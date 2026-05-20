@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">    
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Availability Search</title>
+
+</head>
+<body>
+    {% include 'availability/toolbar.html' %}
+    <div class="availability-search-results">
+        <!-- Search results will be displayed here -->
+         <p>{{ start_date }} - {{ end_date }} | Guests: {{ guests }}</p>
+        <ul>
+            {% for property in available_properties %}
+                <li>{{ property.name }} - {{ property.specs.bedrooms }} bedrooms, max {{ property.specs.max_guests }} guests</li>
+            {% empty %}
+                <li>No properties available for the selected criteria.</li>
+            {% endfor %}
+    </div>
+</body>
+</html>

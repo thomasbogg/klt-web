@@ -1,0 +1,46 @@
+.group-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    min-width: 250px;
+    border-bottom: #eee 1px solid;
+}
+
+.count-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.group-row label {
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+.grouppicker button {
+    font-size: 3rem;
+    color: royalblue;
+}
+
+.group-row button.increment,
+.group-row button.decrement {
+    width: 30px;
+    height: 30px;
+}
+
+.count-controls button:disabled {
+    cursor: not-allowed;
+    background: #e0e0e0;
+    color: #aaa;
+}
+
+.group-row button:hover {
+    background: #dcdcdc;
+}
+
+.count-display {
+    min-width: 20px;
+    text-align: center;
+    font-size: 1rem;
+}

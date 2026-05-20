@@ -1,0 +1,36 @@
+.datepicker-input {
+    width: 150px;
+}
+
+.datepicker {
+    min-width: 250px;
+}
+
+.days, .dates {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 10px;
+    margin-block-start: 10px;
+}
+
+.days span {
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    text-align: center; 
+}
+
+.dates button {
+    color: slategray;
+    aspect-ratio: 1;
+}
+
+.dates button.today {
+    background: rgba(82, 62, 122, 0.2);
+    color: royalblue;
+}
+
+.dates button.selected {
+    background: royalblue;
+    color: #fff;
+}

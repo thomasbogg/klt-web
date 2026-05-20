@@ -1,0 +1,23 @@
+{% load static %}
+<div class="header-container">
+    <a href="/"><img class="logo" src="{% static 'index/images/logo/1.png' %}" alt="Algarve Beach Apartments"></a>
+    <nav>
+        <ul id="menu">
+            <li><a href="/">Home</a></li>
+            <li><a href="/properties">Apartments</a></li>
+            <li><a href="/gallery">Gallery</a></li>
+            <li><a href="/location">Location</a></li>
+            <li><a href="/contact">Contact</a></li>
+        </ul>
+    </nav>
+    <div class="menu-toggle" onclick="toggleMenu()">
+        <span></span>
+        <span></span>
+        <span></span>
+    </div>
+</div>
+<script>
+    function toggleMenu() {
+        document.getElementById('menu').classList.toggle('active');
+    }
+</script>

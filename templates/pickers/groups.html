@@ -1,0 +1,19 @@
+<div class="{{ name }}-grouppicker-container">
+    <input type="text" class="grouppicker-input" name="{{ name }}-grouppicker-input" autocomplete="off" readonly>
+    <div class="grouppicker" hidden>
+        
+        {% for group_item, default_num, min_num, max_num in groups %}
+            <div class="group-row">
+                <label>{{ group_item|capfirst }}</label>
+
+                <div class ="count-controls">
+                    <button type="button" id="{{ group_item }}" class="decrement">-</button>
+                    <p class="count-display" id="{{ group_item }}" min="{{ min_num }}" max="{{ max_num }}">
+                        {{ default_num }}
+                    </p>
+                    <button type="button" id="{{ group_item }}" class="increment">+</button>
+                </div>
+            </div>
+            {% endfor %}
+    </div>
+</div> 

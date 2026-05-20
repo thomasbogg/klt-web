@@ -1,0 +1,118 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap');
+
+div[class$="picker-container"] {
+    position: relative;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Poppins', sans-serif;
+    color: #333;
+}
+
+input[class$="picker-input"] {
+    padding: 10px;
+    font-size: 1rem;
+    border: none;
+    border-right: 1px solid #b1acac;
+    padding-left: 10px;
+    color: royalblue;
+    width: 100px;
+    height: 30px;
+    text-align: center;
+}
+
+div[class$="picker"] {
+    position: absolute;
+    z-index: 100;
+    margin-top: 2px;
+    background: #fff;
+    padding: 10px;
+    border-radius: 5px;
+    border: 2px solid #ddd;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+div[class$="picker"] button {
+    cursor: pointer;
+    border: none;
+    border-radius: 3px;
+    font-size: .8rem;
+    font-weight: 500;
+    background: transparent;
+    text-transform: uppercase;
+    transition: .3s;
+}
+
+
+div[class$="picker"] button:hover {
+    background: rgba(119, 136, 153, 0.1);
+    color: #fff;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+
+div[class$="picker"] button:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+    user-select: none;
+}
+
+div[class$="picker-header"] {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+}
+
+div[class$="picker-header"] > div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+div[class$="picker-header"] select, 
+div[class$="picker-header"] input {
+    font-size: 1rem;
+    border: 1px solid #eee;
+    border-radius: 3px;
+    padding: 4px 6px;
+}
+
+div[class$="picker-header"] select {
+    min-width: 100px;
+}
+
+div[class$="picker-header"] input {
+    max-width: 64px;
+    width: 64px;
+}
+
+div[class$="picker-header"] button {
+    color: slategray;
+}
+
+div[class$="picker-header"] button:hover {
+    color: royalblue;
+}
+
+div[class$="picker-footer"] {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #eee;
+}
+
+div[class$="picker-footer"] button {
+    padding: 3px 10px;
+    background: rgba(76, 59, 110, 0.096);
+    text-transform: uppercase;
+    font-size: 0.8rem;
+}
+
+div[class$="picker-footer"] button.apply {
+    background: royalblue;
+    color: #fff;
+}

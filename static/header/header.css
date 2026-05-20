@@ -1,0 +1,78 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap');
+
+header {
+    background-color: #ffffff;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    position: sticky;
+    z-index: 1000;
+}
+
+.header-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: .5rem 1rem;
+}
+
+.logo {
+    max-width: 35%;
+}
+
+nav ul {
+    padding: .5rem 1rem;
+    display: flex;
+    list-style: none;
+    gap: 2rem;
+    font-size: .9em;
+    align-items: end;
+}
+
+nav a {
+    font-family: "Montserrat", arial, sans-serif;
+    letter-spacing: -.5px;
+    text-decoration: none;
+    color: #333333cc;
+    transition: color 0.3s;
+}
+
+nav a:hover {
+    color: #0066cc;
+}
+
+.menu-toggle {
+    display: none;
+    flex-direction: column;
+    cursor: pointer;
+}
+
+.menu-toggle span {
+    width: 25px;
+    height: 3px;
+    background-color: #333;
+    margin: 3px 0;
+}
+
+@media (max-width: 768px) {
+    nav ul {
+        text-align: center;        
+        display: none;
+        flex-direction: column;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background-color: #ffffff;
+        padding: 1rem;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    
+    nav ul.active {
+        display: flex;
+    }
+    
+    .menu-toggle {
+        display: flex;
+    }
+}

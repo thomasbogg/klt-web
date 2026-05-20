@@ -1,0 +1,17 @@
+    < form action="{% urls 'properties:select' %}" method="post">
+        {% csrf_token %}
+        <fieldset>
+            <legend>
+                <h2>Select location</h2>
+            </legend>
+            {% if error_message %}<p><strong>{{ error_message }}</strong></p>{% endif %}
+            {% for location in locations %}
+                <input type="radio" name="location" id="location{{ forloop.counter }}" value="{{ location.id }}">
+                <label for="location{{ forloop.counter }}">
+                    {{ location.title }}
+                </label>
+                <br>
+            {% endfor %}
+        </fieldset>
+        <input type="submit" value="location">
+    </form>
