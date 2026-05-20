@@ -22,14 +22,14 @@ def location(request, title):
     location = get_object_with_slug_or_404(title, Location)
     properties = Property.objects.filter(location_id__exact=location.id)
     context = {'location': location, 'properties': properties}
-    return render(request, 'properties/location.html', context)
+    return render(request, 'properties/location/page.html', context)
 
 
 def property(request, location, title):
     location = get_object_with_slug_or_404(location, Location)
     property = get_object_with_slug_or_404(title, Property, location__title__iexact=location.title)
     context = {'location': location, 'property': property}
-    return render(request, 'properties/property.html', context)
+    return render(request, 'properties/property/page.html', context)
 
 
 class DetailView(generic.DetailView):

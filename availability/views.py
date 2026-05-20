@@ -2,6 +2,7 @@ from django.shortcuts import render
 from django.views import View, generic
 from properties.models import Property
 from bookings.models import Booking
+from env_settings import VALID_BOOKING_STATUSES
 # Create your views here.
 
 class IndexView(generic.TemplateView):
@@ -37,7 +38,6 @@ class SearchView(View):
         return guests
     
     def get_available_properties(self, start_date, end_date, guests):
-        # Implement logic to get available properties based on the given criteria
 
         properties = Property.objects.filter(
             #specs__bedrooms__gte=guests.get('adults', 0) - 1 + guests.get('children', 0) - 1, # Assuming 1 bedroom can accommodate 2 adults or 2 children
@@ -50,15 +50,8 @@ class SearchView(View):
                 property=property,
                 arrival_date__lt=end_date,
                 departure_date__gt=start_date,
-                enquiry_status__in=self.valid_terms()
+                enquiry_status__in=VALID_BOOKING_STATUSES
             )
             if overlapping_bookings.exists():
                 properties = properties.exclude(id=property.id)
         return properties
-    
-    def valid_terms(self):
-        return (
-            'Booking confirmed',
-            'Provisional booking',
-            'Holiday started'
-        )

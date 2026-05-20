@@ -1,0 +1,13 @@
+<h1>Location: {{ location.title }}</h1>
+<p>{{ location.street }}</p>
+<p>{{ location.city }}</p>
+<p>{{ location.zip_code }}</p>
+
+    <ul>
+    {% if properties %}
+        {% for property in properties %}
+            <li><a href="{{ property.title }}">{{ property.title }}</a>: {{ property.description }}</li>
+        {% endfor %}
+    {% else %}
+        <h2>No properties to show for this location</h2>
+    {% endif %}
