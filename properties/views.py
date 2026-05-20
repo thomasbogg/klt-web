@@ -9,7 +9,7 @@ from django.views import generic
 # Create your views here.
 
 def split_slug(slug):
-    return slug.replace('-', ' ')
+    return slug.replace('-', ' ').upper()
 
 
 def get_object_with_slug_or_404(slug, Object, **kwargs):

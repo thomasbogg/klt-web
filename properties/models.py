@@ -129,21 +129,21 @@ class Price(models.Model):
 
 class Property(models.Model):
     """Main property model."""
-    name = models.CharField(max_length=200, unique=True, default='Unnamed Property')
-    short_name = models.CharField(max_length=100, unique=True, default='unnamed-property')
+    title = models.CharField(max_length=200, unique=True, blank=False)
+    short_title = models.CharField(max_length=100, unique=True, blank=False)
     
     # Foreign key relationships
     owner = models.ForeignKey(Owner, on_delete=models.SET_NULL, null=True)
     manager = models.ForeignKey(Manager, on_delete=models.SET_NULL, null=True)
-    address = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True)
+    location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True)
     price = models.ForeignKey(Price, on_delete=models.SET_NULL, null=True, blank=True)
     accountant = models.ForeignKey(Accountant, on_delete=models.SET_NULL, null=True, blank=True)
     
     # Property details
     al_number = models.IntegerField(blank=True, null=True)
     we_book = models.BooleanField(default=False)
-    booking_com_name = models.CharField(max_length=200, blank=True, null=True)
-    airbnb_name = models.CharField(max_length=200, blank=True, null=True)
+    booking_com_title = models.CharField(max_length=200, blank=True, null=True)
+    airbnb_title = models.CharField(max_length=200, blank=True, null=True)
     we_clean = models.BooleanField(default=False)
     standard_cleaning_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     send_owner_booking_forms = models.BooleanField(default=False)
@@ -154,7 +154,7 @@ class Property(models.Model):
         verbose_name_plural = 'Properties'
 
     def __str__(self):
-        return self.name
+        return self.title
 
 
 class Spec(models.Model):
@@ -178,7 +178,7 @@ class Spec(models.Model):
         verbose_name_plural = 'Property Specifications'
 
     def __str__(self):
-        return f"{self.property.name} - Specs"
+        return f"{self.property.title} - Specs"
     
 
 class Amenity(models.Model):
@@ -215,7 +215,7 @@ class Amenity(models.Model):
         verbose_name_plural = 'Property Amenities'
 
     def __str__(self):
-        return f"{self.property.name} - {self.name}"
+        return f"{self.property.title} - {self.name}"
 
 
 class SEFDetail(models.Model):
@@ -231,4 +231,4 @@ class SEFDetail(models.Model):
         verbose_name_plural = 'Property SEF Details'
 
     def __str__(self):
-        return f"{self.property.name} - SEF"
+        return f"{self.property.title} - SEF"

@@ -6,7 +6,7 @@
     <ul>
     {% if properties %}
         {% for property in properties %}
-            <li><a href="{{ property.title }}">{{ property.title }}</a>: {{ property.description }}</li>
+            <li><a href="{{ property.short_name|lower }}">{{ property.name }}</a>: {{ property.description }}</li>
         {% endfor %}
     {% else %}
         <h2>No properties to show for this location</h2>
