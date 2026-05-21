@@ -56,7 +56,8 @@ h2 {
     top: 30%;
 }
 
-.container-inner.half {
+.container.fifty-fifty .left,
+.container.fifty-fifty .right {
     width: 50%;
     height: 100%;
     box-shadow: var(--primary-box-shadow);
@@ -127,15 +128,15 @@ h2 {
         width: 100%;
         height: 50%;
     }
+
+    .container.tiles {
+        flex-direction: column;
+        height: 150vh;
+    }
     
     .container.tiles .tile {
         width: 100%;
         height: 25%;
-    }
-    
-    .container.tiles .tile.one {
-        width: 100%;
-        height: 75%;
     }
     
     .container.text-image.odd,
@@ -149,5 +150,5 @@ h2 {
 
     .container.text-image .image {
         width: 100%;
-}   
+    }   
 }
