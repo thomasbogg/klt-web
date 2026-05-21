@@ -98,12 +98,12 @@ h2 {
 }
 
 .container-inner.half.left.text {
-    background-color: rgb(163, 204, 136);
+    background-color: rgb(136, 196, 204);
     width: 45%;
 }
 
 .container-inner.half.right.image {
-    background-color: rgb(221, 169, 205);
+    background-color: rgb(216, 221, 169);
     width: 55%;
 }   
 
