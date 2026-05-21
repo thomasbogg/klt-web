@@ -27,6 +27,9 @@ h2 {
     margin-bottom: 10px;
 }
 
+/* =========================
+   MAIN CONTAINER: BASE
+   ========================= */
 .container {
     width: 100%;
     height: 100vh;
@@ -36,7 +39,6 @@ h2 {
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
-
 }
 
 .container h1, .container-subtitle {
@@ -56,16 +58,13 @@ h2 {
     top: 30%;
 }
 
+/* =========================
+   MAIN CONTAINER: FIFTY-FIFTY
+   ========================= */
 .container.fifty-fifty .left,
 .container.fifty-fifty .right {
     width: 50%;
     height: 100%;
-    box-shadow: var(--primary-box-shadow);
-}
-
-.container.tiles .tile {
-    width: 50%;
-    height: 50%;
     box-shadow: var(--primary-box-shadow);
 }
 
@@ -77,12 +76,13 @@ h2 {
     background-color: rgb(221, 169, 205);
 }
 
-.container.tiles .tile.three {
-    background-color: rgb(163, 204, 136);
-}
-
-.container.tiles .tile.four {
-    background-color: rgb(221, 169, 205);
+/* =========================
+   MAIN CONTAINER: TILES
+   ========================= */
+.container.tiles .tile {
+    width: 50%;
+    height: 50%;
+    box-shadow: var(--primary-box-shadow);
 }
 
 .container.tiles .tile.one {
@@ -93,9 +93,26 @@ h2 {
     background-color: rgb(255, 223, 186);
 }
 
+.container.tiles .tile.three {
+    background-color: rgb(163, 204, 136);
+}
+
+.container.tiles .tile.four {
+    background-color: rgb(221, 169, 205);
+}
+
 .container.tiles .tile:hover {
     transform: scale(1.05);
     transition: transform 0.3s ease;
+}
+
+/* =========================
+   MAIN CONTAINER: TEXT + IMAGE
+   ========================= */
+.container.text-image {
+    height: 50vh;
+    flex-direction: row;
+    flex-wrap: nowrap;
 }
 
 .container.text-image.odd {
@@ -117,12 +134,20 @@ h2 {
     width: 55%;
 }   
 
-.container.text-image {
-    height: 50vh;
-    flex-direction: row;
-    flex-wrap: nowrap;
+/* =========================
+   MAIN CONTAINER: TEXT BOXES
+   ========================= */
+.container.text-boxes {
+    background-color: salmon;
 }
 
+.container.text-boxes {
+    background-color: rgb(38, 34, 85);
+}
+
+/* =========================
+   RESPONSIVE: CONTAINER OVERRIDES
+   ========================= */
 @media (max-width: 768px) {
     .container.text-image .text {
         width: 100%;
