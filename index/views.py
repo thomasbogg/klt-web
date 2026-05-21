@@ -1,7 +1,7 @@
 from django.http import HttpResponse
 from django.views import generic
 from properties.models import Location
-from dates import dates
+from libraries.dates import dates
 
 # Create your views here.
 

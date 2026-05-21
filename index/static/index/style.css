@@ -62,63 +62,92 @@ h2 {
     box-shadow: var(--primary-box-shadow);
 }
 
-.container-inner.tile {
+.container.tiles .tile {
     width: 50%;
     height: 50%;
     box-shadow: var(--primary-box-shadow);
 }
 
-.container-inner.half.left {
+.container.fifty-fifty .left {
     background-color: rgb(163, 204, 136);
 }
 
-.container-inner.half.right {
+.container.fifty-fifty .right {
     background-color: rgb(221, 169, 205);
 }
 
-.container-inner.tile.three {
+.container.tiles .tile.three {
     background-color: rgb(163, 204, 136);
 }
 
-.container-inner.tile.four {
+.container.tiles .tile.four {
     background-color: rgb(221, 169, 205);
 }
 
-.container-inner.tile.one {
+.container.tiles .tile.one {
     background-color: rgb(178, 190, 230);
 }
 
-.container-inner.tile.two {
+.container.tiles .tile.two {
     background-color: rgb(255, 223, 186);
 }
 
-.container-inner.tile:hover {
+.container.tiles .tile:hover {
     transform: scale(1.05);
     transition: transform 0.3s ease;
 }
 
-.container-inner.half.left.text {
+.container.text-image.odd {
+    display: flex;
+}
+
+.container.text-image.even {
+    display: flex;
+    flex-direction: row-reverse;
+}
+
+.container.text-image .text {
     background-color: rgb(136, 196, 204);
     width: 45%;
 }
 
-.container-inner.half.right.image {
+.container.text-image .image {
     background-color: rgb(216, 221, 169);
     width: 55%;
 }   
 
-.container.with-inner-image {
+.container.text-image {
     height: 50vh;
-}
-
-.container.with-inner-image.even {
-    display: flex;
-    flex-direction: row-reverse;
-    flex-wrap: nowrap;
-}
-
-.container.with-inner-image.odd {
-    display: flex;
     flex-direction: row;
     flex-wrap: nowrap;
+}
+
+@media (max-width: 768px) {
+    .container.text-image .text {
+        width: 100%;
+        height: 50%;
+    }
+    
+    .container.tiles .tile {
+        width: 100%;
+        height: 25%;
+    }
+    
+    .container.tiles .tile.one {
+        width: 100%;
+        height: 75%;
+    }
+    
+    .container.text-image.odd,
+    .container.text-image.even {
+        flex-direction: column-reverse;
+    }
+    
+    .container.text-image .text {
+        width: 100%;
+    }
+
+    .container.text-image .image {
+        width: 100%;
+}   
 }
