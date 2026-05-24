@@ -20,11 +20,13 @@ h1 {
     text-align: center;
     color: #2c3e50;
     margin-bottom: 30px;
+    font-family: 'Merriweather', serif;
 }
 
 h2 {
     font-size: 1.5em;
     margin-bottom: 10px;
+    font-family: 'Cabin', serif;
 }
 
 /* =========================
@@ -138,11 +140,104 @@ h2 {
    MAIN CONTAINER: TEXT BOXES
    ========================= */
 .container.text-boxes {
-    background-color: salmon;
+    background-color: rgb(38, 34, 85);
+    justify-content: center;
 }
 
-.container.text-boxes {
-    background-color: rgb(38, 34, 85);
+.container.text-boxes .text-box {
+    width: 20%;
+    height: 40%;
+    background-color: rgb(255, 255, 255);
+    margin: 0px 20px;
+    box-shadow: var(--primary-box-shadow);
+    position: relative;
+    border-radius: 10px;
+    top: 10%;
+}   
+
+.container.text-boxes .text-box.wide {
+    width: 43%;
+    height: 30%;
+}
+
+.container.text-boxes .text-box-heading {
+    font-size: 1.2em;
+    font-weight: 600;
+    text-align: center;
+    padding-top: 20px;
+}
+
+.container.text-boxes .text-box-heading.wide {
+    padding-top: 40px;
+}
+
+.container.text-boxes .text-box-content {
+    padding: 30px;
+    font-size: 0.9em;
+    text-align: justify;
+}
+
+
+/* =========================
+   MAIN CONTAINER: LISTS
+   ========================= */
+   .container.lists {
+       background-color: rgb(145, 55, 55);
+       justify-content: center;
+    align-items: flex-start;
+}
+
+.container.lists h1 {
+    color: rgb(38, 34, 85);
+    margin-bottom: 20px;
+    top: 10%;
+}
+
+.container.lists .list {
+    width: fit-content;
+    height: fit-content;
+    background-color: rgb(255, 255, 255);
+    margin: 0px 20px;
+    box-shadow: var(--primary-box-shadow);
+    padding: 20px;
+    border-radius: 10px;
+    top: 30%;
+    position: relative;
+}   
+
+.container.lists .list h2 {
+    font-size: 1.2em;
+    font-weight: 600;
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.container.lists .list ul {
+    padding-left: 20px;
+}
+
+.container.lists .list ul li {
+    margin-bottom: 10px;
+    font-size: 0.9em;
+}
+
+/* =========================
+   MAIN CONTAINER: CARDS
+   ========================= */
+
+.container.cards {
+    background-color: rgb(85, 145, 55);
+    justify-content: center;
+    align-items: center;
+}
+
+.container.cards .card {
+    max-width: 40%;
+    background-color: rgb(255, 255, 255);
+    box-shadow: var(--primary-box-shadow);
+    border-radius: 10px;
+    overflow: hidden;
+    text-align: center;
 }
 
 /* =========================
