@@ -182,8 +182,8 @@ h2 {
    MAIN CONTAINER: LISTS
    ========================= */
    .container.lists {
-       background-color: rgb(145, 55, 55);
-       justify-content: center;
+    background-color: rgb(145, 55, 55);
+    justify-content: center;
     align-items: flex-start;
 }
 
@@ -226,18 +226,46 @@ h2 {
    ========================= */
 
 .container.cards {
-    background-color: rgb(85, 145, 55);
-    justify-content: center;
+    background-color: rgb(234, 240, 232);
     align-items: center;
+    justify-content: center;
+
 }
 
-.container.cards .card {
-    max-width: 40%;
+.cards .card {
+    max-width: 80%;
+    width: 500px;
     background-color: rgb(255, 255, 255);
     box-shadow: var(--primary-box-shadow);
-    border-radius: 10px;
     overflow: hidden;
-    text-align: center;
+    text-align: left;
+    margin: 20px;
+}
+
+.cards .card-content {
+    padding: 0 20px;
+}
+
+.cards .card-heading {
+    font-size: 1.5em;
+    font-weight: 600;
+    margin: 10px 0;
+}
+
+.cards .card-description {
+    font-size: .9em;
+    margin: 10px 0;
+}
+
+.cards .card-address {
+    font-size: 0.8em;
+    color: rgb(100, 100, 100);
+    margin: 10px 0;
+}
+
+.cards .card img {
+    width: 100%;
+    height: auto;
 }
 
 /* =========================
