@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="{% static 'availability/toolbar.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/picker.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/dates.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'index/style.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/groups.css' %}">
     <script type="module" src="{% static 'availability/script.js' %}"></script>
@@ -16,26 +17,41 @@
     <script type="module" src="{% static 'pickers/dates.js' %}"></script>
     <script type="module" src="{% static 'pickers/groups.js' %}"></script>
     <script type="module" src="{% static 'index/script.js' %}"></script>
+    <script type="module" src="{% static 'main/script.js' %}"></script>
 </head>
 <header>
     {% include 'header/header.html' %}
 </header>
 <body>
     
-    <div class="top-container">
-        <h1>Stay with the best</h1>
-        <p class="top-container-subtitle">Book your perfect Algarve holiday experience right now!</p>
+    <div class="container top">
         <img src="{% static 'index/images/top/2.jpg' %}" alt="Top Image">
+        <h1>Stay with the best</h1>
+        <h3>Book your perfect Algarve holiday experience right now!</h3>
         {% include 'availability/toolbar.html'  %}
     </div>
 
-    <div class="locations-container">
-        <h1 class="locations-header">Our Premium Locations</h1>
+    <div class="container text-boxes">
+        <div class="text-box one">
+            <h2>Text box 1</h2>
+        
+        </div>
+        <div class="text-box two">
+            <h2>Text box 2</h2>
+            
+        </div>
+        <div class="text-box three">
+            <h2>Text box 3</h2>
+
+        </div>
+
+    </div>
+
+    <div class="container tiles">
         {% if locations_list %}
-            <div class="locations-grid">
-                {% for location in locations_list %}
-                <div class="location-card">
-                    <img class="location-image" src="{% static 'index/images/' %}{{ location.slug }}/main/1.jpg" alt="{{ location.title }}">
+        {% for location in locations_list %}
+            <div class="tile">
+                <img src="{% static 'index/images/' %}{{ location.slug }}/main/1.jpg" alt="{{ location.title }}">
                     <div class="location-details">
                         <h2 class="location-title">{{ location.title|upper }}</h2>
                         <p class="location-description">{{ location.description }}</p>

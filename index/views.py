@@ -30,7 +30,3 @@ class IndexView(generic.ListView):
             ('infants', '0', '0', '10'), # Default 0 infants, min 0, max 10
         ]
         return context
-
-
-class _IndexView(generic.ListView):
-    template_name = 'index/_index.html'
