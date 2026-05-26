@@ -20,283 +20,157 @@ h1 {
     text-align: center;
     color: #2c3e50;
     margin-bottom: 30px;
-    font-family: 'Merriweather', serif;
 }
 
 h2 {
     font-size: 1.5em;
     margin-bottom: 10px;
-    font-family: 'Cabin', serif;
 }
 
-/* =========================
-   MAIN CONTAINER: BASE
-   ========================= */
-.container {
+.top-container {
     width: 100%;
     height: 100vh;
-    background: rgb(221, 117, 117);
-    margin: 0px;
+    background: white;
     position: relative;
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
 }
 
-.container h1, .container-subtitle {
+.top-container img {
+    object-fit: cover;
+    width: 100%;
+    height: 100vh;
+}
+
+.top-container h1, .top-container-subtitle {
     position: absolute;
     top: 20%;
     width: 100%;
     text-align: center;
-    color: rgb(105, 103, 103);
+    color: white;
 }
 
-.container h1 {
+.top-container h1 {
     font-size: 3.2em;
+    margin: 0;
     font-weight: 300;
 }
 
-.container-subtitle {
-    top: 30%;
+.top-container-subtitle {
+    top: 28%;
 }
 
-/* =========================
-   MAIN CONTAINER: FIFTY-FIFTY
-   ========================= */
-.container.fifty-fifty .left,
-.container.fifty-fifty .right {
-    width: 50%;
-    height: 100%;
-    box-shadow: var(--primary-box-shadow);
+.toolbar-container {
+    position: absolute;
+    top: 35%;
+    z-index: 100;
+    width: 100%;
+    background: transparent;
 }
 
-.container.fifty-fifty .left {
-    background-color: rgb(163, 204, 136);
+.locations-container {
+    margin-top: 70px;
+    padding: 0 20px 50px 20px;
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
 }
 
-.container.fifty-fifty .right {
-    background-color: rgb(221, 169, 205);
-}
-
-/* =========================
-   MAIN CONTAINER: TILES
-   ========================= */
-.container.tiles .tile {
-    width: 50%;
-    height: 50%;
-    box-shadow: var(--primary-box-shadow);
-}
-
-.container.tiles .tile.one {
-    background-color: rgb(178, 190, 230);
-}
-
-.container.tiles .tile.two {
-    background-color: rgb(255, 223, 186);
-}
-
-.container.tiles .tile.three {
-    background-color: rgb(163, 204, 136);
-}
-
-.container.tiles .tile.four {
-    background-color: rgb(221, 169, 205);
-}
-
-.container.tiles .tile:hover {
-    transform: scale(1.05);
-    transition: transform 0.3s ease;
-}
-
-/* =========================
-   MAIN CONTAINER: TEXT + IMAGE
-   ========================= */
-.container.text-image {
-    height: 50vh;
-    flex-direction: row;
-    flex-wrap: nowrap;
-}
-
-.container.text-image.odd {
-    display: flex;
-}
-
-.container.text-image.even {
-    display: flex;
-    flex-direction: row-reverse;
-}
-
-.container.text-image .text {
-    background-color: rgb(136, 196, 204);
-    width: 45%;
-}
-
-.container.text-image .image {
-    background-color: rgb(216, 221, 169);
-    width: 55%;
-}   
-
-/* =========================
-   MAIN CONTAINER: TEXT BOXES
-   ========================= */
-.container.text-boxes {
-    background-color: rgb(38, 34, 85);
-    justify-content: center;
-}
-
-.container.text-boxes .text-box {
-    width: 20%;
-    height: 40%;
-    background-color: rgb(255, 255, 255);
-    margin: 0px 20px;
-    box-shadow: var(--primary-box-shadow);
-    position: relative;
-    border-radius: 10px;
-    top: 10%;
-}   
-
-.container.text-boxes .text-box.wide {
-    width: 43%;
-    height: 30%;
-}
-
-.container.text-boxes .text-box-heading {
-    font-size: 1.2em;
-    font-weight: 600;
+.locations-container h1 {
+    color: royalblue;
+    margin: 100px auto;
+    font-size: 4em;
+    font-weight: 100;
     text-align: center;
-    padding-top: 20px;
+}   
+
+.locations-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 60px;
+    margin-top: 30px;
 }
 
-.container.text-boxes .text-box-heading.wide {
-    padding-top: 40px;
+.location-card {
+    display: flex;
+    flex-direction: column;
+    background: white;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    min-width: 300px;
+
 }
 
-.container.text-boxes .text-box-content {
-    padding: 30px;
-    font-size: 0.9em;
+.location-image:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+}
+
+.location-image {
+    width: 100%;
+    height: 40vh;
+    object-fit: cover;
+    margin-bottom: 10px;
+    border-radius: 3px;
+}
+
+.location-details {
+    font-family: 'Cabin', serif;
+    margin-left: 5px;
+}
+
+.location-title {
+    color: royalblue;
+    margin-bottom: 20px;
+    font-size: 1.75em;
+    letter-spacing: 1px;
+    font-weight: 400;
+    text-decoration: underline;
+}
+
+.location-description {
+    color: #7f8c8d;
+    margin: 20px auto;
+    font-size: 1rem;
     text-align: justify;
 }
 
-
-/* =========================
-   MAIN CONTAINER: LISTS
-   ========================= */
-   .container.lists {
-    background-color: rgb(145, 55, 55);
-    justify-content: center;
-    align-items: flex-start;
+.location-address {
+    color: #7f8c8d;
+    margin: 0;
+    font-size: .85em;
 }
 
-.container.lists h1 {
-    color: rgb(38, 34, 85);
-    margin-bottom: 20px;
-    top: 10%;
-}
-
-.container.lists .list {
-    width: fit-content;
-    height: fit-content;
-    background-color: rgb(255, 255, 255);
-    margin: 0px 20px;
-    box-shadow: var(--primary-box-shadow);
-    padding: 20px;
-    border-radius: 10px;
-    top: 30%;
-    position: relative;
-}   
-
-.container.lists .list h2 {
-    font-size: 1.2em;
-    font-weight: 600;
+.no-locations {
     text-align: center;
-    margin-bottom: 20px;
+    color: #7f8c8d;
+    font-size: 1.2em;
+    margin-top: 50px;
 }
 
-.container.lists .list ul {
-    padding-left: 20px;
-}
-
-.container.lists .list ul li {
-    margin-bottom: 10px;
-    font-size: 0.9em;
-}
-
-/* =========================
-   MAIN CONTAINER: CARDS
-   ========================= */
-
-.container.cards {
-    background-color: rgb(234, 240, 232);
-    align-items: center;
-    justify-content: center;
-
-}
-
-.cards .card {
-    max-width: 80%;
-    width: 500px;
-    background-color: rgb(255, 255, 255);
-    box-shadow: var(--primary-box-shadow);
-    overflow: hidden;
-    text-align: left;
-    margin: 20px;
-}
-
-.cards .card-content {
-    padding: 0 20px;
-}
-
-.cards .card-heading {
-    font-size: 1.5em;
-    font-weight: 600;
-    margin: 10px 0;
-}
-
-.cards .card-description {
-    font-size: .9em;
-    margin: 10px 0;
-}
-
-.cards .card-address {
-    font-size: 0.8em;
-    color: rgb(100, 100, 100);
-    margin: 10px 0;
-}
-
-.cards .card img {
-    width: 100%;
-    height: auto;
-}
-
-/* =========================
-   RESPONSIVE: CONTAINER OVERRIDES
-   ========================= */
+/* Responsive design */
 @media (max-width: 768px) {
-    .container.text-image .text {
-        width: 100%;
-        height: 50%;
+    .locations-grid {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+    
+    .location-card {
+        padding: 15px;
+    }
+    
+    h1 {
+        font-size: 1.8em;
     }
 
-    .container.tiles {
-        flex-direction: column;
-        height: 150vh;
+    .container-top img {
+        height: 250px;
     }
-    
-    .container.tiles .tile {
-        width: 100%;
-        height: 25%;
-    }
-    
-    .container.text-image.odd,
-    .container.text-image.even {
-        flex-direction: column-reverse;
-    }
-    
-    .container.text-image .text {
-        width: 100%;
-    }
+}
 
-    .container.text-image .image {
-        width: 100%;
-    }   
+@media (max-width: 480px) {
+    body {
+        padding: 10px;
+    }
+    
+    h1 {
+        font-size: 1.5em;
+    }
 }
