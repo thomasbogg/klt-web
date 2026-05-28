@@ -15,7 +15,7 @@ input[class$="picker-input"] {
     border: none;
     border-right: 1px solid #b1acac;
     padding-left: 10px;
-    color: royalblue;
+    color: var(--primary-color, #2c79b9);
     width: 100px;
     height: 30px;
     text-align: center;
@@ -94,7 +94,7 @@ div[class$="picker-header"] button {
 }
 
 div[class$="picker-header"] button:hover {
-    color: royalblue;
+    color: var(--primary-color, #2c79b9);
 }
 
 div[class$="picker-footer"] {
@@ -107,12 +107,12 @@ div[class$="picker-footer"] {
 
 div[class$="picker-footer"] button {
     padding: 3px 10px;
-    background: rgba(76, 59, 110, 0.096);
+    background: var(--secondary-color-soft, #f9e7b0);
     text-transform: uppercase;
     font-size: 0.8rem;
 }
 
 div[class$="picker-footer"] button.apply {
-    background: royalblue;
+    background: var(--primary-color, #2c79b9);
     color: #fff;
 }

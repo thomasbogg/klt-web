@@ -26,11 +26,11 @@
 }
 
 .dates button.today {
-    background: rgba(82, 62, 122, 0.2);
-    color: royalblue;
+    background: var(--secondary-color-soft, #f9e7b0);
+    color: var(--primary-color-dark, #1f5f93);
 }
 
 .dates button.selected {
-    background: royalblue;
+    background: var(--primary-color, #2c79b9);
     color: #fff;
 }

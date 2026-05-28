@@ -20,7 +20,7 @@
 
 .grouppicker button {
     font-size: 3rem;
-    color: royalblue;
+    color: var(--primary-color, #2c79b9);
 }
 
 .group-row button.increment,

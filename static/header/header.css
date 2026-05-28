@@ -33,12 +33,12 @@ nav a {
     font-family: "Montserrat", arial, sans-serif;
     letter-spacing: -.5px;
     text-decoration: none;
-    color: #333333cc;
+    color: var(--primary-color-dark, #1f5f93);
     transition: color 0.3s;
 }
 
 nav a:hover {
-    color: #0066cc;
+    color: var(--secondary-color, #9f6f00);
 }
 
 .menu-toggle {
@@ -50,7 +50,7 @@ nav a:hover {
 .menu-toggle span {
     width: 25px;
     height: 3px;
-    background-color: #333;
+    background-color: var(--primary-color-dark, #1f5f93);
     margin: 3px 0;
 }
 

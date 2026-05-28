@@ -1,27 +1,26 @@
 /* Toolbar styling */
-.toolbar-container {
-    display: flex;
+.container.availability-toolbar {
     align-items: center;
     justify-content: center;
-    flex-wrap: wrap;    
+    height: auto;
 }
 
-.toolbar-container > div {
+.container.availability-toolbar > div {
     display: flex;
     align-items: center;
     justify-content: space-around;
 }
 
-.toolbar-datepickers {
+.container.availability-toolbar .datepickers {
     display: flex;
     align-items: center;
     justify-content: space-around;
     gap: 0;
 }
 
-.availability-toolbar-submit {
+.container.availability-toolbar .submit {
     background: white;
-    color: royalblue;
+    color: var(--primary-color, #2c79b9);
     border: none;
     padding: 10px 20px;
     font-size: 1rem;
@@ -31,25 +30,26 @@
     height: 50px;
 }
 
-.toolbar-container .availability-toolbar-submit:hover {
-    background: #023f80;
+.container.availability-toolbar .submit:hover {
+    background: var(--primary-color, #2c79b9);
+    color: #fff;
 }
 
-.toolbar-container .availability-toolbar-submit:active {
-    background: #012f60;
+.container.availability-toolbar .submit:active {
+    background: var(--primary-color-dark, #1f5f93);
 }
 
 @media (max-width: 768px) {
-    .toolbar-container {
+    .container.availability-toolbar {
         flex-direction: column;
         align-items: stretch;
     }
     
-    .toolbar-container > div {
+    .container.availability-toolbar > div {
         justify-content: space-between;
     }
     
-    .toolbar-container input[type="text"] {
+    .container.availability-toolbar input[type="text"] {
         width: 100px;
     }
 }

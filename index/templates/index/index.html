@@ -6,12 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
-    <link rel="stylesheet" href="{% static 'availability/toolbar.css' %}">
-    <link rel="stylesheet" href="{% static 'pickers/picker.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/dates.css' %}">
+    <link rel="stylesheet" href="{% static 'pickers/groups.css' %}">
+    <link rel="stylesheet" href="{% static 'pickers/picker.css' %}">
+    <link rel="stylesheet" href="{% static 'availability/toolbar.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'index/style.css' %}">
-    <link rel="stylesheet" href="{% static 'pickers/groups.css' %}">
     <script type="module" src="{% static 'availability/script.js' %}"></script>
     <script type="module" src="{% static 'availability/toolbar.js' %}"></script>
     <script type="module" src="{% static 'pickers/dates.js' %}"></script>
@@ -25,7 +25,7 @@
 <body>
     
     <div class="container top">
-        <img src="{% static 'index/images/top/2.jpg' %}" alt="Top Image">
+        <img src="{% static 'index/images/top/2.jpg' %}" alt="Top Image" class="background-image">
         <h1>Stay with the best</h1>
         <h3>Book your perfect Algarve holiday experience right now!</h3>
         {% include 'availability/toolbar.html'  %}
@@ -33,15 +33,27 @@
 
     <div class="container text-boxes">
         <div class="text-box one">
-            <h2>Text box 1</h2>
-        
+            <img src="{% static 'index/images/icons/premium.svg' %}" alt="Premium Locations Icon" class="icon">
+            <h2>Premium Locations</h2>
+            <p class="text-box-content">
+                Offering a unique blend of comfort, style, and breathtaking views. Whether you prefer a high end sea facing apartment or a pool side marvel, we have the perfect accommodation for you.    
+            </p>
+            
         </div>
         <div class="text-box two">
-            <h2>Text box 2</h2>
+            <img src="{% static 'index/images/icons/facilities.png' %}" alt="Top Facilities Icon" class="icon">
+            <h2>Top Facilities</h2>
+            <p class="text-box-content">
+                Highest quality facilities to ensure a comfortable and enjoyable stay. From fully equipped kitchens and modern appliances to luxurious bathrooms and spacious living areas.
+            </p>
             
         </div>
         <div class="text-box three">
-            <h2>Text box 3</h2>
+            <img src="{% static 'index/images/icons/winter.png' %}" alt="Winter Rates Icon" class="icon">
+            <h2>Winter Rates</h2>
+            <p class="text-box-content">
+                Take advantage of our special winter rates and enjoy a stay at a fraction of the cost. Our winter discounts offer exceptional value without compromising on comfort or quality.
+            </p>
 
         </div>
 

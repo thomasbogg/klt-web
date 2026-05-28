@@ -1,7 +1,48 @@
-@import url('https://fonts.googleapis.com/css2?family=Merriweather:ital,opsz,wght@0,18..144,300..900;1,18..144,300..900&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Cabin:ital,wght@0,400..700;1,400..700&display=swap');
+.container.top h1, .container.top h3 {
+    color: white;
+    position: absolute;
+    text-align: center;
+}
+
+.container.top h1 {
+    top: 18%;
+    letter-spacing: 1px;
+}
+
+.container.top h3 {
+    top: 30%;
+}
+
+.container.top form.availability-toolbar {
+    position: absolute;
+    text-align: center;
+    top: 38%;
+}
 
 .container.text-boxes {
     background: white;
+    height: 75vh;
+}
+
+
+.container.text-boxes .text-box {
+    top: 15%;
+    gap: 5px;
+}
+
+.container.text-boxes .text-box h2 {
+    font-weight: 200;
+    font-size: 1.5em;
+    margin: 15px 0 0;
+}
+
+.container.text-boxes .text-box-content {
+    line-height: 1.6;
+    margin: 0;
+}
+
+.container.text-boxes .icon {
+    text-align: center;
+    width: 100px;
+    height: 100px;
 }

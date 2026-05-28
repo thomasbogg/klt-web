@@ -1,14 +1,14 @@
-<form class="availability-toolbar-form" method="get" action="/availability/search/">
-    <div class="toolbar-container">
+<form class="form availability-toolbar" method="get" action="/availability/search/">
+    <div class="container availability-toolbar">
     
-        <div class="toolbar-datepickers">
+        <div class="datepickers">
             {% include 'pickers/dates.html' with name=toolbar_date_picker_start_name %}
             {% include 'pickers/dates.html' with name=toolbar_date_picker_end_name %}
         </div>
     
-        <div class="toolbar-grouppicker-and-submit">
+        <div class="grouppicker-and-submit">
             {% include 'pickers/groups.html' with name=toolbar_group_picker_name groups=toolbar_group_picker_groups %}
-            <button class="availability-toolbar-submit" type="submit">GO</button>
+            <button class="submit" type="submit">GO</button>
         </div>
 
     </div>
