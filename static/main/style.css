@@ -21,6 +21,7 @@ body {
     padding: 0;
     background-color: white;
     font-family: var(--tertiary-font);
+
 }
 
 /* =========================
@@ -81,16 +82,26 @@ img {
 /* =========================
    MAIN CONTAINER: BASE
    ========================= */
-   .container {
-       width: 100%;
-       height: 100vh;
-       background: var(--background-color);
-       margin: 0px;
-       position: relative;
-       display: flex;
-       flex-direction: row;
-       flex-wrap: wrap;
-    }
+
+.container {
+    width: 100%;
+    height: 100vh;
+    margin: 0px;
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+}
+
+/* =========================
+    MAIN CONTAINER: TOP
+    ========================= */
+
+.container.top {
+    background: None;
+    justify-content: center;
+    align-items: center;
+}
 
 /* =========================
     MAIN CONTAINER: TOP
@@ -115,10 +126,16 @@ img {
 /* =========================
    MAIN CONTAINER: TILES
    ========================= */
+
+.container.tiles {
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
 .container.tiles .tile {
-    width: 50%;
-    height: 50%;
-    box-shadow: var(--primary-box-shadow);
+    width: 49%;
+    height: 49%;
 }
 
 .container.tiles .tile.one {
@@ -149,33 +166,32 @@ img {
     height: 50vh;
     flex-direction: row;
     flex-wrap: nowrap;
+    margin-bottom: 5px;
 }
 
 .container.text-image.odd {
     display: flex;
+    flex-direction: row-reverse;
 }
 
 .container.text-image.even {
     display: flex;
-    flex-direction: row-reverse;
 }
 
 .container.text-image .text {
-    background-color: rgb(136, 196, 204);
-    width: 45%;
+    width: 42.5%;
 }
 
 .container.text-image .image {
-    background-color: rgb(216, 221, 169);
-    width: 55%;
+    width: 52.5%;
 }   
 
 /* =========================
    MAIN CONTAINER: TEXT BOXES
    ========================= */
+
 .container.text-boxes {
     justify-content: center;
-    background: white;
 }
 
 .container.text-boxes .text-box {
@@ -183,7 +199,6 @@ img {
     height: 40%;
     margin: 0px 20px;
     position: relative;
-    border-radius: 10px;
     top: 10%;
     display: flex;
     flex-direction: column;
@@ -215,10 +230,10 @@ img {
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-
 /* =========================
    MAIN CONTAINER: LISTS
    ========================= */
+
 .container.lists {
     justify-content: center;
     align-items: flex-start;

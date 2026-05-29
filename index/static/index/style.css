@@ -20,8 +20,7 @@
 }
 
 .container.text-boxes {
-    background: white;
-    height: 75vh;
+    height: 50vh;
 }
 
 
@@ -45,4 +44,8 @@
     text-align: center;
     width: 100px;
     height: 100px;
+}
+
+.container.tiles {
+    justify-content: space-between;
 }
