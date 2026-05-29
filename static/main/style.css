@@ -53,6 +53,14 @@ h3 {
     font-weight: 400;
 }
 
+div .center {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: center;
+
+}
+
 /* =========================
    IMAGES
    ========================= */
@@ -134,8 +142,10 @@ img {
 }
 
 .container.tiles .tile {
-    width: 49%;
-    height: 49%;
+    width: 50%;
+    height: 50%;
+    box-sizing: border-box;
+    border: 5px solid #ffffff;
 }
 
 .container.tiles .tile.one {
