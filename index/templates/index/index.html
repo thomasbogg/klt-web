@@ -68,9 +68,7 @@
         {% for location in locations_list %}
             <div class="tile">
                 <img src="{% static 'index/images/' %}{{ location.slug }}/main/1.jpg" alt="{{ location.title }}">
-                <h2 class="center">{{ location.title|upper }}</h2>
-                <p class="location-description">{{ location.description }}</p>
-                <p class="location-address">{{ location.street }}, {{ location.zip_code }}, {{ location.city }}</p>
+                <h3>{{ location.title|upper }}</h3>
             </div>
             {% endfor %}
         {% else %}

@@ -127,16 +127,15 @@ img {
 .container.tiles {
     justify-content: space-between;
     align-items: center;
-    flex-wrap: wrap;
     position: absolute;
     height: auto;
 }
 
 .container.tiles .tile {
     display: flex;
-    flex-direction: column;
     justify-content: center;
     align-items: center;
+    position: relative;
     width: 50%;
     height: 50%;
 }
@@ -177,7 +176,9 @@ img {
 .container.tiles .tile:hover {
     transform: scale(1.01, 1.01);
     transition: transform 0.3s ease;
+    
 }
+
 
 /* =========================
    MAIN CONTAINER: TEXT + IMAGE
