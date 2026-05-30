@@ -106,17 +106,6 @@ img {
     ========================= */
 
 .container.top {
-    background: None;
-    justify-content: center;
-    align-items: center;
-}
-
-/* =========================
-    MAIN CONTAINER: TOP
-    ========================= */
-
-.container.top {
-    background: None;
     justify-content: center;
     align-items: center;
 }
@@ -139,14 +128,35 @@ img {
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
+    position: absolute;
+    height: auto;
 }
 
 .container.tiles .tile {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
     width: 50%;
     height: 50%;
-    box-sizing: border-box;
-    border: 5px solid #ffffff;
 }
+
+.container.tiles .tile img {
+    object-fit: cover;
+    opacity: 0.8;
+    z-index: -1;
+}
+
+.container.tiles .tile h1, 
+.container.tiles .tile h2, 
+.container.tiles .tile h3, 
+.container.tiles .tile p {
+    position: absolute;
+    color: white;
+    z-index: 1;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
 
 .container.tiles .tile.one {
     background-color: rgb(178, 190, 230);
@@ -165,7 +175,7 @@ img {
 }
 
 .container.tiles .tile:hover {
-    transform: scale(1.05);
+    transform: scale(1.01, 1.01);
     transition: transform 0.3s ease;
 }
 

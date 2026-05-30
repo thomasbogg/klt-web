@@ -10,7 +10,8 @@ class IndexView(generic.ListView):
     context_object_name = 'locations_list'
     
     def get_queryset(self):
-        return Location.objects.order_by("title")
+        locations = Location.objects.order_by("title")
+        return list(locations)[2:]
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

@@ -47,5 +47,18 @@
 }
 
 .container.tiles {
-    justify-content: space-between;
+    margin-left: 3px;
+
+}
+
+.container.tiles .tile {
+    width: 49.7%;
+    height: 35%;
+    margin-bottom: 3px;
+    margin-right: 3px;
+    margin-left: 0;
+}
+
+.container.tiles .tile h2 {
+    top: 20%;
 }
