@@ -1,5 +1,6 @@
 from django.db import models
 from django.db.models.enums import Choices
+from properties.utils import pretty_title
 
 
 class Location(models.Model):
@@ -26,7 +27,7 @@ class Location(models.Model):
         verbose_name_plural = 'Property Locations'
 
     def __str__(self):
-        return self.title
+        return pretty_title(self.title)
     
 
 class Manager(models.Model):
@@ -154,7 +155,7 @@ class Property(models.Model):
         verbose_name_plural = 'Properties'
 
     def __str__(self):
-        return self.title
+        return pretty_title(self.title)
 
 
 class Spec(models.Model):

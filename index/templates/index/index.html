@@ -25,56 +25,82 @@
 <body>
     
     <div class="container top">
-        <img src="{% static 'index/images/top/2.jpg' %}" alt="Top Image" class="background-image">
+        <img src="{% static 'index/images/top/2.jpg' %}" alt="Top Image Albufeira Algarve" class="background-image">
         <h1>Stay with the best</h1>
         <h3>Book your perfect Algarve holiday experience right now!</h3>
         {% include 'availability/toolbar.html'  %}
     </div>
 
-    <div class="container text-boxes">
-        <div class="center">
+    <div class="container text-boxes center">
         <div class="text-box one">
-            <img src="{% static 'index/images/icons/premium.svg' %}" alt="Premium Locations Icon" class="icon">
+            <img src="{% static 'index/images/icons/premium.svg' %}" alt="Premium Locations Icon Albufeira Algarve" class="text-box-icon">
             <h2>Premium Locations</h2>
             <p class="text-box-content">
-                Offering a unique blend of comfort, style, and breathtaking views. Whether you prefer a high end sea facing apartment or a pool side marvel, we have the perfect accommodation for you.    
+                Offering a unique blend of comfort, style, and breathtaking views. Whether you prefer a sea facing marvel or a pool side gem, we have the perfect place for you.    
             </p>
             
         </div>
         <div class="text-box two">
-            <img src="{% static 'index/images/icons/facilities.png' %}" alt="Top Facilities Icon" class="icon">
+            <img src="{% static 'index/images/icons/facilities.png' %}" alt="Top Facilities Icon Albufeira Algarve" class="text-box-icon">
             <h2>Top Facilities</h2>
             <p class="text-box-content">
-                Only the highest quality to ensure a comfortable and enjoyable stay. From fully equipped kitchens and modern appliances to luxurious bathrooms and spacious living areas.
+                Only the highest quality to ensure a special stay. From fully equipped kitchens and modern appliances to luxurious bathrooms and spacious living areas.
             </p>
             
         </div>
         <div class="text-box three">
-            <img src="{% static 'index/images/icons/winter.png' %}" alt="Winter Rates Icon" class="icon">
+            <img src="{% static 'index/images/icons/winter.png' %}" alt="Winter Rates Icon Albufeira Algarve" class="text-box-icon">
             <h2>Winter Rates</h2>
             <p class="text-box-content">
-                Take advantage of our special winter rates and enjoy a stay at a fraction of the cost. Our winter discounts offer exceptional value without compromising on comfort or quality.
+                Take advantage of our special winter rates and enjoy a stay at a fraction of the cost. Our winter discounts offer real value without compromising on comfort or quality.
             </p>
 
         </div>
-        </div>
-
-
     </div>
 
-    <div class="container">
-    <div class="container tiles">
+    <div class="container mosaic ornate center">
+        <div class="left">
+            <div class="tile">
+                <img src="{% static 'index/images/mosaic/beachfront.jpg' %}" alt="Beachfront Albufeira Algarve">
+                <h2>Beachfront</h2>
+ 
+            </div>
+        </div>
+        <div class="right">
+            <div class="tile">
+                <img src="{% static 'index/images/mosaic/rooftop.jpg' %}" alt="Rooftop Albufeira Algarve">
+                <h2>Rooftop</h2>
+    
+            </div>
+            <div class="tile">
+                <img src="{% static 'index/images/mosaic/old-town.jpg' %}" alt="Old Town Albufeira Algarve">
+                <h2>Old Town</h2>
+    
+            </div>
+            <div class="tile">
+                <img src="{% static 'index/images/mosaic/kitchen.jpg' %}" alt="Full Kitchens Albufeira Algarve">
+                <h2>Full Kitchens</h2>
+    
+            </div>
+            <div class="tile">
+                <img src="{% static 'index/images/mosaic/bathroom.jpg' %}" alt="Luxurious Bathrooms Albufeira Algarve">
+                <h2>Luxurious Bathrooms</h2>
+    
+            </div>
+        </div>
+    </div>
+
+    <div class="container mosaic simple">
         {% if locations_list %}
         {% for location in locations_list %}
             <div class="tile">
-                <img src="{% static 'index/images/' %}{{ location.slug }}/main/1.jpg" alt="{{ location.title }}">
-                <h3>{{ location.title|upper }}</h3>
+                <img src="{% static 'index/images/' %}{{ location.slug }}/main/1.jpg" alt="{{ location }} Albufeira Algarve">
+                <h2>{{ location }}</h2>
             </div>
             {% endfor %}
         {% else %}
             <p class="no-locations">No locations available at the moment.</p>
         {% endif %}
-    </div>
     </div>
 </body>
 </html>

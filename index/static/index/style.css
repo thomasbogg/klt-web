@@ -20,13 +20,12 @@
 }
 
 .container.text-boxes {
-    height: 50vh;
+    height: 30vh;
 }
 
-
 .container.text-boxes .text-box {
-    top: 15%;
-    gap: 5px;
+    top: 10%;
+    padding: 0;
 }
 
 .container.text-boxes .text-box h2 {
@@ -40,25 +39,7 @@
     margin: 0;
 }
 
-.container.text-boxes .icon {
-    text-align: center;
-    width: 100px;
-    height: 100px;
-}
-
-.container.tiles {
-    margin-left: 3px;
-
-}
-
-.container.tiles .tile {
-    width: 49.7%;
-    height: 35%;
-    margin-bottom: 3px;
-    margin-right: 3px;
-    margin-left: 0;
-}
-
-.container.tiles .tile h3 {
-    top: 10%;
+.container.mosaic.ornate {
+    margin-top: 50px;
+    height: 55vh;
 }
