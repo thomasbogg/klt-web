@@ -19,38 +19,45 @@
     top: 38%;
 }
 
-.container.text-boxes.iconic {
+.container.text-boxes.iconic,
+.container.text-boxes.services {
     height: 30vh;
 }
 
-.container.text-boxes.iconic .text-box {
+.container.text-boxes.iconic .text-box,
+.container.text-boxes.services .text-box {
     top: 10%;
     padding: 0;
 }
 
-.container.text-boxes.iconic .text-box h2 {
+.container.text-boxes.iconic .text-box h2,
+.container.text-boxes.services .text-box h2 {
     font-weight: 200;
     font-size: 1.5em;
     margin: 15px 0 0;
 }
 
-.container.text-boxes.iconic .text-box-content {
+.container.text-boxes.iconic .text-box-content,
+.container.text-boxes.services .text-box-content {
     line-height: 1.6;
     margin: 0;
 }
 
-.container.text-boxes.memorable {
+.container.text-boxes.memorable,
+.container.text-boxes.not-all {
     height: fit-content;
 }
 
-.container.text-boxes.memorable .text-box.wide h3 {
+.container.text-boxes.memorable .text-box.wide h3, 
+.container.text-boxes.not-all .text-box.wide h3 {
     color: var(--primary-color);
     font-weight: 200;
     font-size: 2.0em;
     margin: 0;
 
 }
-.container.text-boxes.memorable .text-box.wide {
+.container.text-boxes.memorable .text-box.wide,
+.container.text-boxes.not-all .text-box.wide {
     width: 100%;
     height: fit-content;
     padding: 0 20px;
