@@ -6,9 +6,9 @@ export class Grouppicker extends Picker {
         else name = 'group';
         super(name)
         
-        this.incrementBtns = this.picker.querySelectorAll('.increment');
-        this.decrementBtns = this.picker.querySelectorAll('.decrement');
-        this.countDisplays = this.picker.querySelectorAll('.count-display');
+        this.incrementBtns = this.picker.querySelectorAll('.counter .increment');
+        this.decrementBtns = this.picker.querySelectorAll('.counter .decrement');
+        this.countDisplays = this.picker.querySelectorAll('.counter .count');
            
         this.groupCounts = this.getGroupCounts();
         

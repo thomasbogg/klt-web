@@ -2,12 +2,117 @@
     <div class="container availability-toolbar">
     
         <div class="datepickers">
-            {% include 'pickers/dates.html' with name=toolbar_date_picker_start_name %}
-            {% include 'pickers/dates.html' with name=toolbar_date_picker_end_name %}
+            <div class="container picker visible date check-in">
+                <input type="text" class="readonly" name="check-in" id="check-in" autocomplete="off" readonly>
+                <div class="container picker date check-in hidden" hidden>
+
+                    <div class="picker date header">
+                        <button type="button" class="prev">Prev</button>
+                    
+                        <div>
+                            <select class="month">
+                                <option value="0">January</option>
+                                <option value="1">February</option>
+                                <option value="2">March</option>
+                                <option value="3">April</option>
+                                <option value="4">May</option>
+                                <option value="5">June</option>
+                                <option value="6">July</option>
+                                <option value="7">August</option>
+                                <option value="8">September</option>
+                                <option value="9">October</option>
+                                <option value="10">November</option>
+                                <option value="11">December</option>
+                            </select>
+
+                            <input type="number" class="year">
+                        </div>
+
+                        <button type="button" class="next">Next</button>
+                    </div>
+
+                    <div class="days">
+                        <span>Sun</span>
+                        <span>Mon</span>
+                        <span>Tue</span>
+                        <span>Wed</span>
+                        <span>Thu</span>
+                        <span>Fri</span>
+                        <span>Sat</span>
+                    </div>
+
+                    <div class="dates">
+                        <!-- Dates will be dynamically generated here -->
+                    </div>
+                </div>
+            </div>
+      
+            <div class="container picker visible date check-out">
+                <input type="text" class="readonly" name="check-out" id="check-out" autocomplete="off" readonly>
+                <div class="container picker date check-out hidden" hidden>
+
+                    <div class="picker date header">
+                        <button type="button" class="prev">Prev</button>
+                    
+                        <div>
+                            <select class="month">
+                                <option value="0">January</option>
+                                <option value="1">February</option>
+                                <option value="2">March</option>
+                                <option value="3">April</option>
+                                <option value="4">May</option>
+                                <option value="5">June</option>
+                                <option value="6">July</option>
+                                <option value="7">August</option>
+                                <option value="8">September</option>
+                                <option value="9">October</option>
+                                <option value="10">November</option>
+                                <option value="11">December</option>
+                            </select>
+
+                            <input type="number" class="year">
+                        </div>
+
+                        <button type="button" class="next">Next</button>
+                    </div>
+
+                    <div class="days">
+                        <span>Sun</span>
+                        <span>Mon</span>
+                        <span>Tue</span>
+                        <span>Wed</span>
+                        <span>Thu</span>
+                        <span>Fri</span>
+                        <span>Sat</span>
+                    </div>
+
+                    <div class="dates">
+                        <!-- Dates will be dynamically generated here -->
+                    </div>
+                </div>
+            </div>
         </div>
     
         <div class="grouppicker-and-submit">
-            {% include 'pickers/groups.html' with name=toolbar_group_picker_name groups=toolbar_group_picker_groups %}
+            <div class="container picker visible group">
+                <input type="text" class="readonly" name="group" autocomplete="off" readonly>
+                <div class="container picker group hidden" hidden>
+                    
+                    {% for group_item, default_num, min_num, max_num in groups %}
+                        <div class="row">
+                            <label>{{ group_item|capfirst }}</label>
+
+                            <div class ="counter">
+                                <button type="button" id="{{ group_item }}" class="decrement">-</button>
+                                <p class="count" id="{{ group_item }}" min="{{ min_num }}" max="{{ max_num }}">
+                                    {{ default_num }}
+                                </p>
+                                <button type="button" id="{{ group_item }}" class="increment">+</button>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div> 
             <button class="submit" type="submit">GO</button>
         </div>
 

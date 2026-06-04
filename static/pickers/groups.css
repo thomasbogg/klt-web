@@ -1,4 +1,4 @@
-.group-row {
+.container.picker.group.hidden .row {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -7,39 +7,39 @@
     border-bottom: #eee 1px solid;
 }
 
-.count-controls {
+.container.picker.group.hidden .counter {
     display: flex;
     align-items: center;
     gap: 10px;
 }
 
-.group-row label {
+.container.picker.group.hidden .row label {
     font-size: 1rem;
     font-weight: 500;
 }
 
-.grouppicker button {
+.container.picker.group.hidden button {
     font-size: 3rem;
     color: var(--primary-color, #2c79b9);
 }
 
-.group-row button.increment,
-.group-row button.decrement {
+.container.picker.group.hidden button.increment,
+.container.picker.group.hidden button.decrement {
     width: 30px;
     height: 30px;
 }
 
-.count-controls button:disabled {
+.container.picker.group.hidden .counter button:disabled {
     cursor: not-allowed;
     background: #e0e0e0;
     color: #aaa;
 }
 
-.group-row button:hover {
+.container.picker.group.hidden button:hover {
     background: #dcdcdc;
 }
 
-.count-display {
+.container.picker.group.hidden .count {
     min-width: 20px;
     text-align: center;
     font-size: 1rem;

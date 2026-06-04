@@ -3,16 +3,13 @@ import { Picker } from './picker.js'
 export class Datepicker extends Picker {
     constructor(name='', selectedDate = new Date(), disableBefore = null, disableAfter = null) {
         
-        if (name) name = name + '-date';
-        else name = 'date';
         super(name);
         
-        //this.header = this.picker.querySelector(".datepicker-header");
-        this.yearInput = this.picker.querySelector(".year-input");
-        this.monthInput = this.picker.querySelector(".month-input");
-        this.nextBtn = this.picker.querySelector(".next");
-        this.prevBtn = this.picker.querySelector(".prev");
-        this.dates = this.picker.querySelector(".dates");
+        this.yearInput = this.picker.querySelector("input.year");
+        this.monthInput = this.picker.querySelector("select.month");
+        this.nextBtn = this.picker.querySelector("button.next");
+        this.prevBtn = this.picker.querySelector("button.prev");
+        this.dates = this.picker.querySelector("div.dates");
 
         this._selectedDate = this.#simplifyDate(selectedDate);
         this.year = selectedDate.getFullYear();

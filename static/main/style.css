@@ -1,18 +1,20 @@
 @import url('https://fonts.googleapis.com/css2?family=Merriweather:ital,opsz,wght@0,18..144,300..900;1,18..144,300..900&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400..700;1,400..700&family=Raleway:ital,wght@0,100..900;1,100..900&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Raleway:ital,wght@0,100..900;1,100..900&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap');
 
 :root {
     --primary-color: #2c79b9;
     --primary-color-dark: #1f5f93;
     --secondary-color: #9f6f00;
     --secondary-color-soft: #f9e7b0;
+    --secondary-color-soft-dark: #f2d48a;
+    --pink-color: #333;
     --background-color: #f7fafc;
-    --primary-font: 'Merriweather', serif;
-    --primary-font-2: 'Lora', serif;
+    --primary-font: 'Lora', serif;
     --secondary-font: 'Raleway', sans-serif;
     --tertiary-font: 'Montserrat', sans-serif;
+    --picker-font: 'Poppins', sans-serif;
     --primary-box-shadow: 0 4px 8px rgba(0, 0, 0, 0.288);
     --primary-margin-bottom: 60px;
 }
@@ -33,7 +35,7 @@ h1 {
     text-align: center;
     color: var(--primary-color);
     margin-bottom: 30px;
-    font-family: var(--primary-font-2);
+    font-family: var(--primary-font);
     font-size: 3.2em;
     font-weight: 400;
 }
@@ -375,6 +377,96 @@ img {
 .cards .card img {
     width: 100%;
     height: auto;
+}
+
+/* =========================
+    MAIN CONTAINER: PICKERs
+    ========================= */
+
+.container.picker.visible {
+    position: relative;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: var(--picker-font);
+    color: var(--picker-color);
+}
+
+.container.picker input {
+    padding: 10px;
+    border-right: 1px solid #b1acac;
+    color: var(--primary-color, #2c79b9);
+    width: 100px;
+    height: 30px;
+    text-align: center;
+}
+
+.container.picker.hidden {
+    position: absolute;
+    z-index: 100;
+    margin-top: 2px;
+    background: #fff;
+    padding: 10px;
+    border-radius: 5px;
+    border: 2px solid #ddd;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.container.picker.hidden button {
+    cursor: pointer;
+    border: none;
+    border-radius: 3px;
+    font-size: .8rem;
+    font-weight: 500;
+    background: transparent;
+    text-transform: uppercase;
+    transition: .3s;
+}
+
+.container.picker.hidden button:hover {
+    background: rgba(119, 136, 153, 0.1);
+    color: #fff;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.container.picker.hidden button:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+    user-select: none;
+}
+
+.container.picker.hidden .picker.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+    gap: 8px;
+}
+
+.container.picker.hidden select, 
+.container.picker.hidden input {
+    border: 1px solid #eee;
+    border-radius: 3px;
+    padding: 4px 6px;
+}
+
+.container.picker.hidden select {
+    min-width: 100px;
+}
+
+.container.picker.hidden input {
+    max-width: 64px;
+    width: 64px;
+}
+
+.container.picker.hidden button {
+    color: slategray;
+}
+
+.container.picker.hidden button:hover {
+    color: var(--primary-color, #2c79b9);
 }
 
 /* =========================

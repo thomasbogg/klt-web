@@ -1,36 +1,37 @@
-.datepicker-input {
+.container.picker.date input.readonly {
     width: 150px;
 }
 
-.datepicker {
+.container.picker.date {
     min-width: 250px;
 }
 
-.days, .dates {
+.container.picker.date .days, 
+.container.picker.date .dates {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     gap: 10px;
     margin-block-start: 10px;
 }
 
-.days span {
+.container.picker.date .days span {
     font-size: 14px;
     font-weight: 600;
     text-transform: uppercase;
     text-align: center; 
 }
 
-.dates button {
+.container.picker.date .dates button {
     color: slategray;
     aspect-ratio: 1;
 }
 
-.dates button.today {
+.container.picker.date .dates button.today {
     background: var(--secondary-color-soft, #f9e7b0);
     color: var(--primary-color-dark, #1f5f93);
 }
 
-.dates button.selected {
+.container.picker.date .dates button.selected {
     background: var(--primary-color, #2c79b9);
     color: #fff;
 }

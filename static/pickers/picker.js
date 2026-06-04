@@ -2,11 +2,11 @@ export class Picker {
     constructor(name){
         this.name = name;
         // select container with input element and the picker container
-        this.container = document.querySelector(`.${name}picker-container`);
+        this.container = document.querySelector(`.container.picker.visible.${name}`);
         // select the clickable input element that raises/hides the picker element 
-        this.inputter = this.container.querySelector('input[class$="picker-input"]'); 
+        this.inputter = this.container.querySelector('input.readonly'); 
         // select the picker element that is raised and hidden accordingly
-        this.picker = this.container.querySelector('div[class$="picker"');
+        this.picker = this.container.querySelector('.container.picker.hidden');
 
         document.addEventListener('click', (e) => {
             this.openClosePickerContainer(e);

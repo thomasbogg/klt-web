@@ -1,5 +1,5 @@
-<div class="{{ name }}-location-container">
-    <select name="{{ name }}-locationpicker-select" id="{{ name }}-locationpicker-select">
+<div class="container picker visible location">
+    <select name="{{ name }}" id="{{ name }}">
         <option value="" disabled selected>Select a location</option>
         {% for location in locations %}
             <option value="{{ location }}">{{ location }}</option>

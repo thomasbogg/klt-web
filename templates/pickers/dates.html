@@ -1,12 +1,12 @@
-<div class="{{ name }}-datepicker-container">
-    <input type="text" class="datepicker-input" name="{{ name }}-date-input" autocomplete="off" readonly>
-    <div class="datepicker" hidden>
+<div class="container picker visible date check-in">
+    <input type="text" class="readonly" name="check-in" id="check-in" autocomplete="off" readonly>
+    <div class="container picker date check-in hidden" hidden>
 
-        <div class="datepicker-header">
+        <div class="picker date header">
             <button type="button" class="prev">Prev</button>
         
             <div>
-                <select class="month-input">
+                <select class="month">
                     <option value="0">January</option>
                     <option value="1">February</option>
                     <option value="2">March</option>
@@ -21,7 +21,7 @@
                     <option value="11">December</option>
                 </select>
 
-                <input type="number" class="year-input">
+                <input type="number" class="year">
             </div>
 
             <button type="button" class="next">Next</button>
@@ -40,11 +40,5 @@
         <div class="dates">
             <!-- Dates will be dynamically generated here -->
         </div>
-        <!--
-        <div class="datepicker-footer">
-            <button type="button" class="cancel">Cancel</button>
-            <button type="button" class="apply">Apply</button>
-        </div>
-        -->
     </div>
 </div>
