@@ -2,20 +2,19 @@ import { dateCheck, isDateString, addDays } from './script.js'
 import { Datepicker } from '../../../static/pickers/dates.js';
 import { Grouppicker } from '../../../static/pickers/groups.js';
 
-const toolbarName = 'availability-toolbar-';
 const selectedDate = new Date();
 const disableBefore = new Date();
 const disableAfter = null;
 
 class ToolbarStartDatepicker extends Datepicker{
     constructor(){
-        super(toolbarName + 'start', selectedDate, disableBefore, disableAfter);
+        super('start', selectedDate, disableBefore, disableAfter);
     }
 }
 
 class ToolbarEndDatepicker extends Datepicker{
     constructor(toolbarStartDatepicker){
-        super(toolbarName + 'end',  selectedDate, disableBefore, disableAfter);
+        super('end',  selectedDate, disableBefore, disableAfter);
         this.toolbarStartDatepicker = toolbarStartDatepicker;
     }
     openClosePickerContainer(e){
@@ -36,7 +35,7 @@ class ToolbarEndDatepicker extends Datepicker{
 
 class ToolbarGrouppicker extends Grouppicker{
     constructor(endDatesPickerElement){
-        super(toolbarName + 'guests');
+        super('guests');
         this.endDatesPickerElement = endDatesPickerElement;
     }
     openClosePickerContainer(e){
@@ -50,8 +49,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const toolbarEndDatepicker = new ToolbarEndDatepicker(toolbarStartDatepicker);
     const toolbarGrouppicker = new ToolbarGrouppicker(toolbarEndDatepicker.dates);
     
-    const form = document.querySelector('.' + toolbarName + 'form');
-    const submitBtn = document.querySelector('.' + toolbarName + 'submit');
+    const form = document.querySelector('form.toolbar.availability.lite');
+    const submitBtn = document.querySelector('form.toolbar.availability.lite submit');
 
     toolbarStartDatepicker.placeholder = 'Check-in';
     toolbarEndDatepicker.placeholder = 'Check-out';
@@ -109,18 +108,3 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
 });
-//const adults = document.querySelector('input[name="adults"]');
-//if (adults && (!adults.value || adults.value < 1)) {
-//    e.preventDefault();
-//    alert('At least 1 adult is required');
-//    return;
-//}
-//
-//// Add guest number input validation
-//const groupInput = toolbarGrouppicker.querySelector('.grouppicker-input');
-//console.log('Validating group input:', groupInput.value);
-//if (!RegExp('^([1-9]|10) adults, ([0-9]|10) children, ([0-9]|10) infants$').test(groupInput.value)){
-//    e.preventDefault();
-//    alert('Cannot read group numbers. Please retry');
-//    return;
-//}

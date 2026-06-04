@@ -3,6 +3,7 @@ from django.views import View, generic
 from properties.models import Property
 from bookings.models import Booking
 from env_settings import VALID_BOOKING_STATUSES
+
 # Create your views here.
 
 class IndexView(generic.TemplateView):
