@@ -1,22 +1,40 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">    
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Availability Search</title>
-
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'pickers/dates.css' %}">
+    <link rel="stylesheet" href="{% static 'pickers/groups.css' %}">
+    <link rel="stylesheet" href="{% static 'pickers/picker.css' %}">
+    <link rel="stylesheet" href="{% static 'availability/toolbar_lite.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="module" src="{% static 'availability/script.js' %}"></script>
+    <script type="module" src="{% static 'availability/toolbar_lite.js' %}"></script>
+    <script type="module" src="{% static 'pickers/dates.js' %}"></script>
+    <script type="module" src="{% static 'pickers/groups.js' %}"></script>
+    <script type="module" src="{% static 'index/script.js' %}"></script>
+    <script type="module" src="{% static 'main/script.js' %}"></script>
 </head>
+<header>
+    {% include 'header/header.html' %}
+</header>
 <body>
-    {% include 'availability/toolbar.html' %}
+    {% include 'availability/toolbar_lite.html' %}
     <div class="availability-search-results">
         <!-- Search results will be displayed here -->
          <p>{{ start_date }} - {{ end_date }} | Guests: {{ guests }}</p>
         <ul>
             {% for property in available_properties %}
-                <li>{{ property.name }} - {{ property.specs.bedrooms }} bedrooms, max {{ property.specs.max_guests }} guests</li>
+                <li>{{ property.title }} - {{ property.specs.bedrooms }} bedrooms, max {{ property.specs.max_guests }} guests</li>
             {% empty %}
                 <li>No properties available for the selected criteria.</li>
             {% endfor %}
+        </ul>
     </div>
+    {% include 'footer/footer.html' %}
 </body>
 </html>

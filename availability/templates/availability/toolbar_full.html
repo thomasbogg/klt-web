@@ -1,0 +1,23 @@
+<form class="form availability-toolbar" method="get" action="/availability/search/">
+    <div class="container availability-toolbar">
+    
+        <div class="datepickers">
+            {% include 'pickers/dates.html' with name=toolbar_date_picker_start_name %}
+            {% include 'pickers/dates.html' with name=toolbar_date_picker_end_name %}
+        </div>
+    
+        <div class="grouppicker-and-submit">
+            {% include 'pickers/groups.html' with name=toolbar_group_picker_name groups=toolbar_group_picker_groups %}
+        </div>
+        
+        <div class="locationpicker">
+            {% include 'pickers/locations.html' with name=toolbar_location_picker_name locations=toolbar_location_picker_locations %}
+        </div>
+        
+        <div class="bedroomspicker">
+            {% include 'pickers/bedrooms.html' with name=toolbar_bedrooms_picker_name bedrooms=toolbar_bedrooms_picker_bedrooms %}
+        </div>
+        
+        <button class="submit" type="submit">GO</button>
+    </div>
+</form>
