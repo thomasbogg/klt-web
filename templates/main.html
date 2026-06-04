@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
     <script type="module" src="{% static 'main/script.js' %}"></script>
 </head>
 <header>
@@ -140,6 +141,8 @@
             </div>
         </div>
     </div>
+
+    {% include 'footer/footer.html' %}
 
 </body>
 </html>

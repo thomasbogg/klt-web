@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="{% static 'availability/toolbar.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'index/style.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
     <script type="module" src="{% static 'availability/script.js' %}"></script>
     <script type="module" src="{% static 'availability/toolbar.js' %}"></script>
     <script type="module" src="{% static 'pickers/dates.js' %}"></script>
@@ -116,9 +117,6 @@
     <div class="container text-boxes center not-all">
         <div class="text-box wide">
             <h3>And that's not all...</h3>
-            <p class="text-box-content">
-                From start to finish, we'll be there for you!
-            </p>
             
         </div>
         <div class="container text-boxes services center">
@@ -148,5 +146,8 @@
             </div>
         </div>
     </div>
+
+    {% include 'footer/footer.html' %}
+
 </body>
 </html>

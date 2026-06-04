@@ -101,6 +101,7 @@ img {
 .container.center {
     max-width: 1200px;
     margin: 0 auto var(--primary-margin-bottom) auto;
+    text-align: center;
 }
 
 /* =========================
@@ -221,7 +222,6 @@ img {
     height: 50%;
 }
 
-
 /* =========================
    MAIN CONTAINER: TEXT + IMAGE
    ========================= */
@@ -260,16 +260,14 @@ img {
 
 .container.text-boxes .text-box {
     width: 30%;
-    height: 40%;
-    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
+    padding-top: 0;
 }   
 
 .container.text-boxes .text-box.wide {
     width: 43%;
-    height: 30%;
 }
 
 .container.text-boxes .text-box-icon {
@@ -287,6 +285,7 @@ img {
 
 .container.text-boxes .text-box-content {
     padding: 20px;
+    padding-bottom: 0;
     line-height: 1.5;
     text-align: center;
     font-size: 0.9em;
@@ -377,8 +376,6 @@ img {
     width: 100%;
     height: auto;
 }
-
-
 
 /* =========================
    RESPONSIVE: CONTAINER OVERRIDES

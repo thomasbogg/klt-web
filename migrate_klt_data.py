@@ -215,17 +215,17 @@ class Command(BaseCommand):
             for row in rows:
                 Property.objects.create(
                     id=row['id'],
-                    name=row['name'],
-                    short_name=row['shortName'],
+                    title=row['name'],
+                    short_title=row['shortName'],
                     owner_id=row['ownerId'],
                     manager_id=row['managerId'],
-                    address_id=row['addressId'],
+                    location_id=row['addressId'],
                     #price_id=row['priceId'] if row['priceId'] else None,
                     accountant_id=row['accountantId'] if row['accountantId'] else None,
                     al_number=row['alNumber'],
                     we_book=bool(row['weBook']),
-                    booking_com_name=row['bookingComName'],
-                    airbnb_name=row['airbnbName'],
+                    booking_com_title=row['bookingComName'],
+                    airbnb_title=row['airbnbName'],
                     we_clean=bool(row['weClean']),
                     standard_cleaning_fee=row['standardCleaningFee'],
                     send_owner_booking_forms=bool(row['sendOwnerBookingForms'])

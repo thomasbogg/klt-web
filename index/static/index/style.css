@@ -34,7 +34,7 @@
 .container.text-boxes.services .text-box h2 {
     font-weight: 200;
     font-size: 1.5em;
-    margin: 15px 0 0;
+    margin: 15px 0 0 0;
 }
 
 .container.text-boxes.iconic .text-box-content,
@@ -59,7 +59,6 @@
 .container.text-boxes.memorable .text-box.wide,
 .container.text-boxes.not-all .text-box.wide {
     width: 100%;
-    height: fit-content;
     padding: 0 20px;
 }
 
