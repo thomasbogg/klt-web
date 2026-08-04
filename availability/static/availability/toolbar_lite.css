@@ -40,12 +40,73 @@
         flex-direction: column;
         align-items: stretch;
     }
-    
+
     .container.availability-toolbar > div {
         justify-content: space-between;
     }
-    
+
     .container.availability-toolbar input[type="text"] {
         width: 100px;
+    }
+}
+
+/* =========================
+   TOOLBAR: BAR VARIANT
+   For non-hero contexts (e.g. search results) where the toolbar
+   sits on a plain page background instead of over a hero image.
+   ========================= */
+
+.toolbar-bar {
+    background: var(--background-color, #f7fafc);
+    border-bottom: 1px solid #e6eaee;
+    padding: 24px 20px;
+}
+
+.toolbar-bar .container.toolbar.availability.lite {
+    width: fit-content;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: var(--primary-box-shadow);
+    padding: 4px;
+    flex-wrap: wrap;
+}
+
+.toolbar-bar .container.toolbar.availability.lite .submit {
+    background: var(--primary-color, #2c79b9);
+    color: #fff;
+    border-radius: 4px;
+}
+
+.toolbar-bar .container.toolbar.availability.lite .submit:hover {
+    background: var(--primary-color-dark, #1f5f93);
+}
+
+@media (max-width: 768px) {
+    .toolbar-bar .container.toolbar.availability.lite {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        border-radius: 8px;
+    }
+
+    .toolbar-bar .datepickers,
+    .toolbar-bar .grouppicker-and-submit {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .toolbar-bar .container.picker input.readonly {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid #b1acac;
+    }
+
+    .toolbar-bar .grouppicker-and-submit {
+        border-bottom: none;
+    }
+
+    .toolbar-bar .grouppicker-and-submit .container.picker.group input.readonly {
+        border-bottom: none;
     }
 }

@@ -1,37 +1,57 @@
 {% load static %}
 <!DOCTYPE html>
-<html lang="en">    
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Availability Search</title>
+    <title>Search Availability | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/dates.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/groups.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/picker.css' %}">
     <link rel="stylesheet" href="{% static 'availability/toolbar_lite.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'availability/search.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
     <script type="module" src="{% static 'availability/toolbar_lite.js' %}"></script>
-    <script type="module" src="{% static 'index/script.js' %}"></script>
     <script type="module" src="{% static 'main/script.js' %}"></script>
 </head>
 <header>
     {% include 'header/header.html' %}
 </header>
 <body>
-    {% include 'availability/toolbar_lite.html' %}
-    <div class="availability-search-results">
-        <!-- Search results will be displayed here -->
-         <p>{{ start_date }} - {{ end_date }} | Guests: {{ guests }}</p>
-        <ul>
-            {% for property in available_properties %}
-                <li>{{ property.title }} - {{ property.specs.bedrooms }} bedrooms, max {{ property.specs.max_guests }} guests</li>
-            {% empty %}
-                <li>No properties available for the selected criteria.</li>
-            {% endfor %}
-        </ul>
+
+    <div class="toolbar-bar">
+        {% include 'availability/toolbar_lite.html' %}
     </div>
+
+    <div class="availability-search-results">
+        <p class="search-summary">
+            <strong>{{ start_date|date:"d M Y" }}</strong> &ndash; <strong>{{ end_date|date:"d M Y" }}</strong>
+            &middot;
+            {{ guests.adults|default:0 }} adult{{ guests.adults|pluralize }}{% if guests.children %}, {{ guests.children }} child{{ guests.children|pluralize:"ren" }}{% endif %}{% if guests.infants %}, {{ guests.infants }} infant{{ guests.infants|pluralize }}{% endif %}
+        </p>
+
+        <div class="container cards results">
+            {% for property in available_properties %}
+            <div class="card">
+                <img src="{% static 'index/images/' %}{{ property.location.slug }}/main/1.jpg" alt="{{ property }}">
+                <div class="card-content">
+                    <h3>{{ property }}</h3>
+                    <div class="card-description">
+                        <p>{{ property.specs.bedrooms }} bedroom{{ property.specs.bedrooms|pluralize }} &middot; {{ property.specs.bathrooms }} bathroom{{ property.specs.bathrooms|pluralize }} &middot; sleeps {{ property.specs.max_guests }}</p>
+                    </div>
+                    <div class="card-address"><p>{{ property.location.street }}, {{ property.location.city }}</p></div>
+                    <a class="card-link" href="{% url 'properties:property/page' location=property.location.slug title=property.short_title|slugify %}">View apartment</a>
+                </div>
+            </div>
+            {% empty %}
+            <p class="no-results">No properties available for the selected dates and guest count. Try adjusting your search.</p>
+            {% endfor %}
+        </div>
+    </div>
+
     {% include 'footer/footer.html' %}
+
 </body>
 </html>

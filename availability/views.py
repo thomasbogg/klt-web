@@ -14,7 +14,16 @@ class SearchView(View):
     template_name = 'availability/search.html'
 
     def get(self, request, *args, **kwargs):
-        context = {}
+        context = {
+            'datepicker_start_name': 'start',
+            'datepicker_end_name': 'end',
+            'grouppicker_name': 'guests',
+            'grouppicker_groups': [
+                ('adults', '2', '1', '10'),
+                ('children', '0', '0', '10'),
+                ('infants', '0', '0', '10'),
+            ],
+        }
         for key, value in request.GET.items():
             if 'start' in key:
                 context['start_date'] = self.date_string_to_date(value)

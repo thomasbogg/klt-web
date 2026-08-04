@@ -385,6 +385,7 @@ img {
 
 .container.picker.visible {
     position: relative;
+    height: auto;
     margin: 0;
     padding: 0;
     box-sizing: border-box;
