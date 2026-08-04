@@ -50,7 +50,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const toolbarGrouppicker = new ToolbarGrouppicker(toolbarEndDatepicker.dates);
     
     const form = document.querySelector('form.toolbar.availability.lite');
-    const submitBtn = document.querySelector('form.toolbar.availability.lite submit');
+    const submitBtn = document.querySelector('form.toolbar.availability.lite button.submit');
 
     toolbarStartDatepicker.placeholder = 'Check-in';
     toolbarEndDatepicker.placeholder = 'Check-out';

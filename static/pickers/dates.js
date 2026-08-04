@@ -3,6 +3,7 @@ import { Picker } from './picker.js'
 export class Datepicker extends Picker {
     constructor(name='', selectedDate = new Date(), disableBefore = null, disableAfter = null) {
         
+        if (!name) name = 'date';
         super(name);
         
         this.yearInput = this.picker.querySelector("input.year");

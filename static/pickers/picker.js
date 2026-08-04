@@ -1,18 +1,28 @@
 export class Picker {
+    static instances = new Set();
+    static documentListenerAttached = false;
+
     constructor(name){
         this.name = name;
-        // select container with input element and the picker container
         this.container = document.querySelector(`.container.picker.visible.${name}`);
-        // select the clickable input element that raises/hides the picker element 
-        this.inputter = this.container.querySelector('input.readonly'); 
-        // select the picker element that is raised and hidden accordingly
+        if (!this.container) {
+            throw new Error(`Picker container not found for name: ${name}`);
+        }
+
+        this.inputter = this.container.querySelector('input.readonly');
         this.picker = this.container.querySelector('.container.picker.hidden');
 
-        document.addEventListener('click', (e) => {
-            this.openClosePickerContainer(e);
-        });
+        if (!this.inputter || !this.picker) {
+            throw new Error(`Picker inputs not found for name: ${name}`);
+        }
 
-        this.#printDebugInfo(name);
+        this.hide();
+
+        Picker.instances.add(this);
+        if (!Picker.documentListenerAttached) {
+            document.addEventListener('click', Picker.handleDocumentClick);
+            Picker.documentListenerAttached = true;
+        }
     }
 
     // Getters and Setters
@@ -34,45 +44,57 @@ export class Picker {
     
     // Class functions
     open(){
-        if (this.picker.hidden) {
+        if (this.isHidden()) {
             this.picker.hidden = false;
             this.display();
         }
     }
 
     close(){
-        if (!this.picker.hidden) this.picker.hidden = true;
+        if (!this.isHidden()) {
+            this.hide();
+        }
+    }
+
+    hide(){
+        this.picker.hidden = true;
+    }
+
+    isHidden(){
+        return this.picker.hidden === true;
     }
 
     display(){
-        // the picker appearance creator and updater
-        // to be set up in the child class
+        // Child classes implement calendar or group rendering.
     }
 
     getValueString(){
-        // the string rendition to set the value of the inputter
-        // to be set up in the child class
+        // Child classes implement their own display text.
     }
 
-    // Private fuctions
+    // Private functions
     openClosePickerContainer(e){
-        // if not clicking any part of the container, hide
-        if (!this.container.contains(e.target)) {
-            this.picker.hidden = true;
-            return
+        const target = e.target;
+
+        if (!this.container.contains(target)) {
+            this.hide();
+            return;
         }
-        // if clicking inside the picker, ignore
-        if (this.picker.contains(e.target)) return;
-        // if clicking the input, open if hidden and vice-versa
-        if (this.picker.hidden) this.picker.hidden = false;
-        else this.picker.hidden = true;
+
+        if (this.picker.contains(target)) {
+            return;
+        }
+
+        if (this.isHidden()) {
+            this.open();
+        } else {
+            this.close();
+        }
     }
 
-    #printDebugInfo(name){
-        console.log('----------------')
-        console.log('Debug info for Picker initialised with name:', name);
-        console.log('- main container is:', this.container);
-        console.log('- inputter is:', this.inputter);
-        console.log('- picker is:', this.picker);
+    static handleDocumentClick(e){
+        for (const instance of Picker.instances) {
+            instance.openClosePickerContainer(e);
+        }
     }
 }

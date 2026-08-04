@@ -1,9 +1,7 @@
 import { Picker } from "./picker.js";
 
 export class Grouppicker extends Picker {
-    constructor(name = null){
-        if (name) name = name + '-group';
-        else name = 'group';
+    constructor(name){
         super(name)
         
         this.incrementBtns = this.picker.querySelectorAll('.counter .increment');

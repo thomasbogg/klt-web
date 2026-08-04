@@ -1,6 +1,6 @@
-<div class="container picker visible group">
-    <input type="text" class="readonly" name="group" autocomplete="off" readonly>
-    <div class="container picker group hidden" hidden>
+<div class="container picker visible group {{ name }}">
+    <input type="text" class="readonly" name="{{ name }}" id="{{ name }}" autocomplete="off" readonly>
+    <div class="container picker group {{ name }} hidden" hidden>
         
         {% for group_item, default_num, min_num, max_num in groups %}
             <div class="row">

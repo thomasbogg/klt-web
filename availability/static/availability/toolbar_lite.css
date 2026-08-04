@@ -1,24 +1,20 @@
 /* Toolbar styling */
-.container.availability-toolbar {
+
+.container.toolbar.availability.lite {
+    display: flex;
     align-items: center;
     justify-content: center;
     height: auto;
 }
 
-.container.availability-toolbar > div {
-    display: flex;
-    align-items: center;
-    justify-content: space-around;
-}
-
-.container.availability-toolbar .datepickers {
+.container.toolbar.availability.lite .datepickers {
     display: flex;
     align-items: center;
     justify-content: space-around;
     gap: 0;
 }
 
-.container.availability-toolbar .submit {
+.container.container.toolbar.availability.lite .submit {
     background: white;
     color: var(--primary-color, #2c79b9);
     border: none;

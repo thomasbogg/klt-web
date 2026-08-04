@@ -13,7 +13,7 @@
     top: 30%;
 }
 
-.container.top form.availability-toolbar {
+.container.top form.toolbar.availability.lite {
     position: absolute;
     text-align: center;
     top: 38%;
