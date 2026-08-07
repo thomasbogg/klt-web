@@ -34,17 +34,38 @@
 
         <div class="container cards results">
             {% for property in available_properties %}
-            <div class="card">
-                <img src="{% static 'index/images/' %}{{ property.location.slug }}/main/1.jpg" alt="{{ property }}">
-                <div class="card-content">
-                    <h3>{{ property }}</h3>
-                    <div class="card-description">
-                        <p>{{ property.specs.bedrooms }} bedroom{{ property.specs.bedrooms|pluralize }} &middot; {{ property.specs.bathrooms }} bathroom{{ property.specs.bathrooms|pluralize }} &middot; sleeps {{ property.specs.max_guests }}</p>
+            <a class="card" href="{% url 'properties:property/page' location=property.location.slug title=property.short_title|slugify %}">
+                <div class="card-image">
+                    <img src="{% static 'index/images/' %}{{ property.location.slug }}/main/1.jpg" alt="{{ property }}">
+                    <div class="card-badge">
+                        {% if property.specs.is_sea_view %}
+                            Sea view
+                        {% elif property.specs.is_beachfront %}
+                            Beachfront
+                        {% else %}
+                            Apartment
+                        {% endif %}
                     </div>
-                    <div class="card-address"><p>{{ property.location.street }}, {{ property.location.city }}</p></div>
-                    <a class="card-link" href="{% url 'properties:property/page' location=property.location.slug title=property.short_title|slugify %}">View apartment</a>
                 </div>
-            </div>
+                <div class="card-content">
+                    <p class="card-tag">{{ property.location.city }}</p>
+                    <h3>{{ property }}</h3>
+                    <p class="card-meta">
+                        <span class="meta-item"><span class="meta-value">{{ property.specs.bedrooms }}</span> bed{{ property.specs.bedrooms|pluralize }}</span>
+                        <span class="meta-separator">·</span>
+                        <span class="meta-item"><span class="meta-value">{{ property.specs.bathrooms }}</span> bath{{ property.specs.bathrooms|pluralize }}</span>
+                        <span class="meta-separator">·</span>
+                        <span class="meta-item"><span class="meta-value">Sleeps {{ property.specs.max_guests }}</span></span>
+                    </p>
+                    <p class="card-description">{{ property.specs.description|default:"Bright apartment with outdoor terrace, pool access, and easy walking distance to the beach." }}</p>
+                    <div class="card-details">
+                        <span class="card-address">{{ property.location.street }}, {{ property.location.city }}</span>
+                        {% if property.price %}
+                        <span class="card-price">From €{{ property.price.july|floatformat:0 }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </a>
             {% empty %}
             <p class="no-results">No properties available for the selected dates and guest count. Try adjusting your search.</p>
             {% endfor %}

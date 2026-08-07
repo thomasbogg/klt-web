@@ -14,6 +14,20 @@
     gap: 0;
 }
 
+.container.toolbar.availability.lite .grouppicker-and-submit {
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+
+.container.toolbar.availability.lite .grouppicker-and-submit .container.picker.group {
+    border-right: none;
+}
+
+.container.toolbar.availability.lite .grouppicker-and-submit .container.picker.group input.readonly {
+    border-right: none;
+}
+
 .container.container.toolbar.availability.lite .submit {
     background: white;
     color: var(--primary-color, #2c79b9);
@@ -54,7 +68,6 @@
    TOOLBAR: BAR VARIANT
    For non-hero contexts (e.g. search results) where the toolbar
    sits on a plain page background instead of over a hero image.
-   ========================= */
 
 .toolbar-bar {
     background: var(--background-color, #f7fafc);
@@ -107,6 +120,65 @@
     }
 
     .toolbar-bar .grouppicker-and-submit .container.picker.group input.readonly {
+        border-bottom: none;
+    }
+}
+
+   ========================= */
+
+
+/* =========================
+   TOOLBAR: HERO VARIANT
+   For the toolbar as it appears layered over the hero image
+   (e.g. homepage). Same "single bar" treatment as the bar
+   variant, but sized to sit centered over the image rather
+   than spanning the page.
+   ========================= */
+
+.container.top .container.toolbar.availability.lite {
+    width: fit-content;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: var(--primary-box-shadow);
+    padding: 4px;
+    flex-wrap: wrap;
+}
+
+.container.top .container.toolbar.availability.lite .submit {
+    background: var(--primary-color, #2c79b9);
+    color: #fff;
+    border-radius: 4px;
+}
+
+.container.top .container.toolbar.availability.lite .submit:hover {
+    background: var(--primary-color-dark, #1f5f93);
+}
+
+@media (max-width: 768px) {
+    .container.top .container.toolbar.availability.lite {
+        width: 90vw;
+        max-width: 320px;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .container.top .datepickers,
+    .container.top .grouppicker-and-submit {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .container.top .container.picker input.readonly {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid #b1acac;
+    }
+
+    .container.top .grouppicker-and-submit {
+        border-bottom: none;
+    }
+
+    .container.top .grouppicker-and-submit .container.picker.group input.readonly {
         border-bottom: none;
     }
 }

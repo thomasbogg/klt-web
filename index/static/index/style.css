@@ -17,6 +17,8 @@
     position: absolute;
     text-align: center;
     top: 38%;
+    left: 50%;
+    transform: translateX(-50%);
 }
 
 .container.text-boxes.iconic,

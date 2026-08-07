@@ -4,23 +4,40 @@
     align-items: center;
     margin-bottom: 10px;
     min-width: 250px;
-    border-bottom: #eee 1px solid;
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.container.picker.group.hidden .row:last-child {
+    margin-bottom: 0;
+    border-bottom: none;
 }
 
 .container.picker.group.hidden .counter {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
 .container.picker.group.hidden .row label {
     font-size: 1rem;
     font-weight: 500;
+    margin: 0;
 }
 
 .container.picker.group.hidden button {
-    font-size: 3rem;
+    font-size: 1.25rem;
     color: var(--primary-color, #2c79b9);
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    width: 30px;
+    height: 30px;
+    line-height: 1;
+    padding: 0;
 }
 
 .container.picker.group.hidden button.increment,
@@ -31,12 +48,13 @@
 
 .container.picker.group.hidden .counter button:disabled {
     cursor: not-allowed;
-    background: #e0e0e0;
-    color: #aaa;
+    background: transparent;
+    color: #b0b0b0;
+    opacity: 0.6;
 }
 
-.container.picker.group.hidden button:hover {
-    background: #dcdcdc;
+.container.picker.group.hidden button:hover:not(:disabled) {
+    background: #f0f0f0;
 }
 
 .container.picker.group.hidden .count {

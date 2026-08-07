@@ -385,6 +385,8 @@ img {
 
 .container.picker.visible {
     position: relative;
+    display: inline-block;
+    width: auto;
     height: auto;
     margin: 0;
     padding: 0;
@@ -403,11 +405,16 @@ img {
     border: none;
     border-right: 1px solid #b1acac;
     padding: 10px;
-    border-right: 1px solid #b1acac;
     color: var(--primary-color, #2c79b9);
     width: 100px;
     height: 30px;
     text-align: center;
+}
+
+.container.picker input:focus,
+.container.picker input:focus-visible {
+    outline: none;
+    box-shadow: none;
 }
 
 .container.picker.hidden {
@@ -456,11 +463,22 @@ img {
     gap: 8px;
 }
 
-.container.picker.hidden select, 
+.container.picker.hidden .picker.header > div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.container.picker.hidden select,
 .container.picker.hidden input {
     border: 1px solid #eee;
     border-radius: 3px;
     padding: 4px 6px;
+}
+
+.container.picker.hidden .picker.header input.year {
+    font-size: 0.9rem;
+    width: 56px;
 }
 
 .container.picker.hidden select {

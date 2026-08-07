@@ -2,27 +2,32 @@
     width: 150px;
 }
 
-.container.picker.date {
+.container.picker.hidden.date {
     min-width: 250px;
 }
 
 .container.picker.date .days, 
 .container.picker.date .dates {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 10px;
     margin-block-start: 10px;
+    width: 100%;
+    justify-items: center;
+    align-items: center;
 }
 
 .container.picker.date .days span {
     font-size: 14px;
     font-weight: 600;
     text-transform: uppercase;
-    text-align: center; 
+    text-align: center;
+    width: 100%;
 }
 
 .container.picker.date .dates button {
     color: slategray;
+    width: 100%;
     aspect-ratio: 1;
 }
 
