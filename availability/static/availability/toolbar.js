@@ -1,11 +1,9 @@
 import { Datepicker } from '../../../static/pickers/dates.js';
 import { Grouppicker } from '../../../static/pickers/groups.js';
 
-
 const selectedDate = new Date();
 const disableBefore = new Date();
 const disableAfter = null;
-
 
 export class StartDatepicker extends Datepicker{
     constructor(){
