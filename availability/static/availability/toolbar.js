@@ -58,6 +58,11 @@ export const switchStartToEndPicker = (startPicker, endPicker) => {
     endPicker.open();
 }
 
+export const switchEndToGuestsPicker = (endPicker, guestsPicker) => {
+    endPicker.close();
+    guestsPicker.open();
+}
+
 export const submissionValidation = (e, start, end) => {
     // Basic validation
     

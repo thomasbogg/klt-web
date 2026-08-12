@@ -1,6 +1,6 @@
 import { dateCheck, isDateString, addDays } from './script.js'
 import { Grouppicker } from '../../../static/pickers/groups.js';
-import './toolbar_lite.js';
+import './toolbar_pill.js';
 
 const selectedDate = new Date();
 const disableBefore = new Date();

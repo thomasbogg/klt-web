@@ -9,11 +9,11 @@
     <link rel="stylesheet" href="{% static 'pickers/dates.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/groups.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/picker.css' %}">
-    <link rel="stylesheet" href="{% static 'availability/toolbar_full.css' %}">
+    <link rel="stylesheet" href="{% static 'availability/toolbar_sticky.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'availability/search.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
-    <script type="module" src="{% static 'availability/toolbar_lite.js' %}"></script>
+    <script type="module" src="{% static 'availability/toolbar_pill.js' %}"></script>
     <script type="module" src="{% static 'main/script.js' %}"></script>
 </head>
 <header>
@@ -22,7 +22,7 @@
 <body>
 
     <div class="toolbar-full-bar">
-        {% include 'availability/toolbar_full.html' %}
+        {% include 'availability/toolbar_sticky.html' %}
     </div>
 
     <div class="availability-search-results">
