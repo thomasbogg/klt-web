@@ -11,11 +11,11 @@
         </div>
 
         <div class="bedroomspicker">
-            {% include 'pickers/bedrooms.html' with name=toolbar_bedrooms_picker_name bedrooms=toolbar_bedrooms_picker_bedrooms %}
+            {% include 'pickers/groups.html' with name=toolbar_bedrooms_picker_name bedrooms=toolbar_bedrooms_picker_groups %}
         </div>
 
         <div class="grouppicker-and-submit">
-            {% include 'pickers/groups.html' with name=toolbar_group_picker_name groups=toolbar_group_picker_groups %}
+            {% include 'pickers/groups.html' with name=toolbar_guests_picker_name groups=toolbar_guests_picker_groups %}
             <button class="submit" type="submit">GO</button>
         </div>
 

@@ -3,6 +3,7 @@ from django.views import View, generic
 from properties.models import Property, Location
 from bookings.models import Booking
 from env_settings import VALID_BOOKING_STATUSES
+from availability.utils import full_toolbar_context
 
 # Create your views here.
 
@@ -14,28 +15,7 @@ class SearchView(View):
     template_name = 'availability/search.html'
 
     def get(self, request, *args, **kwargs):
-        context = {
-            'datepicker_start_name': 'start',
-            'datepicker_end_name': 'end',
-            'grouppicker_name': 'guests',
-            'grouppicker_groups': [
-                ('adults', '2', '1', '10'),
-                ('children', '0', '0', '10'),
-                ('infants', '0', '0', '10'),
-            ],
-            'toolbar_date_picker_start_name': 'start',
-            'toolbar_date_picker_end_name': 'end',
-            'toolbar_group_picker_name': 'guests',
-            'toolbar_group_picker_groups': [
-                ('adults', '2', '1', '10'),
-                ('children', '0', '0', '10'),
-                ('infants', '0', '0', '10'),
-            ],
-            'toolbar_location_picker_name': 'location',
-            'toolbar_location_picker_locations': Location.objects.order_by('title'),
-            'toolbar_bedrooms_picker_name': 'bedrooms',
-            'toolbar_bedrooms_picker_bedrooms': ['1', '2', '3', '4', '5+'],
-        }
+        context = full_toolbar_context()
         for key, value in request.GET.items():
             if 'start' in key:
                 context['start_date'] = self.date_string_to_date(value)
