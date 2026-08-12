@@ -1,14 +1,14 @@
 /* Full-width top-of-page toolbar bar, used on search results and other
    non-hero pages (e.g. property pages) in place of the lite hero pill. */
 
-.toolbar-full-bar {
+.toolbar-sticky-bar {
     width: 100%;
     background: #fff;
     border-bottom: 1px solid #e6eaee;
     box-shadow: var(--primary-box-shadow);
 }
 
-.container.toolbar.availability.full {
+.container.toolbar.availability.sticky {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -20,24 +20,24 @@
     padding: 12px 20px;
 }
 
-.container.toolbar.availability.full .datepickers,
-.container.toolbar.availability.full .grouppicker-and-submit {
+.container.toolbar.availability.sticky .datepickers,
+.container.toolbar.availability.sticky .grouppicker-and-submit {
     display: flex;
     align-items: center;
     gap: 0;
 }
 
-.container.toolbar.availability.full .locationpicker,
-.container.toolbar.availability.full .bedroomspicker {
+.container.toolbar.availability.sticky .locationpicker,
+.container.toolbar.availability.sticky .bedroomspicker {
     display: flex;
     align-items: center;
 }
 
-.container.toolbar.availability.full .grouppicker-and-submit .container.picker.group input.readonly {
+.container.toolbar.availability.sticky .grouppicker-and-submit .container.picker.group input.readonly {
     border-right: none;
 }
 
-.container.toolbar.availability.full select {
+.container.toolbar.availability.sticky select {
     height: 50px;
     padding: 0 12px;
     border: none;
@@ -49,11 +49,11 @@
     cursor: pointer;
 }
 
-.container.toolbar.availability.full .bedroomspicker select {
+.container.toolbar.availability.sticky .bedroomspicker select {
     border-right: none;
 }
 
-.container.toolbar.availability.full .submit {
+.container.toolbar.availability.sticky .submit {
     background: var(--primary-color, #2c79b9);
     color: #fff;
     border: none;
@@ -67,36 +67,36 @@
     transition: background-color 0.2s;
 }
 
-.container.toolbar.availability.full .submit:hover {
+.container.toolbar.availability.sticky .submit:hover {
     background: var(--primary-color-dark, #1f5f93);
 }
 
-.container.toolbar.availability.full .submit:active {
+.container.toolbar.availability.sticky .submit:active {
     background: var(--primary-color-dark, #1f5f93);
 }
 
 @media (max-width: 992px) {
-    .container.toolbar.availability.full {
+    .container.toolbar.availability.sticky {
         flex-direction: column;
         align-items: stretch;
     }
 
-    .container.toolbar.availability.full .datepickers,
-    .container.toolbar.availability.full .locationpicker,
-    .container.toolbar.availability.full .bedroomspicker,
-    .container.toolbar.availability.full .grouppicker-and-submit {
+    .container.toolbar.availability.sticky .datepickers,
+    .container.toolbar.availability.sticky .locationpicker,
+    .container.toolbar.availability.sticky .bedroomspicker,
+    .container.toolbar.availability.sticky .grouppicker-and-submit {
         flex-direction: column;
         align-items: stretch;
     }
 
-    .container.toolbar.availability.full input.readonly,
-    .container.toolbar.availability.full select {
+    .container.toolbar.availability.sticky input.readonly,
+    .container.toolbar.availability.sticky select {
         width: 100%;
         border-right: none;
         border-bottom: 1px solid #b1acac;
     }
 
-    .container.toolbar.availability.full .submit {
+    .container.toolbar.availability.sticky .submit {
         margin-left: 0;
         margin-top: 12px;
     }

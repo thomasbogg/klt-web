@@ -1,20 +1,16 @@
 import { Datepicker } from '../../../static/pickers/dates.js';
 import { Grouppicker } from '../../../static/pickers/groups.js';
 
-const selectedDate = new Date();
-const disableBefore = new Date();
-const disableAfter = null;
-
 export class StartDatepicker extends Datepicker{
     constructor(){
-        super('start', selectedDate, disableBefore, disableAfter);
+        super('start', selectedDate = new Date(), disableBefore = new Date(), disableAfter = null);
         this.placeholder = 'Check-in';
     }
 }
 
 export class EndDatepicker extends Datepicker{
     constructor(toolbarStartDatepicker){
-        super('end',  selectedDate, disableBefore, disableAfter);
+        super('end',  selectedDate = new Date(), disableBefore = new Date(), disableAfter = null);
         this.placeholder = 'Check-out';
         this.toolbarStartDatepicker = toolbarStartDatepicker;
     }
