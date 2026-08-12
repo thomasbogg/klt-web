@@ -1,3 +1,37 @@
-<h1>{{ location.title|upper }} - {{ property.title }}</h1>
-<p>{{ property.description }}</p>
-<p>{{ location.street }}, {{ location.zip_code }}, {{ location.city }}</p>
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ property.title }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'pickers/dates.css' %}">
+    <link rel="stylesheet" href="{% static 'pickers/groups.css' %}">
+    <link rel="stylesheet" href="{% static 'pickers/picker.css' %}">
+    <link rel="stylesheet" href="{% static 'availability/toolbar_full.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'properties/property.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="module" src="{% static 'availability/toolbar_lite.js' %}"></script>
+    <script type="module" src="{% static 'main/script.js' %}"></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="toolbar-full-bar">
+        {% include 'availability/toolbar_full.html' %}
+    </div>
+
+    <div class="property-page">
+        <h1>{{ property.title }}</h1>
+        <p>{{ property.description }}</p>
+        <p>{{ location.street }}, {{ location.zip_code }}, {{ location.city }}</p>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

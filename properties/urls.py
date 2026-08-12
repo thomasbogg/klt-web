@@ -3,6 +3,6 @@ from . import views
 
 app_name = 'properties'
 urlpatterns = [
-    path('<str:title>/', views.location, name='location/page'),
-    path('<str:location>/<str:title>/', views.property, name='property/page'),
+    path('<str:title>/', views.LocationView.as_view(), name='location/page'),
+    path('<str:location>/<str:title>/', views.PropertyView.as_view(), name='property/page'),
 ]

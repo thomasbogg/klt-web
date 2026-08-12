@@ -1,0 +1,8 @@
+<div class="container picker visible bedrooms">
+    <select name="{{ name }}" id="{{ name }}">
+        <option value="" disabled selected>Bedrooms</option>
+        {% for bedroom in bedrooms %}
+            <option value="{{ bedroom }}">{{ bedroom }}</option>
+        {% endfor %}
+    </select>
+</div>
