@@ -11,7 +11,7 @@ def full_toolbar_context():
             ('infants', '0', '0', '10'),
         ],
         'toolbar_location_picker_name': 'location',
-        'toolbar_location_picker_locations': Location.objects.order_by('title'),
+        'toolbar_location_picker_list': Location.objects.order_by('title'),
         'toolbar_bedrooms_picker_name': 'bedrooms',
         'toolbar_bedrooms_picker_groups': [
             ('bedrooms', '1', '1', '3')

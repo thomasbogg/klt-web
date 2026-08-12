@@ -1,10 +1,7 @@
-from django.template import loader
-from django.shortcuts import render#, get_list_or_404
 from django.shortcuts import get_object_or_404
-from django.http import HttpResponse, Http404
-from django.urls import path
 from .models import Property, Location, Price
 from django.views import generic
+from availability.utils import full_toolbar_context
 
 # Create your views here.
 
@@ -14,7 +11,6 @@ def split_slug(slug):
 
 def get_object_with_slug_or_404(slug, Object, **kwargs):
     title = split_slug(slug)
-    print(title)
     object = get_object_or_404(Object, title__iexact=title, **kwargs)
     return object
 
@@ -49,19 +45,8 @@ class PropertyView(generic.DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context.update(full_toolbar_context())
         context['location'] = self.object.location
-        context['toolbar_date_picker_start_name'] = 'start'
-        context['toolbar_date_picker_end_name'] = 'end'
-        context['toolbar_group_picker_name'] = 'guests'
-        context['toolbar_group_picker_groups'] = [
-            ('adults', '2', '1', '10'),
-            ('children', '0', '0', '10'),
-            ('infants', '0', '0', '10'),
-        ]
-        context['toolbar_location_picker_name'] = 'location'
-        context['toolbar_location_picker_locations'] = Location.objects.order_by('title')
-        context['toolbar_bedrooms_picker_name'] = 'bedrooms'
-        context['toolbar_bedrooms_picker_bedrooms'] = ['1', '2', '3']
         return context
     
 
