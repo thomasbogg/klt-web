@@ -7,14 +7,14 @@ const disableBefore = new Date();
 const disableAfter = null;
 
 
-class StartDatepicker extends Datepicker{
+export class StartDatepicker extends Datepicker{
     constructor(){
         super('start', selectedDate, disableBefore, disableAfter);
         this.placeholder = 'Check-in';
     }
 }
 
-class EndDatepicker extends Datepicker{
+export class EndDatepicker extends Datepicker{
     constructor(toolbarStartDatepicker){
         super('end',  selectedDate, disableBefore, disableAfter);
         this.placeholder = 'Check-out';
@@ -36,7 +36,7 @@ class EndDatepicker extends Datepicker{
     }
 }
 
-class GuestsGrouppicker extends Grouppicker{
+export class GuestsGrouppicker extends Grouppicker{
     constructor(endDatesPickerElement){
         super('guests');
         this.endDatesPickerElement = endDatesPickerElement;
