@@ -70,14 +70,14 @@
     top: 14px;
     left: 14px;
     background: rgba(255, 255, 255, 0.9);
-    color: #2c79b9;
+    color: var(--secondary-color, #9f6f00);
     font-size: 0.85rem;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
     padding: 7px 12px;
     border-radius: 999px;
-    border: 1px solid rgba(44, 121, 185, 0.15);
+    border: 1px solid rgba(159, 111, 0, 0.15);
     box-shadow: none;
 }
 
