@@ -4,8 +4,8 @@ def full_toolbar_context():
     return {
         'toolbar_date_picker_start_name': 'start',
         'toolbar_date_picker_end_name': 'end',
-        'toolbar_group_picker_name': 'guests',
-        'toolbar_group_picker_groups': [
+        'toolbar_guests_picker_name': 'guests',
+        'toolbar_guests_picker_groups': [
             ('adults', '2', '1', '10'),
             ('children', '0', '0', '10'),
             ('infants', '0', '0', '10'),

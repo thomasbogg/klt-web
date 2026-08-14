@@ -7,8 +7,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const form = document.querySelector('form.toolbar.availability');
     const submitBtn = document.querySelector('form.toolbar.availability button.submit');
 
-    startPicker.dates.addEventListener('click', switchStartToEndPicker(startPicker, endPicker));
-    endPicker.dates.addEventListener('click', switchEndToGuestsPicker(endPicker, guestsPicker));
-    
-    if (submitBtn && form) submitBtn.addEventListener('click', submissionValidation(e, startPicker.value, endPicker.value));
+    startPicker.dates.addEventListener('click', () => switchStartToEndPicker(startPicker, endPicker));
+    endPicker.dates.addEventListener('click', () => switchEndToGuestsPicker(endPicker, guestsPicker));
+
+    if (submitBtn && form) submitBtn.addEventListener('click', (e) => submissionValidation(e, startPicker.value, endPicker.value));
 });

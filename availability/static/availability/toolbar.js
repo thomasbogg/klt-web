@@ -1,16 +1,17 @@
+import { dateCheck, isDateString, addDays } from './script.js';
 import { Datepicker } from '../../../static/pickers/dates.js';
 import { Grouppicker } from '../../../static/pickers/groups.js';
 
 export class StartDatepicker extends Datepicker{
     constructor(){
-        super('start', selectedDate = new Date(), disableBefore = new Date(), disableAfter = null);
+        super('start', new Date(), new Date(), null);
         this.placeholder = 'Check-in';
     }
 }
 
 export class EndDatepicker extends Datepicker{
     constructor(toolbarStartDatepicker){
-        super('end',  selectedDate = new Date(), disableBefore = new Date(), disableAfter = null);
+        super('end', new Date(), new Date(), null);
         this.placeholder = 'Check-out';
         this.toolbarStartDatepicker = toolbarStartDatepicker;
     }

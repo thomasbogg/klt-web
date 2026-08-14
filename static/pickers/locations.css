@@ -1,0 +1,19 @@
+.container.picker.location .options {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+.container.picker.location .options .option {
+    text-align: left;
+    padding: 8px 10px;
+    white-space: nowrap;
+}
+
+.container.picker.location .options .option.selected {
+    background: var(--primary-color, #2c79b9);
+    color: #fff;
+}

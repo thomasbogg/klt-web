@@ -1,8 +1,10 @@
-<div class="container picker visible location">
-    <select name="{{ name }}" id="{{ name }}">
-        <option value="" disabled selected>Select a location</option>
-        {% for location in locations %}
-            <option value="{{ location }}">{{ location }}</option>
-        {% endfor %}
-    </select>
+<div class="container picker visible location {{ name }}">
+    <input type="text" class="readonly" name="{{ name }}" id="{{ name }}" autocomplete="off" readonly>
+    <div class="container picker location {{ name }} hidden" hidden>
+        <div class="options">
+            {% for location in locations %}
+                <button type="button" class="option">{{ location }}</button>
+            {% endfor %}
+        </div>
+    </div>
 </div>

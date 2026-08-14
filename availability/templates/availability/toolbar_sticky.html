@@ -1,5 +1,5 @@
-<form class="toolbar availability full" method="get" action="{% url 'availability:search' %}">
-    <div class="container toolbar availability full">
+<form class="toolbar availability sticky" method="get" action="{% url 'availability:search' %}">
+    <div class="container toolbar availability sticky">
 
         <div class="datepickers">
             {% include 'pickers/dates.html' with name=toolbar_date_picker_start_name %}
@@ -11,7 +11,7 @@
         </div>
 
         <div class="bedroomspicker">
-            {% include 'pickers/groups.html' with name=toolbar_bedrooms_picker_name bedrooms=toolbar_bedrooms_picker_groups %}
+            {% include 'pickers/groups.html' with name=toolbar_bedrooms_picker_name groups=toolbar_bedrooms_picker_groups %}
         </div>
 
         <div class="grouppicker-and-submit">
