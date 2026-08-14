@@ -27,11 +27,37 @@
     </div>
 
     <div class="availability-search-results">
-        <p class="search-summary">
-            <strong>{{ start_date|date:"d M Y" }}</strong> &ndash; <strong>{{ end_date|date:"d M Y" }}</strong>
-            &middot;
-            {{ guests.adults|default:0 }} adult{{ guests.adults|pluralize }}{% if guests.children %}, {{ guests.children }} child{{ guests.children|pluralize:"ren" }}{% endif %}{% if guests.infants %}, {{ guests.infants }} infant{{ guests.infants|pluralize }}{% endif %}
-        </p>
+        <div class="search-summary">
+            <div class="search-summary-dates">
+                <div class="date-chip">
+                    <span class="date-chip-day">{{ start_date|date:"D" }}</span>
+                    <span class="date-chip-value">{{ start_date|date:"d M Y" }}</span>
+                </div>
+                <span class="date-chip-arrow">&rarr;</span>
+                <div class="date-chip">
+                    <span class="date-chip-day">{{ end_date|date:"D" }}</span>
+                    <span class="date-chip-value">{{ end_date|date:"d M Y" }}</span>
+                </div>
+            </div>
+            <div class="search-summary-guests">
+                <div class="guest-chip">
+                    <span class="guest-chip-label">Adult{{ guests.adults|pluralize }}</span>
+                    <span class="guest-chip-value">{{ guests.adults|default:0 }}</span>
+                </div>
+                {% if guests.children %}
+                <div class="guest-chip">
+                    <span class="guest-chip-label">Child{{ guests.children|pluralize:"ren" }}</span>
+                    <span class="guest-chip-value">{{ guests.children }}</span>
+                </div>
+                {% endif %}
+                {% if guests.infants %}
+                <div class="guest-chip">
+                    <span class="guest-chip-label">Infant{{ guests.infants|pluralize }}</span>
+                    <span class="guest-chip-value">{{ guests.infants }}</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
 
         <div class="container cards results">
             {% for property in available_properties %}

@@ -14,9 +14,9 @@
     justify-content: center;
     flex-wrap: wrap;
     gap: 0;
-    width: 100%;
+    max-width: 1200px;
     height: auto;
-    margin: 0;
+    margin: 0 auto;
     padding: 12px 20px;
 }
 

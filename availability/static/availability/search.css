@@ -10,14 +10,103 @@
 
 .availability-search-results .search-summary {
     text-align: center;
-    color: rgb(80, 80, 80);
-    font-family: var(--secondary-font);
-    font-size: 1.1em;
     margin: 0 0 40px;
 }
 
-.availability-search-results .search-summary strong {
+.availability-search-results .search-summary-dates {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    margin-bottom: 10px;
+}
+
+.availability-search-results .date-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    background: rgba(44, 121, 185, 0.08);
+    border: 1px solid rgba(44, 121, 185, 0.18);
+    border-radius: 12px;
+    padding: 8px 20px;
+    line-height: 1.2;
+}
+
+.availability-search-results .date-chip-day {
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+}
+
+.availability-search-results .date-chip-value {
+    font-family: var(--primary-font);
+    font-size: 1.25rem;
+    font-weight: 600;
     color: var(--primary-color);
+}
+
+.availability-search-results .date-chip-arrow {
+    color: rgb(180, 180, 180);
+    font-size: 1.3rem;
+}
+
+.availability-search-results .search-summary-guests {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 0;
+}
+
+.availability-search-results .guest-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    background: var(--secondary-color-soft, #f9e7b0);
+    border: 1px solid rgba(159, 111, 0, 0.25);
+    border-radius: 12px;
+    padding: 6px 18px;
+    line-height: 1.2;
+}
+
+.availability-search-results .guest-chip-label {
+    font-family: var(--secondary-font);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+}
+
+.availability-search-results .guest-chip-value {
+    font-family: var(--primary-font);
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: rgb(94, 66, 8);
+}
+
+@media (max-width: 480px) {
+    .availability-search-results .search-summary-dates {
+        gap: 8px;
+    }
+    .availability-search-results .date-chip {
+        padding: 6px 12px;
+    }
+    .availability-search-results .date-chip-value {
+        font-size: 1.02rem;
+    }
+    .availability-search-results .guest-chip {
+        padding: 5px 12px;
+    }
+    .availability-search-results .guest-chip-value {
+        font-size: 1rem;
+    }
 }
 
 .container.cards.results {

@@ -12,6 +12,7 @@ class Booking(models.Model):
     # Booking identifiers
     pims_id = models.IntegerField(blank=True, null=True)
     platform_id = models.CharField(max_length=200, blank=True, null=True)
+    ical_uid = models.URLField(blank=True, null=True)
     
     # Booking details
     arrival_date = models.DateField()
@@ -25,7 +26,6 @@ class Booking(models.Model):
     adults = models.IntegerField()
     children = models.IntegerField()
     babies = models.IntegerField()
-    manual_guests = models.BooleanField()
     
     # Metadata
     last_updated = models.DateTimeField()
@@ -48,7 +48,6 @@ class Arrival(models.Model):
     details = models.TextField(blank=True, null=True)
     self_check_in = models.BooleanField(blank=True, null=True)
     meet_greet = models.BooleanField()
-    manual_date = models.BooleanField(blank=True, null=True)
 
     class Meta:
         db_table = 'booking_arrivals'
