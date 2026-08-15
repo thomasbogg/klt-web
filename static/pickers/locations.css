@@ -11,6 +11,11 @@
     text-align: left;
     padding: 8px 10px;
     white-space: nowrap;
+    font-family: var(--picker-font);
+    font-size: 1rem;
+    font-weight: 500;
+    text-transform: none;
+    color: inherit;
 }
 
 .container.picker.location .options .option.selected {

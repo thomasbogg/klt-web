@@ -1,3 +1,41 @@
-<h1>{{ location.title|upper }} - {{ property.title }}</h1>
-<p>{{ property.description }}</p>
-<p>{{ location.street }}, {{ location.zip_code }}, {{ location.city }}</p>
+{% load static %}
+<a class="card" href="{% url 'properties:property/page' location=property.location.slug title=property.short_title|slugify %}">
+    <div class="card-image">
+        {% with photo=property.images.first %}
+        {% if photo %}
+        <img src="{{ photo.image.url }}" alt="{{ photo.caption|default:property }}">
+        {% else %}
+        <img src="{% static 'index/images/' %}{{ property.location.slug }}/main/1.jpg" alt="{{ property }}">
+        {% endif %}
+        {% endwith %}
+        <div class="card-badge">
+            {% if property.specs.is_sea_view %}
+                Sea view
+            {% elif property.specs.is_beachfront %}
+                Beachfront
+            {% else %}
+                Apartment
+            {% endif %}
+        </div>
+    </div>
+    <div class="card-content">
+        <p class="card-tag">{{ property.location.city }}</p>
+        <h3>{{ property }}</h3>
+        <p class="card-meta">
+            <span class="meta-item"><span class="meta-value">{{ property.specs.bedrooms }}</span> bed{{ property.specs.bedrooms|pluralize }}</span>
+            <span class="meta-separator">·</span>
+            <span class="meta-item"><span class="meta-value">{{ property.specs.bathrooms }}</span> bath{{ property.specs.bathrooms|pluralize }}</span>
+            <span class="meta-separator">·</span>
+            <span class="meta-item"><span class="meta-value">Sleeps {{ property.specs.max_guests }}</span></span>
+        </p>
+        {% if property.specs.description %}
+        <p class="card-description">{{ property.specs.description }}</p>
+        {% endif %}
+        <div class="card-details">
+            <span class="card-address">{{ property.location.street }}, {{ property.location.city }}</span>
+            {% if property.price %}
+            <span class="card-price">From €{{ property.price.july|floatformat:0 }}</span>
+            {% endif %}
+        </div>
+    </div>
+</a>

@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ property.title }} | Algarve Beach Apartments</title>
+    <title>{{ property }} | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/dates.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/groups.css' %}">
@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="{% static 'properties/property.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
     <script type="module" src="{% static 'availability/toolbar_sticky.js' %}"></script>
+    <script type="module" src="{% static 'main/hero_carousel.js' %}"></script>
     <script type="module" src="{% static 'main/script.js' %}"></script>
 </head>
 <header>
@@ -21,14 +22,38 @@
 </header>
 <body>
 
+    <div class="container top hero">
+        {% for image in property.images.all %}
+        <img src="{{ image.image.url }}" alt="{{ image.caption|default:property }}" class="hero-carousel-image{% if forloop.first %} active{% endif %}">
+        {% endfor %}
+        {% if property.images.count > 1 %}
+        <button type="button" class="hero-carousel-control prev" aria-label="Previous image">&#8249;</button>
+        <button type="button" class="hero-carousel-control next" aria-label="Next image">&#8250;</button>
+        {% endif %}
+    </div>
+
     <div class="toolbar-sticky-bar">
         {% include 'availability/toolbar_sticky.html' %}
     </div>
 
     <div class="property-page">
-        <h1>{{ property.title }}</h1>
-        <p>{{ property.description }}</p>
-        <p>{{ location.street }}, {{ location.zip_code }}, {{ location.city }}</p>
+        <h1>{{ property }}</h1>
+        {% if property.specs.description %}
+        <p class="property-blurb">{{ property.specs.description }}</p>
+        {% endif %}
+        {% with features=property.amenities.top_features %}
+        {% if features %}
+        <div class="property-features">
+            {% for feature in features %}
+            <div class="property-feature">
+                <img src="{% static feature.icon %}" alt="{{ feature.label }}" class="property-feature-icon">
+                <span class="property-feature-label">{{ feature.label }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+        <div class="property-intro-divider"></div>
     </div>
 
     {% include 'footer/footer.html' %}

@@ -3,3 +3,49 @@
     margin: 0 auto;
     padding: 40px 20px var(--primary-margin-bottom);
 }
+
+.property-blurb {
+    max-width: 720px;
+    margin: 0 auto 40px;
+    text-align: center;
+    line-height: 1.7;
+    font-size: 1em;
+    color: rgb(80, 80, 80);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.property-features {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 40px 48px;
+    margin-bottom: 40px;
+}
+
+.property-feature {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.property-feature-icon {
+    width: 42px;
+    height: 42px;
+}
+
+.property-feature-label {
+    font-family: var(--secondary-font);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+}
+
+.property-intro-divider {
+    width: 60px;
+    height: 3px;
+    margin: 0 auto 50px;
+    background: var(--secondary-color-soft-dark, #f2d48a);
+}

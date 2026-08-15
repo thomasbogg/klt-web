@@ -1,0 +1,138 @@
+/* =========================
+   LOCATION PAGE
+   ========================= */
+
+.location-page {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 20px var(--primary-margin-bottom);
+}
+
+.location-blurb {
+    max-width: 720px;
+    margin: 0 auto 40px;
+    text-align: center;
+    line-height: 1.7;
+    font-size: 1em;
+    color: rgb(80, 80, 80);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.location-features {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 48px;
+    margin-bottom: 40px;
+}
+
+.location-feature {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.location-feature-icon {
+    width: 42px;
+    height: 42px;
+}
+
+.location-feature-label {
+    font-family: var(--secondary-font);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+}
+
+.location-intro-divider {
+    width: 60px;
+    height: 3px;
+    margin: 0 auto 50px;
+    background: var(--secondary-color-soft-dark, #f2d48a);
+}
+
+/* =========================
+   LOCATION MAP & RULES
+   ========================= */
+
+.location-map-rules {
+    display: flex;
+    align-items: stretch;
+    gap: 40px;
+    margin-top: 60px;
+}
+
+.location-map-column {
+    flex: 1 1 55%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.location-map {
+    flex: 1 1 auto;
+    min-height: 320px;
+    box-shadow: var(--primary-box-shadow);
+    overflow: hidden;
+}
+
+.location-map iframe {
+    width: 100%;
+    height: 100%;
+    min-height: 320px;
+    display: block;
+}
+
+.location-map-link {
+    align-self: flex-start;
+    font-family: var(--secondary-font);
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.location-map-link:hover {
+    text-decoration: underline;
+}
+
+.location-rules {
+    flex: 1 1 45%;
+    background: var(--background-color);
+    padding: 30px;
+    box-sizing: border-box;
+}
+
+.location-rules h3 {
+    text-align: left;
+    margin-bottom: 20px;
+}
+
+.location-rules-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    line-height: 1.6;
+    color: rgb(80, 80, 80);
+}
+
+.location-rules-list strong {
+    color: var(--primary-color);
+}
+
+@media (max-width: 768px) {
+    .location-map-rules {
+        flex-direction: column;
+    }
+
+    .location-map,
+    .location-map iframe {
+        min-height: 280px;
+    }
+}

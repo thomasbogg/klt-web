@@ -26,6 +26,7 @@ class LocationView(generic.DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context.update(full_toolbar_context())
         location = self.get_object()
         properties = Property.objects.filter(location_id__exact=location.id)
         context['properties'] = properties
