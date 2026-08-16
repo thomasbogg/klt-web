@@ -36,12 +36,13 @@ env/
 # Ignore database files
 *.db
 
-# Ignore image files
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.svg
+# Ignore uploaded media images (user-uploaded property/location photos);
+# static/ image assets (icons, hero photos, logos) are checked in normally
+media/**/*.png
+media/**/*.jpg
+media/**/*.jpeg
+media/**/*.gif
+media/**/*.svg
 
 # Ignore media files
 cache/accountancy-sheets
