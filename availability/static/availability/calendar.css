@@ -3,15 +3,6 @@
     margin: 0 auto;
 }
 
-.availability-calendar-title {
-    text-align: center;
-    color: var(--primary-color);
-    font-family: var(--primary-font);
-    font-size: 2rem;
-    font-weight: 400;
-    margin-bottom: 24px;
-}
-
 .availability-calendar-legend {
     display: flex;
     justify-content: center;
@@ -56,7 +47,7 @@
 .availability-calendar-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 40px 32px;
+    gap: 20px 16px;
 }
 
 .availability-month {
@@ -79,7 +70,7 @@
 .availability-days {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
-    gap: 4px;
+    gap: 2px;
 }
 
 .availability-weekdays {
