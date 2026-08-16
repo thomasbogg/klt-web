@@ -68,9 +68,15 @@ PROPERTIES: tuple[str, ...] = (
 # Valid booking status values
 VALID_BOOKING_STATUSES: tuple[str, ...] = (
     'Booking confirmed',
-    'Guests have departed', 
-    'Guests on-site', 
+    'Guests have departed',
+    'Guests on-site',
     'Holiday completed'
+)
+
+# Booking status values that hold dates without confirming them
+PROVISIONAL_BOOKING_STATUSES: tuple[str, ...] = (
+    'Provisional booking',
+    'Dates agreed and held',
 )
 
 

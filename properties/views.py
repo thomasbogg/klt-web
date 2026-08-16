@@ -1,7 +1,7 @@
 from django.shortcuts import get_object_or_404
 from .models import Property, Location, Price
 from django.views import generic
-from availability.utils import full_toolbar_context
+from availability.utils import full_toolbar_context, get_property_calendar
 
 # Create your views here.
 
@@ -48,6 +48,7 @@ class PropertyView(generic.DetailView):
         context = super().get_context_data(**kwargs)
         context.update(full_toolbar_context())
         context['location'] = self.object.location
+        context['calendar_months'] = get_property_calendar(self.object)
         return context
     
 

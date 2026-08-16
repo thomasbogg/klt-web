@@ -1,0 +1,37 @@
+<div class="availability-calendar">
+    <h2 class="availability-calendar-title">Availability</h2>
+
+    <div class="availability-calendar-legend">
+        <span class="availability-calendar-legend-item">
+            <span class="availability-calendar-swatch available"></span>Available
+        </span>
+        <span class="availability-calendar-legend-item">
+            <span class="availability-calendar-swatch provisional"></span>Provisional
+        </span>
+        <span class="availability-calendar-legend-item">
+            <span class="availability-calendar-swatch booked"></span>Booked
+        </span>
+    </div>
+
+    <div class="availability-calendar-grid">
+        {% for month in calendar_months %}
+        <div class="availability-month">
+            <h3 class="availability-month-label">{{ month.label }}</h3>
+            <div class="availability-weekdays">
+                <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+            </div>
+            <div class="availability-days">
+                {% for week in month.weeks %}
+                    {% for cell in week %}
+                        {% if cell %}
+                        <span class="availability-day {{ cell.status }}{% if cell.is_today %} today{% endif %}">{{ cell.day }}</span>
+                        {% else %}
+                        <span class="availability-day empty"></span>
+                        {% endif %}
+                    {% endfor %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>

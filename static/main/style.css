@@ -17,6 +17,12 @@
     --picker-font: 'Poppins', sans-serif;
     --primary-box-shadow: 0 4px 8px rgba(0, 0, 0, 0.288);
     --primary-margin-bottom: 60px;
+    --status-available-bg: #e5f4ec;
+    --status-available-color: #2f8f5b;
+    --status-booked-bg: #fbe4e4;
+    --status-booked-color: #c1554f;
+    --status-provisional-bg: var(--secondary-color-soft);
+    --status-provisional-color: var(--secondary-color);
 }
 
 body {
