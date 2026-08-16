@@ -51,6 +51,8 @@ BROWSER_USER_DATA_DIR: str = os.path.join(os.path.expanduser('~'), '.browser_dat
 DATABASE_NAME: str = os.getenv('DATABASE_NAME')
 DATABASE_USER: str = os.getenv('DATABASE_USER')
 DATABASE_PASSWORD: str = os.getenv('DATABASE_PASSWORD')
+DATABASE_HOST: str = os.getenv('DATABASE_HOST', 'localhost')
+DATABASE_PORT: str = os.getenv('DATABASE_PORT', '5432')
 DATABASE_PATH: str = os.path.join(DIR, DATABASE_NAME)
 
 
