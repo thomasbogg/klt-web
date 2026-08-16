@@ -39,6 +39,26 @@
 
     <div class="property-page">
         <h1>{{ property }}</h1>
+        {% if property.specs %}
+        <div class="property-stats">
+            <div class="property-stat">
+                <span class="property-stat-value">{{ property.specs.bedrooms }}</span>
+                <span class="property-stat-label">Bedrooms</span>
+            </div>
+            <div class="property-stat">
+                <span class="property-stat-value">{{ property.specs.bathrooms }}</span>
+                <span class="property-stat-label">Bathrooms</span>
+            </div>
+            <div class="property-stat">
+                <span class="property-stat-value">{{ property.specs.max_guests }}</span>
+                <span class="property-stat-label">Max Guests</span>
+            </div>
+            <div class="property-stat">
+                <span class="property-stat-value">{{ property.specs.minimum_nights }}</span>
+                <span class="property-stat-label">Min Nights</span>
+            </div>
+        </div>
+        {% endif %}
         {% if property.specs.description %}
         <p class="property-blurb">{{ property.specs.description }}</p>
         {% endif %}

@@ -8,9 +8,66 @@
     margin-bottom: 48px;
 }
 
+.property-stats {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: fit-content;
+    margin: 0 auto 56px;
+    padding: 16px 0;
+    border-top: 1px solid #ebebeb;
+    border-bottom: 1px solid #ebebeb;
+}
+
+.property-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 28px;
+}
+
+.property-stat:not(:last-child) {
+    border-right: 1px solid #ebebeb;
+}
+
+.property-stat-value {
+    font-family: var(--primary-font);
+    font-size: 2.2rem;
+    font-weight: 400;
+    color: var(--primary-color);
+    line-height: 1;
+}
+
+.property-stat-label {
+    margin-top: 6px;
+    font-family: var(--secondary-font);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+    white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+    .property-stats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        width: auto;
+        margin-left: 20px;
+        margin-right: 20px;
+        gap: 20px 0;
+    }
+
+    .property-stat {
+        padding: 0;
+        border-right: none !important;
+    }
+}
+
 .property-blurb {
     max-width: 720px;
-    margin: 0 auto 64px;
+    margin: 0 auto 80px;
     text-align: center;
     line-height: 1.7;
     font-size: 1em;
