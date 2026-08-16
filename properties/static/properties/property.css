@@ -15,11 +15,12 @@
 }
 
 .property-features {
-    display: flex;
-    justify-content: center;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    justify-items: center;
     gap: 40px 48px;
-    margin-bottom: 40px;
+    max-width: 800px;
+    margin: 0 auto 40px;
 }
 
 .property-feature {
@@ -41,6 +42,29 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--secondary-color);
+}
+
+@media (max-width: 768px) {
+    .property-features {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 28px 24px;
+    }
+
+    .property-feature-icon {
+        width: 36px;
+        height: 36px;
+    }
+
+    .property-feature-label {
+        font-size: 0.75rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .property-features {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 24px 16px;
+    }
 }
 
 .property-intro-divider {

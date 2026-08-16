@@ -78,7 +78,8 @@
     }
 
     .container.toolbar.availability.sticky input.readonly {
-        width: 100%;
+        box-sizing: border-box;
+        width: 100% !important;
         border-right: none;
         border-bottom: 1px solid #b1acac;
     }
