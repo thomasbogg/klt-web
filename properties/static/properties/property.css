@@ -4,9 +4,13 @@
     padding: 40px 20px var(--primary-margin-bottom);
 }
 
+.property-page h1 {
+    margin-bottom: 48px;
+}
+
 .property-blurb {
     max-width: 720px;
-    margin: 0 auto 40px;
+    margin: 0 auto 64px;
     text-align: center;
     line-height: 1.7;
     font-size: 1em;
@@ -42,6 +46,7 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--secondary-color);
+    text-align: center;
 }
 
 @media (max-width: 768px) {

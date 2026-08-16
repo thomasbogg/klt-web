@@ -355,8 +355,19 @@ class Amenity(models.Model):
         ('safe', 'Safe', 'properties/icons/safe.svg'),
     ]
 
+    def bed_label(self):
+        if self.double_beds > 0:
+            size = self.bed_sizes.replace(' ', '')
+            return f"{size}cm Bed"
+        if self.single_beds > 0:
+            return "Twin Beds"
+        return None
+
     def top_features(self, count=None):
         features = []
+        bed_label = self.bed_label()
+        if bed_label:
+            features.append({'label': bed_label, 'icon': 'properties/icons/bed.svg'})
         seen_labels = set()
         for field, label, icon in self.FEATURE_PRIORITY:
             if icon is None or not getattr(self, field) or label in seen_labels:
