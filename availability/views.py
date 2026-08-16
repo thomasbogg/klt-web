@@ -3,7 +3,7 @@ from django.views import View, generic
 from properties.models import Property, Location
 from bookings.models import Booking
 from env_settings import VALID_BOOKING_STATUSES
-from availability.utils import full_toolbar_context
+from availability.utils import date_string_to_date, full_toolbar_context, guests_string_to_dict
 
 # Create your views here.
 
@@ -18,27 +18,19 @@ class SearchView(View):
         context = full_toolbar_context()
         for key, value in request.GET.items():
             if 'start' in key:
-                context['start_date'] = self.date_string_to_date(value)
-            elif 'end' in key:                
-                context['end_date'] = self.date_string_to_date(value)
+                context['start_date'] = date_string_to_date(value)
+                context['start_query'] = value
+            elif 'end' in key:
+                context['end_date'] = date_string_to_date(value)
+                context['end_query'] = value
             elif 'guests' in key:
-                context['guests'] = self.guests_string_to_dict(value)
+                context['guests'] = guests_string_to_dict(value)
+                context['guests_query'] = value
         context['available_properties'] = self.get_available_properties(
             context['start_date'], context['end_date'], context['guests']
         )
         return render(request, self.template_name, context)
 
-    def date_string_to_date(self, date_string):
-        from datetime import datetime
-        return datetime.strptime(date_string, '%d/%m/%Y').date()
-
-    def guests_string_to_dict(self, guests_string):
-        guests = {}
-        for guest in guests_string.split(','):
-            value, key = guest.split()
-            guests[key] = int(value)
-        return guests
-    
     def get_available_properties(self, start_date, end_date, guests):
 
         properties = Property.objects.filter(

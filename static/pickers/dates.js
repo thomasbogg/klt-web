@@ -12,6 +12,11 @@ export class Datepicker extends Picker {
         this.prevBtn = this.picker.querySelector("button.prev");
         this.dates = this.picker.querySelector("div.dates");
 
+        // a server-rendered value (e.g. carried over from a search) takes
+        // precedence over the default selected date
+        const prefillDate = Datepicker.parseValue(this.inputter.value);
+        if (prefillDate) selectedDate = prefillDate;
+
         this._selectedDate = this.#simplifyDate(selectedDate);
         this.year = selectedDate.getFullYear();
         this.month = selectedDate.getMonth();
@@ -197,6 +202,15 @@ export class Datepicker extends Picker {
                 }
             )
         );
+    }
+
+    static parseValue(value){
+        if (!value) return null;
+        const parts = value.split('/');
+        if (parts.length !== 3) return null;
+        const [day, month, year] = parts.map(Number);
+        if (!day || !month || !year) return null;
+        return new Date(year, month - 1, day);
     }
 
     #simplifyDate(date = null){

@@ -1,5 +1,5 @@
 {% load static %}
-<a class="card" href="{% url 'properties:property/page' location=property.location.slug title=property.short_title|slugify %}">
+<a class="card" href="{% url 'properties:property/page' location=property.location.slug title=property.short_title|slugify %}{% if start_query %}?start={{ start_query|urlencode }}&end={{ end_query|urlencode }}&guests={{ guests_query|urlencode }}{% endif %}">
     <div class="card-image">
         {% with photo=property.images.first %}
         {% if photo %}

@@ -1,0 +1,70 @@
+.reserve-page {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 80px 20px var(--primary-margin-bottom);
+    text-align: center;
+}
+
+.reserve-message {
+    max-width: 480px;
+    margin: 0 auto 40px;
+    line-height: 1.7;
+    font-size: 1em;
+    color: rgb(80, 80, 80);
+}
+
+.reserve-summary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 48px;
+}
+
+.reserve-chip {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    background: rgba(44, 121, 185, 0.08);
+    border: 1px solid rgba(44, 121, 185, 0.18);
+    border-radius: 12px;
+    padding: 8px 20px;
+    line-height: 1.2;
+}
+
+.reserve-chip-label {
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+}
+
+.reserve-chip-value {
+    font-family: var(--primary-font);
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.reserve-chip-arrow {
+    color: rgb(180, 180, 180);
+    font-size: 1.3rem;
+}
+
+.reserve-back-link {
+    display: inline-block;
+    color: var(--primary-color);
+    font-family: var(--secondary-font);
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-decoration: none;
+}
+
+.reserve-back-link:hover {
+    text-decoration: underline;
+}

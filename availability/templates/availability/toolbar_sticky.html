@@ -1,11 +1,12 @@
-<form class="toolbar availability sticky" method="get" action="{% url 'availability:search' %}">
+<form class="toolbar availability sticky" method="get" action="{% if toolbar_compact %}{% url 'properties:property/reserve' location=location.slug title=property.short_title|slugify %}{% else %}{% url 'availability:search' %}{% endif %}">
     <div class="container toolbar availability sticky">
 
         <div class="datepickers">
-            {% include 'pickers/dates.html' with name=toolbar_date_picker_start_name %}
-            {% include 'pickers/dates.html' with name=toolbar_date_picker_end_name %}
+            {% include 'pickers/dates.html' with name=toolbar_date_picker_start_name value=toolbar_date_picker_start_value %}
+            {% include 'pickers/dates.html' with name=toolbar_date_picker_end_name value=toolbar_date_picker_end_value %}
         </div>
 
+        {% if not toolbar_compact %}
         <div class="locationpicker">
             {% include 'pickers/locations.html' with name=toolbar_location_picker_name locations=toolbar_location_picker_list %}
         </div>
@@ -13,10 +14,11 @@
         <div class="bedroomspicker">
             {% include 'pickers/groups.html' with name=toolbar_bedrooms_picker_name groups=toolbar_bedrooms_picker_groups %}
         </div>
+        {% endif %}
 
         <div class="grouppicker-and-submit">
             {% include 'pickers/groups.html' with name=toolbar_guests_picker_name groups=toolbar_guests_picker_groups %}
-            <button class="submit" type="submit">GO</button>
+            <button class="submit" type="submit">{% if toolbar_compact %}BOOK{% else %}GO{% endif %}</button>
         </div>
 
     </div>

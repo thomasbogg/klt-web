@@ -1,19 +1,35 @@
 import calendar as calendar_module
-from datetime import date
+from datetime import date, datetime
 
 from bookings.models import Booking
 from env_settings import PROVISIONAL_BOOKING_STATUSES, VALID_BOOKING_STATUSES
 from properties.models import Location, Property
 
-def full_toolbar_context():
+
+def date_string_to_date(date_string):
+    return datetime.strptime(date_string, '%d/%m/%Y').date()
+
+
+def guests_string_to_dict(guests_string):
+    guests = {}
+    for guest in guests_string.split(','):
+        value, key = guest.split()
+        guests[key] = int(value)
+    return guests
+
+
+def full_toolbar_context(start_date=None, end_date=None, guests=None):
+    guests = guests or {}
     return {
         'toolbar_date_picker_start_name': 'start',
         'toolbar_date_picker_end_name': 'end',
+        'toolbar_date_picker_start_value': start_date.strftime('%d/%m/%Y') if start_date else '',
+        'toolbar_date_picker_end_value': end_date.strftime('%d/%m/%Y') if end_date else '',
         'toolbar_guests_picker_name': 'guests',
         'toolbar_guests_picker_groups': [
-            ('adults', '2', '1', '10'),
-            ('children', '0', '0', '10'),
-            ('infants', '0', '0', '10'),
+            ('adults', str(guests.get('adults', 2)), '1', '10'),
+            ('children', str(guests.get('children', 0)), '0', '10'),
+            ('infants', str(guests.get('infants', 0)), '0', '10'),
         ],
         'toolbar_location_picker_name': 'location',
         'toolbar_location_picker_list': Location.objects.order_by('title'),

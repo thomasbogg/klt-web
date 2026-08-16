@@ -1,5 +1,5 @@
 <div class="container picker visible date {{ name }}">
-    <input type="text" class="readonly" name="{{ name }}" id="{{ name }}" autocomplete="off" readonly>
+    <input type="text" class="readonly" name="{{ name }}" id="{{ name }}" autocomplete="off" readonly value="{{ value|default:'' }}">
     <div class="container picker hidden date {{ name }}" hidden>
 
         <div class="picker date header">

@@ -1,0 +1,51 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book {{ property }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'properties/reserve.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="reserve-page">
+        <h1>{{ property }}</h1>
+        <p class="reserve-message">
+            Online booking is coming soon. In the meantime, get in touch with us
+            and we'll take care of the rest.
+        </p>
+
+        {% if start_date and end_date %}
+        <div class="reserve-summary">
+            <div class="reserve-chip">
+                <span class="reserve-chip-label">Check-in</span>
+                <span class="reserve-chip-value">{{ start_date|date:"D, d M Y" }}</span>
+            </div>
+            <span class="reserve-chip-arrow">&rarr;</span>
+            <div class="reserve-chip">
+                <span class="reserve-chip-label">Check-out</span>
+                <span class="reserve-chip-value">{{ end_date|date:"D, d M Y" }}</span>
+            </div>
+            <div class="reserve-chip">
+                <span class="reserve-chip-label">Guests</span>
+                <span class="reserve-chip-value">
+                    {{ guests.adults|default:0 }} adult{{ guests.adults|pluralize }}{% if guests.children %}, {{ guests.children }} child{{ guests.children|pluralize:"ren" }}{% endif %}{% if guests.infants %}, {{ guests.infants }} infant{{ guests.infants|pluralize }}{% endif %}
+                </span>
+            </div>
+        </div>
+        {% endif %}
+
+        <a class="reserve-back-link" href="{% url 'properties:property/page' location=location.slug title=property.short_title|slugify %}">&larr; Back to {{ property }}</a>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>
