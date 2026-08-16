@@ -1,0 +1,14 @@
+Django
+psycopg
+python-dotenv
+bs4
+python-dateutil
+deepl
+google-api-python-client
+google_auth_oauthlib
+openpyxl
+regex
+requests
+selenium
+seleniumbase
+undetected-chromedriver
