@@ -1,9 +1,8 @@
-from django import forms
+from urllib.parse import parse_qsl
+
 from django.contrib import admin
 from django.template.response import TemplateResponse
 from django.urls import reverse
-
-EU_DATE_FORMAT = '%d-%m-%Y'
 
 NARROW_FIELD_WIDTHS = {
     'start_date': '7em',
@@ -81,15 +80,25 @@ class PriceAdmin(admin.ModelAdmin):
         'last_minute_discount_percent', 'last_minute_discount_days',
     )
     list_filter = ('property',)
+    ordering = ('start_date',)
 
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
         if db_field.name in ('start_date', 'end_date'):
-            formfield.widget = forms.DateInput(format=EU_DATE_FORMAT, attrs={'placeholder': 'DD-MM-YYYY'})
-            formfield.input_formats = [EU_DATE_FORMAT]
+            formfield.widget.attrs['placeholder'] = 'DD-MM-YYYY'
         if db_field.name in NARROW_FIELD_WIDTHS:
             formfield.widget.attrs['style'] = f'width: {NARROW_FIELD_WIDTHS[db_field.name]}'
         return formfield
+
+    def get_changeform_initial_data(self, request):
+        """Pre-select the property on the add form when arriving from a filtered price list."""
+        initial = super().get_changeform_initial_data(request)
+        changelist_filters = request.GET.get('_changelist_filters')
+        if changelist_filters and 'property' not in initial:
+            filters = dict(parse_qsl(changelist_filters))
+            if 'property__id__exact' in filters:
+                initial['property'] = filters['property__id__exact']
+        return initial
 
     def changelist_view(self, request, extra_context=None):
         if 'property__id__exact' not in request.GET:

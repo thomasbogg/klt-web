@@ -127,6 +127,9 @@ USE_I18N = True
 
 USE_TZ = True
 
+# Overrides en-us's m/d/Y default with EU-style d-m-Y - see klt_web/formats/en/formats.py
+FORMAT_MODULE_PATH = 'klt_web.formats'
+
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
