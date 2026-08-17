@@ -1,7 +1,78 @@
+from datetime import timedelta
+from decimal import Decimal, ROUND_HALF_UP
+
+from django.core.validators import EmailValidator, MinValueValidator, MaxValueValidator
 from django.db import models
-from django.core.validators import EmailValidator
+
 from properties.models import Property
 from guests.models import Guest
+
+TWO_PLACES = Decimal('0.01')
+
+
+class BookingSettings(models.Model):
+    """Site-wide financial rules for costing a booking. Singleton — always exactly one row (pk=1)."""
+    admin_fee_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('5.50'),
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="Admin fee charged cumulatively on top of the basic rental, as a percentage."
+    )
+    deposit_percent_at_booking = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('25.00'),
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="Percentage of the rental + admin fee due at the reservation stage. The remainder is due at the balance payment stage."
+    )
+    balance_due_days_before_arrival = models.PositiveIntegerField(
+        default=56,
+        help_text="How many days before arrival the balance payment becomes due."
+    )
+    security_deposit_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('200.00'),
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text="Fixed refundable security deposit. Collected in cash at check-in, separate from the online rental/admin payment split."
+    )
+
+    class Meta:
+        db_table = 'booking_settings'
+        verbose_name = 'Booking Settings'
+        verbose_name_plural = 'Booking Settings'
+
+    def __str__(self):
+        return "Booking Settings"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls):
+        settings, _ = cls.objects.get_or_create(pk=1)
+        return settings
+
+    def compute_costs(self, basic_rental, arrival_date=None):
+        """Cost breakdown for a stay's basic rental total: admin fee, booking/balance split, balance due date.
+
+        The security deposit is reported separately since it's collected in cash at check-in,
+        not part of the online rental/admin payment split.
+        """
+        basic_rental = Decimal(basic_rental)
+        admin_fee = (basic_rental * self.admin_fee_percent / Decimal('100')).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        subtotal = basic_rental + admin_fee
+        due_at_booking = (subtotal * self.deposit_percent_at_booking / Decimal('100')).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        due_at_balance = subtotal - due_at_booking
+        balance_due_date = arrival_date - timedelta(days=self.balance_due_days_before_arrival) if arrival_date else None
+        return {
+            'basic_rental': basic_rental,
+            'admin_fee': admin_fee,
+            'subtotal': subtotal,
+            'due_at_booking': due_at_booking,
+            'due_at_balance': due_at_balance,
+            'balance_due_date': balance_due_date,
+            'security_deposit': self.security_deposit_amount,
+        }
 
 
 class Booking(models.Model):
