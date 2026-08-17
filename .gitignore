@@ -36,6 +36,9 @@ env/
 # Ignore database files
 *.db
 
+# Ignore tar files
+*.tar.gz
+
 # Ignore uploaded media images (user-uploaded property/location photos);
 # static/ image assets (icons, hero photos, logos) are checked in normally
 media/**/*.png
