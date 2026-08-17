@@ -1,3 +1,4 @@
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from properties.utils import pretty_title, location_image_path, property_image_path
 
@@ -246,7 +247,30 @@ class Price(models.Model):
     end_date = models.DateField()
     rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_special_rate = models.BooleanField(default=False)
-    
+    weekly_discount_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Discount applied to stays of 7 or more nights, as a percentage."
+    )
+    last_minute_discount_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Discount applied when booking within the last-minute window, as a percentage."
+    )
+    last_minute_discount_days = models.PositiveIntegerField(
+        default=7,
+        help_text="Number of days before arrival within which the last-minute discount applies."
+    )
+    monthly_discount_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Discount applied to stays of at least monthly_discount_min_nights nights, as a percentage."
+    )
+    monthly_discount_min_nights = models.PositiveIntegerField(
+        default=28,
+        help_text="Minimum number of nights a stay must be for the monthly discount to apply."
+    )
+
     class Meta:
         db_table = 'property_prices'
         verbose_name = 'Property Price'
