@@ -11,6 +11,8 @@ NARROW_FIELD_WIDTHS = {
     'weekly_discount_percent': '4.5em',
     'monthly_discount_percent': '4.5em',
     'last_minute_discount_percent': '4.5em',
+    'extra_adult_rate': '5.5em',
+    'extra_child_rate': '5.5em',
 }
 
 # Register your models here.
@@ -70,14 +72,16 @@ class PriceAdmin(admin.ModelAdmin):
     list_display = (
         'name', 'start_date', 'end_date', 'rate',
         'weekly_discount_percent',
-        'monthly_discount_percent', 'monthly_discount_min_nights',
+        'monthly_discount_percent',
         'last_minute_discount_percent', 'last_minute_discount_days',
+        'extra_adult_rate', 'extra_child_rate',
     )
     list_editable = (
         'start_date', 'end_date', 'rate',
         'weekly_discount_percent',
-        'monthly_discount_percent', 'monthly_discount_min_nights',
+        'monthly_discount_percent',
         'last_minute_discount_percent', 'last_minute_discount_days',
+        'extra_adult_rate', 'extra_child_rate',
     )
     list_filter = ('property',)
     ordering = ('start_date',)

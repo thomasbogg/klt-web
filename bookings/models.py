@@ -31,6 +31,10 @@ class BookingSettings(models.Model):
         validators=[MinValueValidator(Decimal('0'))],
         help_text="Fixed refundable security deposit. Collected in cash at check-in, separate from the online rental/admin payment split."
     )
+    monthly_discount_min_nights = models.PositiveIntegerField(
+        default=28,
+        help_text="Minimum number of nights a stay must be for a property's monthly discount to apply."
+    )
 
     class Meta:
         db_table = 'booking_settings'

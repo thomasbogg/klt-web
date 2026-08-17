@@ -268,12 +268,19 @@ class Price(models.Model):
         max_digits=5, decimal_places=2, default=0,
         verbose_name='monthly %',
         validators=[MinValueValidator(0), MaxValueValidator(100)],
-        help_text="Discount applied to stays of at least monthly_discount_min_nights nights, as a percentage."
+        help_text="Discount applied to stays meeting the site-wide monthly-stay minimum (see Booking Settings), as a percentage."
     )
-    monthly_discount_min_nights = models.PositiveIntegerField(
-        default=28,
-        verbose_name='min nights',
-        help_text="Minimum number of nights a stay must be for the monthly discount to apply."
+    extra_adult_rate = models.DecimalField(
+        max_digits=10, decimal_places=2, default=10,
+        verbose_name='extra adult',
+        validators=[MinValueValidator(0)],
+        help_text="Charge per night for each adult beyond the first 2."
+    )
+    extra_child_rate = models.DecimalField(
+        max_digits=10, decimal_places=2, default=5,
+        verbose_name='extra child',
+        validators=[MinValueValidator(0)],
+        help_text="Charge per night for each child."
     )
 
     class Meta:
