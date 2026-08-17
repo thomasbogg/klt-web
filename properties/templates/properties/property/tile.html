@@ -33,8 +33,11 @@
         {% endif %}
         <div class="card-details">
             <span class="card-address">{{ property.location.street }}, {{ property.location.city }}</span>
-            {% if property.price %}
-            <span class="card-price">From €{{ property.price.july|floatformat:0 }}</span>
+            {% if property.stay_total_price %}
+            <span class="card-price">
+                <span class="card-price-amount">€{{ property.stay_total_price|floatformat:0 }}</span>
+                <span class="card-price-label">{{ nights }} night{{ nights|pluralize }}</span>
+            </span>
             {% endif %}
         </div>
     </div>
