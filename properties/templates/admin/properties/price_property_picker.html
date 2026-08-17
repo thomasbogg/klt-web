@@ -1,0 +1,34 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label='properties' %}">{% translate 'Properties' %}</a>
+&rsaquo; {{ title }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <p>Select a property to view and edit its price rows.</p>
+    <table id="result_list">
+        <thead>
+            <tr>
+                <th scope="col">Property</th>
+                <th scope="col">Price rows</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for property in properties %}
+            <tr class="{% cycle 'row1' 'row2' %}">
+                <th scope="row"><a href="{{ changelist_url }}?property__id__exact={{ property.id }}">{{ property }}</a></th>
+                <td>{{ property.prices.count }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="2">No properties found.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

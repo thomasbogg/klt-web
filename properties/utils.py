@@ -15,7 +15,7 @@ def get_stay_total_price(property, start_date, end_date):
         night = max(price.start_date, start_date)
         last_night = min(price.end_date, end_date - timedelta(days=1))
         while night <= last_night:
-            if price.is_special_rate or night not in nightly_prices:
+            if night not in nightly_prices:
                 nightly_prices[night] = price
             night += timedelta(days=1)
 

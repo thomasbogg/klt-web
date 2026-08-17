@@ -246,7 +246,6 @@ class Price(models.Model):
     start_date = models.DateField()
     end_date = models.DateField()
     rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    is_special_rate = models.BooleanField(default=False)
     weekly_discount_percent = models.DecimalField(
         max_digits=5, decimal_places=2, default=0,
         validators=[MinValueValidator(0), MaxValueValidator(100)],
