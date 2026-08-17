@@ -35,7 +35,7 @@
             <span class="card-address">{{ property.location.street }}, {{ property.location.city }}</span>
             {% if property.stay_total_price %}
             <span class="card-price">
-                <span class="card-price-amount">€{{ property.stay_total_price|floatformat:0 }}</span>
+                <span class="card-price-amount price-value" data-eur="{{ property.stay_total_price|floatformat:0 }}" data-gbp="{{ property.stay_total_price_gbp|floatformat:0 }}">€{{ property.stay_total_price|floatformat:0 }}</span>
                 <span class="card-price-label">{{ nights }} night{{ nights|pluralize }}</span>
             </span>
             {% endif %}

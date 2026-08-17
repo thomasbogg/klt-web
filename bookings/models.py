@@ -13,6 +13,14 @@ from guests.models import Guest
 TWO_PLACES = Decimal('0.01')
 REFERENCE_GENERATION_ATTEMPTS = 5
 
+# The only quote/charge currencies offered for now. Kept as a hardcoded pair rather than a free-text
+# field so a staff member manually editing a booking in the admin can't introduce a currency the rest
+# of the system (GBP conversion, price display toggle) doesn't know how to handle.
+CURRENCY_CHOICES = (
+    ('EUR', 'EUR'),
+    ('GBP', 'GBP'),
+)
+
 
 class BookingSettings(models.Model):
     """Site-wide financial rules for costing a booking. Singleton — always exactly one row (pk=1)."""
@@ -39,6 +47,16 @@ class BookingSettings(models.Model):
         default=28,
         help_text="Minimum number of nights a stay must be for a property's monthly discount to apply."
     )
+    gbp_conversion_rate = models.DecimalField(
+        max_digits=6, decimal_places=4, default=Decimal('0.8600'),
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text="Euro-to-Pound rate for optional GBP price quotes (amount in GBP = amount in EUR × this rate). Charges are always recorded in EUR regardless of the quote currency shown to the guest."
+    )
+
+    # Cost dict keys from compute_costs() that represent a money amount and are shown converted to
+    # GBP when a guest toggles the currency display. security_deposit is deliberately excluded: it's
+    # cash collected locally in Portugal at check-in and stays in EUR regardless of quote currency.
+    GBP_DISPLAY_COST_KEYS = ('basic_rental', 'admin_fee', 'subtotal', 'due_at_booking', 'due_at_balance')
 
     class Meta:
         db_table = 'booking_settings'
@@ -81,6 +99,13 @@ class BookingSettings(models.Model):
             'balance_due_date': balance_due_date,
             'security_deposit': self.security_deposit_amount,
         }
+
+    def to_gbp(self, amount):
+        return (Decimal(amount) * self.gbp_conversion_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+
+    def costs_in_gbp(self, costs):
+        """GBP-converted view of a compute_costs() dict, for optional display alongside the EUR original."""
+        return {key: self.to_gbp(costs[key]) for key in self.GBP_DISPLAY_COST_KEYS if key in costs}
 
 
 class Booking(models.Model):
@@ -203,7 +228,7 @@ class Charge(models.Model):
     # Payment methods
     bank_transfer = models.BooleanField(blank=True, null=True)
     credit_card = models.BooleanField(blank=True, null=True)
-    currency = models.CharField(max_length=10, blank=True, null=True)
+    currency = models.CharField(max_length=3, blank=True, null=True, choices=CURRENCY_CHOICES)
     
     # Charge amounts
     basic_rental = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
@@ -219,6 +244,29 @@ class Charge(models.Model):
     due_at_booking = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     due_at_balance = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     balance_due_date = models.DateField(blank=True, null=True)
+
+    # Snapshot of BookingSettings.gbp_conversion_rate at booking time. A guest who saw/paid a GBP
+    # quote at deposit time must see the same GBP total at balance time, even if the live rate has
+    # since changed - so GBP display for an existing booking always uses this frozen rate, never
+    # BookingSettings.load().gbp_conversion_rate directly.
+    gbp_conversion_rate = models.DecimalField(max_digits=6, decimal_places=4, blank=True, null=True)
+
+    def to_gbp(self, amount):
+        if self.gbp_conversion_rate is None or amount is None:
+            return None
+        return (Decimal(amount) * self.gbp_conversion_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+
+    def costs_in_gbp(self):
+        """GBP-converted view of the locked EUR charge amounts, using the rate frozen at booking time."""
+        if self.gbp_conversion_rate is None:
+            return None
+        return {
+            'basic_rental': self.to_gbp(self.basic_rental),
+            'admin_fee': self.to_gbp(self.admin),
+            'subtotal': self.to_gbp(self.basic_rental + self.admin),
+            'due_at_booking': self.to_gbp(self.due_at_booking),
+            'due_at_balance': self.to_gbp(self.due_at_balance),
+        }
 
     class Meta:
         db_table = 'booking_charges'

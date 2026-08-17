@@ -20,29 +20,36 @@
     </div>
 </div>
 
+{% if costs_gbp %}
+<div class="currency-toggle">
+    <button type="button" data-currency="EUR" {% if charge.currency != 'GBP' %}class="active"{% endif %}>EUR &euro;</button>
+    <button type="button" data-currency="GBP" {% if charge.currency == 'GBP' %}class="active"{% endif %}>GBP &pound;</button>
+</div>
+{% endif %}
+
 <div class="confirmation-breakdown">
     <div class="confirmation-breakdown-row">
         <span>Basic rental ({{ nights }} night{{ nights|pluralize }})</span>
-        <span>&euro;{{ charge.basic_rental|floatformat:2 }}</span>
+        <span class="price-value" data-eur="{{ charge.basic_rental|floatformat:2 }}" data-gbp="{{ costs_gbp.basic_rental|floatformat:2 }}">&euro;{{ charge.basic_rental|floatformat:2 }}</span>
     </div>
     <div class="confirmation-breakdown-row">
         <span>Admin fee</span>
-        <span>&euro;{{ charge.admin|floatformat:2 }}</span>
+        <span class="price-value" data-eur="{{ charge.admin|floatformat:2 }}" data-gbp="{{ costs_gbp.admin_fee|floatformat:2 }}">&euro;{{ charge.admin|floatformat:2 }}</span>
     </div>
     <div class="confirmation-breakdown-row confirmation-breakdown-total">
         <span>Total</span>
-        <span>&euro;{{ subtotal|floatformat:2 }}</span>
+        <span class="price-value" data-eur="{{ subtotal|floatformat:2 }}" data-gbp="{{ costs_gbp.subtotal|floatformat:2 }}">&euro;{{ subtotal|floatformat:2 }}</span>
     </div>
     <div class="confirmation-breakdown-row">
         <span>Due now</span>
-        <span>&euro;{{ charge.due_at_booking|floatformat:2 }}</span>
+        <span class="price-value" data-eur="{{ charge.due_at_booking|floatformat:2 }}" data-gbp="{{ costs_gbp.due_at_booking|floatformat:2 }}">&euro;{{ charge.due_at_booking|floatformat:2 }}</span>
     </div>
     <div class="confirmation-breakdown-row">
         <span>Due by {{ charge.balance_due_date|date:"d M Y" }}</span>
-        <span>&euro;{{ charge.due_at_balance|floatformat:2 }}</span>
+        <span class="price-value" data-eur="{{ charge.due_at_balance|floatformat:2 }}" data-gbp="{{ costs_gbp.due_at_balance|floatformat:2 }}">&euro;{{ charge.due_at_balance|floatformat:2 }}</span>
     </div>
     <div class="confirmation-breakdown-row confirmation-breakdown-note">
-        <span>Security deposit (cash at check-in)</span>
+        <span>Security deposit (cash at check-in, always in EUR)</span>
         <span>&euro;{{ charge.security|floatformat:2 }}</span>
     </div>
 </div>

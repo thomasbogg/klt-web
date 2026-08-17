@@ -1,6 +1,7 @@
 from django import forms
 
 from availability.utils import date_string_to_date, guests_string_to_dict
+from bookings.models import CURRENCY_CHOICES
 
 
 class ReservationForm(forms.Form):
@@ -24,6 +25,10 @@ class ReservationForm(forms.Form):
     start = forms.CharField(widget=forms.HiddenInput)
     end = forms.CharField(widget=forms.HiddenInput)
     guests = forms.CharField(widget=forms.HiddenInput)
+    currency = forms.ChoiceField(
+        choices=CURRENCY_CHOICES,
+        widget=forms.HiddenInput, initial='EUR', required=False,
+    )
 
     def clean_start(self):
         try:
@@ -42,6 +47,9 @@ class ReservationForm(forms.Form):
             return guests_string_to_dict(self.cleaned_data['guests'])
         except (ValueError, TypeError):
             raise forms.ValidationError("Invalid guest counts.")
+
+    def clean_currency(self):
+        return self.cleaned_data.get('currency') or 'EUR'
 
     def clean(self):
         cleaned_data = super().clean()

@@ -13,6 +13,11 @@
     margin: 0 0 40px;
 }
 
+.availability-search-results .search-currency-toggle {
+    text-align: center;
+    margin: -20px 0 30px;
+}
+
 .availability-search-results .search-summary-dates {
     display: flex;
     align-items: center;

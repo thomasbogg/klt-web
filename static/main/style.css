@@ -591,5 +591,33 @@ img {
 
     .container.text-image .image {
         width: 100%;
-    }   
+    }
+}
+
+.currency-toggle {
+    display: inline-flex;
+    background: rgba(44, 121, 185, 0.08);
+    border: 1px solid rgba(44, 121, 185, 0.18);
+    border-radius: 999px;
+    padding: 3px;
+    gap: 2px;
+}
+
+.currency-toggle button {
+    border: none;
+    background: transparent;
+    padding: 6px 16px;
+    border-radius: 999px;
+    font-family: var(--secondary-font);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--secondary-color);
+    cursor: pointer;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.currency-toggle button.active {
+    background: var(--primary-color, #2c79b9);
+    color: #fff;
 }

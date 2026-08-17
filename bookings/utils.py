@@ -19,11 +19,13 @@ def generate_reference_candidate():
     return '-'.join(groups)
 
 
-def create_booking(property, guest_data, start_date, end_date, guests):
+def create_booking(property, guest_data, start_date, end_date, guests, currency='EUR'):
     """Create the Guest (if new), Booking, and locked-in Charge for a reservation, all-or-nothing.
 
     guest_data: dict with first_name, last_name, email, phone.
     guests: dict with adults/children/infants, as returned by availability.utils.guests_string_to_dict.
+    currency: 'EUR' or 'GBP' - the quote currency the guest was viewing at booking time, recorded on
+    the Charge for staff follow-up. The charge amounts themselves are always locked in EUR.
     Raises django.core.exceptions.ValidationError (from Booking.full_clean()) if the dates are no
     longer available. Returns the created Booking.
     """
@@ -78,6 +80,8 @@ def create_booking(property, guest_data, start_date, end_date, guests):
             due_at_booking=costs['due_at_booking'],
             due_at_balance=costs['due_at_balance'],
             balance_due_date=costs['balance_due_date'],
+            currency=currency,
+            gbp_conversion_rate=booking_settings.gbp_conversion_rate,
         )
 
     return booking
@@ -91,4 +95,5 @@ def booking_confirmation_context(booking):
         'charge': charge,
         'subtotal': charge.basic_rental + charge.admin,
         'nights': (booking.departure_date - booking.arrival_date).days,
+        'costs_gbp': charge.costs_in_gbp(),
     }

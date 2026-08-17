@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="{% static 'availability/search.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
     <script type="module" src="{% static 'availability/toolbar_sticky.js' %}"></script>
+    <script type="module" src="{% static 'main/currency_toggle.js' %}"></script>
     <script type="module" src="{% static 'main/script.js' %}"></script>
 </head>
 <header>
@@ -58,6 +59,13 @@
                     <span class="guest-chip-value">{{ guests.infants }}</span>
                 </div>
                 {% endif %}
+            </div>
+        </div>
+
+        <div class="search-currency-toggle">
+            <div class="currency-toggle">
+                <button type="button" data-currency="EUR" class="active">EUR &euro;</button>
+                <button type="button" data-currency="GBP">GBP &pound;</button>
             </div>
         </div>
 

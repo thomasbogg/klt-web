@@ -77,6 +77,10 @@
     color: var(--status-booked-color, #c1554f);
 }
 
+.reserve-page .currency-toggle {
+    margin-bottom: 20px;
+}
+
 .reserve-breakdown {
     max-width: 420px;
     margin: 0 auto 32px;

@@ -128,6 +128,7 @@ class ReserveView(generic.DetailView):
                 context['is_available'] = False  # can't book a stay we can't price
             else:
                 context['costs'] = booking_settings.compute_costs(rental_total, arrival_date=start_date)
+                context['costs_gbp'] = booking_settings.costs_in_gbp(context['costs'])
                 if 'form' not in context:
                     context['form'] = ReservationForm(initial={
                         'start': self.request.GET.get('start', ''),
@@ -152,6 +153,7 @@ class ReserveView(generic.DetailView):
                     form.cleaned_data['start'],
                     form.cleaned_data['end'],
                     form.cleaned_data['guests'],
+                    currency=form.cleaned_data['currency'],
                 )
                 return redirect('bookings:confirmation', reference=booking.reference)
             except ValidationError as error:

@@ -45,6 +45,10 @@ class SearchView(View):
                     booking_settings.compute_costs(rental_total, arrival_date=start_date)['subtotal']
                     if rental_total is not None else None
                 )
+                property.stay_total_price_gbp = (
+                    booking_settings.to_gbp(property.stay_total_price)
+                    if property.stay_total_price is not None else None
+                )
             context['available_properties'] = available_properties
             context['nights'] = (end_date - start_date).days
         return render(request, self.template_name, context)

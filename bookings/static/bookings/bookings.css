@@ -47,6 +47,10 @@
     margin-bottom: 32px;
 }
 
+.confirmation-page .currency-toggle {
+    margin-bottom: 20px;
+}
+
 .confirmation-chip {
     display: flex;
     flex-direction: column;

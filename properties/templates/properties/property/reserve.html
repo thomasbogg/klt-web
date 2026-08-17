@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'properties/reserve.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="module" src="{% static 'main/currency_toggle.js' %}"></script>
 </head>
 <header>
     {% include 'header/header.html' %}
@@ -50,29 +51,34 @@
         <a class="reserve-back-link" href="{% url 'properties:property/page' location=location.slug title=property.short_title|slugify %}">&larr; Back to {{ property }}</a>
 
         {% else %}
+        <div class="currency-toggle">
+            <button type="button" data-currency="EUR" class="active">EUR &euro;</button>
+            <button type="button" data-currency="GBP">GBP &pound;</button>
+        </div>
+
         <div class="reserve-breakdown">
             <div class="reserve-breakdown-row">
                 <span>Basic rental ({{ nights }} night{{ nights|pluralize }})</span>
-                <span>&euro;{{ costs.basic_rental|floatformat:2 }}</span>
+                <span class="price-value" data-eur="{{ costs.basic_rental|floatformat:2 }}" data-gbp="{{ costs_gbp.basic_rental|floatformat:2 }}">&euro;{{ costs.basic_rental|floatformat:2 }}</span>
             </div>
             <div class="reserve-breakdown-row">
                 <span>Admin fee</span>
-                <span>&euro;{{ costs.admin_fee|floatformat:2 }}</span>
+                <span class="price-value" data-eur="{{ costs.admin_fee|floatformat:2 }}" data-gbp="{{ costs_gbp.admin_fee|floatformat:2 }}">&euro;{{ costs.admin_fee|floatformat:2 }}</span>
             </div>
             <div class="reserve-breakdown-row reserve-breakdown-total">
                 <span>Total</span>
-                <span>&euro;{{ costs.subtotal|floatformat:2 }}</span>
+                <span class="price-value" data-eur="{{ costs.subtotal|floatformat:2 }}" data-gbp="{{ costs_gbp.subtotal|floatformat:2 }}">&euro;{{ costs.subtotal|floatformat:2 }}</span>
             </div>
             <div class="reserve-breakdown-row">
                 <span>Due now</span>
-                <span>&euro;{{ costs.due_at_booking|floatformat:2 }}</span>
+                <span class="price-value" data-eur="{{ costs.due_at_booking|floatformat:2 }}" data-gbp="{{ costs_gbp.due_at_booking|floatformat:2 }}">&euro;{{ costs.due_at_booking|floatformat:2 }}</span>
             </div>
             <div class="reserve-breakdown-row">
                 <span>Due by {{ costs.balance_due_date|date:"d M Y" }}</span>
-                <span>&euro;{{ costs.due_at_balance|floatformat:2 }}</span>
+                <span class="price-value" data-eur="{{ costs.due_at_balance|floatformat:2 }}" data-gbp="{{ costs_gbp.due_at_balance|floatformat:2 }}">&euro;{{ costs.due_at_balance|floatformat:2 }}</span>
             </div>
             <div class="reserve-breakdown-row reserve-breakdown-note">
-                <span>Security deposit (cash at check-in)</span>
+                <span>Security deposit (cash at check-in, always in EUR)</span>
                 <span>&euro;{{ costs.security_deposit|floatformat:2 }}</span>
             </div>
         </div>
@@ -90,6 +96,7 @@
             {{ form.start }}
             {{ form.end }}
             {{ form.guests }}
+            {{ form.currency }}
 
             <div class="reserve-form-row">
                 <label for="{{ form.first_name.id_for_label }}">First name</label>
