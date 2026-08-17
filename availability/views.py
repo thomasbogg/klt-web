@@ -2,7 +2,7 @@ from django.shortcuts import render
 from django.views import View, generic
 from properties.models import Property, Location
 from properties.utils import get_stay_total_price
-from bookings.models import Booking
+from bookings.models import Booking, BookingSettings
 from env_settings import VALID_BOOKING_STATUSES
 from availability.utils import date_string_to_date, full_toolbar_context, guests_string_to_dict
 
@@ -31,8 +31,13 @@ class SearchView(View):
         end_date = context.get('end_date')
         context.update(full_toolbar_context(start_date, end_date, context.get('guests')))
         available_properties = list(self.get_available_properties(start_date, end_date, context['guests']))
+        booking_settings = BookingSettings.load()
         for property in available_properties:
-            property.stay_total_price = get_stay_total_price(property, start_date, end_date)
+            rental_total = get_stay_total_price(property, start_date, end_date)
+            property.stay_total_price = (
+                booking_settings.compute_costs(rental_total, arrival_date=start_date)['subtotal']
+                if rental_total is not None else None
+            )
         context['available_properties'] = available_properties
         context['nights'] = (end_date - start_date).days if start_date and end_date else None
         return render(request, self.template_name, context)
