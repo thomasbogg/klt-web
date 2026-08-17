@@ -22,8 +22,8 @@ class IndexView(generic.ListView):
         # Group Picker Settings
         context['grouppicker_name'] = 'guests'
         context['grouppicker_groups'] = [
-            ('adults', '2', '1', '10'), # Default 2 adults, min 1, max 10
-            ('children', '0', '0', '10'), # Default 0 children, min 0, max 10
-            ('infants', '0', '0', '10'), # Default 0 infants, min 0, max 10
+            ('adults', '2', '1', '10', 'Adults', 'Ages 13 or above'), # Default 2 adults, min 1, max 10
+            ('children', '0', '0', '10', 'Children', 'Ages 2 – 12'), # Default 0 children, min 0, max 10
+            ('infants', '0', '0', '10', 'Infants (Cots)', 'Under 2'), # Default 0 infants, min 0, max 10
         ]
         return context

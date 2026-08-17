@@ -19,10 +19,21 @@
     gap: 8px;
 }
 
+.container.picker.group.hidden .row-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
 .container.picker.group.hidden .row label {
     font-size: 1rem;
     font-weight: 500;
     margin: 0;
+}
+
+.container.picker.group.hidden .row-subtitle {
+    font-size: 0.8rem;
+    color: #888;
 }
 
 .container.picker.group.hidden button {

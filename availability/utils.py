@@ -27,9 +27,9 @@ def full_toolbar_context(start_date=None, end_date=None, guests=None):
         'toolbar_date_picker_end_value': end_date.strftime('%d/%m/%Y') if end_date else '',
         'toolbar_guests_picker_name': 'guests',
         'toolbar_guests_picker_groups': [
-            ('adults', str(guests.get('adults', 2)), '1', '10'),
-            ('children', str(guests.get('children', 0)), '0', '10'),
-            ('infants', str(guests.get('infants', 0)), '0', '10'),
+            ('adults', str(guests.get('adults', 2)), '1', '10', 'Adults', 'Ages 13 or above'),
+            ('children', str(guests.get('children', 0)), '0', '10', 'Children', 'Ages 2 – 12'),
+            ('infants', str(guests.get('infants', 0)), '0', '10', 'Infants (Cots)', 'Under 2'),
         ],
         'toolbar_location_picker_name': 'location',
         'toolbar_location_picker_list': Location.objects.order_by('title'),

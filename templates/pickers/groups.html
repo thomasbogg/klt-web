@@ -2,9 +2,12 @@
     <input type="text" class="readonly" name="{{ name }}" id="{{ name }}" autocomplete="off" readonly>
     <div class="container picker group {{ name }} hidden" hidden>
         
-        {% for group_item, default_num, min_num, max_num in groups %}
+        {% for group_item, default_num, min_num, max_num, label, subtitle in groups %}
             <div class="row">
-                <label>{{ group_item|capfirst }}</label>
+                <div class="row-label">
+                    <label>{{ label }}</label>
+                    {% if subtitle %}<span class="row-subtitle">{{ subtitle }}</span>{% endif %}
+                </div>
 
                 <div class ="counter">
                     <button type="button" id="{{ group_item }}" class="decrement">-</button>
