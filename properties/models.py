@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from properties.utils import pretty_title, location_image_path, property_image_path
@@ -282,6 +283,20 @@ class Price(models.Model):
 
     def __str__(self):
         return f"{self.property.title} - {self.name} - {self.start_date} to {self.end_date}"
+
+    def clean(self):
+        super().clean()
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValidationError({'end_date': 'End date must be on or after the start date.'})
+        if self.property_id and self.start_date and self.end_date:
+            overlap = Price.objects.filter(
+                property_id=self.property_id,
+                start_date__lte=self.end_date,
+                end_date__gte=self.start_date,
+            ).exclude(pk=self.pk).first()
+            if overlap:
+                message = f"Overlaps with '{overlap.name}' ({overlap.start_date} to {overlap.end_date})."
+                raise ValidationError({'start_date': message, 'end_date': message})
 
 
 class PropertySpec(models.Model):
