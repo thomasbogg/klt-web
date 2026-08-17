@@ -78,7 +78,15 @@
         </div>
 
         {% else %}
-        <p class="search-prompt">Choose your dates and guests above to see what's available.</p>
+        <div class="search-empty-state">
+            <img src="{% static 'index/images/top/1.jpg' %}" alt="Aerial view of the Algarve coastline" class="search-empty-image">
+            <div class="search-empty-overlay"></div>
+            <div class="search-empty-content">
+                <h2>Ready when you are</h2>
+                <p class="search-prompt">Choose your dates and guests above to see what's available.</p>
+                <a class="search-empty-conditions" href="{% url 'bookings:conditions' %}">Read our Booking Conditions &rarr;</a>
+            </div>
+        </div>
         {% endif %}
     </div>
 
