@@ -1,6 +1,18 @@
+from django import forms
 from django.contrib import admin
 from django.template.response import TemplateResponse
 from django.urls import reverse
+
+EU_DATE_FORMAT = '%d-%m-%Y'
+
+NARROW_FIELD_WIDTHS = {
+    'start_date': '7em',
+    'end_date': '7em',
+    'rate': '5.5em',
+    'weekly_discount_percent': '4.5em',
+    'monthly_discount_percent': '4.5em',
+    'last_minute_discount_percent': '4.5em',
+}
 
 # Register your models here.
 from .models import (
@@ -69,6 +81,15 @@ class PriceAdmin(admin.ModelAdmin):
         'last_minute_discount_percent', 'last_minute_discount_days',
     )
     list_filter = ('property',)
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
+        if db_field.name in ('start_date', 'end_date'):
+            formfield.widget = forms.DateInput(format=EU_DATE_FORMAT, attrs={'placeholder': 'DD-MM-YYYY'})
+            formfield.input_formats = [EU_DATE_FORMAT]
+        if db_field.name in NARROW_FIELD_WIDTHS:
+            formfield.widget.attrs['style'] = f'width: {NARROW_FIELD_WIDTHS[db_field.name]}'
+        return formfield
 
     def changelist_view(self, request, extra_context=None):
         if 'property__id__exact' not in request.GET:
