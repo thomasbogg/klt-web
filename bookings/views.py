@@ -3,7 +3,7 @@ from django.shortcuts import render
 from django.views import View
 
 from bookings.forms import BookingLookupForm
-from bookings.models import Booking
+from bookings.models import Booking, BookingCondition
 from bookings.utils import booking_confirmation_context
 
 
@@ -17,6 +17,14 @@ class BookingConfirmationView(View):
         if booking is None:
             raise Http404("No booking found for this reference.")
         return render(request, self.template_name, booking_confirmation_context(booking))
+
+
+class BookingConditionsView(View):
+    """Public summary of the terms a guest should understand before reserving."""
+    template_name = 'bookings/conditions.html'
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name, {'conditions': BookingCondition.objects.all()})
 
 
 class ManageBookingView(View):

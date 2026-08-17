@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import reverse
 from django.shortcuts import redirect
 
-from .models import Booking, BookingSettings, Charge
+from .models import Booking, BookingCondition, BookingSettings, Charge
 
 
 @admin.register(BookingSettings)
@@ -31,3 +31,11 @@ class BookingAdmin(admin.ModelAdmin):
     list_display = ('reference', 'property', 'guest', 'arrival_date', 'departure_date', 'enquiry_status', 'enquiry_source')
     list_filter = ('enquiry_status', 'enquiry_source')
     search_fields = ('reference', 'guest__first_name', 'guest__last_name', 'guest__email')
+
+
+@admin.register(BookingCondition)
+class BookingConditionAdmin(admin.ModelAdmin):
+    list_display = ('order', 'text')
+    list_display_links = ('text',)
+    list_editable = ('order',)
+    ordering = ('order',)

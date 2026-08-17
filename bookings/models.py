@@ -143,6 +143,21 @@ class Booking(models.Model):
         super().save(*args, **kwargs)
 
 
+class BookingCondition(models.Model):
+    """A single bullet point shown on the public Booking Conditions page. Order is admin-editable."""
+    text = models.TextField()
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = 'booking_conditions'
+        verbose_name = 'Booking Condition'
+        verbose_name_plural = 'Booking Conditions'
+        ordering = ('order',)
+
+    def __str__(self):
+        return self.text[:80]
+
+
 class Arrival(models.Model):
     """Booking arrival information."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='arrival')

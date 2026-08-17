@@ -1,0 +1,31 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Booking Conditions | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="conditions-page">
+        <h1>Booking Conditions</h1>
+        <p class="conditions-intro">Please understand the following before making a reservation.</p>
+        <ul class="conditions-list">
+            {% for condition in conditions %}
+            <li>{{ condition.text }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>
