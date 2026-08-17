@@ -112,6 +112,7 @@
 
             <button type="submit" class="reserve-form-submit">Confirm Reservation</button>
         </form>
+        <a class="reserve-form-cancel" href="{% url 'availability:search' %}?start={{ start_query|urlencode }}&end={{ end_query|urlencode }}&guests={{ guests_query|urlencode }}">Return to Search</a>
         {% endif %}
         {% endif %}
     </div>

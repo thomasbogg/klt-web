@@ -107,6 +107,9 @@ class ReserveView(generic.DetailView):
         context['start_date'] = start_date
         context['end_date'] = end_date
         context['guests'] = guests
+        context['start_query'] = params.get('start', '')
+        context['end_query'] = params.get('end', '')
+        context['guests_query'] = params.get('guests', '')
 
         if not start_date or not end_date:
             context['is_available'] = False
