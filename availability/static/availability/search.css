@@ -293,3 +293,11 @@
     font-size: 1.1em;
     padding: 60px 20px;
 }
+
+.search-prompt {
+    width: 100%;
+    text-align: center;
+    color: rgb(100, 100, 100);
+    font-size: 1.1em;
+    padding: 60px 20px;
+}

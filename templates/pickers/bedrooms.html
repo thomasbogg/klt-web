@@ -1,8 +1,10 @@
-<div class="container picker visible bedrooms">
-    <select name="{{ name }}" id="{{ name }}">
-        <option value="" disabled selected>Bedrooms</option>
-        {% for bedroom in bedrooms %}
-            <option value="{{ bedroom }}">{{ bedroom }}</option>
-        {% endfor %}
-    </select>
+<div class="container picker visible bedrooms {{ name }}">
+    <input type="text" class="readonly" name="{{ name }}" id="{{ name }}" autocomplete="off" readonly>
+    <div class="container picker bedrooms {{ name }} hidden" hidden>
+        <div class="options">
+            {% for bedroom in bedrooms %}
+                <button type="button" class="option">{{ bedroom }} Bedroom{{ bedroom|pluralize }}</button>
+            {% endfor %}
+        </div>
+    </div>
 </div>

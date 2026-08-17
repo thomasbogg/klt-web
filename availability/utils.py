@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from bookings.models import Booking
 from env_settings import PROVISIONAL_BOOKING_STATUSES, VALID_BOOKING_STATUSES
-from properties.models import Location, Property
+from properties.models import Location, Property, PropertySpec
 
 
 def date_string_to_date(date_string):
@@ -34,9 +34,7 @@ def full_toolbar_context(start_date=None, end_date=None, guests=None):
         'toolbar_location_picker_name': 'location',
         'toolbar_location_picker_list': Location.objects.order_by('title'),
         'toolbar_bedrooms_picker_name': 'bedrooms',
-        'toolbar_bedrooms_picker_groups': [
-            ('bedrooms', '1', '1', '3')
-        ],
+        'toolbar_bedrooms_picker_list': PropertySpec.objects.order_by('bedrooms').values_list('bedrooms', flat=True).distinct(),
     }
 
 

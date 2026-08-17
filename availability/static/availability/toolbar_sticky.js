@@ -1,17 +1,6 @@
 import { StartDatepicker, EndDatepicker, GuestsGrouppicker, submissionValidation, switchStartToEndPicker, switchEndToGuestsPicker } from './toolbar.js';
-import { Grouppicker } from '../../../static/pickers/groups.js';
 import { Locationpicker } from '../../../static/pickers/locations.js';
-
-class BedroomsGrouppicker extends Grouppicker{
-    constructor(endDatesPickerElement){
-        super('bedrooms');
-        this.endDatesPickerElement = endDatesPickerElement;
-    }
-    openClosePickerContainer(e){
-        if (this.endDatesPickerElement.contains(e.target)) return;
-        super.openClosePickerContainer(e);
-    }
-}
+import { Bedroomspicker } from '../../../static/pickers/bedrooms.js';
 
 document.addEventListener('DOMContentLoaded', function() {
     const startPicker = new StartDatepicker();
@@ -21,7 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // the location/bedrooms pickers are omitted from the toolbar when it's
     // pre-filled from a search, so only wire them up if present
     const bedroomsEl = document.querySelector('.container.picker.visible.bedrooms');
-    const bedroomsPicker = bedroomsEl ? new BedroomsGrouppicker(endPicker.dates) : null;
+    const bedroomsPicker = bedroomsEl ? new Bedroomspicker('bedrooms') : null;
     const locationEl = document.querySelector('.container.picker.visible.location');
     const locationPicker = locationEl ? new Locationpicker('location') : null;
 

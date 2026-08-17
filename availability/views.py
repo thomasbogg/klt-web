@@ -29,20 +29,24 @@ class SearchView(View):
                 context['guests_query'] = value
         start_date = context.get('start_date')
         end_date = context.get('end_date')
-        context.update(full_toolbar_context(start_date, end_date, context.get('guests')))
-        available_properties = list(self.get_available_properties(start_date, end_date, context['guests']))
-        booking_settings = BookingSettings.load()
-        for property in available_properties:
-            rental_total = get_stay_total_price(
-                property, start_date, end_date, context['guests'],
-                monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
-            )
-            property.stay_total_price = (
-                booking_settings.compute_costs(rental_total, arrival_date=start_date)['subtotal']
-                if rental_total is not None else None
-            )
-        context['available_properties'] = available_properties
-        context['nights'] = (end_date - start_date).days if start_date and end_date else None
+        guests = context.get('guests', {})
+        context.update(full_toolbar_context(start_date, end_date, guests))
+        context['guests'] = guests
+        context['has_search'] = bool(start_date and end_date)
+        if context['has_search']:
+            available_properties = list(self.get_available_properties(start_date, end_date, guests))
+            booking_settings = BookingSettings.load()
+            for property in available_properties:
+                rental_total = get_stay_total_price(
+                    property, start_date, end_date, guests,
+                    monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
+                )
+                property.stay_total_price = (
+                    booking_settings.compute_costs(rental_total, arrival_date=start_date)['subtotal']
+                    if rental_total is not None else None
+                )
+            context['available_properties'] = available_properties
+            context['nights'] = (end_date - start_date).days
         return render(request, self.template_name, context)
 
     def get_available_properties(self, start_date, end_date, guests):
