@@ -1,0 +1,53 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manage Your Booking | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="confirmation-page">
+        <h1>Manage Your Booking</h1>
+
+        {% if booking %}
+        {% include 'bookings/_confirmation_details.html' %}
+
+        {% else %}
+        <p class="manage-message">Enter your booking reference and the email you booked with.</p>
+
+        {% if not_found %}
+        <div class="reserve-form-errors">
+            <p>No matching booking found. Double-check your reference and email.</p>
+        </div>
+        {% endif %}
+
+        <form class="manage-form" method="post">
+            {% csrf_token %}
+            <div class="reserve-form-row">
+                <label for="{{ form.reference.id_for_label }}">Booking reference</label>
+                {{ form.reference }}
+                {% for error in form.reference.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
+            <div class="reserve-form-row">
+                <label for="{{ form.email.id_for_label }}">Email</label>
+                {{ form.email }}
+                {% for error in form.email.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
+            <button type="submit" class="reserve-form-submit">Find My Booking</button>
+        </form>
+        {% endif %}
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

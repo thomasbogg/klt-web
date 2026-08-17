@@ -17,12 +17,14 @@
 
     <div class="reserve-page">
         <h1>{{ property }}</h1>
-        <p class="reserve-message">
-            Online booking is coming soon. In the meantime, get in touch with us
-            and we'll take care of the rest.
-        </p>
 
-        {% if start_date and end_date %}
+        {% if not start_date or not end_date %}
+        <p class="reserve-message">
+            Select your dates from the property page to start a reservation.
+        </p>
+        <a class="reserve-back-link" href="{% url 'properties:property/page' location=location.slug title=property.short_title|slugify %}">&larr; Back to {{ property }}</a>
+
+        {% else %}
         <div class="reserve-summary">
             <div class="reserve-chip">
                 <span class="reserve-chip-label">Check-in</span>
@@ -40,9 +42,78 @@
                 </span>
             </div>
         </div>
-        {% endif %}
 
+        {% if not is_available %}
+        <p class="reserve-message reserve-unavailable">
+            Sorry, {{ property }} is no longer available for these dates. Please try a different search.
+        </p>
         <a class="reserve-back-link" href="{% url 'properties:property/page' location=location.slug title=property.short_title|slugify %}">&larr; Back to {{ property }}</a>
+
+        {% else %}
+        <div class="reserve-breakdown">
+            <div class="reserve-breakdown-row">
+                <span>Basic rental ({{ nights }} night{{ nights|pluralize }})</span>
+                <span>&euro;{{ costs.basic_rental|floatformat:2 }}</span>
+            </div>
+            <div class="reserve-breakdown-row">
+                <span>Admin fee</span>
+                <span>&euro;{{ costs.admin_fee|floatformat:2 }}</span>
+            </div>
+            <div class="reserve-breakdown-row reserve-breakdown-total">
+                <span>Total</span>
+                <span>&euro;{{ costs.subtotal|floatformat:2 }}</span>
+            </div>
+            <div class="reserve-breakdown-row">
+                <span>Due now</span>
+                <span>&euro;{{ costs.due_at_booking|floatformat:2 }}</span>
+            </div>
+            <div class="reserve-breakdown-row">
+                <span>Due by {{ costs.balance_due_date|date:"d M Y" }}</span>
+                <span>&euro;{{ costs.due_at_balance|floatformat:2 }}</span>
+            </div>
+            <div class="reserve-breakdown-row reserve-breakdown-note">
+                <span>Security deposit (cash at check-in)</span>
+                <span>&euro;{{ costs.security_deposit|floatformat:2 }}</span>
+            </div>
+        </div>
+
+        <form class="reserve-form" method="post">
+            {% csrf_token %}
+            {% if form.non_field_errors %}
+            <div class="reserve-form-errors">
+                {% for error in form.non_field_errors %}
+                <p>{{ error }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {{ form.start }}
+            {{ form.end }}
+            {{ form.guests }}
+
+            <div class="reserve-form-row">
+                <label for="{{ form.first_name.id_for_label }}">First name</label>
+                {{ form.first_name }}
+            </div>
+            <div class="reserve-form-row">
+                <label for="{{ form.last_name.id_for_label }}">Last name</label>
+                {{ form.last_name }}
+                {% for error in form.last_name.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
+            <div class="reserve-form-row">
+                <label for="{{ form.email.id_for_label }}">Email</label>
+                {{ form.email }}
+                {% for error in form.email.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
+            <div class="reserve-form-row">
+                <label for="{{ form.phone.id_for_label }}">Phone</label>
+                {{ form.phone }}
+            </div>
+
+            <button type="submit" class="reserve-form-submit">Confirm Reservation</button>
+        </form>
+        {% endif %}
+        {% endif %}
     </div>
 
     {% include 'footer/footer.html' %}

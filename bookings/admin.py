@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import reverse
 from django.shortcuts import redirect
 
-from .models import BookingSettings
+from .models import Booking, BookingSettings, Charge
 
 
 @admin.register(BookingSettings)
@@ -18,3 +18,16 @@ class BookingSettingsAdmin(admin.ModelAdmin):
     def changelist_view(self, request, extra_context=None):
         settings = BookingSettings.load()
         return redirect(reverse('admin:bookings_bookingsettings_change', args=[settings.pk]))
+
+
+class ChargeInline(admin.StackedInline):
+    model = Charge
+    max_num = 1
+
+
+@admin.register(Booking)
+class BookingAdmin(admin.ModelAdmin):
+    inlines = [ChargeInline]
+    list_display = ('reference', 'property', 'guest', 'arrival_date', 'departure_date', 'enquiry_status', 'enquiry_source')
+    list_filter = ('enquiry_status', 'enquiry_source')
+    search_fields = ('reference', 'guest__first_name', 'guest__last_name', 'guest__email')

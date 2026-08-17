@@ -1,13 +1,17 @@
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
+from django.core.exceptions import ValidationError
 from django.core.validators import EmailValidator, MinValueValidator, MaxValueValidator
 from django.db import models
 
+from bookings.utils import generate_reference_candidate
+from env_settings import VALID_BOOKING_STATUSES, PROVISIONAL_BOOKING_STATUSES
 from properties.models import Property
 from guests.models import Guest
 
 TWO_PLACES = Decimal('0.01')
+REFERENCE_GENERATION_ATTEMPTS = 5
 
 
 class BookingSettings(models.Model):
@@ -83,12 +87,13 @@ class Booking(models.Model):
     """Main booking model."""
     property = models.ForeignKey(Property, on_delete=models.PROTECT)
     guest = models.ForeignKey(Guest, on_delete=models.PROTECT)
-    
+
     # Booking identifiers
+    reference = models.CharField(max_length=20, unique=True, blank=True, null=True, db_index=True)
     pims_id = models.IntegerField(blank=True, null=True)
     platform_id = models.CharField(max_length=200, blank=True, null=True)
     ical_uid = models.URLField(blank=True, null=True)
-    
+
     # Booking details
     arrival_date = models.DateField()
     departure_date = models.DateField()
@@ -96,12 +101,12 @@ class Booking(models.Model):
     enquiry_status = models.CharField(max_length=100)
     enquiry_date = models.DateField(blank=True, null=True)
     enquiry_source = models.CharField(max_length=100)
-    
+
     # Guest numbers
     adults = models.IntegerField()
     children = models.IntegerField()
     babies = models.IntegerField()
-    
+
     # Metadata
     last_updated = models.DateTimeField()
 
@@ -111,7 +116,31 @@ class Booking(models.Model):
         verbose_name_plural = 'Bookings'
 
     def __str__(self):
-        return f"{self.property.short_name} - {self.guest.last_name} ({self.id})"
+        return f"{self.property.short_title} - {self.guest.last_name} ({self.id})"
+
+    def clean(self):
+        super().clean()
+        if self.property_id and self.arrival_date and self.departure_date:
+            overlap = Booking.objects.filter(
+                property_id=self.property_id,
+                arrival_date__lt=self.departure_date,
+                departure_date__gt=self.arrival_date,
+                enquiry_status__in=VALID_BOOKING_STATUSES + PROVISIONAL_BOOKING_STATUSES,
+            ).exclude(pk=self.pk).first()
+            if overlap:
+                message = f"These dates overlap an existing booking ({overlap.arrival_date} to {overlap.departure_date})."
+                raise ValidationError({'arrival_date': message, 'departure_date': message})
+
+    def save(self, *args, **kwargs):
+        if not self.pk and not self.reference:
+            for _ in range(REFERENCE_GENERATION_ATTEMPTS):
+                candidate = generate_reference_candidate()
+                if not Booking.objects.filter(reference=candidate).exists():
+                    self.reference = candidate
+                    break
+            else:
+                raise RuntimeError("Could not generate a unique booking reference.")
+        super().save(*args, **kwargs)
 
 
 class Arrival(models.Model):
@@ -169,6 +198,12 @@ class Charge(models.Model):
     platform_fee = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     extra_nights = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     manual_charges = models.BooleanField(blank=True, null=True)
+
+    # Locked-in payment split at booking time - see BookingSettings.compute_costs(). Kept fixed
+    # even if BookingSettings' percentages/timing change later, so past bookings don't retroactively change.
+    due_at_booking = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    due_at_balance = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    balance_due_date = models.DateField(blank=True, null=True)
 
     class Meta:
         db_table = 'booking_charges'
