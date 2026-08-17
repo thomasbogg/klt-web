@@ -29,6 +29,7 @@ class SearchView(View):
                 context['guests_query'] = value
         start_date = context.get('start_date')
         end_date = context.get('end_date')
+        context.update(full_toolbar_context(start_date, end_date, context.get('guests')))
         available_properties = list(self.get_available_properties(start_date, end_date, context['guests']))
         for property in available_properties:
             property.stay_total_price = get_stay_total_price(property, start_date, end_date)
