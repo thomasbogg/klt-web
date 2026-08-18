@@ -50,7 +50,7 @@
         {% else %}
         <div class="pay-amount">
             <span class="pay-amount-label">Amount due now</span>
-            <span class="pay-amount-value">&euro;{{ charge.due_at_booking|floatformat:2 }}</span>
+            <span class="pay-amount-value">{% if pay_currency == 'GBP' %}&pound;{% else %}&euro;{% endif %}{{ pay_amount|floatformat:2 }}</span>
         </div>
 
         <p class="pay-countdown" id="pay-countdown" data-expires-at="{{ booking.hold_expires_at|date:'c' }}" data-status-url="{% url 'bookings:pay_status' reference=booking.reference %}">
@@ -64,23 +64,18 @@
 
         {% elif payment.provider == 'revolut' %}
         <a class="reserve-form-submit pay-button" href="{{ payment.revolut_checkout_url }}">Pay now</a>
-        <p class="pay-instructions">You'll be taken to Revolut's secure checkout, where you can pay by card or bank transfer.</p>
+        <p class="pay-instructions">Opens Revolut's secure checkout, where you can pay by card or bank transfer in {{ pay_currency }}.</p>
 
         {% else %}
         <div class="pay-wise-panel">
-            <p class="pay-instructions">
-                Pay by bank transfer using our Wise business account. Enter the exact amount and reference below when prompted.
+            <p class="pay-instructions pay-instructions-lead">
+                Our Wise payment page lets you enter these details yourself. Before clicking the button below (it opens in a new tab), note:
             </p>
-            <div class="confirmation-breakdown">
-                <div class="confirmation-breakdown-row">
-                    <span>Amount</span>
-                    <span>&euro;{{ charge.due_at_booking|floatformat:2 }}</span>
-                </div>
-                <div class="confirmation-breakdown-row">
-                    <span>Reference</span>
-                    <span>{{ booking.reference }}</span>
-                </div>
-            </div>
+            <ol class="pay-steps">
+                <li>Enter the amount: <strong>{% if pay_currency == 'GBP' %}&pound;{% else %}&euro;{% endif %}{{ pay_amount|floatformat:2 }}</strong></li>
+                <li>Select <strong>{{ pay_currency }}</strong> as the currency</li>
+                <li>Enter the reference: <strong>{{ booking.reference }}</strong></li>
+            </ol>
             <a class="reserve-form-submit pay-button" href="{{ wise_payment_link }}" target="_blank" rel="noopener">Pay via Wise</a>
         </div>
         {% endif %}

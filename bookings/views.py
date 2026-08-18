@@ -46,25 +46,28 @@ class BookingPaymentView(View):
 
         payment = booking.payment
         charge = booking.charges
+        pay_amount, pay_currency = charge.due_at_booking_in_charge_currency()
         context = {
             'booking': booking,
             'charge': charge,
             'payment': payment,
+            'pay_amount': pay_amount,
+            'pay_currency': pay_currency,
             'hold_expired': booking.hold_expires_at is not None and booking.hold_expires_at <= timezone.now(),
         }
 
         if not context['hold_expired'] and payment.provider == 'revolut' and not payment.revolut_checkout_url:
-            self._create_revolut_order(booking, payment, charge)
+            self._create_revolut_order(booking, payment, pay_amount, pay_currency)
 
         context['payment_error'] = payment.provider == 'revolut' and not payment.revolut_checkout_url and not context['hold_expired']
         context['wise_payment_link'] = env_settings.WISE_BASE_PAYMENT_LINK
 
         return render(request, self.template_name, context)
 
-    def _create_revolut_order(self, booking, payment, charge):
+    def _create_revolut_order(self, booking, payment, pay_amount, pay_currency):
         order = Revolut(secretKey=env_settings.REVOLUT_API_SECRET_KEY).payment
-        order.amount = int(charge.due_at_booking * 100)  # Revolut wants minor units (cents), not euros
-        order.currency = 'EUR'  # Charge amounts are always locked in EUR regardless of quote currency
+        order.amount = int(pay_amount * 100)  # Revolut wants minor units (cents/pence), not major units
+        order.currency = pay_currency  # whatever currency the guest was quoted at booking time
         order.description = f"Deposit for booking {booking.reference}"
         order.customerEmail = booking.guest.email
         order.customerName = f"{booking.guest.first_name} {booking.guest.last_name}".strip()

@@ -1,9 +1,10 @@
 from datetime import date, timedelta
+from decimal import Decimal
 
 from django.test import TestCase
 from django.utils import timezone
 
-from bookings.models import Booking
+from bookings.models import Booking, Charge
 from bookings.utils import determine_payment_provider, expire_stale_holds
 from guests.models import Guest
 from properties.models import Property
@@ -107,3 +108,17 @@ class ExpireStaleHoldsTests(TestCase):
         expire_stale_holds()
         booking.refresh_from_db()
         self.assertEqual(booking.enquiry_status, 'Booking confirmed')
+
+
+class ChargeDueAtBookingInChargeCurrencyTests(TestCase):
+    def test_eur_charge_returns_eur_amount_unconverted(self):
+        charge = Charge(currency='EUR', due_at_booking=Decimal('131.88'), gbp_conversion_rate=Decimal('0.8600'))
+        amount, currency = charge.due_at_booking_in_charge_currency()
+        self.assertEqual(amount, Decimal('131.88'))
+        self.assertEqual(currency, 'EUR')
+
+    def test_gbp_charge_returns_converted_amount_at_frozen_rate(self):
+        charge = Charge(currency='GBP', due_at_booking=Decimal('131.88'), gbp_conversion_rate=Decimal('0.8600'))
+        amount, currency = charge.due_at_booking_in_charge_currency()
+        self.assertEqual(amount, Decimal('113.42'))  # 131.88 * 0.8600, rounded
+        self.assertEqual(currency, 'GBP')

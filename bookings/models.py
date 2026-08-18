@@ -295,6 +295,15 @@ class Charge(models.Model):
             return None
         return (Decimal(amount) * self.gbp_conversion_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
 
+    def due_at_booking_in_charge_currency(self):
+        """(amount, currency) for the deposit in whatever currency the guest was quoted at booking
+        time - GBP via the frozen rate, or EUR (the underlying base currency) otherwise. This is
+        what the guest actually pays via Revolut/Wise, not just what's shown on a display toggle -
+        see bookings/views.py::BookingPaymentView."""
+        if self.currency == 'GBP':
+            return self.to_gbp(self.due_at_booking), 'GBP'
+        return self.due_at_booking, 'EUR'
+
     def costs_in_gbp(self):
         """GBP-converted view of the locked EUR charge amounts, using the rate frozen at booking time."""
         if self.gbp_conversion_rate is None:
