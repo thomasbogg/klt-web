@@ -86,6 +86,21 @@ class ReserveView(generic.DetailView):
     def is_still_available(self, property, start_date, end_date):
         return not Booking.objects.overlapping(property, start_date, end_date).exists()
 
+    def _own_pending_booking(self, start_date, end_date):
+        """If these exact dates are unavailable only because of a hold this same browser session
+        started (not paid yet, not someone else's booking), surface it so reserve.html can offer
+        'continue payment' / 'cancel and start over' instead of a dead-end 'unavailable' message."""
+        reference = self.request.session.get('pending_booking_reference')
+        if not reference:
+            return None
+        return Booking.objects.filter(
+            reference=reference,
+            property=self.object,
+            arrival_date=start_date,
+            departure_date=end_date,
+            enquiry_status='Awaiting payment',
+        ).first()
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['location'] = self.object.location
@@ -111,6 +126,9 @@ class ReserveView(generic.DetailView):
 
         context['nights'] = (end_date - start_date).days
         context['is_available'] = self.is_still_available(self.object, start_date, end_date)
+
+        if not context['is_available']:
+            context['own_pending_booking'] = self._own_pending_booking(start_date, end_date)
 
         if context['is_available']:
             booking_settings = BookingSettings.load()
@@ -149,6 +167,7 @@ class ReserveView(generic.DetailView):
                     form.cleaned_data['guests'],
                     currency=form.cleaned_data['currency'],
                 )
+                request.session['pending_booking_reference'] = booking.reference
                 return redirect('bookings:pay', reference=booking.reference)
             except ValidationError as error:
                 messages = dict.fromkeys(error.messages) if hasattr(error, 'messages') else [str(error)]

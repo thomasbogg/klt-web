@@ -1,8 +1,11 @@
 import secrets
 from datetime import date, timedelta
+from urllib.parse import urlencode
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.template.defaultfilters import slugify
+from django.urls import reverse
 from django.utils import timezone
 
 REFERENCE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTVWXYZ'  # no 0/O/1/I/L/U - avoids transcription errors
@@ -122,6 +125,42 @@ def expire_stale_holds():
         enquiry_status='Awaiting payment',
         hold_expires_at__lt=timezone.now(),
     ).update(enquiry_status='Hold expired')
+
+
+def cancel_booking_hold(booking):
+    """Guest-initiated cancellation of their own not-yet-paid hold - e.g. they picked the wrong
+    currency and want to redo the reservation, but their own active hold blocks a second attempt
+    at the same dates (see Booking.clean()'s overlap guard). Only acts on a booking still genuinely
+    awaiting payment - a no-op (returns False) if it's already confirmed/failed/expired/paid, so
+    this can't be used to cancel a real booking by guessing at a reference. Deliberately doesn't
+    touch any Revolut order that may already exist - cancelling it via the API would trigger an
+    ORDER_CANCELLED webhook, which klt-hooks treats as a genuine payment failure; an abandoned,
+    never-completed order is harmless to just leave alone.
+    """
+    if booking.enquiry_status != 'Awaiting payment':
+        return False
+    booking.enquiry_status = 'Cancelled by guest'
+    booking.save(update_fields=['enquiry_status'])
+    return True
+
+
+def reservation_retry_url(booking):
+    """Rebuilds the reserve-page URL (with start/end/guests querystring) for a booking's property
+    and dates, so a guest can be sent back to redo a reservation after cancel_booking_hold() -
+    mirrors the querystring format properties.views.ReserveView/availability.utils expect."""
+    property = booking.property
+    location = property.location
+    base_url = reverse('properties:property/reserve', kwargs={
+        'location': location.slug,
+        'title': slugify(property.short_title),
+    })
+    guests = f"{booking.adults} adults,{booking.children} children,{booking.babies} infants"
+    query = urlencode({
+        'start': booking.arrival_date.strftime('%d/%m/%Y'),
+        'end': booking.departure_date.strftime('%d/%m/%Y'),
+        'guests': guests,
+    })
+    return f"{base_url}?{query}"
 
 
 def booking_confirmation_context(booking):

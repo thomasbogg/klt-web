@@ -45,10 +45,24 @@
         </div>
 
         {% if not is_available %}
+        {% if own_pending_booking %}
+        <p class="reserve-message">
+            You already started a reservation for these dates (reference <strong>{{ own_pending_booking.reference }}</strong>) that's still awaiting payment.
+        </p>
+        <div class="reserve-pending-actions">
+            <a class="reserve-form-submit" href="{% url 'bookings:pay' reference=own_pending_booking.reference %}">Continue to payment</a>
+            <form method="post" action="{% url 'bookings:pay_cancel' reference=own_pending_booking.reference %}">
+                {% csrf_token %}
+                <button type="submit" class="reserve-form-cancel">Cancel and start over</button>
+            </form>
+        </div>
+
+        {% else %}
         <p class="reserve-message reserve-unavailable">
             Sorry, {{ property }} is no longer available for these dates. Please try a different search.
         </p>
         <a class="reserve-back-link" href="{% url 'properties:property/page' location=location.slug title=property.short_title|slugify %}">&larr; Back to {{ property }}</a>
+        {% endif %}
 
         {% else %}
         <div class="currency-toggle">

@@ -1,3 +1,105 @@
+from datetime import date, timedelta
+
 from django.test import TestCase
 
-# Create your tests here.
+from bookings.models import Booking
+from properties.models import Location, Price, Property, PropertySpec
+
+
+class ReserveOwnPendingBookingTests(TestCase):
+    """Covers the 'wrong currency, clicked back' scenario: a guest's own not-yet-paid hold
+    shouldn't be a dead end - see bookings/utils.py::cancel_booking_hold()/reservation_retry_url()."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Test Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.property = Property.objects.create(
+            title=f'{self.location} - RETRYTEST', short_title='RETRYTEST',
+            location=self.location, we_book=True,
+        )
+        PropertySpec.objects.create(property=self.property, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        self.start = date.today() + timedelta(days=330)
+        self.end = self.start + timedelta(days=5)
+        Price.objects.create(
+            property=self.property, name='Test Rate',
+            start_date=date.today(), end_date=self.end + timedelta(days=30), rate=100,
+        )
+        self.reserve_url = f'/properties/{self.location.slug}/retrytest/reserve/'
+        self.query = {
+            'start': self.start.strftime('%d/%m/%Y'),
+            'end': self.end.strftime('%d/%m/%Y'),
+            'guests': '2 adults,0 children,0 infants',
+        }
+
+    def submit_reservation(self, currency='EUR'):
+        return self.client.post(self.reserve_url, {
+            **self.query, 'currency': currency,
+            'first_name': 'Test', 'last_name': 'Guest', 'email': 'retrytest@example.com', 'phone': '',
+        })
+
+    def test_full_wrong_currency_recovery_flow(self):
+        # Fresh reserve page - available, form present
+        response = self.client.get(self.reserve_url, self.query)
+        self.assertContains(response, 'Continue to Payment')
+
+        # Submit with the "wrong" currency by mistake
+        response = self.submit_reservation(currency='EUR')
+        self.assertEqual(response.status_code, 302)
+        reference = response.url.rstrip('/').split('/')[-2]
+        booking = Booking.objects.get(reference=reference)
+        self.assertEqual(booking.enquiry_status, 'Awaiting payment')
+        self.assertEqual(self.client.session.get('pending_booking_reference'), reference)
+
+        # Simulate clicking browser back - reserve page, same session
+        response = self.client.get(self.reserve_url, self.query)
+        content = response.content.decode()
+        self.assertIn('already started a reservation', content)
+        self.assertIn(reference, content)
+        self.assertNotIn('is no longer available', content)
+
+        # A second submission attempt should fail - own hold still blocks it
+        second_attempt = self.submit_reservation(currency='GBP')
+        self.assertEqual(second_attempt.status_code, 200)  # re-rendered with a form error, not redirected
+
+        # Cancel and start over
+        cancel_response = self.client.post(f'/bookings/{reference}/pay/cancel/')
+        self.assertEqual(cancel_response.status_code, 302)
+        self.assertIn(self.reserve_url, cancel_response.url)
+        booking.refresh_from_db()
+        self.assertEqual(booking.enquiry_status, 'Cancelled by guest')
+
+        # Now the reserve page should be genuinely available again, and a corrected resubmission works
+        response = self.client.get(self.reserve_url, self.query)
+        self.assertContains(response, 'Continue to Payment')
+
+        retry_response = self.submit_reservation(currency='GBP')
+        self.assertEqual(retry_response.status_code, 302)
+        new_reference = retry_response.url.rstrip('/').split('/')[-2]
+        self.assertNotEqual(new_reference, reference)
+        new_booking = Booking.objects.get(reference=new_reference)
+        self.assertEqual(new_booking.charges.currency, 'GBP')
+
+    def test_cancel_does_not_touch_a_confirmed_booking(self):
+        response = self.submit_reservation()
+        reference = response.url.rstrip('/').split('/')[-2]
+        booking = Booking.objects.get(reference=reference)
+        booking.enquiry_status = 'Booking confirmed'
+        booking.save()
+
+        self.client.post(f'/bookings/{reference}/pay/cancel/')
+        booking.refresh_from_db()
+        self.assertEqual(booking.enquiry_status, 'Booking confirmed')
+
+    def test_cancel_requires_matching_session_not_just_a_known_reference(self):
+        from django.test import Client
+
+        response = self.submit_reservation()
+        reference = response.url.rstrip('/').split('/')[-2]
+        booking = Booking.objects.get(reference=reference)
+
+        stranger = Client()  # a different browser session, never created this booking
+        stranger.post(f'/bookings/{reference}/pay/cancel/')
+        booking.refresh_from_db()
+        self.assertEqual(booking.enquiry_status, 'Awaiting payment')

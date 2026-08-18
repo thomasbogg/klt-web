@@ -6,7 +6,7 @@ from django.views import View
 import env_settings
 from bookings.forms import BookingLookupForm
 from bookings.models import Booking, BookingCondition
-from bookings.utils import booking_confirmation_context
+from bookings.utils import booking_confirmation_context, cancel_booking_hold, reservation_retry_url
 from libraries.banking.revolut import Revolut
 
 
@@ -79,6 +79,29 @@ class BookingPaymentView(View):
             payment.save()
         # else: order.create() already logged the failure via logerror(); leave payment.revolut_checkout_url
         # unset so payment_error renders and the guest can retry on reload.
+
+
+class BookingPaymentCancelView(View):
+    """Lets a guest back out of their own not-yet-paid hold (e.g. picked the wrong currency) and
+    redoes the reservation, rather than being stuck until the hold times out - see
+    bookings/utils.py::cancel_booking_hold() for why this can't be used against an already-paid
+    or already-failed booking, and why the Revolut order (if any) is deliberately left alone.
+
+    Every other reference-based view here is deliberately read-only (a bearer link, like a
+    checkout confirmation), so this is the one place a bare reference isn't enough - cancelling is
+    a write, and anyone who happened to see someone else's reference could otherwise grief their
+    still-active reservation. Requires it to match this session's own pending_booking_reference,
+    set in ReserveView.post() at creation time.
+    """
+
+    def post(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if request.session.get('pending_booking_reference') == reference:
+            cancel_booking_hold(booking)
+            request.session.pop('pending_booking_reference', None)
+        return redirect(reservation_retry_url(booking))
 
 
 class BookingPaymentStatusView(View):
