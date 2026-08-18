@@ -82,7 +82,7 @@
 
         <form method="post" action="{% url 'bookings:pay_cancel' reference=booking.reference %}" class="pay-cancel-form">
             {% csrf_token %}
-            <button type="submit" class="reserve-back-link pay-cancel-button">Wrong details? Cancel and start over</button>
+            <button type="submit" class="pay-cancel-button">Wrong details? Cancel and start over</button>
         </form>
         {% endif %}
     </div>
