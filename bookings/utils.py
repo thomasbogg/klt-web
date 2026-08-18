@@ -32,6 +32,31 @@ def determine_payment_provider(arrival_date):
     return 'wise' if arrival_date.month in WISE_MONTHS else 'revolut'
 
 
+WEEKEND_WEEKDAYS = {4, 5}  # date.weekday(): Friday=4, Saturday=5
+
+
+def add_business_days(start, business_days):
+    """start + N business days, skipping Saturdays and Sundays entirely. Used for the Wise-path
+    weekend hold extension - see BookingSettings.extend_wise_hold_on_weekends."""
+    current = start
+    added = 0
+    while added < business_days:
+        current += timedelta(days=1)
+        if current.weekday() < 5:  # Monday-Friday
+            added += 1
+    return current
+
+
+def wise_hold_expiry(now, booking_settings):
+    """A Wise-path reservation made on a Friday or Saturday gets held for a number of business
+    days instead of the flat wise_hold_hours window, if enabled - SEPA-style bank transfers
+    typically only clear on business days, so a same-day-only window can expire before a guest's
+    legitimate transfer even lands."""
+    if booking_settings.extend_wise_hold_on_weekends and now.weekday() in WEEKEND_WEEKDAYS:
+        return add_business_days(now, booking_settings.wise_weekend_hold_business_days)
+    return now + timedelta(hours=booking_settings.wise_hold_hours)
+
+
 def create_booking(property, guest_data, start_date, end_date, guests, currency='EUR'):
     """Create the Guest (if new), Booking, and locked-in Charge for a reservation, all-or-nothing.
 
@@ -70,7 +95,7 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
 
         provider = determine_payment_provider(start_date)
         if provider == 'wise':
-            hold_expires_at = timezone.now() + timedelta(hours=booking_settings.wise_hold_hours)
+            hold_expires_at = wise_hold_expiry(timezone.now(), booking_settings)
         else:
             hold_expires_at = timezone.now() + timedelta(minutes=booking_settings.revolut_hold_minutes)
 

@@ -65,6 +65,14 @@ class BookingSettings(models.Model):
         default=12,
         help_text="Hours a Wise-path deposit hold lasts. Flat, since Wise gives no in-progress payment signal to extend on."
     )
+    extend_wise_hold_on_weekends = models.BooleanField(
+        default=True,
+        help_text="If a Wise-path reservation is made on a Friday or Saturday, hold for a number of business days instead of the flat hour window - bank transfers often don't clear over the weekend."
+    )
+    wise_weekend_hold_business_days = models.PositiveIntegerField(
+        default=2,
+        help_text="Business days (Mon-Fri) to hold for when extend_wise_hold_on_weekends applies. Only used for reservations made on a Friday or Saturday."
+    )
 
     # Cost dict keys from compute_costs() that represent a money amount and are shown converted to
     # GBP when a guest toggles the currency display. security_deposit is deliberately excluded: it's
