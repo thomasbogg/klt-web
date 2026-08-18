@@ -210,21 +210,26 @@
 }
 
 .conditions-page {
-    max-width: 700px;
+    max-width: 900px;
     margin: 0 auto;
     padding: 40px 20px var(--primary-margin-bottom);
 }
 
 .conditions-page h1 {
-    margin-bottom: 48px;
+    display: inline-block;
+    font-size: clamp(1.8rem, 5vw + 1rem, 3.2rem);
+    margin-bottom: 64px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid rgba(159, 111, 0, 0.25);
 }
 
 .conditions-intro {
-    text-align: center;
-    max-width: 480px;
-    margin: 0 auto 48px;
+    text-align: left;
+    max-width: 520px;
+    margin: 0 0 20px;
     line-height: 1.7;
-    font-size: 1em;
+    font-family: var(--primary-font);
+    font-size: 1.05em;
     color: rgb(80, 80, 80);
 }
 
@@ -234,8 +239,9 @@
 }
 
 .conditions-list li {
-    line-height: 1.7;
-    font-size: 0.95rem;
+    line-height: 1.8;
+    font-family: var(--primary-font);
+    font-size: 1rem;
     color: rgb(80, 80, 80);
-    margin-bottom: 14px;
+    margin-bottom: 16px;
 }
