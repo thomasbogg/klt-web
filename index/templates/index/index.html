@@ -100,10 +100,10 @@
     <div class="container mosaic simple">
         {% if locations_list %}
         {% for location in locations_list %}
-        <div class="tile">
+        <a class="tile" href="{% url 'properties:location/page' title=location.slug %}">
             <img src="{% static 'index/images/' %}{{ location.slug }}/main/1.jpg" alt="{{ location }} Albufeira Algarve">
             <h2>{{ location }}</h2>
-        </div>
+        </a>
         {% endfor %}
         {% else %}
         <p class="no-locations">No locations available at the moment.</p>
