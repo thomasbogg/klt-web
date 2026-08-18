@@ -3,7 +3,6 @@ from django.views import View, generic
 from properties.models import Property, Location
 from properties.utils import get_stay_total_price
 from bookings.models import Booking, BookingSettings
-from env_settings import VALID_BOOKING_STATUSES, PROVISIONAL_BOOKING_STATUSES
 from availability.utils import date_string_to_date, full_toolbar_context, guests_string_to_dict
 
 # Create your views here.
@@ -62,12 +61,6 @@ class SearchView(View):
         )
 
         for property in properties:
-            overlapping_bookings = Booking.objects.filter(
-                property=property,
-                arrival_date__lt=end_date,
-                departure_date__gt=start_date,
-                enquiry_status__in=VALID_BOOKING_STATUSES + PROVISIONAL_BOOKING_STATUSES
-            )
-            if overlapping_bookings.exists():
+            if Booking.objects.overlapping(property, start_date, end_date).exists():
                 properties = properties.exclude(id=property.id)
         return properties

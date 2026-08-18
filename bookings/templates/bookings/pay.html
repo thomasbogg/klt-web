@@ -1,0 +1,93 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pay for Booking {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="module" src="{% static 'main/currency_toggle.js' %}"></script>
+    <script type="module" src="{% static 'main/pay_countdown.js' %}"></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="confirmation-page">
+        <h1>Pay your deposit</h1>
+
+        <div class="confirmation-reference">
+            <span class="confirmation-reference-label">Booking Reference</span>
+            <span class="confirmation-reference-value">{{ booking.reference }}</span>
+        </div>
+
+        <div class="confirmation-summary">
+            <div class="confirmation-chip">
+                <span class="confirmation-chip-label">Property</span>
+                <span class="confirmation-chip-value">{{ booking.property }}</span>
+            </div>
+            <div class="confirmation-chip">
+                <span class="confirmation-chip-label">Check-in</span>
+                <span class="confirmation-chip-value">{{ booking.arrival_date|date:"D, d M Y" }}</span>
+            </div>
+            <span class="confirmation-chip-arrow">&rarr;</span>
+            <div class="confirmation-chip">
+                <span class="confirmation-chip-label">Check-out</span>
+                <span class="confirmation-chip-value">{{ booking.departure_date|date:"D, d M Y" }}</span>
+            </div>
+        </div>
+
+        {% if hold_expired %}
+        <div class="reserve-form-errors">
+            <p>This reservation hold has expired because no payment was received in time. Your dates have been released back to search.</p>
+        </div>
+        <a class="reserve-back-link" href="{% url 'availability:search' %}">&larr; Start a new search</a>
+
+        {% else %}
+        <div class="pay-amount">
+            <span class="pay-amount-label">Amount due now</span>
+            <span class="pay-amount-value">&euro;{{ charge.due_at_booking|floatformat:2 }}</span>
+        </div>
+
+        <p class="pay-countdown" id="pay-countdown" data-expires-at="{{ booking.hold_expires_at|date:'c' }}" data-status-url="{% url 'bookings:pay_status' reference=booking.reference %}">
+            Reservation held for <span id="pay-countdown-time">--:--</span>
+        </p>
+
+        {% if payment_error %}
+        <div class="reserve-form-errors">
+            <p>We couldn't set up card payment just now. Please reload this page to try again.</p>
+        </div>
+
+        {% elif payment.provider == 'revolut' %}
+        <a class="reserve-form-submit pay-button" href="{{ payment.revolut_checkout_url }}">Pay now</a>
+        <p class="pay-instructions">You'll be taken to Revolut's secure checkout, where you can pay by card or bank transfer.</p>
+
+        {% else %}
+        <div class="pay-wise-panel">
+            <p class="pay-instructions">
+                Pay by bank transfer using our Wise business account. Enter the exact amount and reference below when prompted.
+            </p>
+            <div class="confirmation-breakdown">
+                <div class="confirmation-breakdown-row">
+                    <span>Amount</span>
+                    <span>&euro;{{ charge.due_at_booking|floatformat:2 }}</span>
+                </div>
+                <div class="confirmation-breakdown-row">
+                    <span>Reference</span>
+                    <span>{{ booking.reference }}</span>
+                </div>
+            </div>
+            <a class="reserve-form-submit pay-button" href="{{ wise_payment_link }}" target="_blank" rel="noopener">Pay via Wise</a>
+        </div>
+        {% endif %}
+        {% endif %}
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

@@ -13,7 +13,6 @@ from availability.utils import (
 from bookings.forms import ReservationForm
 from bookings.models import Booking, BookingSettings
 from bookings.utils import create_booking
-from env_settings import VALID_BOOKING_STATUSES, PROVISIONAL_BOOKING_STATUSES
 
 # Create your views here.
 
@@ -85,12 +84,7 @@ class ReserveView(generic.DetailView):
         return get_property_from_slugs(self.kwargs.get('location'), self.kwargs.get('title'))
 
     def is_still_available(self, property, start_date, end_date):
-        return not Booking.objects.filter(
-            property=property,
-            arrival_date__lt=end_date,
-            departure_date__gt=start_date,
-            enquiry_status__in=VALID_BOOKING_STATUSES + PROVISIONAL_BOOKING_STATUSES,
-        ).exists()
+        return not Booking.objects.overlapping(property, start_date, end_date).exists()
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -155,7 +149,7 @@ class ReserveView(generic.DetailView):
                     form.cleaned_data['guests'],
                     currency=form.cleaned_data['currency'],
                 )
-                return redirect('bookings:confirmation', reference=booking.reference)
+                return redirect('bookings:pay', reference=booking.reference)
             except ValidationError as error:
                 messages = dict.fromkeys(error.messages) if hasattr(error, 'messages') else [str(error)]
                 form.add_error(None, '; '.join(messages))

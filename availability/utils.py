@@ -55,11 +55,10 @@ def get_property_calendar(property, months=12, start=None):
         end_year += 1
     range_end = date(end_year, end_month, 1)
 
-    bookings = Booking.objects.filter(
+    bookings = Booking.objects.holding().filter(
         property=property,
         arrival_date__lt=range_end,
         departure_date__gt=range_start,
-        enquiry_status__in=VALID_BOOKING_STATUSES + PROVISIONAL_BOOKING_STATUSES,
     )
     booked_ranges = [
         (booking.arrival_date, booking.departure_date)

@@ -1,10 +1,20 @@
-from django.http import Http404
-from django.shortcuts import render
+from django.http import Http404, JsonResponse
+from django.shortcuts import redirect, render
+from django.utils import timezone
 from django.views import View
 
+import env_settings
 from bookings.forms import BookingLookupForm
 from bookings.models import Booking, BookingCondition
 from bookings.utils import booking_confirmation_context
+from libraries.banking.revolut import Revolut
+
+
+def is_paid(booking):
+    """A booking with no Payment row at all predates this feature or was platform-synced - never
+    part of the deposit-payment flow, so treat it as paid (i.e. don't gate it)."""
+    payment = getattr(booking, 'payment', None)
+    return payment is None or payment.status == 'paid'
 
 
 class BookingConfirmationView(View):
@@ -16,7 +26,72 @@ class BookingConfirmationView(View):
         booking = Booking.objects.filter(reference=reference).first()
         if booking is None:
             raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:pay', reference=reference)
         return render(request, self.template_name, booking_confirmation_context(booking))
+
+
+class BookingPaymentView(View):
+    """Deposit-payment step shown right after a reservation is created. Revolut-path bookings get
+    a hosted checkout link (created lazily here, on first visit); Wise-path bookings get a static
+    pay-page link with instructions, since there's no per-booking API object to create for Wise."""
+    template_name = 'bookings/pay.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if is_paid(booking):
+            return redirect('bookings:confirmation', reference=reference)
+
+        payment = booking.payment
+        charge = booking.charges
+        context = {
+            'booking': booking,
+            'charge': charge,
+            'payment': payment,
+            'hold_expired': booking.hold_expires_at is not None and booking.hold_expires_at <= timezone.now(),
+        }
+
+        if not context['hold_expired'] and payment.provider == 'revolut' and not payment.revolut_checkout_url:
+            self._create_revolut_order(booking, payment, charge)
+
+        context['payment_error'] = payment.provider == 'revolut' and not payment.revolut_checkout_url and not context['hold_expired']
+        context['wise_payment_link'] = env_settings.WISE_BASE_PAYMENT_LINK
+
+        return render(request, self.template_name, context)
+
+    def _create_revolut_order(self, booking, payment, charge):
+        order = Revolut(secretKey=env_settings.REVOLUT_API_SECRET_KEY).payment
+        order.amount = int(charge.due_at_booking * 100)  # Revolut wants minor units (cents), not euros
+        order.currency = 'EUR'  # Charge amounts are always locked in EUR regardless of quote currency
+        order.description = f"Deposit for booking {booking.reference}"
+        order.customerEmail = booking.guest.email
+        order.customerName = f"{booking.guest.first_name} {booking.guest.last_name}".strip()
+        order.create()
+
+        if order.id and order.has('checkout_url'):
+            payment.revolut_order_id = order.id
+            payment.revolut_checkout_url = order.checkoutUrl
+            payment.save()
+        # else: order.create() already logged the failure via logerror(); leave payment.revolut_checkout_url
+        # unset so payment_error renders and the guest can retry on reload.
+
+
+class BookingPaymentStatusView(View):
+    """Read-only JSON status for the pay page's polling JS. All writes to Payment/Booking happen
+    from klt-hooks via the Revolut webhook - this endpoint never mutates anything."""
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        payment = getattr(booking, 'payment', None)
+        return JsonResponse({
+            'status': payment.status if payment else 'paid',
+            'enquiry_status': booking.enquiry_status,
+            'hold_expires_at': booking.hold_expires_at.isoformat() if booking.hold_expires_at else None,
+        })
 
 
 class BookingConditionsView(View):
@@ -42,7 +117,9 @@ class ManageBookingView(View):
                 reference=form.cleaned_data['reference'],
                 guest__email__iexact=form.cleaned_data['email'],
             ).first()
-            if booking is not None:
+            if booking is not None and not is_paid(booking):
+                return redirect('bookings:pay', reference=booking.reference)
+            elif booking is not None:
                 context.update(booking_confirmation_context(booking))
             else:
                 context['not_found'] = True

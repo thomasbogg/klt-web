@@ -4,6 +4,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.core.exceptions import ValidationError
 from django.core.validators import EmailValidator, MinValueValidator, MaxValueValidator
 from django.db import models
+from django.utils import timezone
 
 from bookings.utils import generate_reference_candidate
 from env_settings import VALID_BOOKING_STATUSES, PROVISIONAL_BOOKING_STATUSES
@@ -51,6 +52,18 @@ class BookingSettings(models.Model):
         max_digits=6, decimal_places=4, default=Decimal('0.8600'),
         validators=[MinValueValidator(Decimal('0'))],
         help_text="Euro-to-Pound rate for optional GBP price quotes (amount in GBP = amount in EUR × this rate). Charges are always recorded in EUR regardless of the quote currency shown to the guest."
+    )
+    revolut_hold_minutes = models.PositiveIntegerField(
+        default=20,
+        help_text="Minutes a Revolut-path deposit hold lasts with no payment signal at all before being released."
+    )
+    revolut_hold_extension_minutes = models.PositiveIntegerField(
+        default=20,
+        help_text="Extra minutes granted when Revolut reports a payment in progress (e.g. mid Open Banking bank-app confirmation), instead of releasing the hold."
+    )
+    wise_hold_hours = models.PositiveIntegerField(
+        default=12,
+        help_text="Hours a Wise-path deposit hold lasts. Flat, since Wise gives no in-progress payment signal to extend on."
     )
 
     # Cost dict keys from compute_costs() that represent a money amount and are shown converted to
@@ -108,6 +121,26 @@ class BookingSettings(models.Model):
         return {key: self.to_gbp(costs[key]) for key in self.GBP_DISPLAY_COST_KEYS if key in costs}
 
 
+class BookingQuerySet(models.QuerySet):
+    def holding(self):
+        """Bookings that currently occupy the calendar: valid statuses, plus provisional statuses
+        whose hold hasn't expired (or has no expiry at all - staff-held, pre-existing, or synced
+        from a platform, none of which set hold_expires_at)."""
+        now = timezone.now()
+        return self.filter(
+            models.Q(enquiry_status__in=VALID_BOOKING_STATUSES) |
+            models.Q(enquiry_status__in=PROVISIONAL_BOOKING_STATUSES, hold_expires_at__isnull=True) |
+            models.Q(enquiry_status__in=PROVISIONAL_BOOKING_STATUSES, hold_expires_at__gt=now)
+        )
+
+    def overlapping(self, property, start_date, end_date):
+        return self.holding().filter(
+            property_id=getattr(property, 'pk', property),
+            arrival_date__lt=end_date,
+            departure_date__gt=start_date,
+        )
+
+
 class Booking(models.Model):
     """Main booking model."""
     property = models.ForeignKey(Property, on_delete=models.PROTECT)
@@ -132,8 +165,17 @@ class Booking(models.Model):
     children = models.IntegerField()
     babies = models.IntegerField()
 
+    # Deposit-hold expiry for online bookings awaiting payment. NULL means "no expiry, blocks
+    # indefinitely" - true for every booking that predates this field and every non-online booking
+    # (platform-synced or staff-held in the admin), so they keep blocking the calendar unchanged.
+    # klt-hooks extends this directly via raw SQL when a Revolut payment is detected in progress -
+    # see libraries/banking/revolut.py and the klt-hooks postgres_bookings.py module.
+    hold_expires_at = models.DateTimeField(blank=True, null=True)
+
     # Metadata
     last_updated = models.DateTimeField()
+
+    objects = BookingQuerySet.as_manager()
 
     class Meta:
         db_table = 'bookings'
@@ -146,11 +188,8 @@ class Booking(models.Model):
     def clean(self):
         super().clean()
         if self.property_id and self.arrival_date and self.departure_date:
-            overlap = Booking.objects.filter(
-                property_id=self.property_id,
-                arrival_date__lt=self.departure_date,
-                departure_date__gt=self.arrival_date,
-                enquiry_status__in=VALID_BOOKING_STATUSES + PROVISIONAL_BOOKING_STATUSES,
+            overlap = Booking.objects.overlapping(
+                self.property_id, self.arrival_date, self.departure_date
             ).exclude(pk=self.pk).first()
             if overlap:
                 message = f"These dates overlap an existing booking ({overlap.arrival_date} to {overlap.departure_date})."
@@ -275,6 +314,49 @@ class Charge(models.Model):
 
     def __str__(self):
         return f"{self.booking} - Charges"
+
+
+PROVIDER_CHOICES = (
+    ('revolut', 'Revolut'),
+    ('wise', 'Wise'),
+)
+
+PAYMENT_STATUS_CHOICES = (
+    ('pending', 'Pending'),
+    ('in_progress', 'In progress'),
+    ('paid', 'Paid'),
+    ('declined', 'Declined'),
+    ('failed', 'Failed'),
+    ('cancelled', 'Cancelled'),
+)
+
+
+class Payment(models.Model):
+    """Deposit-payment tracking for a booking's due_at_booking amount. Kept separate from Charge,
+    which is an immutable pricing snapshot - this is the opposite, mutated repeatedly by webhook
+    events from klt-hooks (see bookings/models.py::Booking.hold_expires_at for how that ties in).
+    """
+    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='payment')
+    provider = models.CharField(max_length=10, choices=PROVIDER_CHOICES)
+    status = models.CharField(max_length=15, choices=PAYMENT_STATUS_CHOICES, default='pending')
+
+    # Revolut-specific - unused for provider='wise' rows, which have no per-booking API object.
+    revolut_order_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    revolut_checkout_url = models.URLField(blank=True, null=True)
+
+    last_event_type = models.CharField(max_length=100, blank=True, null=True)
+    in_progress_at = models.DateTimeField(blank=True, null=True)
+    paid_at = models.DateTimeField(blank=True, null=True)
+    failed_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'booking_payments'
+        verbose_name = 'Payment'
+        verbose_name_plural = 'Payments'
+
+    def __str__(self):
+        return f"{self.booking} - Payment ({self.get_status_display()})"
 
 
 class Extra(models.Model):

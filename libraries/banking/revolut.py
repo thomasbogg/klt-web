@@ -2,8 +2,13 @@ import requests
 from libraries.utils import Object, logerror, generate_request_headers
 from typing import List
 
+import env_settings
+
 API_VERSION = '2026-04-20'
-BASE_URL = "https://merchant.revolut.com/api"
+PROD_BASE_URL = "https://merchant.revolut.com/api"
+# Unverified against Revolut's current docs - confirm this hostname before relying on it for testing.
+SANDBOX_BASE_URL = "https://sandbox-merchant.revolut.com/api"
+BASE_URL = SANDBOX_BASE_URL if env_settings.TEST else PROD_BASE_URL
 
 
 class Revolut(Object):
@@ -156,6 +161,16 @@ class Revolut(Object):
                 if value not in val:
                     val.append(value)
             self._set('events', val)
+
+        @property
+        def id(self) -> str | None:
+            """
+            Get the webhook id, assigned by Revolut on creation.
+
+            Returns:
+                The webhook id, or None if the webhook hasn't been created yet.
+            """
+            return self._values.get('id')
 
         @property
         def signingSecret(self) -> str | None:
@@ -379,6 +394,16 @@ class Revolut(Object):
                 value: The description to set for the payment order.
             """
             self._set('description', value)
+
+        @property
+        def id(self) -> str | None:
+            """
+            Get the order id for the payment order, assigned by Revolut on creation.
+
+            Returns:
+                The order id, or None if the order hasn't been created yet.
+            """
+            return self._values.get('id')
 
         @property
         def token(self) -> str | None:

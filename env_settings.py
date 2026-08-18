@@ -79,6 +79,7 @@ VALID_BOOKING_STATUSES: tuple[str, ...] = (
 PROVISIONAL_BOOKING_STATUSES: tuple[str, ...] = (
     'Provisional booking',
     'Dates agreed and held',
+    'Awaiting payment',
 )
 
 
@@ -156,6 +157,10 @@ else:
 REVOLUT_API_SECRET_KEY = os.getenv('REVOLUT_API_SECRET_KEY')
 REVOLUT_API_VERSION = os.getenv('REVOLUT_API_VERSION')
 REVOLUT_BASE_PAYMENT_LINK = 'https://checkout.revolut.com/payment-link/'
+
+# Static Wise business pay page - guest enters the amount and reference themselves, nothing is
+# created per-booking via API. Used for Nov-Mar arrivals - see bookings/utils.py::determine_payment_provider.
+WISE_BASE_PAYMENT_LINK = 'https://wise.com/pay/business/algarvebeachapartments'
 
 ##################################################
 # TOURIST TAX SETTINGS

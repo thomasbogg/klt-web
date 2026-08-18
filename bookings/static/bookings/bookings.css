@@ -245,3 +245,73 @@
     color: rgb(80, 80, 80);
     margin-bottom: 16px;
 }
+
+.reserve-back-link {
+    display: inline-block;
+    color: var(--primary-color);
+    font-family: var(--secondary-font);
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-decoration: none;
+}
+
+.reserve-back-link:hover {
+    text-decoration: underline;
+}
+
+.pay-amount {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 24px;
+}
+
+.pay-amount-label {
+    font-family: var(--secondary-font);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+}
+
+.pay-amount-value {
+    font-family: var(--primary-font);
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+.pay-countdown {
+    margin: 0 0 24px;
+    font-size: 0.9rem;
+    color: rgb(110, 110, 110);
+}
+
+#pay-countdown-time {
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+.pay-button {
+    display: inline-block;
+    max-width: 380px;
+    margin: 0 auto 12px;
+    text-decoration: none;
+    text-align: center;
+}
+
+.pay-instructions {
+    max-width: 420px;
+    margin: 0 auto 20px;
+    font-size: 0.88rem;
+    line-height: 1.6;
+    color: rgb(110, 110, 110);
+}
+
+.pay-wise-panel {
+    max-width: 420px;
+    margin: 0 auto;
+}

@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import reverse
 from django.shortcuts import redirect
 
-from .models import Booking, BookingCondition, BookingSettings, Charge
+from .models import Booking, BookingCondition, BookingSettings, Charge, Payment
 
 
 @admin.register(BookingSettings)
@@ -25,9 +25,16 @@ class ChargeInline(admin.StackedInline):
     max_num = 1
 
 
+class PaymentInline(admin.StackedInline):
+    """Lets staff manually flip status/enquiry_status once a Wise transfer is seen to land, since
+    there's no automated Wise reconciliation (see bookings/utils.py::determine_payment_provider)."""
+    model = Payment
+    max_num = 1
+
+
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
-    inlines = [ChargeInline]
+    inlines = [ChargeInline, PaymentInline]
     list_display = ('reference', 'property', 'guest', 'arrival_date', 'departure_date', 'enquiry_status', 'enquiry_source')
     list_filter = ('enquiry_status', 'enquiry_source')
     search_fields = ('reference', 'guest__first_name', 'guest__last_name', 'guest__email')
