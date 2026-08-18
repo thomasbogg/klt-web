@@ -106,6 +106,24 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
     return booking
 
 
+def expire_stale_holds():
+    """Flip 'Awaiting payment' bookings whose hold has lapsed to a distinct 'Hold expired' status,
+    purely for admin visibility - availability itself is already correct regardless (see
+    Booking.objects.holding()), since an expired hold falls out of that query on its own. Safe to
+    call as often as wanted: a booking only matches here if nothing has extended hold_expires_at
+    (see klt-hooks' mark_payment_in_progress()), so genuine in-flight payments are never touched,
+    and a webhook's paid/failed write always wins regardless of ordering. Cheap - a single bulk
+    UPDATE, not a per-row loop. Called from BookingAdmin.get_queryset() for now; reuse this same
+    function from a scheduled job too if/when one exists (see automation roadmap discussion).
+    """
+    from bookings.models import Booking
+
+    Booking.objects.filter(
+        enquiry_status='Awaiting payment',
+        hold_expires_at__lt=timezone.now(),
+    ).update(enquiry_status='Hold expired')
+
+
 def booking_confirmation_context(booking):
     """Display context shared by the post-booking redirect and the manage-lookup success state."""
     charge = booking.charges

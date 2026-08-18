@@ -3,6 +3,7 @@ from django.urls import reverse
 from django.shortcuts import redirect
 
 from .models import Booking, BookingCondition, BookingSettings, Charge, Payment
+from .utils import expire_stale_holds
 
 
 @admin.register(BookingSettings)
@@ -38,6 +39,12 @@ class BookingAdmin(admin.ModelAdmin):
     list_display = ('reference', 'property', 'guest', 'arrival_date', 'departure_date', 'enquiry_status', 'enquiry_source')
     list_filter = ('enquiry_status', 'enquiry_source')
     search_fields = ('reference', 'guest__first_name', 'guest__last_name', 'guest__email')
+
+    def get_queryset(self, request):
+        # Cheap bulk update, run on every changelist load - see bookings/utils.py::expire_stale_holds()
+        # for why this can't clobber a genuinely in-progress payment.
+        expire_stale_holds()
+        return super().get_queryset(request)
 
 
 @admin.register(BookingCondition)

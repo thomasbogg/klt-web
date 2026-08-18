@@ -82,6 +82,10 @@ PROVISIONAL_BOOKING_STATUSES: tuple[str, ...] = (
     'Awaiting payment',
 )
 
+# 'Payment failed' (klt-hooks, on a Revolut decline/fail/cancel) and 'Hold expired'
+# (bookings/utils.py::expire_stale_holds()) are deliberately NOT in either status tuple above -
+# that's what makes them stop blocking the calendar, without any extra query logic needed.
+
 
 #######################################################
 # BOOKING PLATFORM SETTINGS
