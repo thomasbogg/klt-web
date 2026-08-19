@@ -10,6 +10,16 @@
     margin: 40px 0;
 }
 
+/* Only draws a divider between sections when there's more than one - the adjacent-sibling
+   combinator naturally does nothing until a second <section> exists (e.g. Extras, Arrival/
+   Departure Day Plans), matching the site's existing thin-rule divider language (see
+   .reserve-breakdown in properties/static/properties/reserve.css) rather than a heavier card
+   style. */
+.details-section + .details-section {
+    border-top: 1px solid #ebebeb;
+    padding-top: 40px;
+}
+
 .details-section-title {
     text-align: left;
     font-family: var(--secondary-font);
