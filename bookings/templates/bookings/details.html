@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="module" src="{% static 'main/pay_countdown.js' %}"></script>
     <script type="module" src="{% static 'bookings/guest_list.js' %}"></script>
 </head>
 <header>
@@ -37,6 +38,10 @@
         </div>
 
         {% else %}
+        <p class="pay-countdown" id="pay-countdown" data-expires-at="{{ booking.hold_expires_at|date:'c' }}" data-status-url="{% url 'bookings:pay_status' reference=booking.reference %}">
+            Reservation held for <span id="pay-countdown-time">--:--</span>
+        </p>
+
         <form method="post" class="details-form">
             {% csrf_token %}
 

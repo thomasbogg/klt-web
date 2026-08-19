@@ -11,6 +11,7 @@
 }
 
 .details-section-title {
+    text-align: left;
     font-family: var(--secondary-font);
     font-size: 0.85rem;
     font-weight: 700;
