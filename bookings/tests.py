@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from bookings.models import Booking, BookingSettings, Charge
-from bookings.utils import determine_payment_provider, expire_stale_holds, wise_hold_expiry
+from bookings.utils import add_business_days, determine_payment_provider, expire_stale_holds, payment_clearing_expiry
 from guests.models import Guest
 from properties.models import Property
 
@@ -117,8 +117,14 @@ class ChargeDueAtBookingInChargeCurrencyTests(TestCase):
         self.assertEqual(amount, Decimal('131.88'))
         self.assertEqual(currency, 'EUR')
 
+    def test_gbp_charge_returns_converted_amount_at_frozen_rate(self):
+        charge = Charge(currency='GBP', due_at_booking=Decimal('131.88'), gbp_conversion_rate=Decimal('0.8600'))
+        amount, currency = charge.due_at_booking_in_charge_currency()
+        self.assertEqual(amount, Decimal('113.42'))  # 131.88 * 0.8600, rounded
+        self.assertEqual(currency, 'GBP')
 
-class WiseHoldExpiryTests(TestCase):
+
+class PaymentClearingExpiryTests(TestCase):
     def next_weekday(self, target_weekday):
         """The next datetime (from now) landing on the given date.weekday() value."""
         now = timezone.now()
@@ -132,33 +138,20 @@ class WiseHoldExpiryTests(TestCase):
         settings.save()
         return settings
 
-    def test_friday_booking_extends_to_business_days_when_enabled(self):
-        settings = self.make_settings(extend_wise_hold_on_weekends=True, wise_weekend_hold_business_days=2, wise_hold_hours=12)
-        friday = self.next_weekday(4)
-        expiry = wise_hold_expiry(friday, settings)
-        self.assertEqual(expiry.weekday(), 1)  # Friday + 2 business days (Mon, Tue) = Tuesday
-        self.assertGreater(expiry, friday + timedelta(hours=12))
+    def test_is_a_thin_wrapper_around_add_business_days(self):
+        settings = self.make_settings(payment_clearing_business_days=3)
+        now = timezone.now()
+        self.assertEqual(payment_clearing_expiry(now, settings), add_business_days(now, 3))
 
-    def test_saturday_booking_extends_to_business_days_when_enabled(self):
-        settings = self.make_settings(extend_wise_hold_on_weekends=True, wise_weekend_hold_business_days=2)
-        saturday = self.next_weekday(5)
-        expiry = wise_hold_expiry(saturday, settings)
-        self.assertEqual(expiry.weekday(), 1)  # Saturday + 2 business days (Mon, Tue) = Tuesday
+    def test_thursday_start_skips_the_weekend(self):
+        settings = self.make_settings(payment_clearing_business_days=3)
+        thursday = self.next_weekday(3)
+        expiry = payment_clearing_expiry(thursday, settings)
+        self.assertEqual(expiry.weekday(), 1)  # Thu + 3 business days (Fri, Mon, Tue) = Tuesday
 
-    def test_weekday_booking_uses_flat_hours_even_when_extension_enabled(self):
-        settings = self.make_settings(extend_wise_hold_on_weekends=True, wise_hold_hours=12)
-        wednesday = self.next_weekday(2)
-        expiry = wise_hold_expiry(wednesday, settings)
-        self.assertEqual(expiry, wednesday + timedelta(hours=12))
-
-    def test_friday_booking_uses_flat_hours_when_extension_disabled(self):
-        settings = self.make_settings(extend_wise_hold_on_weekends=False, wise_hold_hours=12)
-        friday = self.next_weekday(4)
-        expiry = wise_hold_expiry(friday, settings)
-        self.assertEqual(expiry, friday + timedelta(hours=12))
-
-    def test_gbp_charge_returns_converted_amount_at_frozen_rate(self):
-        charge = Charge(currency='GBP', due_at_booking=Decimal('131.88'), gbp_conversion_rate=Decimal('0.8600'))
-        amount, currency = charge.due_at_booking_in_charge_currency()
-        self.assertEqual(amount, Decimal('113.42'))  # 131.88 * 0.8600, rounded
-        self.assertEqual(currency, 'GBP')
+    def test_never_lands_on_a_weekend(self):
+        settings = self.make_settings(payment_clearing_business_days=3)
+        for weekday in range(7):
+            start = self.next_weekday(weekday)
+            expiry = payment_clearing_expiry(start, settings)
+            self.assertLess(expiry.weekday(), 5)

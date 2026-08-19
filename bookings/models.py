@@ -61,17 +61,14 @@ class BookingSettings(models.Model):
         default=20,
         help_text="Extra minutes granted when Revolut reports a payment in progress (e.g. mid Open Banking bank-app confirmation), instead of releasing the hold."
     )
-    wise_hold_hours = models.PositiveIntegerField(
-        default=12,
-        help_text="Hours a Wise-path deposit hold lasts. Flat, since Wise gives no in-progress payment signal to extend on."
-    )
-    extend_wise_hold_on_weekends = models.BooleanField(
-        default=True,
-        help_text="If a Wise-path reservation is made on a Friday or Saturday, hold for a number of business days instead of the flat hour window - bank transfers often don't clear over the weekend."
-    )
-    wise_weekend_hold_business_days = models.PositiveIntegerField(
-        default=2,
-        help_text="Business days (Mon-Fri) to hold for when extend_wise_hold_on_weekends applies. Only used for reservations made on a Friday or Saturday."
+    payment_clearing_business_days = models.PositiveIntegerField(
+        default=3,
+        help_text="Business days (Mon-Fri) a deposit hold lasts once a payment is confirmed to be clearing: "
+                   "for Wise, from the moment the reservation is made (Wise gives no in-progress signal to "
+                   "extend on); for Revolut, from the moment Revolut reports ORDER_PAYMENT_AUTHENTICATED (the "
+                   "guest approved payment at their own bank - card payments settle in seconds after this so "
+                   "the long window costs them nothing, but Open Banking bank transfers can take up to 2 "
+                   "business days to clear, and Revolut doesn't tell us which one a guest used)."
     )
 
     # Cost dict keys from compute_costs() that represent a money amount and are shown converted to

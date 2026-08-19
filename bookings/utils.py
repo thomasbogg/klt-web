@@ -32,12 +32,9 @@ def determine_payment_provider(arrival_date):
     return 'wise' if arrival_date.month in WISE_MONTHS else 'revolut'
 
 
-WEEKEND_WEEKDAYS = {4, 5}  # date.weekday(): Friday=4, Saturday=5
-
-
 def add_business_days(start, business_days):
-    """start + N business days, skipping Saturdays and Sundays entirely. Used for the Wise-path
-    weekend hold extension - see BookingSettings.extend_wise_hold_on_weekends."""
+    """start + N business days, skipping Saturdays and Sundays entirely. Shared primitive for
+    payment_clearing_expiry() below."""
     current = start
     added = 0
     while added < business_days:
@@ -47,14 +44,14 @@ def add_business_days(start, business_days):
     return current
 
 
-def wise_hold_expiry(now, booking_settings):
-    """A Wise-path reservation made on a Friday or Saturday gets held for a number of business
-    days instead of the flat wise_hold_hours window, if enabled - SEPA-style bank transfers
-    typically only clear on business days, so a same-day-only window can expire before a guest's
-    legitimate transfer even lands."""
-    if booking_settings.extend_wise_hold_on_weekends and now.weekday() in WEEKEND_WEEKDAYS:
-        return add_business_days(now, booking_settings.wise_weekend_hold_business_days)
-    return now + timedelta(hours=booking_settings.wise_hold_hours)
+def payment_clearing_expiry(now, booking_settings):
+    """now + payment_clearing_business_days business days (skipping Sat/Sun). Used both for the
+    Wise-path initial hold (Wise gives no in-progress signal, so every Wise booking gets this from
+    the moment it's made) and for the Revolut-path hold once ORDER_PAYMENT_AUTHENTICATED fires
+    (see klt-hooks postgres_bookings.py::mark_payment_authenticated) - bank transfers can take up
+    to 2 business days to settle after authentication; card payments settle in seconds so this
+    costs them nothing."""
+    return add_business_days(now, booking_settings.payment_clearing_business_days)
 
 
 def create_booking(property, guest_data, start_date, end_date, guests, currency='EUR'):
@@ -95,7 +92,7 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
 
         provider = determine_payment_provider(start_date)
         if provider == 'wise':
-            hold_expires_at = wise_hold_expiry(timezone.now(), booking_settings)
+            hold_expires_at = payment_clearing_expiry(timezone.now(), booking_settings)
         else:
             hold_expires_at = timezone.now() + timedelta(minutes=booking_settings.revolut_hold_minutes)
 
