@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import reverse
 from django.shortcuts import redirect
 
-from .models import Booking, BookingCondition, BookingSettings, Charge, Payment
+from .models import Booking, BookingCondition, BookingGuest, BookingSettings, Charge, Payment
 from .utils import expire_stale_holds
 
 
@@ -33,9 +33,13 @@ class PaymentInline(admin.StackedInline):
     max_num = 1
 
 
+class BookingGuestInline(admin.TabularInline):
+    model = BookingGuest
+
+
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
-    inlines = [ChargeInline, PaymentInline]
+    inlines = [ChargeInline, PaymentInline, BookingGuestInline]
     list_display = ('reference', 'property', 'guest', 'arrival_date', 'departure_date', 'enquiry_status', 'enquiry_source')
     list_filter = ('enquiry_status', 'enquiry_source')
     search_fields = ('reference', 'guest__first_name', 'guest__last_name', 'guest__email')

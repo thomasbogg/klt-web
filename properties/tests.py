@@ -42,7 +42,7 @@ class ReserveOwnPendingBookingTests(TestCase):
     def test_full_wrong_currency_recovery_flow(self):
         # Fresh reserve page - available, form present
         response = self.client.get(self.reserve_url, self.query)
-        self.assertContains(response, 'Continue to Payment')
+        self.assertContains(response, 'Proceed to Reservation')
 
         # Submit with the "wrong" currency by mistake
         response = self.submit_reservation(currency='EUR')
@@ -72,7 +72,7 @@ class ReserveOwnPendingBookingTests(TestCase):
 
         # Now the reserve page should be genuinely available again, and a corrected resubmission works
         response = self.client.get(self.reserve_url, self.query)
-        self.assertContains(response, 'Continue to Payment')
+        self.assertContains(response, 'Proceed to Reservation')
 
         retry_response = self.submit_reservation(currency='GBP')
         self.assertEqual(retry_response.status_code, 302)

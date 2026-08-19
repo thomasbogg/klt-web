@@ -1,0 +1,134 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Booking Details {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="module" src="{% static 'bookings/guest_list.js' %}"></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="confirmation-page details-page">
+        <h1>Booking Details</h1>
+
+        <div class="confirmation-reference">
+            <span class="confirmation-reference-label">Booking Reference</span>
+            <span class="confirmation-reference-value">{{ booking.reference }}</span>
+        </div>
+
+        {% if hold_expired %}
+        <div class="reserve-form-errors">
+            <p>This reservation hold has expired because no payment was received in time. Your dates have been released back to search.</p>
+        </div>
+        <a class="reserve-back-link" href="{% url 'availability:search' %}">&larr; Start a new search</a>
+
+        {% elif payment_in_progress %}
+        <div class="reserve-form-errors">
+            <p>Your payment is already being processed. <a href="{% url 'bookings:pay' reference=booking.reference %}">Go to the payment page</a>.</p>
+        </div>
+
+        {% else %}
+        <form method="post" class="details-form">
+            {% csrf_token %}
+
+            {% if non_field_error %}
+            <div class="reserve-form-errors">
+                <p>{{ non_field_error }}</p>
+            </div>
+            {% endif %}
+
+            <section class="details-section">
+                <h2 class="details-section-title">Guest List</h2>
+                <p class="details-note">Please enter details for all members of your party (including yourself). Use each guest's age at the time of your stay, not today.</p>
+                <p class="details-note">This property allows up to {{ max_guests }} guests. Additional guests may be added at a later date if the maximum hasn't been reached, but additional charges may apply - please contact us.</p>
+
+                <div class="guest-rows" id="guest-rows">
+                    <div class="guest-row guest-row-header">
+                        <span></span>
+                        <span>First name</span>
+                        <span>Last name</span>
+                        <span>Age</span>
+                        <span></span>
+                    </div>
+                    {% for row in rows %}
+                    <div class="guest-row">
+                        <span class="guest-row-index">{{ forloop.counter }}</span>
+                        <div class="guest-row-field">
+                            <input type="text" name="first_name[]" class="reserve-input" value="{{ row.first_name }}" placeholder="First name">
+                            {% if row.errors.first_name %}<p class="reserve-form-error">{{ row.errors.first_name }}</p>{% endif %}
+                        </div>
+                        <div class="guest-row-field">
+                            <input type="text" name="last_name[]" class="reserve-input" value="{{ row.last_name }}" placeholder="Last name">
+                            {% if row.errors.last_name %}<p class="reserve-form-error">{{ row.errors.last_name }}</p>{% endif %}
+                        </div>
+                        <div class="guest-row-field guest-row-age">
+                            <input type="number" name="age[]" class="reserve-input" value="{{ row.age }}" min="0" max="120" placeholder="Age">
+                            {% if row.errors.age %}<p class="reserve-form-error">{{ row.errors.age }}</p>{% endif %}
+                        </div>
+                        {% if forloop.first %}
+                        <span class="guest-row-remove-placeholder"></span>
+                        {% else %}
+                        <button type="button" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <template id="guest-row-template">
+                    <div class="guest-row">
+                        <span class="guest-row-index"></span>
+                        <div class="guest-row-field">
+                            <input type="text" name="first_name[]" class="reserve-input" placeholder="First name">
+                        </div>
+                        <div class="guest-row-field">
+                            <input type="text" name="last_name[]" class="reserve-input" placeholder="Last name">
+                        </div>
+                        <div class="guest-row-field guest-row-age">
+                            <input type="number" name="age[]" class="reserve-input" min="0" max="120" placeholder="Age">
+                        </div>
+                        <button type="button" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
+                    </div>
+                </template>
+
+                <button type="button" class="guest-row-add" id="guest-row-add">+ Add guest</button>
+            </section>
+
+            <button type="submit" class="reserve-form-submit">Make Payment</button>
+
+            {% if price_changed %}
+            <div class="price-change-overlay" id="price-change-overlay">
+                <div class="price-change-panel">
+                    <p class="price-change-title">The price for the party you entered differs from what we quoted</p>
+                    <p class="price-change-body">This can happen if a guest's age puts them in a different pricing category, the party size changed, or pricing has been updated since you started.</p>
+                    <div class="price-change-row">
+                        <span>Previously quoted, due now</span>
+                        <span>&euro;{{ old_charge.due_at_booking|floatformat:2 }}</span>
+                    </div>
+                    <div class="price-change-row price-change-new">
+                        <span>Recalculated, due now</span>
+                        <span>&euro;{{ new_costs.due_at_booking|floatformat:2 }}</span>
+                    </div>
+                    <div class="price-change-actions">
+                        <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Proceed to payment anyway</button>
+                        <button type="button" class="reserve-form-cancel" id="price-change-edit">Edit details</button>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </form>
+        {% endif %}
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

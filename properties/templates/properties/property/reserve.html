@@ -50,7 +50,7 @@
             You already started a reservation for these dates (reference <strong>{{ own_pending_booking.reference }}</strong>) that's still awaiting payment.
         </p>
         <div class="reserve-pending-actions">
-            <a class="reserve-form-submit" href="{% url 'bookings:pay' reference=own_pending_booking.reference %}">Continue to payment</a>
+            <a class="reserve-form-submit" href="{% url 'bookings:details' reference=own_pending_booking.reference %}">Continue reservation</a>
             <form method="post" action="{% url 'bookings:pay_cancel' reference=own_pending_booking.reference %}">
                 {% csrf_token %}
                 <button type="submit" class="reserve-form-cancel">Cancel and start over</button>
@@ -131,7 +131,7 @@
                 {{ form.phone }}
             </div>
 
-            <button type="submit" class="reserve-form-submit">Continue to Payment</button>
+            <button type="submit" class="reserve-form-submit">Proceed to Reservation</button>
         </form>
         <a class="reserve-form-cancel" href="{% url 'availability:search' %}?start={{ start_query|urlencode }}&end={{ end_query|urlencode }}&guests={{ guests_query|urlencode }}">Return to Search</a>
         {% endif %}

@@ -1,0 +1,188 @@
+.details-page {
+    max-width: 760px;
+}
+
+.details-form {
+    text-align: left;
+}
+
+.details-section {
+    margin: 40px 0;
+}
+
+.details-section-title {
+    font-family: var(--secondary-font);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--primary-color);
+    margin-bottom: 16px;
+}
+
+.details-note {
+    font-size: 0.88rem;
+    line-height: 1.6;
+    color: rgb(110, 110, 110);
+    margin: 0 0 10px;
+}
+
+.guest-rows {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.guest-row {
+    display: grid;
+    grid-template-columns: 24px 1fr 1fr 90px 32px;
+    align-items: start;
+    gap: 10px;
+}
+
+.guest-row-header {
+    font-family: var(--secondary-font);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+}
+
+.guest-row-index {
+    padding-top: 10px;
+    font-size: 0.9rem;
+    color: rgb(150, 150, 150);
+}
+
+.guest-row-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.guest-row-field .reserve-input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.guest-row-remove,
+.guest-row-add {
+    background: none;
+    border: 1px solid var(--status-booked-color, #c1554f);
+    color: var(--status-booked-color, #c1554f);
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 700;
+    transition: background-color 0.2s;
+}
+
+.guest-row-remove {
+    width: 32px;
+    height: 40px;
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+.guest-row-remove:hover {
+    background: var(--status-booked-bg, #fbe4e4);
+}
+
+.guest-row-add {
+    margin-top: 16px;
+    padding: 8px 16px;
+    font-size: 0.9rem;
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.guest-row-add:hover {
+    background: rgba(44, 121, 185, 0.08);
+}
+
+@media (max-width: 560px) {
+    .guest-row {
+        grid-template-columns: 20px 1fr 1fr;
+        row-gap: 4px;
+    }
+
+    .guest-row-age {
+        grid-column: 2;
+    }
+
+    .guest-row-remove {
+        grid-column: 3;
+        justify-self: end;
+    }
+
+    .guest-row-header {
+        display: none;
+    }
+}
+
+.price-change-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(30, 30, 30, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 100;
+}
+
+.price-change-overlay.price-change-stale {
+    display: none;
+}
+
+.price-change-panel {
+    background: #fff;
+    border-radius: 10px;
+    padding: 28px;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+
+.price-change-title {
+    font-family: var(--primary-font);
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--status-booked-color, #c1554f);
+    margin: 0 0 12px;
+}
+
+.price-change-body {
+    font-size: 0.88rem;
+    line-height: 1.6;
+    color: rgb(110, 110, 110);
+    margin: 0 0 20px;
+}
+
+.price-change-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    font-size: 0.95rem;
+    color: rgb(80, 80, 80);
+    border-top: 1px solid #ebebeb;
+}
+
+.price-change-new {
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+.price-change-actions {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.price-change-actions .reserve-form-submit,
+.price-change-actions .reserve-form-cancel {
+    margin: 0;
+    max-width: none;
+}

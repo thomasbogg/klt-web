@@ -168,7 +168,7 @@ class ReserveView(generic.DetailView):
                     currency=form.cleaned_data['currency'],
                 )
                 request.session['pending_booking_reference'] = booking.reference
-                return redirect('bookings:pay', reference=booking.reference)
+                return redirect('bookings:details', reference=booking.reference)
             except ValidationError as error:
                 messages = dict.fromkeys(error.messages) if hasattr(error, 'messages') else [str(error)]
                 form.add_error(None, '; '.join(messages))

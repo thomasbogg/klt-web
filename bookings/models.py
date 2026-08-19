@@ -70,6 +70,15 @@ class BookingSettings(models.Model):
                    "the long window costs them nothing, but Open Banking bank transfers can take up to 2 "
                    "business days to clear, and Revolut doesn't tell us which one a guest used)."
     )
+    adult_min_age = models.PositiveIntegerField(
+        default=13,
+        help_text="Age at time of stay (inclusive) from which a guest is priced as an adult."
+    )
+    child_min_age = models.PositiveIntegerField(
+        default=2,
+        help_text="Age at time of stay (inclusive) from which a guest is priced as a child rather than "
+                   "an infant. Below this: infant, currently free (see cot-as-extra, not yet built)."
+    )
 
     # Cost dict keys from compute_costs() that represent a money amount and are shown converted to
     # GBP when a guest toggles the currency display. security_deposit is deliberately excluded: it's
@@ -210,6 +219,27 @@ class Booking(models.Model):
             else:
                 raise RuntimeError("Could not generate a unique booking reference.")
         super().save(*args, **kwargs)
+
+
+class BookingGuest(models.Model):
+    """One party member on a booking, named + aged for pricing and (later) SEF registration -
+    separate from guests.models.Guest, which is keyed by email and can be shared across bookings,
+    so correcting a typo here never mutates a shared record. is_lead marks the row pre-filled from
+    Booking.guest's name on the booking-details page (see bookings/views.py::BookingDetailsView)."""
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='party')
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100)
+    age = models.PositiveIntegerField(validators=[MaxValueValidator(120)])
+    is_lead = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'booking_guests'
+        verbose_name = 'Booking Guest'
+        verbose_name_plural = 'Booking Guests'
+        ordering = ('-is_lead', 'id')
+
+    def __str__(self):
+        return f"{self.first_name} {self.last_name} ({self.booking})"
 
 
 class BookingCondition(models.Model):

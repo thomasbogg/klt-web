@@ -131,6 +131,46 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
     return booking
 
 
+def guest_counts_by_age(ages, booking_settings):
+    """Ages are each guest's age AT ARRIVAL (the booking-details page makes this explicit to the
+    guest - age is entered directly as of time of stay, no birthdate math needed). Buckets into the
+    same {'adults', 'children', 'infants'} shape get_stay_total_price()/compute_costs() expect."""
+    counts = {'adults': 0, 'children': 0, 'infants': 0}
+    for age in ages:
+        if age >= booking_settings.adult_min_age:
+            counts['adults'] += 1
+        elif age >= booking_settings.child_min_age:
+            counts['children'] += 1
+        else:
+            counts['infants'] += 1
+    return counts
+
+
+def recalculate_costs_for_party(booking, ages):
+    """Recompute costs from real party ages, reusing get_stay_total_price()/compute_costs() exactly
+    as create_booking() does at initial booking time. Returns (new_guests, new_costs, changed) -
+    changed compares basic_rental (not due_at_booking, which is a rounded percentage and can
+    coincidentally match across different rentals) against the booking's current Charge. Returns
+    (None, None, None) if the stay can no longer be priced at all (e.g. a Price row was
+    edited/removed since the reservation was made) - the same situation create_booking() raises
+    ValidationError for; the caller must handle it explicitly instead. Writes nothing to the DB -
+    the caller (bookings/views.py::BookingDetailsView) decides whether/what to persist."""
+    from bookings.models import BookingSettings
+    from properties.utils import get_stay_total_price
+
+    booking_settings = BookingSettings.load()
+    new_guests = guest_counts_by_age(ages, booking_settings)
+    rental_total = get_stay_total_price(
+        booking.property, booking.arrival_date, booking.departure_date, new_guests,
+        monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
+    )
+    if rental_total is None:
+        return None, None, None
+    new_costs = booking_settings.compute_costs(rental_total, arrival_date=booking.arrival_date)
+    changed = booking.charges.basic_rental is None or new_costs['basic_rental'] != booking.charges.basic_rental
+    return new_guests, new_costs, changed
+
+
 def expire_stale_holds():
     """Flip 'Awaiting payment' bookings whose hold has lapsed to a distinct 'Hold expired' status,
     purely for admin visibility - availability itself is already correct regardless (see

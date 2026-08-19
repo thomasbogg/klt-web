@@ -172,6 +172,44 @@
     border-color: var(--primary-color);
 }
 
+.reserve-input {
+    padding: 10px 12px;
+    font-size: 1rem;
+    font-family: inherit;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    color: var(--primary-color, #2c79b9);
+}
+
+.reserve-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.reserve-form-cancel {
+    display: block;
+    width: 100%;
+    max-width: 420px;
+    box-sizing: border-box;
+    margin: 12px auto 0;
+    background: var(--status-booked-color, #c1554f);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 14px 24px;
+    font-family: Arial, sans-serif;
+    font-size: 1rem;
+    font-weight: 800;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.reserve-form-cancel:hover {
+    background: #a8433d;
+}
+
 .reserve-form-error {
     margin: 0;
     font-size: 0.82rem;
