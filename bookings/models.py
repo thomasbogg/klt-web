@@ -309,8 +309,15 @@ class Charge(models.Model):
     admin = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     security = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     security_method = models.CharField(max_length=100, blank=True, null=True)
+
+    # Legacy, imported-only - the old system used this one table for every booking's money
+    # regardless of source. Charge is now scoped to the online direct-booking flow only; a platform
+    # booking's commission/payout lives on PlatformPayout instead, and extra-nights charges live on
+    # BookingDateAdjustment (see [[project_klt_web_platform_payout]] / [[project_klt_web_extras_feature]]
+    # in memory) - neither of these two fields is written by any current code path.
     platform_fee = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     extra_nights = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+
     manual_charges = models.BooleanField(blank=True, null=True)
 
     # Locked-in payment split at booking time - see BookingSettings.compute_costs(). Kept fixed
@@ -358,6 +365,39 @@ class Charge(models.Model):
 
     def __str__(self):
         return f"{self.booking} - Charges"
+
+
+class PlatformPayout(models.Model):
+    """What a platform (Airbnb/Booking.com/Vrbo - see env_settings.PLATFORMS) actually paid out for
+    a booking, as its own distinct relationship from Charge, which is scoped to the online
+    direct-booking flow (Revolut/Wise deposit/balance split - see bookings/utils.py::create_booking()).
+    A platform booking never has a Charge/Payment split in that sense - the guest pays the platform
+    directly, not us, so this captures gross/commission/payout instead of overloading Charge's
+    fields for two structurally different kinds of money (see [[project_klt_web_platform_payout]]
+    in memory for the full reasoning)."""
+    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='platform_payout')
+    gross_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True,
+        help_text="Total the guest paid the platform."
+    )
+    platform_commission = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True,
+        help_text="What the platform kept as its fee/commission."
+    )
+    payout_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, blank=True, null=True,
+        help_text="Net amount actually paid out to us."
+    )
+    payout_currency = models.CharField(max_length=3, blank=True, null=True, choices=CURRENCY_CHOICES)
+    payout_date = models.DateField(blank=True, null=True, help_text="When the platform's payout was received, if known.")
+
+    class Meta:
+        db_table = 'booking_platform_payouts'
+        verbose_name = 'Platform Payout'
+        verbose_name_plural = 'Platform Payouts'
+
+    def __str__(self):
+        return f"{self.booking} - Platform Payout"
 
 
 PROVIDER_CHOICES = (
