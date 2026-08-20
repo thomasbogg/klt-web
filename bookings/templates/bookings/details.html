@@ -170,7 +170,7 @@
             </section>
 
             <section class="details-section">
-                <h2 class="details-section-title">Airport Transfers</h2>
+                <h2 class="details-section-title">Airport Transfers (Faro Airport only)</h2>
                 <p class="details-note">Everything below is paid in cash at check-in - it isn't included in the amount due now. Prices shown are estimates based on total headcount and pickup/drop-off time; we'll confirm the final price with you.</p>
                 <p class="details-note">Sharing a ride with another apartment's guests? Only one lead guest should submit the combined request with the total headcount - the other party shouldn't submit a separate one.</p>
 
@@ -204,8 +204,7 @@
                             <div class="transfer-field">
                                 <label>Airport</label>
                                 <select name="transfer_airport[]" class="reserve-input">
-                                    <option value="faro" {% if row.is_faro %}selected{% endif %}>Faro</option>
-                                    <option value="other" {% if not row.is_faro %}selected{% endif %}>Other</option>
+                                    <option value="faro" selected>Faro</option>
                                 </select>
                             </div>
                             <div class="transfer-field transfer-field-guests">
@@ -262,7 +261,6 @@
                                 <label>Airport</label>
                                 <select name="transfer_airport[]" class="reserve-input">
                                     <option value="faro" selected>Faro</option>
-                                    <option value="other">Other</option>
                                 </select>
                             </div>
                             <div class="transfer-field transfer-field-guests">
