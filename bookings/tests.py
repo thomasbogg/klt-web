@@ -1,11 +1,14 @@
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from decimal import Decimal
 
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from bookings.models import Booking, BookingSettings, Charge, Payment, RequestType, WelcomePackItem
+from bookings.models import (
+    AirportTransferPriceBand, Booking, BookingSettings, Charge, ExtrasSettings, Payment, RequestType,
+    WelcomePackItem,
+)
 from bookings.utils import (
     add_business_days, determine_payment_provider, expire_stale_holds, guest_counts_by_age,
     payment_clearing_expiry, recalculate_costs_for_party,
@@ -440,3 +443,56 @@ class WelcomePackItemMatchesTests(TestCase):
         water = WelcomePackItem(name='Water', category=WelcomePackItem.Category.DRINKS_COMMON)
         self.assertTrue(water.matches(food_choice='standard', drinks_choice='alcoholic'))
         self.assertTrue(water.matches(food_choice='vegan', drinks_choice='non_alcoholic'))
+
+
+class AirportTransferPriceBandTests(TestCase):
+    def setUp(self):
+        AirportTransferPriceBand.objects.create(max_guests=4, price=Decimal('25.00'))
+        AirportTransferPriceBand.objects.create(max_guests=8, price=Decimal('45.00'))
+        AirportTransferPriceBand.objects.create(max_guests=12, price=Decimal('70.00'))
+
+    def test_picks_the_smallest_band_that_fits(self):
+        self.assertEqual(AirportTransferPriceBand.for_guest_count(1).max_guests, 4)
+        self.assertEqual(AirportTransferPriceBand.for_guest_count(4).max_guests, 4)
+        self.assertEqual(AirportTransferPriceBand.for_guest_count(5).max_guests, 8)
+        self.assertEqual(AirportTransferPriceBand.for_guest_count(12).max_guests, 12)
+
+    def test_returns_none_when_guest_count_exceeds_every_band(self):
+        self.assertIsNone(AirportTransferPriceBand.for_guest_count(13))
+
+
+class ExtrasSettingsTransferPricingTests(TestCase):
+    def setUp(self):
+        AirportTransferPriceBand.objects.create(max_guests=4, price=Decimal('25.00'))
+        self.settings = ExtrasSettings.load()
+        self.settings.airport_transfer_night_surcharge = Decimal('10.00')
+        self.settings.airport_transfer_night_window_start = time(22, 0)
+        self.settings.airport_transfer_night_window_end = time(6, 0)
+        self.settings.save()
+
+    def test_daytime_transfer_has_no_surcharge(self):
+        self.assertEqual(self.settings.compute_transfer_price(2, time(14, 0)), Decimal('25.00'))
+
+    def test_transfer_after_night_window_start_has_surcharge(self):
+        self.assertEqual(self.settings.compute_transfer_price(2, time(23, 0)), Decimal('35.00'))
+
+    def test_transfer_before_night_window_end_has_surcharge(self):
+        self.assertEqual(self.settings.compute_transfer_price(2, time(3, 0)), Decimal('35.00'))
+
+    def test_transfer_at_window_boundaries_has_surcharge(self):
+        self.assertEqual(self.settings.compute_transfer_price(2, time(22, 0)), Decimal('35.00'))
+        self.assertEqual(self.settings.compute_transfer_price(2, time(6, 0)), Decimal('35.00'))
+
+    def test_transfer_just_outside_window_has_no_surcharge(self):
+        self.assertEqual(self.settings.compute_transfer_price(2, time(21, 59)), Decimal('25.00'))
+        self.assertEqual(self.settings.compute_transfer_price(2, time(6, 1)), Decimal('25.00'))
+
+    def test_unbanded_guest_count_returns_none(self):
+        self.assertIsNone(self.settings.compute_transfer_price(99, time(14, 0)))
+
+    def test_non_wrapping_window_still_works(self):
+        self.settings.airport_transfer_night_window_start = time(1, 0)
+        self.settings.airport_transfer_night_window_end = time(5, 0)
+        self.settings.save()
+        self.assertEqual(self.settings.compute_transfer_price(2, time(3, 0)), Decimal('35.00'))
+        self.assertEqual(self.settings.compute_transfer_price(2, time(14, 0)), Decimal('25.00'))

@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
@@ -475,13 +475,6 @@ class Extra(models.Model):
     late_checkout = models.BooleanField(blank=True, null=True)
     extra_nights = models.BooleanField(blank=True, null=True)
 
-    # Transport
-    airport_transfers = models.BooleanField(blank=True, null=True)
-    airport_transfer_inbound_only = models.BooleanField(blank=True, null=True)
-    airport_transfer_outbound_only = models.BooleanField(blank=True, null=True)
-    child_seats = models.CharField(max_length=200, blank=True, null=True)
-    excess_baggage = models.CharField(max_length=200, blank=True, null=True)
-
     # Payment
     owner_is_paying = models.BooleanField(blank=True, null=True)
 
@@ -562,6 +555,116 @@ class WelcomePackItem(models.Model):
         if self.category in (self.Category.DRINKS_ALCOHOLIC, self.Category.DRINKS_NON_ALCOHOLIC):
             return self.category == f'drinks_{drinks_choice}'
         return True
+
+
+class AirportTransferPriceBand(models.Model):
+    """A flat price for an airport transfer carrying up to max_guests people total (adults +
+    children + infants) - e.g. rows of (4, 25.00), (8, 45.00), (12, 70.00) for "up to 4", "up to
+    8", "up to 12". AirportTransferPriceBand.for_guest_count() picks the smallest band that fits."""
+    max_guests = models.PositiveIntegerField(unique=True)
+    price = models.DecimalField(max_digits=8, decimal_places=2)
+
+    class Meta:
+        db_table = 'airport_transfer_price_bands'
+        verbose_name = 'Airport transfer price band'
+        ordering = ('max_guests',)
+
+    def __str__(self):
+        return f"Up to {self.max_guests} guests - €{self.price}"
+
+    @classmethod
+    def for_guest_count(cls, total_guests):
+        return cls.objects.filter(max_guests__gte=total_guests).order_by('max_guests').first()
+
+
+class ExtrasSettings(models.Model):
+    """Singleton admin settings for Extras pricing that doesn't fit BookingSettings - kept separate
+    because these pricing shapes (guest-count bands, a night-surcharge window) are a genuinely
+    different concern from BookingSettings' flat percentages/day-counts (see the plan this was
+    built from). Same singleton pattern as BookingSettings.load()."""
+    airport_transfer_night_surcharge = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    airport_transfer_night_window_start = models.TimeField(default=time(22, 0))
+    airport_transfer_night_window_end = models.TimeField(default=time(6, 0))
+
+    class Meta:
+        db_table = 'extras_settings'
+        verbose_name = 'Extras Settings'
+        verbose_name_plural = 'Extras Settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def is_night_time(self, pickup_time):
+        """Whether a pickup/dropoff time falls in the night-surcharge window. The window can wrap
+        past midnight (default 22:00-06:00), so this isn't a plain start <= t <= end check."""
+        start, end = self.airport_transfer_night_window_start, self.airport_transfer_night_window_end
+        if start <= end:
+            return start <= pickup_time <= end
+        return pickup_time >= start or pickup_time <= end
+
+    def compute_transfer_price(self, total_guests, pickup_time):
+        """Returns None if total_guests exceeds every configured band (nothing priced that high
+        yet) - the caller is responsible for deciding what that means (e.g. flag for staff)."""
+        band = AirportTransferPriceBand.for_guest_count(total_guests)
+        if band is None:
+            return None
+        price = band.price
+        if self.is_night_time(pickup_time):
+            price += self.airport_transfer_night_surcharge
+        return price
+
+
+class AirportTransferDirection(models.TextChoices):
+    INBOUND = 'inbound', 'Inbound (arrival)'
+    OUTBOUND = 'outbound', 'Outbound (departure)'
+
+
+class AirportTransfer(models.Model):
+    """One airport transfer request on a booking - many rows per Booking (unlike Extra), since a
+    stay can need more than one (inbound + outbound at minimum, occasionally more). Deliberately no
+    formal cross-booking linkage for shared rides - see the plan this was built from for the
+    privacy/security reasoning. adults/children/infants mirror the search-page guest picker's
+    shape rather than BookingGuest's named/aged list, since a shared ride's headcount can exceed
+    the requesting guest's own party. The date is implied by direction (Booking.arrival_date for
+    inbound, Booking.departure_date for outbound) rather than stored separately."""
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='airport_transfers')
+    direction = models.CharField(max_length=10, choices=AirportTransferDirection.choices)
+    is_faro = models.BooleanField(default=True, help_text="Uncheck if flying via an airport other than Faro.")
+    flight_number = models.CharField(max_length=20, blank=True)
+    time = models.TimeField()
+    adults = models.PositiveIntegerField(default=1)
+    children = models.PositiveIntegerField(default=0)
+    infants = models.PositiveIntegerField(default=0)
+    child_seats = models.CharField(max_length=200, blank=True)
+    excess_baggage = models.CharField(max_length=200, blank=True)
+    notes = models.TextField(blank=True)
+    price_at_request = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'airport_transfers'
+        verbose_name = 'Airport transfer'
+        ordering = ('created_at',)
+
+    def __str__(self):
+        return f"{self.booking} - {self.get_direction_display()} ({self.time})"
+
+    @property
+    def total_guests(self):
+        return self.adults + self.children + self.infants
+
+    @property
+    def date(self):
+        return self.booking.arrival_date if self.direction == AirportTransferDirection.INBOUND else self.booking.departure_date
 
 
 class Form(models.Model):

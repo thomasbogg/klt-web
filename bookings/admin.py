@@ -3,8 +3,9 @@ from django.urls import reverse
 from django.shortcuts import redirect
 
 from .models import (
-    Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Extra,
-    Payment, PlatformPayout, RequestType, WelcomePackItem,
+    AirportTransfer, AirportTransferPriceBand, Booking, BookingCondition, BookingGuest,
+    BookingRequestedExtra, BookingSettings, Charge, Extra, ExtrasSettings, Payment, PlatformPayout,
+    RequestType, WelcomePackItem,
 )
 from .utils import expire_stale_holds
 
@@ -58,10 +59,15 @@ class BookingRequestedExtraInline(admin.TabularInline):
     extra = 0
 
 
+class AirportTransferInline(admin.TabularInline):
+    model = AirportTransfer
+    extra = 0
+
+
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
     inlines = [ChargeInline, PaymentInline, BookingGuestInline, PlatformPayoutInline, ExtraInline,
-               BookingRequestedExtraInline]
+               BookingRequestedExtraInline, AirportTransferInline]
     list_display = ('reference', 'property', 'guest', 'arrival_date', 'departure_date', 'enquiry_status', 'enquiry_source')
     list_filter = ('enquiry_status', 'enquiry_source')
     search_fields = ('reference', 'guest__first_name', 'guest__last_name', 'guest__email')
@@ -96,3 +102,25 @@ class WelcomePackItemAdmin(admin.ModelAdmin):
     list_editable = ('category', 'order', 'active')
     list_filter = ('category',)
     ordering = ('category', 'order')
+
+
+@admin.register(ExtrasSettings)
+class ExtrasSettingsAdmin(admin.ModelAdmin):
+    """Singleton admin: skips the changelist and goes straight to the one row's edit form."""
+
+    def has_add_permission(self, request):
+        return not ExtrasSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        settings = ExtrasSettings.load()
+        return redirect(reverse('admin:bookings_extrassettings_change', args=[settings.pk]))
+
+
+@admin.register(AirportTransferPriceBand)
+class AirportTransferPriceBandAdmin(admin.ModelAdmin):
+    list_display = ('max_guests', 'price')
+    list_editable = ('price',)
+    ordering = ('max_guests',)
