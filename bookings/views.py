@@ -6,7 +6,10 @@ from django.views import View
 
 import env_settings
 from bookings.forms import BookingLookupForm
-from bookings.models import Booking, BookingCondition, BookingGuest, BookingRequestedExtra, Extra, RequestType, WelcomePackItem
+from bookings.models import (
+    Booking, BookingCondition, BookingGuest, BookingRequestedExtra, Extra, RequestType, WelcomePackDrinksChoice,
+    WelcomePackFoodChoice, WelcomePackItem,
+)
 from bookings.utils import (
     booking_confirmation_context, cancel_booking_hold, recalculate_costs_for_party, reservation_retry_url,
 )
@@ -157,11 +160,26 @@ class BookingDetailsView(View):
 
     def _save_extras(self, booking, post_data):
         """Welcome Pack + RequestType selections are cash-at-checkin (see the plan this was built
-        from) so, unlike the guest list, they never touch Charge/Payment - just persisted as-is."""
+        from) so, unlike the guest list, they never touch Charge/Payment - just persisted as-is.
+        The pack's food/drinks choices are only meaningful (and only stored) when welcome_pack is
+        actually wanted - a fixed pair of picks, not a freeform swap request (see the memory this
+        was rebuilt from after the first version's freeform text field turned out to invite too
+        much back-and-forth for a two-person operation)."""
         extra, _ = Extra.objects.get_or_create(booking=booking)
         extra.welcome_pack = post_data.get('welcome_pack') == 'on'
-        extra.welcome_pack_modifications = post_data.get('welcome_pack_modifications', '').strip()
-        extra.save(update_fields=['welcome_pack', 'welcome_pack_modifications'])
+        if extra.welcome_pack:
+            food = post_data.get('welcome_pack_food', '')
+            extra.welcome_pack_food = food if food in WelcomePackFoodChoice.values else WelcomePackFoodChoice.STANDARD
+            drinks = post_data.get('welcome_pack_drinks', '')
+            extra.welcome_pack_drinks = (
+                drinks if drinks in WelcomePackDrinksChoice.values else WelcomePackDrinksChoice.ALCOHOLIC
+            )
+            extra.welcome_pack_note = post_data.get('welcome_pack_note', '').strip()
+        else:
+            extra.welcome_pack_food = None
+            extra.welcome_pack_drinks = None
+            extra.welcome_pack_note = ''
+        extra.save(update_fields=['welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note'])
 
         booking.requested_extras.all().delete()
         new_requests = []
@@ -188,13 +206,19 @@ class BookingDetailsView(View):
 
         if post_data is not None:
             welcome_pack = post_data.get('welcome_pack') == 'on'
-            welcome_pack_modifications = post_data.get('welcome_pack_modifications', '').strip()
+            welcome_pack_food = post_data.get('welcome_pack_food') or WelcomePackFoodChoice.STANDARD
+            welcome_pack_drinks = post_data.get('welcome_pack_drinks') or WelcomePackDrinksChoice.ALCOHOLIC
+            welcome_pack_note = post_data.get('welcome_pack_note', '').strip()
             quantities = {t.id: post_data.get(f'request_qty_{t.id}', '0').strip() or '0' for t in active_types}
             notes = {t.id: post_data.get(f'request_note_{t.id}', '').strip() for t in active_types}
         else:
             extra = getattr(booking, 'extras', None)
             welcome_pack = bool(extra and extra.welcome_pack)
-            welcome_pack_modifications = extra.welcome_pack_modifications if extra else ''
+            welcome_pack_food = (extra.welcome_pack_food if extra and extra.welcome_pack_food
+                                  else WelcomePackFoodChoice.STANDARD)
+            welcome_pack_drinks = (extra.welcome_pack_drinks if extra and extra.welcome_pack_drinks
+                                    else WelcomePackDrinksChoice.ALCOHOLIC)
+            welcome_pack_note = extra.welcome_pack_note if extra and extra.welcome_pack_note else ''
             existing = {r.request_type_id: r for r in booking.requested_extras.all()}
             quantities = {t.id: str(existing[t.id].quantity) if t.id in existing else '0' for t in active_types}
             notes = {t.id: existing[t.id].note if t.id in existing else '' for t in active_types}
@@ -202,7 +226,9 @@ class BookingDetailsView(View):
         return {
             'welcome_pack_items': WelcomePackItem.objects.filter(active=True),
             'welcome_pack': welcome_pack,
-            'welcome_pack_modifications': welcome_pack_modifications,
+            'welcome_pack_food': welcome_pack_food,
+            'welcome_pack_drinks': welcome_pack_drinks,
+            'welcome_pack_note': welcome_pack_note,
             'request_rows': [
                 {'request_type': t, 'quantity': quantities[t.id], 'note': notes[t.id]}
                 for t in active_types

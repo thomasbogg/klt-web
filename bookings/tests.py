@@ -377,7 +377,9 @@ class BookingDetailsViewTests(TestCase):
         self._set_session()
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
         data['welcome_pack'] = 'on'
-        data['welcome_pack_modifications'] = 'Swap red wine for white'
+        data['welcome_pack_food'] = 'vegan'
+        data['welcome_pack_drinks'] = 'non_alcoholic'
+        data['welcome_pack_note'] = 'Nut allergy'
         data[f'request_qty_{extra_bed.id}'] = '1'
         data[f'request_note_{extra_bed.id}'] = 'For the sofa bed'
         response = self.client.post(self.url, data)
@@ -385,12 +387,24 @@ class BookingDetailsViewTests(TestCase):
 
         self.booking.refresh_from_db()
         self.assertTrue(self.booking.extras.welcome_pack)
-        self.assertEqual(self.booking.extras.welcome_pack_modifications, 'Swap red wine for white')
+        self.assertEqual(self.booking.extras.welcome_pack_food, 'vegan')
+        self.assertEqual(self.booking.extras.welcome_pack_drinks, 'non_alcoholic')
+        self.assertEqual(self.booking.extras.welcome_pack_note, 'Nut allergy')
         requested = self.booking.requested_extras.get()
         self.assertEqual(requested.request_type, extra_bed)
         self.assertEqual(requested.quantity, 1)
         self.assertEqual(requested.note, 'For the sofa bed')
         self.assertEqual(requested.price_at_request, Decimal('15.00'))
+
+    def test_post_without_welcome_pack_leaves_food_and_drinks_unset(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertFalse(self.booking.extras.welcome_pack)
+        self.assertIsNone(self.booking.extras.welcome_pack_food)
+        self.assertIsNone(self.booking.extras.welcome_pack_drinks)
 
     def test_post_with_zero_quantity_does_not_create_a_requested_extra(self):
         extra_bed = RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
@@ -414,3 +428,15 @@ class BookingDetailsViewTests(TestCase):
         row = next(r for r in response.context['request_rows'] if r['request_type'] == extra_bed)
         self.assertEqual(row['quantity'], '2')
         self.assertEqual(self.booking.requested_extras.count(), 0)
+
+
+class WelcomePackItemMatchesTests(TestCase):
+    def test_variant_specific_item_only_matches_its_own_variant(self):
+        ham = WelcomePackItem(name='Ham', category=WelcomePackItem.Category.FOOD_STANDARD)
+        self.assertTrue(ham.matches(food_choice='standard', drinks_choice='alcoholic'))
+        self.assertFalse(ham.matches(food_choice='vegan', drinks_choice='alcoholic'))
+
+    def test_common_item_matches_either_variant_on_its_axis(self):
+        water = WelcomePackItem(name='Water', category=WelcomePackItem.Category.DRINKS_COMMON)
+        self.assertTrue(water.matches(food_choice='standard', drinks_choice='alcoholic'))
+        self.assertTrue(water.matches(food_choice='vegan', drinks_choice='non_alcoholic'))

@@ -443,6 +443,16 @@ class Payment(models.Model):
         return f"{self.booking} - Payment ({self.get_status_display()})"
 
 
+class WelcomePackFoodChoice(models.TextChoices):
+    STANDARD = 'standard', 'Standard'
+    VEGAN = 'vegan', 'Vegan'
+
+
+class WelcomePackDrinksChoice(models.TextChoices):
+    ALCOHOLIC = 'alcoholic', 'Alcoholic'
+    NON_ALCOHOLIC = 'non_alcoholic', 'Non-alcoholic'
+
+
 class Extra(models.Model):
     """Booking extras and additional services."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='extras')
@@ -453,10 +463,14 @@ class Extra(models.Model):
 
     # Services
     welcome_pack = models.BooleanField(blank=True, null=True)
-    welcome_pack_modifications = models.TextField(blank=True, null=True)
+    welcome_pack_food = models.CharField(max_length=20, choices=WelcomePackFoodChoice.choices, blank=True, null=True)
+    welcome_pack_drinks = models.CharField(max_length=20, choices=WelcomePackDrinksChoice.choices, blank=True, null=True)
+    welcome_pack_note = models.TextField(blank=True, null=True,
+                                          help_text="Allergies or dietary notes only - the pack's contents are "
+                                                     "fixed by the food/drinks choice, not open to swap requests.")
     welcome_pack_charge = models.DecimalField(max_digits=8, decimal_places=2, blank=True, null=True,
-                                               help_text="Staff-entered charge if the guest's welcome pack "
-                                                         "customisation isn't a free like-for-like swap.")
+                                               help_text="Staff-entered charge for a rare exception granted "
+                                                         "outside the standard fixed pack choices.")
     mid_stay_clean = models.BooleanField(blank=True, null=True)
     late_checkout = models.BooleanField(blank=True, null=True)
     extra_nights = models.BooleanField(blank=True, null=True)
@@ -517,18 +531,37 @@ class BookingRequestedExtra(models.Model):
 
 
 class WelcomePackItem(models.Model):
-    """Admin-managed default item list shown to guests for the Welcome Pack."""
+    """Admin-managed item list shown to guests for the Welcome Pack, tagged by which fixed food/
+    drinks choice(s) it belongs to - the *_COMMON categories show regardless of which side of that
+    axis the guest picked (e.g. water is fine for both alcoholic and non-alcoholic)."""
+    class Category(models.TextChoices):
+        FOOD_STANDARD = 'food_standard', 'Food - standard only'
+        FOOD_VEGAN = 'food_vegan', 'Food - vegan only'
+        FOOD_COMMON = 'food_common', 'Food - both standard and vegan'
+        DRINKS_ALCOHOLIC = 'drinks_alcoholic', 'Drinks - alcoholic only'
+        DRINKS_NON_ALCOHOLIC = 'drinks_non_alcoholic', 'Drinks - non-alcoholic only'
+        DRINKS_COMMON = 'drinks_common', 'Drinks - both alcoholic and non-alcoholic'
+
     name = models.CharField(max_length=100)
+    category = models.CharField(max_length=24, choices=Category.choices, default=Category.FOOD_COMMON)
     order = models.PositiveIntegerField(default=0)
     active = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'welcome_pack_items'
         verbose_name = 'Welcome pack item'
-        ordering = ('order', 'name')
+        ordering = ('category', 'order', 'name')
 
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.get_category_display()})"
+
+    def matches(self, food_choice, drinks_choice):
+        """Whether this item should show for a guest who picked the given food/drinks variant."""
+        if self.category in (self.Category.FOOD_STANDARD, self.Category.FOOD_VEGAN):
+            return self.category == f'food_{food_choice}'
+        if self.category in (self.Category.DRINKS_ALCOHOLIC, self.Category.DRINKS_NON_ALCOHOLIC):
+            return self.category == f'drinks_{drinks_choice}'
+        return True
 
 
 class Form(models.Model):

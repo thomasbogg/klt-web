@@ -91,7 +91,8 @@ class RequestTypeAdmin(admin.ModelAdmin):
 
 @admin.register(WelcomePackItem)
 class WelcomePackItemAdmin(admin.ModelAdmin):
-    list_display = ('order', 'name', 'active')
+    list_display = ('name', 'category', 'order', 'active')
     list_display_links = ('name',)
-    list_editable = ('order', 'active')
-    ordering = ('order',)
+    list_editable = ('category', 'order', 'active')
+    list_filter = ('category',)
+    ordering = ('category', 'order')
