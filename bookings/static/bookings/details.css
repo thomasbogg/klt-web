@@ -132,6 +132,98 @@
     }
 }
 
+.details-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.95rem;
+    color: rgb(60, 60, 60);
+    cursor: pointer;
+}
+
+.welcome-pack-block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.welcome-pack-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.welcome-pack-field label {
+    font-size: 0.85rem;
+    color: rgb(110, 110, 110);
+    line-height: 1.5;
+}
+
+.welcome-pack-field textarea {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    font-family: inherit;
+}
+
+.request-rows {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.request-row {
+    display: grid;
+    grid-template-columns: 1fr 70px 1fr;
+    align-items: start;
+    gap: 10px;
+}
+
+.request-row-header {
+    font-family: var(--secondary-font);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+}
+
+.request-row-name {
+    padding-top: 10px;
+    font-size: 0.9rem;
+    color: rgb(60, 60, 60);
+    display: flex;
+    flex-direction: column;
+}
+
+.request-row-price {
+    font-size: 0.8rem;
+    color: rgb(150, 150, 150);
+}
+
+.request-row-desc {
+    font-size: 0.8rem;
+    color: rgb(150, 150, 150);
+}
+
+.request-row input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+@media (max-width: 560px) {
+    .request-row {
+        grid-template-columns: 1fr;
+        row-gap: 6px;
+    }
+
+    .request-row-header {
+        display: none;
+    }
+}
+
 .price-change-overlay {
     position: fixed;
     inset: 0;

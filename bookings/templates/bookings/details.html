@@ -107,6 +107,47 @@
                 <button type="button" class="guest-row-add" id="guest-row-add">+ Add guest</button>
             </section>
 
+            <section class="details-section">
+                <h2 class="details-section-title">Welcome Pack &amp; Requests</h2>
+                <p class="details-note">Everything below is paid in cash at check-in - it isn't included in the amount due now.</p>
+
+                <div class="welcome-pack-block">
+                    <label class="details-checkbox-label">
+                        <input type="checkbox" name="welcome_pack" {% if welcome_pack %}checked{% endif %}>
+                        I'd like a Welcome Pack
+                    </label>
+                    {% if welcome_pack_items %}
+                    <p class="details-note">Default items: {% for item in welcome_pack_items %}{{ item.name }}{% if not forloop.last %}, {% endif %}{% endfor %}.</p>
+                    {% endif %}
+                    <div class="welcome-pack-field">
+                        <label for="welcome_pack_modifications">Any swaps or changes? Like-for-like swaps are free; other changes may incur a charge, which we'll confirm with you before check-in.</label>
+                        <textarea name="welcome_pack_modifications" id="welcome_pack_modifications" class="reserve-input" rows="2">{{ welcome_pack_modifications }}</textarea>
+                    </div>
+                </div>
+
+                {% if request_rows %}
+                <p class="details-note">Anything else you'd like waiting for you?</p>
+                <div class="request-rows">
+                    <div class="request-row request-row-header">
+                        <span>Item</span>
+                        <span>Qty</span>
+                        <span>Note</span>
+                    </div>
+                    {% for row in request_rows %}
+                    <div class="request-row">
+                        <span class="request-row-name">
+                            {{ row.request_type.name }}
+                            {% if row.request_type.default_price %}<span class="request-row-price">&euro;{{ row.request_type.default_price|floatformat:2 }}</span>{% endif %}
+                            {% if row.request_type.description %}<span class="request-row-desc">{{ row.request_type.description }}</span>{% endif %}
+                        </span>
+                        <input type="number" name="request_qty_{{ row.request_type.id }}" class="reserve-input" value="{{ row.quantity }}" min="0" max="20">
+                        <input type="text" name="request_note_{{ row.request_type.id }}" class="reserve-input" value="{{ row.note }}" placeholder="Optional note">
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </section>
+
             <button type="submit" class="reserve-form-submit">Make Payment</button>
 
             {% if price_changed %}

@@ -6,7 +6,7 @@ from django.views import View
 
 import env_settings
 from bookings.forms import BookingLookupForm
-from bookings.models import Booking, BookingCondition, BookingGuest
+from bookings.models import Booking, BookingCondition, BookingGuest, BookingRequestedExtra, Extra, RequestType, WelcomePackItem
 from bookings.utils import (
     booking_confirmation_context, cancel_booking_hold, recalculate_costs_for_party, reservation_retry_url,
 )
@@ -37,12 +37,14 @@ class BookingConfirmationView(View):
 
 
 class BookingDetailsView(View):
-    """Booking-details step shown right after a reservation is created, before payment - currently
-    just the guest-list section (first/last name + age per party member), with room for future
-    sections (extras, arrival/departure coordination) on the same page - see the plan this was
-    built from for context. GET is bearer-readable like every other reference-based view; POST is
-    a write (it can change Booking.adults/children/babies and the locked Charge) and is gated the
-    same way BookingPaymentCancelView gates cancellation - see that class's docstring."""
+    """Booking-details step shown right after a reservation is created, before payment - the
+    guest-list section (first/last name + age per party member) plus a Welcome Pack & Requests
+    section (RequestType catalog items, cash-at-checkin, no interaction with the online Charge/
+    Payment total), with room for future sections (arrival/departure coordination) on the same
+    page - see the plan this was built from for context. GET is bearer-readable like every other
+    reference-based view; POST is a write (it can change Booking.adults/children/babies and the
+    locked Charge, plus the guest's extras) and is gated the same way BookingPaymentCancelView
+    gates cancellation - see that class's docstring."""
     template_name = 'bookings/details.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -60,6 +62,7 @@ class BookingDetailsView(View):
             'hold_expired': booking.hold_expires_at is not None and booking.hold_expires_at <= timezone.now(),
             'payment_in_progress': payment.status == 'in_progress',
         }
+        context.update(self._extras_context(booking))
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
@@ -84,6 +87,7 @@ class BookingDetailsView(View):
             'payment_in_progress': False,
             'non_field_error': non_field_error,
         }
+        context.update(self._extras_context(booking, post_data=request.POST))
 
         if non_field_error or any(row['errors'] for row in rows):
             return render(request, self.template_name, context)
@@ -147,7 +151,63 @@ class BookingDetailsView(View):
                 payment.revolut_checkout_url = None
                 payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
 
+            self._save_extras(booking, request.POST)
+
         return redirect('bookings:pay', reference=booking.reference)
+
+    def _save_extras(self, booking, post_data):
+        """Welcome Pack + RequestType selections are cash-at-checkin (see the plan this was built
+        from) so, unlike the guest list, they never touch Charge/Payment - just persisted as-is."""
+        extra, _ = Extra.objects.get_or_create(booking=booking)
+        extra.welcome_pack = post_data.get('welcome_pack') == 'on'
+        extra.welcome_pack_modifications = post_data.get('welcome_pack_modifications', '').strip()
+        extra.save(update_fields=['welcome_pack', 'welcome_pack_modifications'])
+
+        booking.requested_extras.all().delete()
+        new_requests = []
+        for request_type in RequestType.objects.filter(active=True):
+            try:
+                quantity = int(post_data.get(f'request_qty_{request_type.id}', '0'))
+            except (TypeError, ValueError):
+                quantity = 0
+            if quantity > 0:
+                new_requests.append(BookingRequestedExtra(
+                    booking=booking,
+                    request_type=request_type,
+                    quantity=quantity,
+                    note=post_data.get(f'request_note_{request_type.id}', '').strip(),
+                    price_at_request=request_type.default_price,
+                ))
+        BookingRequestedExtra.objects.bulk_create(new_requests)
+
+    def _extras_context(self, booking, post_data=None):
+        """Welcome Pack + RequestType-row context shared by GET (DB-backed prefill) and a POST
+        re-render after a guest-list validation error or price-change interstitial (form-backed,
+        so nothing the guest typed into the extras section is lost when the page re-renders)."""
+        active_types = list(RequestType.objects.filter(active=True))
+
+        if post_data is not None:
+            welcome_pack = post_data.get('welcome_pack') == 'on'
+            welcome_pack_modifications = post_data.get('welcome_pack_modifications', '').strip()
+            quantities = {t.id: post_data.get(f'request_qty_{t.id}', '0').strip() or '0' for t in active_types}
+            notes = {t.id: post_data.get(f'request_note_{t.id}', '').strip() for t in active_types}
+        else:
+            extra = getattr(booking, 'extras', None)
+            welcome_pack = bool(extra and extra.welcome_pack)
+            welcome_pack_modifications = extra.welcome_pack_modifications if extra else ''
+            existing = {r.request_type_id: r for r in booking.requested_extras.all()}
+            quantities = {t.id: str(existing[t.id].quantity) if t.id in existing else '0' for t in active_types}
+            notes = {t.id: existing[t.id].note if t.id in existing else '' for t in active_types}
+
+        return {
+            'welcome_pack_items': WelcomePackItem.objects.filter(active=True),
+            'welcome_pack': welcome_pack,
+            'welcome_pack_modifications': welcome_pack_modifications,
+            'request_rows': [
+                {'request_type': t, 'quantity': quantities[t.id], 'note': notes[t.id]}
+                for t in active_types
+            ],
+        }
 
     def _seed_or_prefill_rows(self, booking):
         """Row dicts in the same shape _parse_rows() produces, so the template has one rendering

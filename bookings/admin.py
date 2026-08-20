@@ -2,7 +2,10 @@ from django.contrib import admin
 from django.urls import reverse
 from django.shortcuts import redirect
 
-from .models import Booking, BookingCondition, BookingGuest, BookingSettings, Charge, Payment, PlatformPayout
+from .models import (
+    Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Extra,
+    Payment, PlatformPayout, RequestType, WelcomePackItem,
+)
 from .utils import expire_stale_holds
 
 
@@ -45,9 +48,20 @@ class PlatformPayoutInline(admin.StackedInline):
     max_num = 1
 
 
+class ExtraInline(admin.StackedInline):
+    model = Extra
+    max_num = 1
+
+
+class BookingRequestedExtraInline(admin.TabularInline):
+    model = BookingRequestedExtra
+    extra = 0
+
+
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
-    inlines = [ChargeInline, PaymentInline, BookingGuestInline, PlatformPayoutInline]
+    inlines = [ChargeInline, PaymentInline, BookingGuestInline, PlatformPayoutInline, ExtraInline,
+               BookingRequestedExtraInline]
     list_display = ('reference', 'property', 'guest', 'arrival_date', 'departure_date', 'enquiry_status', 'enquiry_source')
     list_filter = ('enquiry_status', 'enquiry_source')
     search_fields = ('reference', 'guest__first_name', 'guest__last_name', 'guest__email')
@@ -64,4 +78,20 @@ class BookingConditionAdmin(admin.ModelAdmin):
     list_display = ('order', 'text')
     list_display_links = ('text',)
     list_editable = ('order',)
+    ordering = ('order',)
+
+
+@admin.register(RequestType)
+class RequestTypeAdmin(admin.ModelAdmin):
+    list_display = ('name', 'default_price', 'active')
+    list_editable = ('default_price', 'active')
+    search_fields = ('name',)
+    ordering = ('name',)
+
+
+@admin.register(WelcomePackItem)
+class WelcomePackItemAdmin(admin.ModelAdmin):
+    list_display = ('order', 'name', 'active')
+    list_display_links = ('name',)
+    list_editable = ('order', 'active')
     ordering = ('order',)

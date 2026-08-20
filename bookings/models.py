@@ -446,26 +446,28 @@ class Payment(models.Model):
 class Extra(models.Model):
     """Booking extras and additional services."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='extras')
-    
+
     # Baby/child items
     cot = models.BooleanField(blank=True, null=True)
     high_chair = models.BooleanField(blank=True, null=True)
-    
+
     # Services
     welcome_pack = models.BooleanField(blank=True, null=True)
     welcome_pack_modifications = models.TextField(blank=True, null=True)
+    welcome_pack_charge = models.DecimalField(max_digits=8, decimal_places=2, blank=True, null=True,
+                                               help_text="Staff-entered charge if the guest's welcome pack "
+                                                         "customisation isn't a free like-for-like swap.")
     mid_stay_clean = models.BooleanField(blank=True, null=True)
     late_checkout = models.BooleanField(blank=True, null=True)
-    other_requests = models.TextField(blank=True, null=True)
     extra_nights = models.BooleanField(blank=True, null=True)
-    
+
     # Transport
     airport_transfers = models.BooleanField(blank=True, null=True)
     airport_transfer_inbound_only = models.BooleanField(blank=True, null=True)
     airport_transfer_outbound_only = models.BooleanField(blank=True, null=True)
     child_seats = models.CharField(max_length=200, blank=True, null=True)
     excess_baggage = models.CharField(max_length=200, blank=True, null=True)
-    
+
     # Payment
     owner_is_paying = models.BooleanField(blank=True, null=True)
 
@@ -476,6 +478,57 @@ class Extra(models.Model):
 
     def __str__(self):
         return f"{self.booking} - Extras"
+
+
+class RequestType(models.Model):
+    """Admin-managed catalog of extra items/services guests can request (e.g. extra bed, extra
+    pillows) - replaces the old freeform Extra.other_requests text field."""
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True)
+    default_price = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'booking_request_types'
+        verbose_name = 'Request type'
+        ordering = ('name',)
+
+    def __str__(self):
+        return self.name
+
+
+class BookingRequestedExtra(models.Model):
+    """A guest's request for a RequestType catalog item on a specific booking. price_at_request is
+    snapshotted from RequestType.default_price at creation time so a later catalog price change
+    doesn't retroactively reprice an already-requested item (same convention as Charge/PlatformPayout)."""
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='requested_extras')
+    request_type = models.ForeignKey(RequestType, on_delete=models.PROTECT)
+    quantity = models.PositiveIntegerField(default=1)
+    note = models.CharField(max_length=200, blank=True)
+    price_at_request = models.DecimalField(max_digits=8, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'booking_requested_extras'
+        ordering = ('created_at',)
+
+    def __str__(self):
+        return f"{self.booking} - {self.request_type} x{self.quantity}"
+
+
+class WelcomePackItem(models.Model):
+    """Admin-managed default item list shown to guests for the Welcome Pack."""
+    name = models.CharField(max_length=100)
+    order = models.PositiveIntegerField(default=0)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'welcome_pack_items'
+        verbose_name = 'Welcome pack item'
+        ordering = ('order', 'name')
+
+    def __str__(self):
+        return self.name
 
 
 class Form(models.Model):

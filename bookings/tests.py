@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from bookings.models import Booking, BookingSettings, Charge, Payment
+from bookings.models import Booking, BookingSettings, Charge, Payment, RequestType, WelcomePackItem
 from bookings.utils import (
     add_business_days, determine_payment_provider, expire_stale_holds, guest_counts_by_age,
     payment_clearing_expiry, recalculate_costs_for_party,
@@ -362,3 +362,55 @@ class BookingDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('adult', response.context['non_field_error'])
         self.assertEqual(self.booking.party.count(), 0)
+
+    def test_get_includes_active_request_types_and_welcome_pack_items(self):
+        RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
+        RequestType.objects.create(name='Discontinued item', default_price=Decimal('5.00'), active=False)
+        WelcomePackItem.objects.create(name='Red wine', order=1)
+        response = self.client.get(self.url)
+        request_type_names = [row['request_type'].name for row in response.context['request_rows']]
+        self.assertEqual(request_type_names, ['Extra bed'])
+        self.assertEqual(list(response.context['welcome_pack_items']), [WelcomePackItem.objects.get(name='Red wine')])
+
+    def test_post_persists_welcome_pack_and_requested_extras(self):
+        extra_bed = RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['welcome_pack'] = 'on'
+        data['welcome_pack_modifications'] = 'Swap red wine for white'
+        data[f'request_qty_{extra_bed.id}'] = '1'
+        data[f'request_note_{extra_bed.id}'] = 'For the sofa bed'
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.extras.welcome_pack)
+        self.assertEqual(self.booking.extras.welcome_pack_modifications, 'Swap red wine for white')
+        requested = self.booking.requested_extras.get()
+        self.assertEqual(requested.request_type, extra_bed)
+        self.assertEqual(requested.quantity, 1)
+        self.assertEqual(requested.note, 'For the sofa bed')
+        self.assertEqual(requested.price_at_request, Decimal('15.00'))
+
+    def test_post_with_zero_quantity_does_not_create_a_requested_extra(self):
+        extra_bed = RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data[f'request_qty_{extra_bed.id}'] = '0'
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.assertEqual(self.booking.requested_extras.count(), 0)
+
+    def test_post_price_change_warning_preserves_typed_extras(self):
+        extra_bed = RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 15])
+        data['welcome_pack'] = 'on'
+        data[f'request_qty_{extra_bed.id}'] = '2'
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['price_changed'])
+        self.assertTrue(response.context['welcome_pack'])
+        row = next(r for r in response.context['request_rows'] if r['request_type'] == extra_bed)
+        self.assertEqual(row['quantity'], '2')
+        self.assertEqual(self.booking.requested_extras.count(), 0)
