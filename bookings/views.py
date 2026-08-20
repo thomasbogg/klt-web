@@ -14,8 +14,8 @@ from bookings.models import (
     RequestType, WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
-    booking_confirmation_context, cancel_booking_hold, extras_summary, recalculate_costs_for_party,
-    reservation_retry_url,
+    booking_confirmation_context, cancel_booking_hold, extras_summary, recalculate_balance_for_party,
+    recalculate_costs_for_party, reservation_retry_url,
 )
 from libraries.banking.revolut import Revolut
 
@@ -51,7 +51,7 @@ class BookingConfirmationView(View):
         return render(request, self.template_name, booking_confirmation_context(booking))
 
 
-class ExtrasFormMixin:
+class BookingFormMixin:
     """Extras section logic (Welcome Pack, Cot/High Chair, Late Checkout, Airport Transfers,
     RequestType rows) shared between BookingDetailsView (the collapsed-booking case, where Extras
     are chosen alongside the deposit) and BookingBalanceDetailsView (the two-stage case, where
@@ -320,8 +320,94 @@ class ExtrasFormMixin:
         except ValueError:
             return True, None, "Enter a valid checkout time."
 
+    def _any_infant_age(self, rows, child_min_age):
+        """Whether any current guest-list row is age'd as an infant (below child_min_age) - the
+        sole condition for showing the Cot & High Chair section server-side on first render.
+        cot_high_chair.js recomputes this same check client-side as the guest edits ages, so the
+        section can appear/disappear live without a page reload - see that file. Deliberately does
+        NOT also consider Booking.babies (the original search's infant count): on a fresh booking
+        every age field starts blank regardless of what was picked in search (see
+        _seed_or_prefill_rows), so there's no age to check yet - the guest must actually type an
+        infant age into a row for either the initial render or the live JS check to show it."""
+        for row in rows:
+            age = str(row.get('age', '')).strip()
+            if age.isdigit() and int(age) < child_min_age:
+                return True
+        return False
 
-class BookingDetailsView(ExtrasFormMixin, View):
+    def _seed_or_prefill_rows(self, booking):
+        """Row dicts in the same shape _parse_rows() produces, so the template has one rendering
+        path for both a fresh GET and a POST re-display after a validation error."""
+        existing = list(booking.party.all())
+        if existing:
+            return [
+                {'first_name': guest.first_name, 'last_name': guest.last_name, 'age': guest.age, 'errors': {}}
+                for guest in existing
+            ]
+        rows = [{
+            'first_name': booking.guest.first_name or '',
+            'last_name': booking.guest.last_name,
+            'age': '',
+            'errors': {},
+        }]
+        blank_count = booking.adults + booking.children + booking.babies - 1
+        for _ in range(max(0, blank_count)):
+            rows.append({'first_name': '', 'last_name': '', 'age': '', 'errors': {}})
+        return rows
+
+    def _parse_rows(self, post_data):
+        """Three parallel arrays (first_name[]/last_name[]/age[]), not a Django formset - see the
+        plan this was built from for why. Returns (rows, non_field_error); rows is [] only when
+        non_field_error is set (a malformed submission, not a normal validation failure)."""
+        first_names = post_data.getlist('first_name[]')
+        last_names = post_data.getlist('last_name[]')
+        ages_raw = post_data.getlist('age[]')
+
+        if not first_names or not (len(first_names) == len(last_names) == len(ages_raw)):
+            return [], "Something went wrong submitting the guest list - please try again."
+
+        rows = []
+        for first_name, last_name, age_raw in zip(first_names, last_names, ages_raw):
+            errors = {}
+            first_name = first_name.strip()
+            last_name = last_name.strip()
+            if not first_name:
+                errors['first_name'] = "First name is required."
+            if not last_name:
+                errors['last_name'] = "Last name is required."
+            try:
+                age_value = int(age_raw)
+                if age_value < 0 or age_value > MAX_GUEST_AGE:
+                    errors['age'] = "Enter a real age."
+            except (TypeError, ValueError):
+                errors['age'] = "Enter a real age."
+            rows.append({'first_name': first_name, 'last_name': last_name, 'age': age_raw.strip(), 'errors': errors})
+        return rows, None
+
+    def _save_guest_list(self, booking, rows, new_guests):
+        """Persists a validated guest list - shared by BookingDetailsView (deposit stage) and
+        BookingBalanceDetailsView (balance stage, see recalculate_balance_for_party()). Does NOT
+        touch Charge - the caller applies whichever pricing rule is appropriate for its stage
+        first, then calls this."""
+        booking.party.all().delete()
+        BookingGuest.objects.bulk_create([
+            BookingGuest(
+                booking=booking,
+                first_name=row['first_name'],
+                last_name=row['last_name'],
+                age=int(row['age']),
+                is_lead=(index == 0),
+            )
+            for index, row in enumerate(rows)
+        ])
+        booking.adults = new_guests['adults']
+        booking.children = new_guests['children']
+        booking.babies = new_guests['infants']
+        booking.last_updated = timezone.now()
+        booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
+
+
+class BookingDetailsView(BookingFormMixin, View):
     """Booking-details step shown right after a reservation is created, before payment - the
     guest-list section (first/last name + age per party member) plus, for a collapsed (single-
     payment) booking only, the Extras section (Welcome Pack, Cot/High Chair, Late Checkout,
@@ -428,23 +514,7 @@ class BookingDetailsView(ExtrasFormMixin, View):
             return render(request, self.template_name, context)
 
         with transaction.atomic():
-            booking.party.all().delete()
-            BookingGuest.objects.bulk_create([
-                BookingGuest(
-                    booking=booking,
-                    first_name=row['first_name'],
-                    last_name=row['last_name'],
-                    age=int(row['age']),
-                    is_lead=(index == 0),
-                )
-                for index, row in enumerate(rows)
-            ])
-
-            booking.adults = new_guests['adults']
-            booking.children = new_guests['children']
-            booking.babies = new_guests['infants']
-            booking.last_updated = timezone.now()
-            booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
+            self._save_guest_list(booking, rows, new_guests)
 
             charge = booking.charges
             charge.basic_rental = new_costs['basic_rental']
@@ -471,81 +541,20 @@ class BookingDetailsView(ExtrasFormMixin, View):
 
         return redirect('bookings:pay', reference=booking.reference)
 
-    def _any_infant_age(self, rows, child_min_age):
-        """Whether any current guest-list row is age'd as an infant (below child_min_age) - the
-        sole condition for showing the Cot & High Chair section server-side on first render.
-        cot_high_chair.js recomputes this same check client-side as the guest edits ages, so the
-        section can appear/disappear live without a page reload - see that file. Deliberately does
-        NOT also consider Booking.babies (the original search's infant count): on a fresh booking
-        every age field starts blank regardless of what was picked in search (see
-        _seed_or_prefill_rows), so there's no age to check yet - the guest must actually type an
-        infant age into a row for either the initial render or the live JS check to show it."""
-        for row in rows:
-            age = str(row.get('age', '')).strip()
-            if age.isdigit() and int(age) < child_min_age:
-                return True
-        return False
 
-    def _seed_or_prefill_rows(self, booking):
-        """Row dicts in the same shape _parse_rows() produces, so the template has one rendering
-        path for both a fresh GET and a POST re-display after a validation error."""
-        existing = list(booking.party.all())
-        if existing:
-            return [
-                {'first_name': guest.first_name, 'last_name': guest.last_name, 'age': guest.age, 'errors': {}}
-                for guest in existing
-            ]
-        rows = [{
-            'first_name': booking.guest.first_name or '',
-            'last_name': booking.guest.last_name,
-            'age': '',
-            'errors': {},
-        }]
-        blank_count = booking.adults + booking.children + booking.babies - 1
-        for _ in range(max(0, blank_count)):
-            rows.append({'first_name': '', 'last_name': '', 'age': '', 'errors': {}})
-        return rows
-
-    def _parse_rows(self, post_data):
-        """Three parallel arrays (first_name[]/last_name[]/age[]), not a Django formset - see the
-        plan this was built from for why. Returns (rows, non_field_error); rows is [] only when
-        non_field_error is set (a malformed submission, not a normal validation failure)."""
-        first_names = post_data.getlist('first_name[]')
-        last_names = post_data.getlist('last_name[]')
-        ages_raw = post_data.getlist('age[]')
-
-        if not first_names or not (len(first_names) == len(last_names) == len(ages_raw)):
-            return [], "Something went wrong submitting the guest list - please try again."
-
-        rows = []
-        for first_name, last_name, age_raw in zip(first_names, last_names, ages_raw):
-            errors = {}
-            first_name = first_name.strip()
-            last_name = last_name.strip()
-            if not first_name:
-                errors['first_name'] = "First name is required."
-            if not last_name:
-                errors['last_name'] = "Last name is required."
-            try:
-                age_value = int(age_raw)
-                if age_value < 0 or age_value > MAX_GUEST_AGE:
-                    errors['age'] = "Enter a real age."
-            except (TypeError, ValueError):
-                errors['age'] = "Enter a real age."
-            rows.append({'first_name': first_name, 'last_name': last_name, 'age': age_raw.strip(), 'errors': errors})
-        return rows, None
-
-
-class BookingBalanceDetailsView(ExtrasFormMixin, View):
-    """Extras-selection step for a two-stage booking's balance stage (see BalancePayment's
-    docstring) - the guest-list equivalent of BookingDetailsView, but for Extras only: the guest
-    list itself was already locked in at deposit time and isn't editable here. Reached via a link
-    sent manually to the guest around BookingSettings.balance_reminder_days_before_arrival (no
-    automated email yet), or self-serve from the confirmation/manage-booking pages once the
-    deposit is paid - see bookings/utils.py::booking_confirmation_context(). Bearer-readable by
-    reference alone, like every other post-deposit reference-based view here - unlike
-    BookingDetailsView's POST, there's no same-session pending_booking_reference to check, since
-    this is reached from an emailed link days later with no session continuity at all."""
+class BookingBalanceDetailsView(BookingFormMixin, View):
+    """Guest-list and Extras step for a two-stage booking's balance stage (see BalancePayment's
+    docstring). The guest list stays editable here up to the property's max_guests, same as
+    BookingDetailsView - but unlike that view, the deposit (due_at_booking) is already paid and
+    frozen by this point, so a change here can only move due_at_balance, never retroactively
+    redefine the deposit - see bookings/utils.py::recalculate_balance_for_party() for why this
+    can't just reuse recalculate_costs_for_party(). Reached via a link sent manually to the guest
+    around BookingSettings.balance_reminder_days_before_arrival (no automated email yet), or
+    self-serve from the confirmation/manage-booking pages once the deposit is paid - see
+    bookings/utils.py::booking_confirmation_context(). Bearer-readable by reference alone, like
+    every other post-deposit reference-based view here - unlike BookingDetailsView's POST, there's
+    no same-session pending_booking_reference to check, since this is reached from an emailed link
+    days later with no session continuity at all."""
     template_name = 'bookings/balance_details.html'
 
     def _get_gated_booking(self, reference):
@@ -560,20 +569,24 @@ class BookingBalanceDetailsView(ExtrasFormMixin, View):
             return booking, redirect('bookings:pay', reference=reference)
         if is_balance_paid(booking):
             return booking, redirect('bookings:confirmation', reference=reference)
+        if booking.balance_payment.status == 'in_progress':
+            return booking, redirect('bookings:balance_pay', reference=reference)
         return booking, None
-
-    def _show_cot_high_chair(self, booking):
-        """Same infant-presence gate as BookingDetailsView, but computed once from the guest list
-        that's already locked in for this booking (no live guest-row typing to react to here)."""
-        child_min_age = BookingSettings.load().child_min_age
-        return booking.party.filter(age__lt=child_min_age).exists()
 
     def get(self, request, reference, *args, **kwargs):
         booking, redirect_response = self._get_gated_booking(reference)
         if redirect_response is not None:
             return redirect_response
 
-        context = {'booking': booking, 'show_cot_high_chair': self._show_cot_high_chair(booking)}
+        rows = self._seed_or_prefill_rows(booking)
+        child_min_age = BookingSettings.load().child_min_age
+        context = {
+            'booking': booking,
+            'rows': rows,
+            'max_guests': booking.property.specs.max_guests,
+            'child_min_age': child_min_age,
+            'show_cot_high_chair': self._any_infant_age(rows, child_min_age),
+        }
         context.update(self._extras_context(booking))
         context.update(self._transfer_context(booking))
         return render(request, self.template_name, context)
@@ -583,12 +596,25 @@ class BookingBalanceDetailsView(ExtrasFormMixin, View):
         if redirect_response is not None:
             return redirect_response
 
+        max_guests = booking.property.specs.max_guests
+        rows, non_field_error = self._parse_rows(request.POST)
         transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
         _, _, late_checkout_error = self._parse_late_checkout(request.POST)
-        context = {'booking': booking, 'show_cot_high_chair': self._show_cot_high_chair(booking)}
+        child_min_age = BookingSettings.load().child_min_age
+        context = {
+            'booking': booking,
+            'rows': rows,
+            'max_guests': max_guests,
+            'non_field_error': non_field_error,
+            'child_min_age': child_min_age,
+            'show_cot_high_chair': self._any_infant_age(rows, child_min_age),
+        }
         context.update(self._extras_context(booking, post_data=request.POST))
         context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
         context['late_checkout_error'] = late_checkout_error
+
+        if non_field_error or any(row['errors'] for row in rows):
+            return render(request, self.template_name, context)
 
         if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
             return render(request, self.template_name, context)
@@ -596,7 +622,46 @@ class BookingBalanceDetailsView(ExtrasFormMixin, View):
         if late_checkout_error:
             return render(request, self.template_name, context)
 
+        if len(rows) > max_guests:
+            context['non_field_error'] = f"This property allows a maximum of {max_guests} guests."
+            return render(request, self.template_name, context)
+
+        ages = [int(row['age']) for row in rows]
+        new_guests, new_costs, changed = recalculate_balance_for_party(booking, ages)
+        if new_guests is None:
+            context['non_field_error'] = (
+                "This stay can no longer be priced automatically - please contact us to complete your booking."
+            )
+            return render(request, self.template_name, context)
+        if new_guests['adults'] == 0:
+            context['non_field_error'] = "At least one adult must be included in the party."
+            return render(request, self.template_name, context)
+
+        if changed and request.POST.get('confirmed') != '1':
+            context['price_changed'] = True
+            context['old_charge'] = booking.charges
+            context['new_costs'] = new_costs
+            return render(request, self.template_name, context)
+
         with transaction.atomic():
+            self._save_guest_list(booking, rows, new_guests)
+
+            charge = booking.charges
+            charge.basic_rental = new_costs['basic_rental']
+            charge.admin = new_costs['admin_fee']
+            charge.security = new_costs['security_deposit']
+            charge.due_at_balance = new_costs['due_at_balance']
+            charge.save(update_fields=['basic_rental', 'admin', 'security', 'due_at_balance'])
+
+            # A price change after a Revolut checkout URL already exists (guest went balance ->
+            # pay -> back -> balance, changed something) would otherwise leave the guest paying a
+            # stale amount - clear it so BookingBalancePaymentView.get() rebuilds the order fresh.
+            balance_payment = booking.balance_payment
+            if changed and balance_payment.revolut_checkout_url:
+                balance_payment.revolut_order_id = None
+                balance_payment.revolut_checkout_url = None
+                balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
+
             self._save_extras(booking, request.POST)
             self._save_transfers(booking, transfer_rows)
 

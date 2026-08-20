@@ -12,7 +12,7 @@ from bookings.models import (
 )
 from bookings.utils import (
     add_business_days, create_booking, determine_payment_provider, expire_stale_holds, extras_summary,
-    guest_counts_by_age, payment_clearing_expiry, recalculate_costs_for_party,
+    guest_counts_by_age, payment_clearing_expiry, recalculate_balance_for_party, recalculate_costs_for_party,
 )
 from guests.models import Guest
 from properties.models import Price, Property, PropertySpec
@@ -298,6 +298,68 @@ class RecalculateCostsForPartyTests(TestCase):
     def test_unpriceable_stay_returns_all_none(self):
         self.booking.property.prices.all().delete()
         result = recalculate_costs_for_party(self.booking, [30, 32, 10])
+        self.assertEqual(result, (None, None, None))
+
+
+class RecalculateBalanceForPartyTests(TestCase):
+    """Same fixture as RecalculateCostsForPartyTests, but exercising the balance-stage variant -
+    the deposit (due_at_booking) is already paid here, so only due_at_balance should ever move."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property RB', short_title='TESTRB')
+        PropertySpec.objects.create(property=self.property, max_guests=6)
+        self.guest = Guest.objects.create(first_name='Rita', last_name='Fonseca', email='rita-rb@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        Price.objects.create(
+            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+        )
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=1, babies=0, last_updated=timezone.now(),
+        )
+        self.charge = Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('735.00'), admin=Decimal('40.43'),
+            due_at_booking=Decimal('193.86'), due_at_balance=Decimal('581.57'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+
+    def test_unchanged_party_reports_no_change(self):
+        new_guests, new_costs, changed = recalculate_balance_for_party(self.booking, [30, 32, 10])
+        self.assertFalse(changed)
+        self.assertEqual(new_costs['due_at_balance'], Decimal('581.57'))
+        self.assertEqual(new_costs['due_at_booking'], Decimal('193.86'))
+
+    def test_due_at_booking_is_never_recomputed_only_frozen_value_is_reused(self):
+        # Same age change RecalculateCostsForPartyTests uses to trigger a genuine price change
+        # (child reclassified as an adult), but here due_at_booking must stay exactly what was
+        # actually paid, not 25% of the new (larger) subtotal.
+        new_guests, new_costs, changed = recalculate_balance_for_party(self.booking, [30, 32, 15])
+        self.assertTrue(changed)
+        self.assertEqual(new_costs['basic_rental'], Decimal('770.00'))
+        self.assertEqual(new_costs['due_at_booking'], Decimal('193.86'))  # untouched
+        # subtotal = 770 + 5.5% admin (42.35) = 812.35; balance = 812.35 - 193.86 (frozen deposit)
+        self.assertEqual(new_costs['admin_fee'], Decimal('42.35'))
+        self.assertEqual(new_costs['due_at_balance'], Decimal('618.49'))
+
+    def test_removing_the_child_reduces_the_balance(self):
+        new_guests, new_costs, changed = recalculate_balance_for_party(self.booking, [30, 32])
+        self.assertTrue(changed)
+        self.assertEqual(new_costs['basic_rental'], Decimal('700.00'))
+        self.assertLess(new_costs['due_at_balance'], Decimal('581.57'))
+
+    def test_balance_floors_at_zero_never_negative(self):
+        self.charge.due_at_booking = Decimal('100000.00')
+        self.charge.save(update_fields=['due_at_booking'])
+        new_guests, new_costs, changed = recalculate_balance_for_party(self.booking, [30])
+        self.assertEqual(new_costs['due_at_balance'], Decimal('0'))
+
+    def test_unpriceable_stay_returns_all_none(self):
+        self.booking.property.prices.all().delete()
+        result = recalculate_balance_for_party(self.booking, [30, 32, 10])
         self.assertEqual(result, (None, None, None))
 
 
@@ -748,14 +810,25 @@ class BookingBalanceDetailsViewTests(TestCase):
         self.guest = Guest.objects.create(first_name='Elena', last_name='Costa', email='elena-bal@example.com')
         self.start = date.today() + timedelta(days=200)
         self.end = self.start + timedelta(days=7)
+        Price.objects.create(
+            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+        )
         self.booking = Booking.objects.create(
             property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
             is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
-            adults=2, children=0, babies=0, last_updated=timezone.now(),
+            adults=2, children=1, babies=0, last_updated=timezone.now(),
         )
+        # 2 adults + 1 child: FREE_ADULTS=2 means the first two adults are never priced extra
+        # (properties/utils.py) - a child (unlike a 3rd+ adult) always adds extra_child_rate, so
+        # this party actually changes price when a guest is added/removed, unlike a 2-adults-only
+        # party would. Matches the same fixture numbers as RecalculateCostsForPartyTests.
+        BookingGuest.objects.create(booking=self.booking, first_name='Elena', last_name='Costa', age=30, is_lead=True)
+        BookingGuest.objects.create(booking=self.booking, first_name='Marco', last_name='Costa', age=32, is_lead=False)
+        BookingGuest.objects.create(booking=self.booking, first_name='Ines', last_name='Costa', age=10, is_lead=False)
         self.charge = Charge.objects.create(
-            booking=self.booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
-            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            booking=self.booking, basic_rental=Decimal('735.00'), admin=Decimal('40.43'),
+            due_at_booking=Decimal('193.86'), due_at_balance=Decimal('581.57'),
             balance_due_date=self.start - timedelta(days=56), currency='EUR',
             gbp_conversion_rate=Decimal('0.8600'),
         )
@@ -765,6 +838,20 @@ class BookingBalanceDetailsViewTests(TestCase):
         self.pay_url = reverse('bookings:balance_pay', kwargs={'reference': self.booking.reference})
         self.confirmation_url = reverse('bookings:confirmation', kwargs={'reference': self.booking.reference})
         self.deposit_pay_url = reverse('bookings:pay', kwargs={'reference': self.booking.reference})
+
+    def _post_data(self, first_names, last_names, ages, confirmed=False, **extras):
+        data = {
+            'first_name[]': first_names,
+            'last_name[]': last_names,
+            'age[]': [str(age) for age in ages],
+        }
+        if confirmed:
+            data['confirmed'] = '1'
+        data.update(extras)
+        return data
+
+    def _unchanged_party(self, **extras):
+        return self._post_data(['Elena', 'Marco', 'Ines'], ['Costa', 'Costa', 'Costa'], [30, 32, 10], **extras)
 
     def test_get_redirects_to_confirmation_when_not_two_stage(self):
         self.balance_payment.delete()
@@ -783,37 +870,138 @@ class BookingBalanceDetailsViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertRedirects(response, self.confirmation_url, fetch_redirect_response=False)
 
-    def test_get_renders_extras_sections_when_gated_correctly(self):
+    def test_get_redirects_to_balance_pay_when_payment_in_progress(self):
+        self.balance_payment.status = 'in_progress'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+
+    def test_get_prefills_the_locked_in_guest_list(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0]['first_name'], 'Elena')
+        self.assertEqual(rows[1]['first_name'], 'Marco')
+        self.assertEqual(rows[2]['first_name'], 'Ines')
         self.assertIn('welcome_pack_items', response.context)
-        self.assertFalse(response.context['show_cot_high_chair'])
+        self.assertFalse(response.context['show_cot_high_chair'])  # age 10 is a child, not an infant
 
-    def test_show_cot_high_chair_reflects_the_locked_guest_list(self):
-        BookingGuest.objects.create(booking=self.booking, first_name='Baby', last_name='Costa', age=1, is_lead=False)
+    def test_show_cot_high_chair_reflects_a_submitted_infant_age(self):
         response = self.client.get(self.url)
+        self.assertFalse(response.context['show_cot_high_chair'])
+        # A deliberately invalid age on a throwaway 4th row guarantees a 200 re-render (not a
+        # redirect), so the infant row's live effect on show_cot_high_chair can be asserted
+        # directly - same trick BookingDetailsViewTests uses, without depending on whether adding
+        # an infant (priced at zero, see get_stay_total_price) happens to also change the price.
+        data = self._post_data(
+            ['Elena', 'Marco', 'Baby', 'Oops'], ['Costa', 'Costa', 'Costa', 'Oops'], [30, 32, 1, 'not-a-number'],
+        )
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context['show_cot_high_chair'])
 
-    def test_post_persists_extras_and_redirects_to_balance_pay(self):
+    def test_post_unchanged_party_persists_extras_and_redirects_to_balance_pay(self):
         settings = ExtrasSettings.load()
         settings.late_checkout_price = Decimal('20.00')
         settings.save()
-        response = self.client.post(self.url, {'late_checkout': 'on', 'late_checkout_time': '13:00'})
+        response = self.client.post(self.url, self._unchanged_party(late_checkout='on', late_checkout_time='13:00'))
         self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
         self.booking.refresh_from_db()
         self.assertTrue(self.booking.extras.late_checkout)
         self.assertEqual(self.booking.extras.late_checkout_charge, Decimal('20.00'))
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.due_at_booking, Decimal('193.86'))  # untouched
+        self.assertEqual(self.charge.due_at_balance, Decimal('581.57'))  # unchanged - same party
 
     def test_post_with_invalid_late_checkout_time_rerenders_with_error(self):
-        response = self.client.post(self.url, {'late_checkout': 'on', 'late_checkout_time': 'not-a-time'})
+        response = self.client.post(self.url, self._unchanged_party(late_checkout='on', late_checkout_time='not-a-time'))
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context['late_checkout_error'])
         self.assertFalse(hasattr(self.booking, 'extras'))
 
     def test_post_does_not_require_a_session_gate(self):
         # No _set_session() call anywhere in this test class - reference-alone auth is the point.
-        response = self.client.post(self.url, {})
+        response = self.client.post(self.url, self._unchanged_party())
         self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+
+    def test_post_missing_guest_list_is_rejected(self):
+        response = self.client.post(self.url, {})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['non_field_error'])
+
+    def test_post_exceeding_max_guests_is_rejected(self):
+        data = self._post_data(['A', 'B', 'C', 'D', 'E'], ['X'] * 5, [30, 30, 10, 10, 5])
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('maximum', response.context['non_field_error'])
+
+    def test_post_with_zero_adults_is_rejected(self):
+        data = self._post_data(['A', 'B'], ['X', 'X'], [10, 8])
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('adult', response.context['non_field_error'])
+
+    def test_removing_a_guest_shows_the_price_change_interstitial_and_reduces_balance_when_confirmed(self):
+        # Dropping Ines (the priced child): FREE_ADULTS=2 means Elena+Marco alone are no cheaper
+        # or costlier than each other, but the child's extra_child_rate genuinely drops off.
+        data = self._post_data(['Elena', 'Marco'], ['Costa', 'Costa'], [30, 32])
+        response = self.client.post(self.url, data)
+        self.assertTrue(response.context['price_changed'])
+        self.assertLess(response.context['new_costs']['due_at_balance'], self.charge.due_at_balance)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.due_at_balance, Decimal('581.57'))  # not yet persisted
+
+        data['confirmed'] = '1'
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.charge.refresh_from_db()
+        self.assertLess(self.charge.due_at_balance, Decimal('581.57'))
+        self.assertEqual(self.charge.due_at_booking, Decimal('193.86'))  # deposit stays frozen
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.party.count(), 2)
+
+    def test_adding_a_guest_increases_the_balance(self):
+        # A 4th person (a 3rd adult, beyond FREE_ADULTS=2) genuinely adds extra_adult_rate on top
+        # of the existing child.
+        data = self._post_data(
+            ['Elena', 'Marco', 'Ines', 'Sofia'], ['Costa', 'Costa', 'Costa', 'Costa'], [30, 32, 10, 25],
+            confirmed=True,
+        )
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.charge.refresh_from_db()
+        self.assertGreater(self.charge.due_at_balance, Decimal('581.57'))
+        self.assertEqual(self.charge.due_at_booking, Decimal('193.86'))  # deposit stays frozen
+
+    def test_balance_never_goes_negative_even_if_new_total_undercuts_the_paid_deposit(self):
+        # Force a deposit far larger than any recalculated total could produce.
+        self.charge.due_at_booking = Decimal('100000.00')
+        self.charge.save(update_fields=['due_at_booking'])
+        data = self._post_data(['Elena'], ['Costa'], [30], confirmed=True)
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.due_at_balance, Decimal('0'))
+
+    def test_price_change_clears_a_stale_revolut_checkout_url(self):
+        self.balance_payment.revolut_order_id = 'old-order-id'
+        self.balance_payment.revolut_checkout_url = 'https://checkout.revolut.com/old'
+        self.balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
+
+        data = self._post_data(['Elena'], ['Costa'], [30], confirmed=True)
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.balance_payment.refresh_from_db()
+        self.assertIsNone(self.balance_payment.revolut_order_id)
+        self.assertIsNone(self.balance_payment.revolut_checkout_url)
+
+    def test_unpriceable_stay_shows_contact_us_error(self):
+        self.property.prices.all().delete()
+        data = self._post_data(['Elena'], ['Costa'], [30])
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('contact us', response.context['non_field_error'])
 
 
 class BookingBalancePaymentViewTests(TestCase):

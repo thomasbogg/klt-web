@@ -175,6 +175,44 @@ def recalculate_costs_for_party(booking, ages):
     return new_guests, new_costs, changed
 
 
+def recalculate_balance_for_party(booking, ages):
+    """Balance-stage equivalent of recalculate_costs_for_party(), for a two-stage booking whose
+    deposit (due_at_booking) is already paid and collected - editing the guest list here can only
+    move due_at_balance, never retroactively redefine what the deposit "should have been".
+
+    Reuses get_stay_total_price()/BookingSettings.compute_costs() the same way for
+    basic_rental/admin_fee/subtotal (one formula, not duplicated), but then discards
+    compute_costs()'s own due_at_booking/due_at_balance/balance_due_date split (irrelevant here,
+    and its internal collapse-within-the-window branch doesn't apply once a deposit already
+    exists) in favour of due_at_balance = max(new_subtotal - due_at_booking, 0). Floored at zero
+    deliberately: removing guests can only ever reduce what's still owed, never imply refunding the
+    deposit already collected - see BalancePayment's docstring / the plan this was built from.
+
+    Returns (new_guests, new_costs, changed); new_costs has the same keys as compute_costs().
+    Returns (None, None, None) if the stay can no longer be priced at all - same as
+    recalculate_costs_for_party(). Writes nothing to the DB - the caller
+    (bookings/views.py::BookingBalanceDetailsView) decides whether/what to persist."""
+    from bookings.models import BookingSettings
+    from properties.utils import get_stay_total_price
+
+    booking_settings = BookingSettings.load()
+    new_guests = guest_counts_by_age(ages, booking_settings)
+    rental_total = get_stay_total_price(
+        booking.property, booking.arrival_date, booking.departure_date, new_guests,
+        monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
+    )
+    if rental_total is None:
+        return None, None, None
+
+    charge = booking.charges
+    new_costs = booking_settings.compute_costs(rental_total, arrival_date=booking.arrival_date)
+    new_costs['due_at_booking'] = charge.due_at_booking
+    new_costs['due_at_balance'] = max(new_costs['subtotal'] - charge.due_at_booking, Decimal('0'))
+    new_costs['balance_due_date'] = charge.balance_due_date
+    changed = new_costs['basic_rental'] != charge.basic_rental
+    return new_guests, new_costs, changed
+
+
 def expire_stale_holds():
     """Flip 'Awaiting payment' bookings whose hold has lapsed to a distinct 'Hold expired' status,
     purely for admin visibility - availability itself is already correct regardless (see
