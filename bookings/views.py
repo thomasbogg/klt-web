@@ -189,7 +189,18 @@ class BookingDetailsView(View):
             extra.welcome_pack_food = None
             extra.welcome_pack_drinks = None
             extra.welcome_pack_note = ''
-        extra.save(update_fields=['welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note'])
+
+        extra.cot = post_data.get('cot') == 'on'
+        extra.high_chair = post_data.get('high_chair') == 'on'
+        nights = (booking.departure_date - booking.arrival_date).days
+        extra.cot_high_chair_charge = ExtrasSettings.load().compute_cot_high_chair_price(
+            nights, extra.cot, extra.high_chair,
+        )
+
+        extra.save(update_fields=[
+            'welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note',
+            'cot', 'high_chair', 'cot_high_chair_charge',
+        ])
 
         booking.requested_extras.all().delete()
         new_requests = []
@@ -219,6 +230,8 @@ class BookingDetailsView(View):
             welcome_pack_food = post_data.get('welcome_pack_food') or WelcomePackFoodChoice.STANDARD
             welcome_pack_drinks = post_data.get('welcome_pack_drinks') or WelcomePackDrinksChoice.ALCOHOLIC
             welcome_pack_note = post_data.get('welcome_pack_note', '').strip()
+            cot = post_data.get('cot') == 'on'
+            high_chair = post_data.get('high_chair') == 'on'
             quantities = {t.id: post_data.get(f'request_qty_{t.id}', '0').strip() or '0' for t in active_types}
             notes = {t.id: post_data.get(f'request_note_{t.id}', '').strip() for t in active_types}
         else:
@@ -229,16 +242,30 @@ class BookingDetailsView(View):
             welcome_pack_drinks = (extra.welcome_pack_drinks if extra and extra.welcome_pack_drinks
                                     else WelcomePackDrinksChoice.ALCOHOLIC)
             welcome_pack_note = extra.welcome_pack_note if extra and extra.welcome_pack_note else ''
+            cot = bool(extra and extra.cot)
+            high_chair = bool(extra and extra.high_chair)
             existing = {r.request_type_id: r for r in booking.requested_extras.all()}
             quantities = {t.id: str(existing[t.id].quantity) if t.id in existing else '0' for t in active_types}
             notes = {t.id: existing[t.id].note if t.id in existing else '' for t in active_types}
 
+        settings = ExtrasSettings.load()
+        nights = (booking.departure_date - booking.arrival_date).days
         return {
             'welcome_pack_items': WelcomePackItem.objects.filter(active=True),
             'welcome_pack': welcome_pack,
             'welcome_pack_food': welcome_pack_food,
             'welcome_pack_drinks': welcome_pack_drinks,
             'welcome_pack_note': welcome_pack_note,
+            'cot': cot,
+            'high_chair': high_chair,
+            'cot_high_chair_pricing_config': {
+                'nights': nights,
+                'cot_short': str(settings.cot_price_short_stay),
+                'cot_long': str(settings.cot_price_long_stay),
+                'high_chair_short': str(settings.high_chair_price_short_stay),
+                'high_chair_long': str(settings.high_chair_price_long_stay),
+                'combo_discount': str(settings.cot_and_high_chair_combo_discount),
+            },
             'request_rows': [
                 {'request_type': t, 'quantity': quantities[t.id], 'note': notes[t.id]}
                 for t in active_types

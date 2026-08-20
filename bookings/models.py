@@ -467,6 +467,12 @@ class Extra(models.Model):
     # Baby/child items
     cot = models.BooleanField(blank=True, null=True)
     high_chair = models.BooleanField(blank=True, null=True)
+    cot_high_chair_charge = models.DecimalField(
+        max_digits=8, decimal_places=2, blank=True, null=True,
+        help_text="Combined price for whichever of cot/high chair were requested, computed from "
+                  "ExtrasSettings at request time (day-tier pricing plus the combo discount if both "
+                  "were requested) - see ExtrasSettings.compute_cot_high_chair_price().",
+    )
 
     # Services
     welcome_pack = models.BooleanField(blank=True, null=True)
@@ -593,6 +599,20 @@ class ExtrasSettings(models.Model):
     airport_transfer_night_window_start = models.TimeField(default=time(22, 0))
     airport_transfer_night_window_end = models.TimeField(default=time(6, 0))
 
+    cot_price_short_stay = models.DecimalField(max_digits=8, decimal_places=2, default=0,
+                                                help_text="Flat price for a stay of up to 7 nights.")
+    cot_price_long_stay = models.DecimalField(max_digits=8, decimal_places=2, default=0,
+                                               help_text="Flat price for a stay of more than 7 nights.")
+    high_chair_price_short_stay = models.DecimalField(max_digits=8, decimal_places=2, default=0,
+                                                       help_text="Flat price for a stay of up to 7 nights.")
+    high_chair_price_long_stay = models.DecimalField(max_digits=8, decimal_places=2, default=0,
+                                                      help_text="Flat price for a stay of more than 7 nights.")
+    cot_and_high_chair_combo_discount = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        help_text="Flat discount subtracted from the combined price when both a cot and a high "
+                  "chair are requested together on the same booking.",
+    )
+
     class Meta:
         db_table = 'extras_settings'
         verbose_name = 'Extras Settings'
@@ -628,6 +648,22 @@ class ExtrasSettings(models.Model):
         if self.is_night_time(pickup_time):
             price += self.airport_transfer_night_surcharge
         return price
+
+    def compute_cot_high_chair_price(self, nights, wants_cot, wants_high_chair):
+        """nights is the length of the stay (departure_date - arrival_date), not a per-request
+        value - cot/high chair pricing covers the whole stay, so a 7-night stay is "short" and an
+        8-night stay is "long" (see cot_price_short_stay/cot_price_long_stay). The combo discount
+        only applies when both are requested on the same booking; clamped at 0 so a discount
+        larger than the combined price can never make this negative."""
+        is_long_stay = nights > 7
+        total = Decimal('0')
+        if wants_cot:
+            total += self.cot_price_long_stay if is_long_stay else self.cot_price_short_stay
+        if wants_high_chair:
+            total += self.high_chair_price_long_stay if is_long_stay else self.high_chair_price_short_stay
+        if wants_cot and wants_high_chair:
+            total -= self.cot_and_high_chair_combo_discount
+        return max(total, Decimal('0'))
 
 
 class AirportTransferDirection(models.TextChoices):

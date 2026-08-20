@@ -148,6 +148,19 @@
     margin-bottom: 24px;
 }
 
+.cot-high-chair-block {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.cot-high-chair-price {
+    margin: 4px 0 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
 .welcome-pack-picker {
     display: flex;
     flex-direction: column;

@@ -13,6 +13,7 @@
     <script type="module" src="{% static 'main/pay_countdown.js' %}"></script>
     <script type="module" src="{% static 'bookings/guest_list.js' %}"></script>
     <script type="module" src="{% static 'bookings/welcome_pack.js' %}"></script>
+    <script type="module" src="{% static 'bookings/cot_high_chair.js' %}"></script>
     <script type="module" src="{% static 'bookings/airport_transfers.js' %}"></script>
 </head>
 <header>
@@ -167,6 +168,25 @@
                     {% endfor %}
                 </div>
                 {% endif %}
+            </section>
+
+            <section class="details-section">
+                <h2 class="details-section-title">Cot &amp; High Chair</h2>
+                <p class="details-note">Paid in cash at check-in - it isn't included in the amount due now. Pricing depends on the length of your stay, and requesting both together gets a discount.</p>
+
+                <div class="cot-high-chair-block">
+                    <label class="details-checkbox-label">
+                        <input type="checkbox" name="cot" id="cot_checkbox" {% if cot %}checked{% endif %}>
+                        I need a cot
+                    </label>
+                    <label class="details-checkbox-label">
+                        <input type="checkbox" name="high_chair" id="high_chair_checkbox" {% if high_chair %}checked{% endif %}>
+                        I need a high chair
+                    </label>
+                    <p class="cot-high-chair-price">Estimated price: <span id="cot-high-chair-price-value">&ndash;</span></p>
+                </div>
+
+                {{ cot_high_chair_pricing_config|json_script:"cot-high-chair-pricing-config" }}
             </section>
 
             <section class="details-section">

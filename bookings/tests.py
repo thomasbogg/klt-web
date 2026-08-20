@@ -409,6 +409,34 @@ class BookingDetailsViewTests(TestCase):
         self.assertIsNone(self.booking.extras.welcome_pack_food)
         self.assertIsNone(self.booking.extras.welcome_pack_drinks)
 
+    def test_post_persists_cot_and_high_chair_with_computed_combo_price(self):
+        # self.start/self.end is a 7-night stay (short-stay tier, exactly at the boundary).
+        settings = ExtrasSettings.load()
+        settings.cot_price_short_stay = Decimal('20.00')
+        settings.high_chair_price_short_stay = Decimal('15.00')
+        settings.cot_and_high_chair_combo_discount = Decimal('10.00')
+        settings.save()
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['cot'] = 'on'
+        data['high_chair'] = 'on'
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.extras.cot)
+        self.assertTrue(self.booking.extras.high_chair)
+        self.assertEqual(self.booking.extras.cot_high_chair_charge, Decimal('25.00'))
+
+    def test_post_without_cot_or_high_chair_charges_nothing(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertFalse(self.booking.extras.cot)
+        self.assertFalse(self.booking.extras.high_chair)
+        self.assertEqual(self.booking.extras.cot_high_chair_charge, Decimal('0'))
+
     def test_post_with_zero_quantity_does_not_create_a_requested_extra(self):
         extra_bed = RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
         self._set_session()
@@ -573,6 +601,43 @@ class ExtrasSettingsTransferPricingTests(TestCase):
         self.settings.save()
         self.assertEqual(self.settings.compute_transfer_price(2, time(3, 0)), Decimal('35.00'))
         self.assertEqual(self.settings.compute_transfer_price(2, time(14, 0)), Decimal('25.00'))
+
+
+class ExtrasSettingsCotHighChairPricingTests(TestCase):
+    def setUp(self):
+        self.settings = ExtrasSettings.load()
+        self.settings.cot_price_short_stay = Decimal('20.00')
+        self.settings.cot_price_long_stay = Decimal('35.00')
+        self.settings.high_chair_price_short_stay = Decimal('15.00')
+        self.settings.high_chair_price_long_stay = Decimal('25.00')
+        self.settings.cot_and_high_chair_combo_discount = Decimal('10.00')
+        self.settings.save()
+
+    def test_cot_only_short_stay(self):
+        self.assertEqual(self.settings.compute_cot_high_chair_price(7, True, False), Decimal('20.00'))
+
+    def test_cot_only_long_stay(self):
+        self.assertEqual(self.settings.compute_cot_high_chair_price(8, True, False), Decimal('35.00'))
+
+    def test_high_chair_only_short_stay(self):
+        self.assertEqual(self.settings.compute_cot_high_chair_price(7, False, True), Decimal('15.00'))
+
+    def test_high_chair_only_long_stay(self):
+        self.assertEqual(self.settings.compute_cot_high_chair_price(8, False, True), Decimal('25.00'))
+
+    def test_neither_requested_is_zero(self):
+        self.assertEqual(self.settings.compute_cot_high_chair_price(10, False, False), Decimal('0'))
+
+    def test_combo_discount_applies_only_when_both_requested(self):
+        # short stay: 20 + 15 - 10 = 25
+        self.assertEqual(self.settings.compute_cot_high_chair_price(5, True, True), Decimal('25.00'))
+        # long stay: 35 + 25 - 10 = 50
+        self.assertEqual(self.settings.compute_cot_high_chair_price(10, True, True), Decimal('50.00'))
+
+    def test_combo_discount_never_makes_price_negative(self):
+        self.settings.cot_and_high_chair_combo_discount = Decimal('1000.00')
+        self.settings.save()
+        self.assertEqual(self.settings.compute_cot_high_chair_price(5, True, True), Decimal('0'))
 
 
 class BookingDateAdjustmentTests(TestCase):
