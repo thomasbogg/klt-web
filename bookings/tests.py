@@ -1,18 +1,18 @@
 from datetime import date, time, timedelta
 from decimal import Decimal
 
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import (
-    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, Booking, BookingDateAdjustment,
-    BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Extra, ExtrasSettings, Payment,
-    RequestType, WelcomePackItem,
+    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, BalancePayment, Booking,
+    BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Extra,
+    ExtrasSettings, Payment, RequestType, WelcomePackItem,
 )
 from bookings.utils import (
-    add_business_days, determine_payment_provider, expire_stale_holds, extras_summary, guest_counts_by_age,
-    payment_clearing_expiry, recalculate_costs_for_party,
+    add_business_days, create_booking, determine_payment_provider, expire_stale_holds, extras_summary,
+    guest_counts_by_age, payment_clearing_expiry, recalculate_costs_for_party,
 )
 from guests.models import Guest
 from properties.models import Price, Property, PropertySpec
@@ -165,6 +165,76 @@ class PaymentClearingExpiryTests(TestCase):
             self.assertLess(expiry.weekday(), 5)
 
 
+class ComputeCostsTests(TestCase):
+    def make_settings(self, **overrides):
+        settings = BookingSettings.load()
+        settings.admin_fee_percent = Decimal('5.50')
+        settings.deposit_percent_at_booking = Decimal('25.00')
+        settings.balance_due_days_before_arrival = 56
+        for key, value in overrides.items():
+            setattr(settings, key, value)
+        settings.save()
+        return settings
+
+    def test_normal_split_well_outside_the_window(self):
+        settings = self.make_settings()
+        today = date(2026, 1, 1)
+        arrival = today + timedelta(days=200)
+        costs = settings.compute_costs(Decimal('1000.00'), arrival_date=arrival, today=today)
+        self.assertEqual(costs['admin_fee'], Decimal('55.00'))
+        self.assertEqual(costs['subtotal'], Decimal('1055.00'))
+        self.assertEqual(costs['due_at_booking'], Decimal('263.75'))
+        self.assertEqual(costs['due_at_balance'], Decimal('791.25'))
+        self.assertEqual(costs['balance_due_date'], arrival - timedelta(days=56))
+
+    def test_collapses_when_arrival_is_already_inside_the_window(self):
+        settings = self.make_settings()
+        today = date(2026, 1, 1)
+        arrival = today + timedelta(days=20)  # well inside the 56-day window
+        costs = settings.compute_costs(Decimal('1000.00'), arrival_date=arrival, today=today)
+        self.assertEqual(costs['due_at_booking'], costs['subtotal'])
+        self.assertEqual(costs['due_at_balance'], Decimal('0'))
+        self.assertIsNone(costs['balance_due_date'])
+
+    def test_collapses_exactly_on_the_boundary(self):
+        settings = self.make_settings()
+        today = date(2026, 1, 1)
+        arrival = today + timedelta(days=56)  # balance_due_date lands exactly on today
+        costs = settings.compute_costs(Decimal('1000.00'), arrival_date=arrival, today=today)
+        self.assertEqual(costs['due_at_booking'], costs['subtotal'])
+        self.assertEqual(costs['due_at_balance'], Decimal('0'))
+        self.assertIsNone(costs['balance_due_date'])
+
+    def test_does_not_collapse_one_day_outside_the_boundary(self):
+        settings = self.make_settings()
+        today = date(2026, 1, 1)
+        arrival = today + timedelta(days=57)
+        costs = settings.compute_costs(Decimal('1000.00'), arrival_date=arrival, today=today)
+        self.assertGreater(costs['due_at_balance'], Decimal('0'))
+        self.assertIsNotNone(costs['balance_due_date'])
+
+    def test_no_arrival_date_never_collapses(self):
+        settings = self.make_settings()
+        costs = settings.compute_costs(Decimal('1000.00'), today=date(2026, 1, 1))
+        self.assertIsNone(costs['balance_due_date'])
+        self.assertGreater(costs['due_at_balance'], Decimal('0'))
+
+    def test_default_today_is_used_when_omitted(self):
+        settings = self.make_settings()
+        arrival = date.today() + timedelta(days=5)
+        costs = settings.compute_costs(Decimal('1000.00'), arrival_date=arrival)
+        self.assertEqual(costs['due_at_balance'], Decimal('0'))
+
+    def test_gbp_display_keys_present_after_collapse(self):
+        settings = self.make_settings()
+        today = date(2026, 1, 1)
+        arrival = today + timedelta(days=20)
+        costs = settings.compute_costs(Decimal('1000.00'), arrival_date=arrival, today=today)
+        costs_gbp = settings.costs_in_gbp(costs)
+        self.assertEqual(costs_gbp['due_at_booking'], settings.to_gbp(costs['due_at_booking']))
+        self.assertEqual(costs_gbp['due_at_balance'], Decimal('0.00'))
+
+
 class GuestCountsByAgeTests(TestCase):
     def make_settings(self, **overrides):
         settings = BookingSettings.load()
@@ -229,6 +299,42 @@ class RecalculateCostsForPartyTests(TestCase):
         self.booking.property.prices.all().delete()
         result = recalculate_costs_for_party(self.booking, [30, 32, 10])
         self.assertEqual(result, (None, None, None))
+
+
+class CreateBookingTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property CB', short_title='TESTCB')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest_data = {
+            'first_name': 'Nuno', 'last_name': 'Pereira', 'email': 'nuno-cb@example.com', 'phone': '',
+        }
+
+    def _make_price(self, start, end):
+        Price.objects.create(
+            property=self.property, name='Test', start_date=start, end_date=end,
+            rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+        )
+
+    def test_two_stage_booking_gets_a_balance_payment_row(self):
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+        )
+        self.assertTrue(hasattr(booking, 'balance_payment'))
+        self.assertEqual(booking.balance_payment.provider, booking.payment.provider)
+        self.assertEqual(booking.balance_payment.status, 'pending')
+
+    def test_collapsed_booking_gets_no_balance_payment_row(self):
+        start = date.today() + timedelta(days=10)  # well inside the 56-day window
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+        )
+        self.assertFalse(hasattr(booking, 'balance_payment'))
+        self.assertEqual(booking.charges.due_at_balance, Decimal('0'))
 
 
 class BookingDetailsViewTests(TestCase):
@@ -606,6 +712,176 @@ class BookingDetailsViewTests(TestCase):
         self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
         self.assertEqual(self.booking.airport_transfers.count(), 0)
 
+    def test_two_stage_booking_hides_extras_on_details_and_skips_saving_them(self):
+        # Push arrival far enough out that create_booking() doesn't collapse the split - needs its
+        # own Price row too, since the original one only covers self.start/self.end.
+        self.booking.arrival_date = date.today() + timedelta(days=200)
+        self.booking.departure_date = self.booking.arrival_date + timedelta(days=7)
+        self.booking.save(update_fields=['arrival_date', 'departure_date'])
+        Price.objects.create(
+            property=self.property, name='Far-out', start_date=self.booking.arrival_date,
+            end_date=self.booking.departure_date, rate=Decimal('100.00'),
+            extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+        )
+        self.charge.due_at_balance = Decimal('500.00')
+        self.charge.balance_due_date = self.booking.arrival_date - timedelta(days=56)
+        self.charge.save(update_fields=['due_at_balance', 'balance_due_date'])
+        BalancePayment.objects.create(booking=self.booking, provider='revolut')
+
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['is_two_stage'])
+        self.assertNotIn('welcome_pack_items', response.context)
+
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['welcome_pack'] = 'on'  # should be silently ignored - Extras aren't collected here
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertFalse(hasattr(self.booking, 'extras') and self.booking.extras.welcome_pack)
+
+
+class BookingBalanceDetailsViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property BAL', short_title='TESTBAL')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Elena', last_name='Costa', email='elena-bal@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.charge = Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        self.payment = Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.balance_payment = BalancePayment.objects.create(booking=self.booking, provider='revolut')
+        self.url = reverse('bookings:balance_details', kwargs={'reference': self.booking.reference})
+        self.pay_url = reverse('bookings:balance_pay', kwargs={'reference': self.booking.reference})
+        self.confirmation_url = reverse('bookings:confirmation', kwargs={'reference': self.booking.reference})
+        self.deposit_pay_url = reverse('bookings:pay', kwargs={'reference': self.booking.reference})
+
+    def test_get_redirects_to_confirmation_when_not_two_stage(self):
+        self.balance_payment.delete()
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.confirmation_url, fetch_redirect_response=False)
+
+    def test_get_redirects_to_deposit_pay_when_deposit_unpaid(self):
+        self.payment.status = 'pending'
+        self.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.deposit_pay_url, fetch_redirect_response=False)
+
+    def test_get_redirects_to_confirmation_when_balance_already_paid(self):
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.confirmation_url, fetch_redirect_response=False)
+
+    def test_get_renders_extras_sections_when_gated_correctly(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('welcome_pack_items', response.context)
+        self.assertFalse(response.context['show_cot_high_chair'])
+
+    def test_show_cot_high_chair_reflects_the_locked_guest_list(self):
+        BookingGuest.objects.create(booking=self.booking, first_name='Baby', last_name='Costa', age=1, is_lead=False)
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['show_cot_high_chair'])
+
+    def test_post_persists_extras_and_redirects_to_balance_pay(self):
+        settings = ExtrasSettings.load()
+        settings.late_checkout_price = Decimal('20.00')
+        settings.save()
+        response = self.client.post(self.url, {'late_checkout': 'on', 'late_checkout_time': '13:00'})
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.extras.late_checkout)
+        self.assertEqual(self.booking.extras.late_checkout_charge, Decimal('20.00'))
+
+    def test_post_with_invalid_late_checkout_time_rerenders_with_error(self):
+        response = self.client.post(self.url, {'late_checkout': 'on', 'late_checkout_time': 'not-a-time'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['late_checkout_error'])
+        self.assertFalse(hasattr(self.booking, 'extras'))
+
+    def test_post_does_not_require_a_session_gate(self):
+        # No _set_session() call anywhere in this test class - reference-alone auth is the point.
+        response = self.client.post(self.url, {})
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+
+
+class BookingBalancePaymentViewTests(TestCase):
+    """Uses a Wise-path booking throughout (arrival month in WISE_MONTHS) - Wise never calls the
+    live Revolut API (a static payment link, see BookingBalancePaymentView), so this can safely
+    test the full render path. A Revolut-path booking would need the API mocked - out of scope
+    here, matching the existing untested state of BookingPaymentView for the same reason."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property BALP', short_title='TESTBALP')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Marco', last_name='Reis', email='marco-balp@example.com')
+        self.start = self._next_wise_season_date()
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.charge = Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        self.payment = Payment.objects.create(booking=self.booking, provider='wise', status='paid')
+        self.balance_payment = BalancePayment.objects.create(booking=self.booking, provider='wise')
+        self.url = reverse('bookings:balance_pay', kwargs={'reference': self.booking.reference})
+        self.confirmation_url = reverse('bookings:confirmation', kwargs={'reference': self.booking.reference})
+        self.deposit_pay_url = reverse('bookings:pay', kwargs={'reference': self.booking.reference})
+
+    def _next_wise_season_date(self):
+        candidate = date.today() + timedelta(days=100)  # safely more than 56 days out
+        while candidate.month not in (11, 12, 1, 2, 3):
+            candidate += timedelta(days=1)
+        return candidate
+
+    def test_get_redirects_to_confirmation_when_not_two_stage(self):
+        self.balance_payment.delete()
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.confirmation_url, fetch_redirect_response=False)
+
+    def test_get_redirects_to_deposit_pay_when_deposit_unpaid(self):
+        self.payment.status = 'pending'
+        self.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.deposit_pay_url, fetch_redirect_response=False)
+
+    def test_get_redirects_to_confirmation_when_balance_already_paid(self):
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.confirmation_url, fetch_redirect_response=False)
+
+    def test_get_renders_wise_payment_page_with_correct_amount(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['pay_amount'], Decimal('553.87'))
+        self.assertEqual(response.context['pay_currency'], 'EUR')
+        self.assertContains(response, "Pay via Wise")
+
+    def test_get_includes_extras_summary(self):
+        Extra.objects.create(
+            booking=self.booking, late_checkout=True, late_checkout_charge=Decimal('20.00'),
+        )
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['extras']['total'], Decimal('20.00'))
+
 
 class WelcomePackItemMatchesTests(TestCase):
     def test_variant_specific_item_only_matches_its_own_variant(self):
@@ -815,3 +1091,68 @@ class BookingDateAdjustmentTests(TestCase):
         self.assertEqual((self.booking.arrival_date, self.booking.departure_date), booking_dates_after_first_save)
         adjustment.refresh_from_db()
         self.assertEqual(adjustment.previous_departure_date, self.end)  # unchanged by the edit
+
+
+class BalanceReminderDueFilterTests(TestCase):
+    """Direct test of the filter's queryset() logic (via RequestFactory, not a logged-in admin
+    session) - the filter itself is a thin wrapper around a date-boundary query, and this exercises
+    that boundary without the overhead of a full authenticated admin-view test."""
+
+    def setUp(self):
+        from bookings.admin import BalanceReminderDueFilter
+
+        self.filter_class = BalanceReminderDueFilter
+        self.settings = BookingSettings.load()
+        self.settings.balance_reminder_days_before_arrival = 63
+        self.settings.save()
+
+        self.property = Property.objects.create(title='Test Property BR', short_title='TESTBR')
+        self.guest = Guest.objects.create(first_name='Sara', last_name='Alves', email='sara-br@example.com')
+
+    def _make_balance_payment(self, days_until_arrival, enquiry_status='Booking confirmed', **overrides):
+        booking = Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=date.today() + timedelta(days=days_until_arrival),
+            departure_date=date.today() + timedelta(days=days_until_arrival + 5),
+            is_owner=False, enquiry_status=enquiry_status, enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        defaults = {'booking': booking, 'provider': 'revolut', 'status': 'pending'}
+        defaults.update(overrides)
+        return BalancePayment.objects.create(**defaults)
+
+    def _filtered(self, value='yes'):
+        request = RequestFactory().get('/admin/bookings/balancepayment/')
+        params = {'reminder_due': [value]} if value is not None else {}
+        filter_instance = self.filter_class(request, params, BalancePayment, None)
+        return filter_instance.queryset(request, BalancePayment.objects.all())
+
+    def test_includes_a_pending_unreminded_booking_inside_the_window(self):
+        due = self._make_balance_payment(days_until_arrival=30)
+        self.assertIn(due, self._filtered())
+
+    def test_excludes_a_booking_still_outside_the_window(self):
+        not_due = self._make_balance_payment(days_until_arrival=100)
+        self.assertNotIn(not_due, self._filtered())
+
+    def test_excludes_an_already_reminded_booking(self):
+        already_reminded = self._make_balance_payment(days_until_arrival=30, reminder_sent=True)
+        self.assertNotIn(already_reminded, self._filtered())
+
+    def test_excludes_an_already_paid_balance(self):
+        already_paid = self._make_balance_payment(days_until_arrival=30, status='paid')
+        self.assertNotIn(already_paid, self._filtered())
+
+    def test_excludes_a_booking_whose_deposit_failed_or_was_cancelled(self):
+        failed = self._make_balance_payment(days_until_arrival=30, enquiry_status='Payment failed')
+        cancelled = self._make_balance_payment(days_until_arrival=30, enquiry_status='Cancelled by guest')
+        result = self._filtered()
+        self.assertNotIn(failed, result)
+        self.assertNotIn(cancelled, result)
+
+    def test_unfiltered_value_returns_everything(self):
+        due = self._make_balance_payment(days_until_arrival=30)
+        not_due = self._make_balance_payment(days_until_arrival=100)
+        result = self._filtered(value=None)
+        self.assertIn(due, result)
+        self.assertIn(not_due, result)

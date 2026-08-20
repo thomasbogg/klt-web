@@ -1,0 +1,92 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pay Balance for Booking {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="module" src="{% static 'main/currency_toggle.js' %}"></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="confirmation-page">
+        <h1>Pay your balance</h1>
+
+        <div class="confirmation-reference">
+            <span class="confirmation-reference-label">Booking Reference</span>
+            <span class="confirmation-reference-value">{{ booking.reference }}</span>
+        </div>
+
+        <div class="confirmation-summary">
+            <div class="confirmation-chip">
+                <span class="confirmation-chip-label">Property</span>
+                <span class="confirmation-chip-value">{{ booking.property }}</span>
+            </div>
+            <div class="confirmation-chip">
+                <span class="confirmation-chip-label">Check-in</span>
+                <span class="confirmation-chip-value">{{ booking.arrival_date|date:"D, d M Y" }}</span>
+            </div>
+            <span class="confirmation-chip-arrow">&rarr;</span>
+            <div class="confirmation-chip">
+                <span class="confirmation-chip-label">Check-out</span>
+                <span class="confirmation-chip-value">{{ booking.departure_date|date:"D, d M Y" }}</span>
+            </div>
+        </div>
+
+        <div class="pay-amount">
+            <span class="pay-amount-label">Amount due now</span>
+            <span class="pay-amount-value">{% if pay_currency == 'GBP' %}&pound;{% else %}&euro;{% endif %}{{ pay_amount|floatformat:2 }}</span>
+        </div>
+
+        {% if extras.items %}
+        <div class="pay-extras-breakdown">
+            <p class="pay-extras-breakdown-title">Your Extras</p>
+            {% for item in extras.items %}
+            <div class="pay-extras-breakdown-row">
+                <span>{{ item.label }}</span>
+                <span>&euro;{{ item.price|floatformat:2 }}</span>
+            </div>
+            {% endfor %}
+            <div class="pay-extras-breakdown-row pay-extras-breakdown-total">
+                <span>Total</span>
+                <span>&euro;{{ extras.total|floatformat:2 }}</span>
+            </div>
+            <p class="pay-extras-breakdown-note">Paid in cash at check-in - not included in the amount due now.</p>
+        </div>
+        {% endif %}
+
+        {% if payment_error %}
+        <div class="reserve-form-errors">
+            <p>We couldn't set up card payment just now. Please reload this page to try again.</p>
+        </div>
+
+        {% elif balance_payment.provider == 'revolut' %}
+        <a class="reserve-form-submit pay-button" href="{{ balance_payment.revolut_checkout_url }}">Pay now</a>
+        <p class="pay-instructions">Opens Revolut's secure checkout, where you can pay by card or bank transfer in {{ pay_currency }}.</p>
+
+        {% else %}
+        <div class="pay-wise-panel">
+            <p class="pay-instructions pay-instructions-lead">
+                Our Wise payment page lets you enter these details yourself. Before clicking the button below (it opens in a new tab), note:
+            </p>
+            <ol class="pay-steps">
+                <li>Enter the amount: <strong>{% if pay_currency == 'GBP' %}&pound;{% else %}&euro;{% endif %}{{ pay_amount|floatformat:2 }}</strong></li>
+                <li>Select <strong>{{ pay_currency }}</strong> as the currency</li>
+                <li>Enter the reference: <strong>{{ booking.reference }}</strong></li>
+            </ol>
+            <a class="reserve-form-submit pay-button" href="{{ wise_payment_link }}" target="_blank" rel="noopener">Pay via Wise</a>
+        </div>
+        {% endif %}
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

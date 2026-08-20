@@ -65,7 +65,7 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
     Raises django.core.exceptions.ValidationError (from Booking.full_clean()) if the dates are no
     longer available. Returns the created Booking.
     """
-    from bookings.models import Booking, BookingSettings, Charge, Payment
+    from bookings.models import BalancePayment, Booking, BookingSettings, Charge, Payment
     from guests.models import Guest
     from properties.utils import get_stay_total_price
 
@@ -128,6 +128,9 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
         )
 
         Payment.objects.create(booking=booking, provider=provider)
+
+        if costs['due_at_balance'] > 0:
+            BalancePayment.objects.create(booking=booking, provider=provider)
 
     return booking
 
@@ -267,10 +270,14 @@ def extras_summary(booking):
 def booking_confirmation_context(booking):
     """Display context shared by the post-booking redirect and the manage-lookup success state."""
     charge = booking.charges
+    balance_payment = getattr(booking, 'balance_payment', None)
     return {
         'booking': booking,
         'charge': charge,
         'subtotal': charge.basic_rental + charge.admin,
         'nights': (booking.departure_date - booking.arrival_date).days,
         'costs_gbp': charge.costs_in_gbp(),
+        # Self-serve entry point into the balance flow, for a guest who wants to pay early or lost
+        # a manually-sent link (no automated reminder email yet - see BalancePayment's docstring).
+        'balance_due': balance_payment is not None and balance_payment.status != 'paid',
     }

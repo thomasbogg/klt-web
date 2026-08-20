@@ -1,4 +1,4 @@
-from datetime import time, timedelta
+from datetime import date, time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
@@ -38,6 +38,14 @@ class BookingSettings(models.Model):
     balance_due_days_before_arrival = models.PositiveIntegerField(
         default=56,
         help_text="How many days before arrival the balance payment becomes due."
+    )
+    balance_reminder_days_before_arrival = models.PositiveIntegerField(
+        default=63,
+        help_text="How many days before arrival a balance-payment reminder becomes due for staff "
+                  "follow-up (surfaced in the Balance Payments admin, not sent automatically yet). "
+                  "Should be greater than balance_due_days_before_arrival so the guest gets some "
+                  "notice before the balance is actually due - the gap between the two is that "
+                  "notice period."
     )
     security_deposit_amount = models.DecimalField(
         max_digits=10, decimal_places=2, default=Decimal('200.00'),
@@ -105,18 +113,32 @@ class BookingSettings(models.Model):
         settings, _ = cls.objects.get_or_create(pk=1)
         return settings
 
-    def compute_costs(self, basic_rental, arrival_date=None):
+    def compute_costs(self, basic_rental, arrival_date=None, today=None):
         """Cost breakdown for a stay's basic rental total: admin fee, booking/balance split, balance due date.
 
         The security deposit is reported separately since it's collected in cash at check-in,
         not part of the online rental/admin payment split.
+
+        Collapses to a single payment when the stay is already inside the balance window at
+        booking time (balance_due_date would fall on/before today) - there's no point asking for
+        25% now and the remaining 75% by a date that's already passed, so due_at_booking absorbs
+        the full subtotal, due_at_balance is zeroed, and balance_due_date is cleared entirely
+        (rather than left as a stale past date) so it doubles as the "this booking never gets a
+        balance stage" signal for the guest-facing Extras-at-balance flow.
         """
         basic_rental = Decimal(basic_rental)
+        today = today or date.today()
         admin_fee = (basic_rental * self.admin_fee_percent / Decimal('100')).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
         subtotal = basic_rental + admin_fee
         due_at_booking = (subtotal * self.deposit_percent_at_booking / Decimal('100')).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
         due_at_balance = subtotal - due_at_booking
         balance_due_date = arrival_date - timedelta(days=self.balance_due_days_before_arrival) if arrival_date else None
+
+        if balance_due_date is not None and balance_due_date <= today:
+            due_at_booking = subtotal
+            due_at_balance = Decimal('0')
+            balance_due_date = None
+
         return {
             'basic_rental': basic_rental,
             'admin_fee': admin_fee,
@@ -353,6 +375,14 @@ class Charge(models.Model):
             return self.to_gbp(self.due_at_booking), 'GBP'
         return self.due_at_booking, 'EUR'
 
+    def due_at_balance_in_charge_currency(self):
+        """Same as due_at_booking_in_charge_currency() but for the balance stage - same frozen
+        currency/rate, since a guest who was quoted GBP at deposit time should keep seeing GBP at
+        balance time even if the live rate has moved on. See bookings/views.py::BookingBalancePaymentView."""
+        if self.currency == 'GBP':
+            return self.to_gbp(self.due_at_balance), 'GBP'
+        return self.due_at_balance, 'EUR'
+
     def costs_in_gbp(self):
         """GBP-converted view of the locked EUR charge amounts, using the rate frozen at booking time."""
         if self.gbp_conversion_rate is None:
@@ -448,6 +478,47 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"{self.booking} - Payment ({self.get_status_display()})"
+
+
+class BalancePayment(models.Model):
+    """Balance-payment tracking for a booking's due_at_balance amount - the second, later payment
+    stage for a booking that wasn't made within BookingSettings.balance_due_days_before_arrival of
+    arrival (see BookingSettings.compute_costs()'s collapse behaviour for the alternative). Mirrors
+    Payment field-for-field since it's the same shape of problem one booking-lifecycle stage later,
+    but is a distinct model (not a second row shape shoehorned into Payment) since Payment's own
+    docstring already scopes it specifically to the deposit.
+
+    A row only exists for a booking that actually has a balance stage - created in
+    bookings/utils.py::create_booking() only when due_at_balance > 0, so hasattr(booking,
+    'balance_payment') doubles as the "is this a two-stage booking" signal used throughout the
+    guest-facing balance flow, without needing a separate flag anywhere."""
+    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='balance_payment')
+    provider = models.CharField(max_length=10, choices=PROVIDER_CHOICES)
+    status = models.CharField(max_length=15, choices=PAYMENT_STATUS_CHOICES, default='pending')
+
+    # Revolut-specific - unused for provider='wise' rows, which have no per-booking API object.
+    revolut_order_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    revolut_checkout_url = models.URLField(blank=True, null=True)
+
+    last_event_type = models.CharField(max_length=100, blank=True, null=True)
+    in_progress_at = models.DateTimeField(blank=True, null=True)
+    paid_at = models.DateTimeField(blank=True, null=True)
+    failed_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # No automated reminder email yet (see project_klt_web_automation_roadmap in memory) - staff
+    # send the guest a link manually, then mark it here via the admin action, so the "reminder due"
+    # admin filter stops surfacing this booking.
+    reminder_sent = models.BooleanField(default=False)
+    reminder_sent_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'booking_balance_payments'
+        verbose_name = 'Balance Payment'
+        verbose_name_plural = 'Balance Payments'
+
+    def __str__(self):
+        return f"{self.booking} - Balance Payment ({self.get_status_display()})"
 
 
 class WelcomePackFoodChoice(models.TextChoices):

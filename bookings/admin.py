@@ -1,11 +1,15 @@
+from datetime import timedelta
+
 from django.contrib import admin
 from django.urls import reverse
 from django.shortcuts import redirect
+from django.utils import timezone
 
+from env_settings import VALID_BOOKING_STATUSES
 from .models import (
-    AirportTransfer, AirportTransferPriceBand, Booking, BookingCondition, BookingDateAdjustment,
-    BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Extra, ExtrasSettings, Payment,
-    PlatformPayout, RequestType, WelcomePackItem,
+    AirportTransfer, AirportTransferPriceBand, BalancePayment, Booking, BookingCondition,
+    BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Extra,
+    ExtrasSettings, Payment, PlatformPayout, RequestType, WelcomePackItem,
 )
 from .utils import expire_stale_holds
 
@@ -34,6 +38,15 @@ class PaymentInline(admin.StackedInline):
     """Lets staff manually flip status/enquiry_status once a Wise transfer is seen to land, since
     there's no automated Wise reconciliation (see bookings/utils.py::determine_payment_provider)."""
     model = Payment
+    max_num = 1
+
+
+class BalancePaymentInline(admin.StackedInline):
+    """Only present on two-stage bookings - see BalancePayment's docstring. Same manual-confirm
+    role as PaymentInline: klt-hooks' webhook handling for this is built but deliberately left
+    switched off (a cross-talk issue with the legacy tourist-tax webhook on the same Revolut
+    account), so staff flip status here by hand for both Wise and Revolut until that's turned on."""
+    model = BalancePayment
     max_num = 1
 
 
@@ -77,8 +90,8 @@ class BookingDateAdjustmentInline(admin.TabularInline):
 
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
-    inlines = [ChargeInline, PaymentInline, BookingGuestInline, PlatformPayoutInline, ExtraInline,
-               BookingRequestedExtraInline, AirportTransferInline, BookingDateAdjustmentInline]
+    inlines = [ChargeInline, PaymentInline, BalancePaymentInline, BookingGuestInline, PlatformPayoutInline,
+               ExtraInline, BookingRequestedExtraInline, AirportTransferInline, BookingDateAdjustmentInline]
     list_display = ('reference', 'property', 'guest', 'arrival_date', 'departure_date', 'enquiry_status', 'enquiry_source')
     list_filter = ('enquiry_status', 'enquiry_source', 'manual_override')
     search_fields = ('reference', 'guest__first_name', 'guest__last_name', 'guest__email')
@@ -88,6 +101,42 @@ class BookingAdmin(admin.ModelAdmin):
         # for why this can't clobber a genuinely in-progress payment.
         expire_stale_holds()
         return super().get_queryset(request)
+
+
+class BalanceReminderDueFilter(admin.SimpleListFilter):
+    """Whether this booking has crossed BookingSettings.balance_reminder_days_before_arrival and
+    hasn't been reminded yet - the admin-surfaced replacement for an automated reminder email
+    (not built yet, see bookings/models.py::BalancePayment). Staff message the guest manually,
+    then use the "Mark reminder sent" action below to clear it from this filter."""
+    title = 'reminder due'
+    parameter_name = 'reminder_due'
+
+    def lookups(self, request, model_admin):
+        return (('yes', 'Due now'),)
+
+    def queryset(self, request, queryset):
+        if self.value() != 'yes':
+            return queryset
+        lead_days = BookingSettings.load().balance_reminder_days_before_arrival
+        cutoff = timezone.now().date() + timedelta(days=lead_days)
+        return queryset.filter(
+            reminder_sent=False, status='pending', booking__arrival_date__lte=cutoff,
+            # A booking whose deposit failed/was cancelled still has a dormant BalancePayment row -
+            # only a genuinely confirmed booking should ever prompt a balance reminder.
+            booking__enquiry_status__in=VALID_BOOKING_STATUSES,
+        )
+
+
+@admin.register(BalancePayment)
+class BalancePaymentAdmin(admin.ModelAdmin):
+    list_display = ('booking', 'provider', 'status', 'reminder_sent', 'created_at')
+    list_filter = (BalanceReminderDueFilter, 'provider', 'status')
+    search_fields = ('booking__reference', 'booking__guest__first_name', 'booking__guest__last_name')
+    actions = ['mark_reminder_sent']
+
+    @admin.action(description="Mark reminder sent")
+    def mark_reminder_sent(self, request, queryset):
+        queryset.update(reminder_sent=True, reminder_sent_at=timezone.now())
 
 
 @admin.register(BookingCondition)

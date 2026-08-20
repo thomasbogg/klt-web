@@ -44,10 +44,12 @@
         <span>Due now</span>
         <span class="price-value" data-eur="{{ charge.due_at_booking|floatformat:2 }}" data-gbp="{{ costs_gbp.due_at_booking|floatformat:2 }}">&euro;{{ charge.due_at_booking|floatformat:2 }}</span>
     </div>
+    {% if charge.balance_due_date %}
     <div class="confirmation-breakdown-row">
         <span>Due by {{ charge.balance_due_date|date:"d M Y" }}</span>
         <span class="price-value" data-eur="{{ charge.due_at_balance|floatformat:2 }}" data-gbp="{{ costs_gbp.due_at_balance|floatformat:2 }}">&euro;{{ charge.due_at_balance|floatformat:2 }}</span>
     </div>
+    {% endif %}
     <div class="confirmation-breakdown-row confirmation-breakdown-note">
         <span>Security deposit (cash at check-in, always in EUR)</span>
         <span>&euro;{{ charge.security|floatformat:2 }}</span>
@@ -59,3 +61,7 @@
     received and your reservation is confirmed.
     Keep your reference safe — you can look up this booking any time using it and your email.
 </p>
+
+{% if balance_due %}
+<a class="reserve-form-submit pay-button" href="{% url 'bookings:balance_details' reference=booking.reference %}">Choose Extras &amp; Pay Balance</a>
+{% endif %}

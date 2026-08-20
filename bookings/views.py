@@ -9,9 +9,9 @@ from django.views import View
 import env_settings
 from bookings.forms import BookingLookupForm
 from bookings.models import (
-    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, Booking, BookingCondition,
-    BookingGuest, BookingRequestedExtra, BookingSettings, Extra, ExtrasSettings, RequestType,
-    WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
+    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, BalancePayment, Booking,
+    BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, Extra, ExtrasSettings,
+    RequestType, WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
     booking_confirmation_context, cancel_booking_hold, extras_summary, recalculate_costs_for_party,
@@ -29,6 +29,14 @@ def is_paid(booking):
     return payment is None or payment.status == 'paid'
 
 
+def is_balance_paid(booking):
+    """A booking with no BalancePayment row at all is either collapsed (paid in full at deposit
+    time - see BookingSettings.compute_costs()) or predates this feature - either way there's
+    nothing left to collect, so treat it as paid the same way is_paid() does for a missing Payment."""
+    balance_payment = getattr(booking, 'balance_payment', None)
+    return balance_payment is None or balance_payment.status == 'paid'
+
+
 class BookingConfirmationView(View):
     """Landing page after a successful reservation - looked up by reference alone (a bearer link,
     like a checkout confirmation), not requiring the email too."""
@@ -43,143 +51,12 @@ class BookingConfirmationView(View):
         return render(request, self.template_name, booking_confirmation_context(booking))
 
 
-class BookingDetailsView(View):
-    """Booking-details step shown right after a reservation is created, before payment - the
-    guest-list section (first/last name + age per party member) plus a Welcome Pack & Requests
-    section (RequestType catalog items, cash-at-checkin, no interaction with the online Charge/
-    Payment total), with room for future sections (arrival/departure coordination) on the same
-    page - see the plan this was built from for context. GET is bearer-readable like every other
-    reference-based view; POST is a write (it can change Booking.adults/children/babies and the
-    locked Charge, plus the guest's extras) and is gated the same way BookingPaymentCancelView
-    gates cancellation - see that class's docstring."""
-    template_name = 'bookings/details.html'
-
-    def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
-            raise Http404("No booking found for this reference.")
-        if is_paid(booking):
-            return redirect('bookings:confirmation', reference=reference)
-
-        payment = booking.payment
-        rows = self._seed_or_prefill_rows(booking)
-        child_min_age = BookingSettings.load().child_min_age
-        context = {
-            'booking': booking,
-            'rows': rows,
-            'max_guests': booking.property.specs.max_guests,
-            'hold_expired': booking.hold_expires_at is not None and booking.hold_expires_at <= timezone.now(),
-            'payment_in_progress': payment.status == 'in_progress',
-            'child_min_age': child_min_age,
-            'show_cot_high_chair': self._any_infant_age(rows, child_min_age),
-        }
-        context.update(self._extras_context(booking))
-        context.update(self._transfer_context(booking))
-        return render(request, self.template_name, context)
-
-    def post(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
-            raise Http404("No booking found for this reference.")
-        if request.session.get('pending_booking_reference') != reference:
-            return redirect('bookings:pay', reference=reference)
-
-        hold_expired = booking.hold_expires_at is not None and booking.hold_expires_at <= timezone.now()
-        payment = booking.payment
-        if hold_expired or booking.enquiry_status != 'Awaiting payment' or payment.status == 'in_progress':
-            return redirect('bookings:pay', reference=reference)
-
-        max_guests = booking.property.specs.max_guests
-        rows, non_field_error = self._parse_rows(request.POST)
-        transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
-        _, _, late_checkout_error = self._parse_late_checkout(request.POST)
-        child_min_age = BookingSettings.load().child_min_age
-        context = {
-            'booking': booking,
-            'rows': rows,
-            'max_guests': max_guests,
-            'hold_expired': False,
-            'payment_in_progress': False,
-            'non_field_error': non_field_error,
-            'child_min_age': child_min_age,
-            'show_cot_high_chair': self._any_infant_age(rows, child_min_age),
-        }
-        context.update(self._extras_context(booking, post_data=request.POST))
-        context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
-        context['late_checkout_error'] = late_checkout_error
-
-        if non_field_error or any(row['errors'] for row in rows):
-            return render(request, self.template_name, context)
-
-        if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
-            return render(request, self.template_name, context)
-
-        if late_checkout_error:
-            return render(request, self.template_name, context)
-
-        if len(rows) > max_guests:
-            context['non_field_error'] = f"This property allows a maximum of {max_guests} guests."
-            return render(request, self.template_name, context)
-
-        ages = [int(row['age']) for row in rows]
-        new_guests, new_costs, changed = recalculate_costs_for_party(booking, ages)
-        if new_guests is None:
-            context['non_field_error'] = (
-                "This stay can no longer be priced automatically - please contact us to complete your booking."
-            )
-            return render(request, self.template_name, context)
-        if new_guests['adults'] == 0:
-            context['non_field_error'] = "At least one adult must be included in the party."
-            return render(request, self.template_name, context)
-
-        if changed and request.POST.get('confirmed') != '1':
-            context['price_changed'] = True
-            context['old_charge'] = booking.charges
-            context['new_costs'] = new_costs
-            return render(request, self.template_name, context)
-
-        with transaction.atomic():
-            booking.party.all().delete()
-            BookingGuest.objects.bulk_create([
-                BookingGuest(
-                    booking=booking,
-                    first_name=row['first_name'],
-                    last_name=row['last_name'],
-                    age=int(row['age']),
-                    is_lead=(index == 0),
-                )
-                for index, row in enumerate(rows)
-            ])
-
-            booking.adults = new_guests['adults']
-            booking.children = new_guests['children']
-            booking.babies = new_guests['infants']
-            booking.last_updated = timezone.now()
-            booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
-
-            charge = booking.charges
-            charge.basic_rental = new_costs['basic_rental']
-            charge.admin = new_costs['admin_fee']
-            charge.security = new_costs['security_deposit']
-            charge.due_at_booking = new_costs['due_at_booking']
-            charge.due_at_balance = new_costs['due_at_balance']
-            charge.balance_due_date = new_costs['balance_due_date']
-            charge.save(update_fields=[
-                'basic_rental', 'admin', 'security', 'due_at_booking', 'due_at_balance', 'balance_due_date',
-            ])
-
-            # A price change after a Revolut checkout URL already exists (guest went details ->
-            # pay -> back -> details, changed something) would otherwise leave the guest paying a
-            # stale amount - clear it so BookingPaymentView.get() rebuilds the order fresh.
-            if changed and payment.revolut_checkout_url:
-                payment.revolut_order_id = None
-                payment.revolut_checkout_url = None
-                payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
-
-            self._save_extras(booking, request.POST)
-            self._save_transfers(booking, transfer_rows)
-
-        return redirect('bookings:pay', reference=booking.reference)
+class ExtrasFormMixin:
+    """Extras section logic (Welcome Pack, Cot/High Chair, Late Checkout, Airport Transfers,
+    RequestType rows) shared between BookingDetailsView (the collapsed-booking case, where Extras
+    are chosen alongside the deposit) and BookingBalanceDetailsView (the two-stage case, where
+    Extras move to the balance stage instead - see BalancePayment's docstring). All cash-at-checkin
+    - never touches Charge/Payment/BalancePayment."""
 
     def _save_extras(self, booking, post_data):
         """Welcome Pack + RequestType selections are cash-at-checkin (see the plan this was built
@@ -443,6 +320,157 @@ class BookingDetailsView(View):
         except ValueError:
             return True, None, "Enter a valid checkout time."
 
+
+class BookingDetailsView(ExtrasFormMixin, View):
+    """Booking-details step shown right after a reservation is created, before payment - the
+    guest-list section (first/last name + age per party member) plus, for a collapsed (single-
+    payment) booking only, the Extras section (Welcome Pack, Cot/High Chair, Late Checkout,
+    Airport Transfers, RequestType catalog items - cash-at-checkin, no interaction with the online
+    Charge/Payment total). A two-stage booking (hasattr(booking, 'balance_payment')) skips Extras
+    here entirely - they move to BookingBalanceDetailsView instead, see BalancePayment's docstring
+    for why. GET is bearer-readable like every other reference-based view; POST is a write (it can
+    change Booking.adults/children/babies and the locked Charge, plus the guest's extras on a
+    collapsed booking) and is gated the same way BookingPaymentCancelView gates cancellation - see
+    that class's docstring."""
+    template_name = 'bookings/details.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if is_paid(booking):
+            return redirect('bookings:confirmation', reference=reference)
+
+        is_two_stage = hasattr(booking, 'balance_payment')
+        payment = booking.payment
+        rows = self._seed_or_prefill_rows(booking)
+        child_min_age = BookingSettings.load().child_min_age
+        context = {
+            'booking': booking,
+            'rows': rows,
+            'max_guests': booking.property.specs.max_guests,
+            'hold_expired': booking.hold_expires_at is not None and booking.hold_expires_at <= timezone.now(),
+            'payment_in_progress': payment.status == 'in_progress',
+            'child_min_age': child_min_age,
+            'show_cot_high_chair': self._any_infant_age(rows, child_min_age),
+            'is_two_stage': is_two_stage,
+        }
+        if not is_two_stage:
+            context.update(self._extras_context(booking))
+            context.update(self._transfer_context(booking))
+        return render(request, self.template_name, context)
+
+    def post(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if request.session.get('pending_booking_reference') != reference:
+            return redirect('bookings:pay', reference=reference)
+
+        hold_expired = booking.hold_expires_at is not None and booking.hold_expires_at <= timezone.now()
+        payment = booking.payment
+        if hold_expired or booking.enquiry_status != 'Awaiting payment' or payment.status == 'in_progress':
+            return redirect('bookings:pay', reference=reference)
+
+        is_two_stage = hasattr(booking, 'balance_payment')
+        max_guests = booking.property.specs.max_guests
+        rows, non_field_error = self._parse_rows(request.POST)
+        if not is_two_stage:
+            transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
+            _, _, late_checkout_error = self._parse_late_checkout(request.POST)
+        else:
+            transfer_rows, transfer_non_field_error, late_checkout_error = [], None, None
+        child_min_age = BookingSettings.load().child_min_age
+        context = {
+            'booking': booking,
+            'rows': rows,
+            'max_guests': max_guests,
+            'hold_expired': False,
+            'payment_in_progress': False,
+            'non_field_error': non_field_error,
+            'child_min_age': child_min_age,
+            'show_cot_high_chair': self._any_infant_age(rows, child_min_age),
+            'is_two_stage': is_two_stage,
+        }
+        if not is_two_stage:
+            context.update(self._extras_context(booking, post_data=request.POST))
+            context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
+            context['late_checkout_error'] = late_checkout_error
+
+        if non_field_error or any(row['errors'] for row in rows):
+            return render(request, self.template_name, context)
+
+        if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
+            return render(request, self.template_name, context)
+
+        if late_checkout_error:
+            return render(request, self.template_name, context)
+
+        if len(rows) > max_guests:
+            context['non_field_error'] = f"This property allows a maximum of {max_guests} guests."
+            return render(request, self.template_name, context)
+
+        ages = [int(row['age']) for row in rows]
+        new_guests, new_costs, changed = recalculate_costs_for_party(booking, ages)
+        if new_guests is None:
+            context['non_field_error'] = (
+                "This stay can no longer be priced automatically - please contact us to complete your booking."
+            )
+            return render(request, self.template_name, context)
+        if new_guests['adults'] == 0:
+            context['non_field_error'] = "At least one adult must be included in the party."
+            return render(request, self.template_name, context)
+
+        if changed and request.POST.get('confirmed') != '1':
+            context['price_changed'] = True
+            context['old_charge'] = booking.charges
+            context['new_costs'] = new_costs
+            return render(request, self.template_name, context)
+
+        with transaction.atomic():
+            booking.party.all().delete()
+            BookingGuest.objects.bulk_create([
+                BookingGuest(
+                    booking=booking,
+                    first_name=row['first_name'],
+                    last_name=row['last_name'],
+                    age=int(row['age']),
+                    is_lead=(index == 0),
+                )
+                for index, row in enumerate(rows)
+            ])
+
+            booking.adults = new_guests['adults']
+            booking.children = new_guests['children']
+            booking.babies = new_guests['infants']
+            booking.last_updated = timezone.now()
+            booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
+
+            charge = booking.charges
+            charge.basic_rental = new_costs['basic_rental']
+            charge.admin = new_costs['admin_fee']
+            charge.security = new_costs['security_deposit']
+            charge.due_at_booking = new_costs['due_at_booking']
+            charge.due_at_balance = new_costs['due_at_balance']
+            charge.balance_due_date = new_costs['balance_due_date']
+            charge.save(update_fields=[
+                'basic_rental', 'admin', 'security', 'due_at_booking', 'due_at_balance', 'balance_due_date',
+            ])
+
+            # A price change after a Revolut checkout URL already exists (guest went details ->
+            # pay -> back -> details, changed something) would otherwise leave the guest paying a
+            # stale amount - clear it so BookingPaymentView.get() rebuilds the order fresh.
+            if changed and payment.revolut_checkout_url:
+                payment.revolut_order_id = None
+                payment.revolut_checkout_url = None
+                payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
+
+            if not is_two_stage:
+                self._save_extras(booking, request.POST)
+                self._save_transfers(booking, transfer_rows)
+
+        return redirect('bookings:pay', reference=booking.reference)
+
     def _any_infant_age(self, rows, child_min_age):
         """Whether any current guest-list row is age'd as an infant (below child_min_age) - the
         sole condition for showing the Cot & High Chair section server-side on first render.
@@ -508,6 +536,73 @@ class BookingDetailsView(View):
         return rows, None
 
 
+class BookingBalanceDetailsView(ExtrasFormMixin, View):
+    """Extras-selection step for a two-stage booking's balance stage (see BalancePayment's
+    docstring) - the guest-list equivalent of BookingDetailsView, but for Extras only: the guest
+    list itself was already locked in at deposit time and isn't editable here. Reached via a link
+    sent manually to the guest around BookingSettings.balance_reminder_days_before_arrival (no
+    automated email yet), or self-serve from the confirmation/manage-booking pages once the
+    deposit is paid - see bookings/utils.py::booking_confirmation_context(). Bearer-readable by
+    reference alone, like every other post-deposit reference-based view here - unlike
+    BookingDetailsView's POST, there's no same-session pending_booking_reference to check, since
+    this is reached from an emailed link days later with no session continuity at all."""
+    template_name = 'bookings/balance_details.html'
+
+    def _get_gated_booking(self, reference):
+        """Returns (booking, redirect_response). redirect_response is None if the booking is in a
+        state where this view should actually render - otherwise it's where the guest belongs instead."""
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not hasattr(booking, 'balance_payment'):
+            return booking, redirect('bookings:confirmation', reference=reference)
+        if not is_paid(booking):
+            return booking, redirect('bookings:pay', reference=reference)
+        if is_balance_paid(booking):
+            return booking, redirect('bookings:confirmation', reference=reference)
+        return booking, None
+
+    def _show_cot_high_chair(self, booking):
+        """Same infant-presence gate as BookingDetailsView, but computed once from the guest list
+        that's already locked in for this booking (no live guest-row typing to react to here)."""
+        child_min_age = BookingSettings.load().child_min_age
+        return booking.party.filter(age__lt=child_min_age).exists()
+
+    def get(self, request, reference, *args, **kwargs):
+        booking, redirect_response = self._get_gated_booking(reference)
+        if redirect_response is not None:
+            return redirect_response
+
+        context = {'booking': booking, 'show_cot_high_chair': self._show_cot_high_chair(booking)}
+        context.update(self._extras_context(booking))
+        context.update(self._transfer_context(booking))
+        return render(request, self.template_name, context)
+
+    def post(self, request, reference, *args, **kwargs):
+        booking, redirect_response = self._get_gated_booking(reference)
+        if redirect_response is not None:
+            return redirect_response
+
+        transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
+        _, _, late_checkout_error = self._parse_late_checkout(request.POST)
+        context = {'booking': booking, 'show_cot_high_chair': self._show_cot_high_chair(booking)}
+        context.update(self._extras_context(booking, post_data=request.POST))
+        context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
+        context['late_checkout_error'] = late_checkout_error
+
+        if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
+            return render(request, self.template_name, context)
+
+        if late_checkout_error:
+            return render(request, self.template_name, context)
+
+        with transaction.atomic():
+            self._save_extras(booking, request.POST)
+            self._save_transfers(booking, transfer_rows)
+
+        return redirect('bookings:balance_pay', reference=booking.reference)
+
+
 class BookingPaymentView(View):
     """Deposit-payment step shown right after a reservation is created. Revolut-path bookings get
     a hosted checkout link (created lazily here, on first visit); Wise-path bookings get a static
@@ -556,6 +651,64 @@ class BookingPaymentView(View):
             payment.revolut_checkout_url = order.checkoutUrl
             payment.save()
         # else: order.create() already logged the failure via logerror(); leave payment.revolut_checkout_url
+        # unset so payment_error renders and the guest can retry on reload.
+
+
+class BookingBalancePaymentView(View):
+    """Balance-payment step for a two-stage booking, reached after BookingBalanceDetailsView (or
+    directly, if the guest already chose their Extras and is just returning to pay). Mirrors
+    BookingPaymentView closely - same lazy Revolut order creation, same static Wise link - but
+    against BalancePayment/due_at_balance instead of Payment/due_at_booking, same provider as the
+    deposit (no need to recompute - determine_payment_provider() is a pure function of arrival_date
+    anyway). No hold/countdown here: the calendar slot was already locked in by the confirmed
+    deposit, so there's nothing to expire, and no cancel-and-restart flow either (nothing to release)."""
+    template_name = 'bookings/balance_pay.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not hasattr(booking, 'balance_payment'):
+            return redirect('bookings:confirmation', reference=reference)
+        if not is_paid(booking):
+            return redirect('bookings:pay', reference=reference)
+        if is_balance_paid(booking):
+            return redirect('bookings:confirmation', reference=reference)
+
+        balance_payment = booking.balance_payment
+        charge = booking.charges
+        pay_amount, pay_currency = charge.due_at_balance_in_charge_currency()
+        context = {
+            'booking': booking,
+            'charge': charge,
+            'balance_payment': balance_payment,
+            'pay_amount': pay_amount,
+            'pay_currency': pay_currency,
+            'extras': extras_summary(booking),
+        }
+
+        if balance_payment.provider == 'revolut' and not balance_payment.revolut_checkout_url:
+            self._create_revolut_order(booking, balance_payment, pay_amount, pay_currency)
+
+        context['payment_error'] = balance_payment.provider == 'revolut' and not balance_payment.revolut_checkout_url
+        context['wise_payment_link'] = env_settings.WISE_BASE_PAYMENT_LINK
+
+        return render(request, self.template_name, context)
+
+    def _create_revolut_order(self, booking, balance_payment, pay_amount, pay_currency):
+        order = Revolut(secretKey=env_settings.REVOLUT_API_SECRET_KEY).payment
+        order.amount = int(pay_amount * 100)  # Revolut wants minor units (cents/pence), not major units
+        order.currency = pay_currency
+        order.description = f"Balance for booking {booking.reference}"
+        order.customerEmail = booking.guest.email
+        order.customerName = f"{booking.guest.first_name} {booking.guest.last_name}".strip()
+        order.create()
+
+        if order.id and order.has('checkout_url'):
+            balance_payment.revolut_order_id = order.id
+            balance_payment.revolut_checkout_url = order.checkoutUrl
+            balance_payment.save()
+        # else: order.create() already logged the failure via logerror(); leave revolut_checkout_url
         # unset so payment_error renders and the guest can retry on reload.
 
 

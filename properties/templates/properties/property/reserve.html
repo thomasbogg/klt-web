@@ -87,10 +87,12 @@
                 <span>Due now</span>
                 <span class="price-value" data-eur="{{ costs.due_at_booking|floatformat:2 }}" data-gbp="{{ costs_gbp.due_at_booking|floatformat:2 }}">&euro;{{ costs.due_at_booking|floatformat:2 }}</span>
             </div>
+            {% if costs.balance_due_date %}
             <div class="reserve-breakdown-row">
                 <span>Due by {{ costs.balance_due_date|date:"d M Y" }}</span>
                 <span class="price-value" data-eur="{{ costs.due_at_balance|floatformat:2 }}" data-gbp="{{ costs_gbp.due_at_balance|floatformat:2 }}">&euro;{{ costs.due_at_balance|floatformat:2 }}</span>
             </div>
+            {% endif %}
             <div class="reserve-breakdown-row reserve-breakdown-note">
                 <span>Security deposit (cash at check-in, always in EUR)</span>
                 <span>&euro;{{ costs.security_deposit|floatformat:2 }}</span>
