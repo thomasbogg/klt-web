@@ -486,6 +486,15 @@ class Extra(models.Model):
                                                          "outside the standard fixed pack choices.")
     mid_stay_clean = models.BooleanField(blank=True, null=True)
     late_checkout = models.BooleanField(blank=True, null=True)
+    late_checkout_time = models.TimeField(
+        blank=True, null=True,
+        help_text="Guest's exact requested checkout time. A future cleaning-automation system may "
+                  "add a 'latest possible' boundary this has to respect - not yet built.",
+    )
+    late_checkout_charge = models.DecimalField(
+        max_digits=8, decimal_places=2, blank=True, null=True,
+        help_text="Flat fee snapshotted from ExtrasSettings.late_checkout_price at request time.",
+    )
     extra_nights = models.BooleanField(blank=True, null=True)
 
     # Payment
@@ -611,6 +620,12 @@ class ExtrasSettings(models.Model):
         max_digits=8, decimal_places=2, default=0,
         help_text="Flat discount subtracted from the combined price when both a cot and a high "
                   "chair are requested together on the same booking.",
+    )
+
+    late_checkout_price = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        help_text="Flat fee for a late checkout request. A future cleaning-automation system may "
+                  "vary this by how late the checkout is - kept as a single flat fee for now.",
     )
 
     class Meta:

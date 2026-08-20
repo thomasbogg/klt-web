@@ -456,6 +456,50 @@ class BookingDetailsViewTests(TestCase):
         self.assertFalse(self.booking.extras.high_chair)
         self.assertEqual(self.booking.extras.cot_high_chair_charge, Decimal('0'))
 
+    def test_post_persists_late_checkout_with_flat_charge(self):
+        settings = ExtrasSettings.load()
+        settings.late_checkout_price = Decimal('30.00')
+        settings.save()
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['late_checkout'] = 'on'
+        data['late_checkout_time'] = '13:00'
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.extras.late_checkout)
+        self.assertEqual(self.booking.extras.late_checkout_time, time(13, 0))
+        self.assertEqual(self.booking.extras.late_checkout_charge, Decimal('30.00'))
+
+    def test_post_without_late_checkout_charges_nothing(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertFalse(self.booking.extras.late_checkout)
+        self.assertIsNone(self.booking.extras.late_checkout_time)
+        self.assertIsNone(self.booking.extras.late_checkout_charge)
+
+    def test_post_late_checkout_without_a_time_is_rejected(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['late_checkout'] = 'on'
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['late_checkout_error'])
+        self.assertEqual(self.booking.party.count(), 0)
+
+    def test_post_late_checkout_with_an_invalid_time_is_rejected(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['late_checkout'] = 'on'
+        data['late_checkout_time'] = 'not-a-time'
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['late_checkout_error'])
+        self.assertEqual(self.booking.party.count(), 0)
+
     def test_post_with_zero_quantity_does_not_create_a_requested_extra(self):
         extra_bed = RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
         self._set_session()

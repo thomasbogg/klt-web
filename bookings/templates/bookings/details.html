@@ -15,6 +15,7 @@
     <script type="module" src="{% static 'bookings/welcome_pack.js' %}"></script>
     <script type="module" src="{% static 'bookings/cot_high_chair.js' %}"></script>
     <script type="module" src="{% static 'bookings/airport_transfers.js' %}"></script>
+    <script type="module" src="{% static 'bookings/late_checkout.js' %}"></script>
 </head>
 <header>
     {% include 'header/header.html' %}
@@ -255,6 +256,27 @@
                 <button type="button" class="transfer-row-add" id="transfer-row-add">+ Add transfer</button>
 
                 {{ transfer_pricing_config|json_script:"transfer-pricing-config" }}
+            </section>
+
+            <section class="details-section">
+                <h2 class="details-section-title">Late Checkout</h2>
+                <p class="details-note">Paid in cash at check-in - it isn't included in the amount due now. Let us know your preferred time and we'll confirm whether it's possible.</p>
+
+                <div class="welcome-pack-block">
+                    <label class="details-checkbox-label details-checkbox-label-primary">
+                        <input type="checkbox" name="late_checkout" id="late_checkout_checkbox" {% if late_checkout %}checked{% endif %}>
+                        I'd like a late checkout
+                    </label>
+
+                    <div class="welcome-pack-picker" id="late-checkout-picker">
+                        <div class="welcome-pack-field">
+                            <label for="late_checkout_time">Preferred checkout time</label>
+                            <input type="time" name="late_checkout_time" id="late_checkout_time" class="reserve-input" value="{{ late_checkout_time }}">
+                            {% if late_checkout_error %}<p class="reserve-form-error">{{ late_checkout_error }}</p>{% endif %}
+                        </div>
+                        <p class="cot-high-chair-price">Flat fee: &euro;{{ late_checkout_price|floatformat:2 }}</p>
+                    </div>
+                </div>
             </section>
 
             <section class="details-section">

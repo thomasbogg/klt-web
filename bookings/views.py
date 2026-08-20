@@ -91,6 +91,7 @@ class BookingDetailsView(View):
         max_guests = booking.property.specs.max_guests
         rows, non_field_error = self._parse_rows(request.POST)
         transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
+        _, _, late_checkout_error = self._parse_late_checkout(request.POST)
         child_min_age = BookingSettings.load().child_min_age
         context = {
             'booking': booking,
@@ -104,11 +105,15 @@ class BookingDetailsView(View):
         }
         context.update(self._extras_context(booking, post_data=request.POST))
         context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
+        context['late_checkout_error'] = late_checkout_error
 
         if non_field_error or any(row['errors'] for row in rows):
             return render(request, self.template_name, context)
 
         if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
+            return render(request, self.template_name, context)
+
+        if late_checkout_error:
             return render(request, self.template_name, context)
 
         if len(rows) > max_guests:
@@ -204,9 +209,13 @@ class BookingDetailsView(View):
             nights, extra.cot, extra.high_chair,
         )
 
+        extra.late_checkout, extra.late_checkout_time, _ = self._parse_late_checkout(post_data)
+        extra.late_checkout_charge = ExtrasSettings.load().late_checkout_price if extra.late_checkout else None
+
         extra.save(update_fields=[
             'welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note',
             'cot', 'high_chair', 'cot_high_chair_charge',
+            'late_checkout', 'late_checkout_time', 'late_checkout_charge',
         ])
 
         booking.requested_extras.all().delete()
@@ -239,6 +248,8 @@ class BookingDetailsView(View):
             welcome_pack_note = post_data.get('welcome_pack_note', '').strip()
             cot = post_data.get('cot') == 'on'
             high_chair = post_data.get('high_chair') == 'on'
+            late_checkout = post_data.get('late_checkout') == 'on'
+            late_checkout_time = post_data.get('late_checkout_time', '').strip()
             quantities = {t.id: post_data.get(f'request_qty_{t.id}', '0').strip() or '0' for t in active_types}
             notes = {t.id: post_data.get(f'request_note_{t.id}', '').strip() for t in active_types}
         else:
@@ -251,6 +262,10 @@ class BookingDetailsView(View):
             welcome_pack_note = extra.welcome_pack_note if extra and extra.welcome_pack_note else ''
             cot = bool(extra and extra.cot)
             high_chair = bool(extra and extra.high_chair)
+            late_checkout = bool(extra and extra.late_checkout)
+            late_checkout_time = (
+                extra.late_checkout_time.strftime('%H:%M') if extra and extra.late_checkout_time else ''
+            )
             existing = {r.request_type_id: r for r in booking.requested_extras.all()}
             quantities = {t.id: str(existing[t.id].quantity) if t.id in existing else '0' for t in active_types}
             notes = {t.id: existing[t.id].note if t.id in existing else '' for t in active_types}
@@ -274,6 +289,9 @@ class BookingDetailsView(View):
                 'combo_discount': str(settings.cot_and_high_chair_combo_discount),
                 'child_min_age': BookingSettings.load().child_min_age,
             },
+            'late_checkout': late_checkout,
+            'late_checkout_time': late_checkout_time,
+            'late_checkout_price': settings.late_checkout_price,
             'request_rows': [
                 {'request_type': t, 'quantity': quantities[t.id], 'note': notes[t.id]}
                 for t in active_types
@@ -405,6 +423,22 @@ class BookingDetailsView(View):
                 'errors': errors,
             })
         return rows, None
+
+    def _parse_late_checkout(self, post_data):
+        """A requested time is only required (and only an error) when the checkbox itself is
+        ticked - matches the pattern of transfer rows requiring a time, but here it's a single
+        optional field rather than a repeated row."""
+        late_checkout = post_data.get('late_checkout') == 'on'
+        time_raw = post_data.get('late_checkout_time', '').strip()
+        if not late_checkout:
+            return False, None, None
+
+        if not time_raw:
+            return True, None, "Enter your preferred checkout time."
+        try:
+            return True, datetime.strptime(time_raw, '%H:%M').time(), None
+        except ValueError:
+            return True, None, "Enter a valid checkout time."
 
     def _any_infant_age(self, rows, child_min_age):
         """Whether any current guest-list row is age'd as an infant (below child_min_age) - the
