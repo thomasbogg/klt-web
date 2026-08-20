@@ -169,6 +169,13 @@ class Booking(models.Model):
     # Booking details
     arrival_date = models.DateField()
     departure_date = models.DateField()
+    manual_override = models.BooleanField(
+        default=False,
+        help_text="Set automatically when staff record an extra-nights date adjustment (see "
+                  "BookingDateAdjustment). The external platform-sync scraper must check this "
+                  "before touching arrival_date/departure_date on this booking - true means the "
+                  "dates were adjusted directly with the guest and the scraper must not overwrite them.",
+    )
     is_owner = models.BooleanField()
     enquiry_status = models.CharField(max_length=100)
     enquiry_date = models.DateField(blank=True, null=True)
@@ -665,6 +672,55 @@ class AirportTransfer(models.Model):
     @property
     def date(self):
         return self.booking.arrival_date if self.direction == AirportTransferDirection.INBOUND else self.booking.departure_date
+
+
+class BookingDateAdjustment(models.Model):
+    """Audit log of an extra-nights date change (platform-derived bookings only) - the guest
+    agrees direct with Thomas to extend their stay, off-platform to avoid commission, and pays the
+    cash difference on arrival. Each row is a delta from whatever Booking.arrival_date/
+    departure_date were immediately before it - not a shadow "real dates" table, since every date
+    consumer (calendar, BookingQuerySet.overlapping(), admin) reads those two fields as sole source
+    of truth (see the plan this was built from for why a parallel table was rejected). Supports
+    multiple chained extensions over time, each its own row. additional_charge is deliberately not
+    wired into Charge - see PlatformPayout for why platform-derived bookings have their own money
+    model, separate from the online direct-booking Charge/Payment flow.
+
+    previous_arrival_date/previous_departure_date are snapshotted automatically in save() from the
+    booking's current dates - never staff-entered - so a new row can't accidentally record the
+    wrong "before" state. Creating a new row atomically does all three things a staff member could
+    otherwise partially forget: snapshots the previous dates onto this row, updates the live
+    Booking dates, and sets Booking.manual_override so the external scraper stops touching them.
+    Editing an existing row afterwards is just a correction to the log - it does not re-trigger
+    that cascade, since only a new adjustment represents a new date change."""
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='date_adjustments')
+    previous_arrival_date = models.DateField(editable=False)
+    previous_departure_date = models.DateField(editable=False)
+    new_arrival_date = models.DateField()
+    new_departure_date = models.DateField()
+    additional_charge = models.DecimalField(max_digits=8, decimal_places=2, default=0,
+                                             help_text="Cash difference the guest pays on arrival - not part of Charge.")
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'booking_date_adjustments'
+        verbose_name = 'Booking date adjustment'
+        ordering = ('created_at',)
+
+    def __str__(self):
+        return f"{self.booking} - {self.previous_arrival_date} → {self.new_arrival_date}"
+
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        if is_new:
+            self.previous_arrival_date = self.booking.arrival_date
+            self.previous_departure_date = self.booking.departure_date
+        super().save(*args, **kwargs)
+        if is_new:
+            self.booking.arrival_date = self.new_arrival_date
+            self.booking.departure_date = self.new_departure_date
+            self.booking.manual_override = True
+            self.booking.save(update_fields=['arrival_date', 'departure_date', 'manual_override'])
 
 
 class Form(models.Model):

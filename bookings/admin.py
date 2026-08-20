@@ -3,9 +3,9 @@ from django.urls import reverse
 from django.shortcuts import redirect
 
 from .models import (
-    AirportTransfer, AirportTransferPriceBand, Booking, BookingCondition, BookingGuest,
-    BookingRequestedExtra, BookingSettings, Charge, Extra, ExtrasSettings, Payment, PlatformPayout,
-    RequestType, WelcomePackItem,
+    AirportTransfer, AirportTransferPriceBand, Booking, BookingCondition, BookingDateAdjustment,
+    BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Extra, ExtrasSettings, Payment,
+    PlatformPayout, RequestType, WelcomePackItem,
 )
 from .utils import expire_stale_holds
 
@@ -64,12 +64,23 @@ class AirportTransferInline(admin.TabularInline):
     extra = 0
 
 
+class BookingDateAdjustmentInline(admin.TabularInline):
+    """Staff only ever fill in new_arrival_date/new_departure_date/additional_charge/notes - the
+    previous_* dates are auto-snapshotted by BookingDateAdjustment.save() and shown read-only here
+    so staff can review history without being able to hand-edit what "before" was."""
+    model = BookingDateAdjustment
+    extra = 0
+    readonly_fields = ('previous_arrival_date', 'previous_departure_date', 'created_at')
+    fields = ('previous_arrival_date', 'previous_departure_date', 'new_arrival_date',
+              'new_departure_date', 'additional_charge', 'notes', 'created_at')
+
+
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
     inlines = [ChargeInline, PaymentInline, BookingGuestInline, PlatformPayoutInline, ExtraInline,
-               BookingRequestedExtraInline, AirportTransferInline]
+               BookingRequestedExtraInline, AirportTransferInline, BookingDateAdjustmentInline]
     list_display = ('reference', 'property', 'guest', 'arrival_date', 'departure_date', 'enquiry_status', 'enquiry_source')
-    list_filter = ('enquiry_status', 'enquiry_source')
+    list_filter = ('enquiry_status', 'enquiry_source', 'manual_override')
     search_fields = ('reference', 'guest__first_name', 'guest__last_name', 'guest__email')
 
     def get_queryset(self, request):

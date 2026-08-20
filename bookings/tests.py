@@ -6,8 +6,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import (
-    AirportTransferPriceBand, Booking, BookingSettings, Charge, ExtrasSettings, Payment, RequestType,
-    WelcomePackItem,
+    AirportTransferPriceBand, Booking, BookingDateAdjustment, BookingSettings, Charge,
+    ExtrasSettings, Payment, RequestType, WelcomePackItem,
 )
 from bookings.utils import (
     add_business_days, determine_payment_provider, expire_stale_holds, guest_counts_by_age,
@@ -573,3 +573,59 @@ class ExtrasSettingsTransferPricingTests(TestCase):
         self.settings.save()
         self.assertEqual(self.settings.compute_transfer_price(2, time(3, 0)), Decimal('35.00'))
         self.assertEqual(self.settings.compute_transfer_price(2, time(14, 0)), Decimal('25.00'))
+
+
+class BookingDateAdjustmentTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property DA', short_title='TESTDA')
+        self.guest = Guest.objects.create(last_name='Guest')
+        self.start = date(2026, 9, 1)
+        self.end = date(2026, 9, 8)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Airbnb',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_creating_an_adjustment_snapshots_previous_dates_and_updates_the_booking(self):
+        new_departure = self.end + timedelta(days=2)
+        adjustment = BookingDateAdjustment.objects.create(
+            booking=self.booking, new_arrival_date=self.start, new_departure_date=new_departure,
+            additional_charge=Decimal('120.00'), notes='Guest paying cash on arrival',
+        )
+        self.assertEqual(adjustment.previous_arrival_date, self.start)
+        self.assertEqual(adjustment.previous_departure_date, self.end)
+
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.departure_date, new_departure)
+        self.assertTrue(self.booking.manual_override)
+
+    def test_second_chained_adjustment_snapshots_from_the_first_adjustments_result(self):
+        first_new_departure = self.end + timedelta(days=2)
+        BookingDateAdjustment.objects.create(
+            booking=self.booking, new_arrival_date=self.start, new_departure_date=first_new_departure,
+        )
+        self.booking.refresh_from_db()
+
+        second_new_departure = first_new_departure + timedelta(days=1)
+        second = BookingDateAdjustment.objects.create(
+            booking=self.booking, new_arrival_date=self.start, new_departure_date=second_new_departure,
+        )
+        self.assertEqual(second.previous_departure_date, first_new_departure)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.departure_date, second_new_departure)
+
+    def test_editing_an_existing_adjustment_does_not_recascade(self):
+        adjustment = BookingDateAdjustment.objects.create(
+            booking=self.booking, new_arrival_date=self.start, new_departure_date=self.end + timedelta(days=2),
+        )
+        self.booking.refresh_from_db()
+        booking_dates_after_first_save = (self.booking.arrival_date, self.booking.departure_date)
+
+        adjustment.notes = 'corrected note, not a new date change'
+        adjustment.save()
+
+        self.booking.refresh_from_db()
+        self.assertEqual((self.booking.arrival_date, self.booking.departure_date), booking_dates_after_first_save)
+        adjustment.refresh_from_db()
+        self.assertEqual(adjustment.previous_departure_date, self.end)  # unchanged by the edit
