@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from django.db import transaction
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
@@ -7,7 +9,8 @@ from django.views import View
 import env_settings
 from bookings.forms import BookingLookupForm
 from bookings.models import (
-    Booking, BookingCondition, BookingGuest, BookingRequestedExtra, Extra, RequestType, WelcomePackDrinksChoice,
+    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, Booking, BookingCondition,
+    BookingGuest, BookingRequestedExtra, Extra, ExtrasSettings, RequestType, WelcomePackDrinksChoice,
     WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
@@ -66,6 +69,7 @@ class BookingDetailsView(View):
             'payment_in_progress': payment.status == 'in_progress',
         }
         context.update(self._extras_context(booking))
+        context.update(self._transfer_context(booking))
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
@@ -82,6 +86,7 @@ class BookingDetailsView(View):
 
         max_guests = booking.property.specs.max_guests
         rows, non_field_error = self._parse_rows(request.POST)
+        transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
         context = {
             'booking': booking,
             'rows': rows,
@@ -91,8 +96,12 @@ class BookingDetailsView(View):
             'non_field_error': non_field_error,
         }
         context.update(self._extras_context(booking, post_data=request.POST))
+        context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
 
         if non_field_error or any(row['errors'] for row in rows):
+            return render(request, self.template_name, context)
+
+        if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
             return render(request, self.template_name, context)
 
         if len(rows) > max_guests:
@@ -155,6 +164,7 @@ class BookingDetailsView(View):
                 payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
 
             self._save_extras(booking, request.POST)
+            self._save_transfers(booking, transfer_rows)
 
         return redirect('bookings:pay', reference=booking.reference)
 
@@ -234,6 +244,132 @@ class BookingDetailsView(View):
                 for t in active_types
             ],
         }
+
+    def _save_transfers(self, booking, rows):
+        """Prices are always recomputed here from ExtrasSettings/AirportTransferPriceBand, never
+        trusted from the client - the JS-side estimate in airport_transfers.js is display-only."""
+        booking.airport_transfers.all().delete()
+        settings = ExtrasSettings.load()
+        new_transfers = []
+        for row in rows:
+            total_guests = row['adults'] + row['children'] + row['infants']
+            new_transfers.append(AirportTransfer(
+                booking=booking,
+                direction=row['direction'],
+                is_faro=row['is_faro'],
+                flight_number=row['flight_number'],
+                time=row['parsed_time'],
+                adults=row['adults'],
+                children=row['children'],
+                infants=row['infants'],
+                child_seats=row['child_seats'],
+                excess_baggage=row['excess_baggage'],
+                notes=row['notes'],
+                price_at_request=settings.compute_transfer_price(total_guests, row['parsed_time']),
+            ))
+        AirportTransfer.objects.bulk_create(new_transfers)
+
+    def _transfer_context(self, booking, rows=None, non_field_error=None):
+        """Airport Transfer row context, plus the pricing config (bands + night-surcharge window)
+        embedded for the client-side live price estimate in airport_transfers.js - purely a
+        display convenience, the authoritative price is always recomputed server-side in
+        _save_transfers(), never trusted from the client."""
+        if rows is None:
+            rows = [
+                {
+                    'direction': t.direction, 'is_faro': t.is_faro, 'flight_number': t.flight_number,
+                    'time': t.time.strftime('%H:%M') if t.time else '', 'adults': t.adults,
+                    'children': t.children, 'infants': t.infants, 'child_seats': t.child_seats,
+                    'excess_baggage': t.excess_baggage, 'notes': t.notes, 'errors': {},
+                }
+                for t in booking.airport_transfers.all()
+            ]
+
+        settings = ExtrasSettings.load()
+        return {
+            'transfer_rows': rows,
+            'transfer_non_field_error': non_field_error,
+            'transfer_pricing_config': {
+                'bands': [
+                    {'max_guests': band.max_guests, 'price': str(band.price)}
+                    for band in AirportTransferPriceBand.objects.all()
+                ],
+                'night_start': settings.airport_transfer_night_window_start.strftime('%H:%M'),
+                'night_end': settings.airport_transfer_night_window_end.strftime('%H:%M'),
+                'night_surcharge': str(settings.airport_transfer_night_surcharge),
+            },
+        }
+
+    def _parse_transfer_rows(self, post_data):
+        """Ten parallel arrays, same convention as _parse_rows() - see that method's docstring for
+        why (not a Django formset). Unlike the Guest List, Airport Transfers are entirely optional
+        and dynamically added/removed, so a fully empty submission is not an error - only a genuine
+        length mismatch (a malformed submission) is."""
+        directions = post_data.getlist('transfer_direction[]')
+        airports = post_data.getlist('transfer_airport[]')
+        flight_numbers = post_data.getlist('transfer_flight_number[]')
+        times = post_data.getlist('transfer_time[]')
+        adults_raw = post_data.getlist('transfer_adults[]')
+        children_raw = post_data.getlist('transfer_children[]')
+        infants_raw = post_data.getlist('transfer_infants[]')
+        child_seats = post_data.getlist('transfer_child_seats[]')
+        excess_baggage = post_data.getlist('transfer_excess_baggage[]')
+        notes = post_data.getlist('transfer_notes[]')
+
+        lengths = {
+            len(directions), len(airports), len(flight_numbers), len(times), len(adults_raw),
+            len(children_raw), len(infants_raw), len(child_seats), len(excess_baggage), len(notes),
+        }
+        if len(lengths) > 1:
+            return [], "Something went wrong submitting your airport transfers - please try again."
+
+        def parse_count(raw):
+            try:
+                value = int(raw)
+                return value if value >= 0 else 0
+            except (TypeError, ValueError):
+                return 0
+
+        rows = []
+        for i in range(len(directions)):
+            errors = {}
+            direction = (
+                directions[i] if directions[i] in AirportTransferDirection.values
+                else AirportTransferDirection.INBOUND
+            )
+            is_faro = airports[i] != 'other'
+
+            time_raw = times[i].strip()
+            parsed_time = None
+            if not time_raw:
+                errors['time'] = "Enter a pickup/drop-off time."
+            else:
+                try:
+                    parsed_time = datetime.strptime(time_raw, '%H:%M').time()
+                except ValueError:
+                    errors['time'] = "Enter a valid time."
+
+            adults = parse_count(adults_raw[i])
+            children = parse_count(children_raw[i])
+            infants = parse_count(infants_raw[i])
+            if adults + children + infants < 1:
+                errors['guests'] = "Enter at least one guest."
+
+            rows.append({
+                'direction': direction,
+                'is_faro': is_faro,
+                'flight_number': flight_numbers[i].strip(),
+                'time': time_raw,
+                'parsed_time': parsed_time,
+                'adults': adults,
+                'children': children,
+                'infants': infants,
+                'child_seats': child_seats[i].strip(),
+                'excess_baggage': excess_baggage[i].strip(),
+                'notes': notes[i].strip(),
+                'errors': errors,
+            })
+        return rows, None
 
     def _seed_or_prefill_rows(self, booking):
         """Row dicts in the same shape _parse_rows() produces, so the template has one rendering

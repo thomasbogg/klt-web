@@ -432,6 +432,83 @@ class BookingDetailsViewTests(TestCase):
         self.assertEqual(row['quantity'], '2')
         self.assertEqual(self.booking.requested_extras.count(), 0)
 
+    def test_get_includes_transfer_pricing_config_and_existing_rows(self):
+        AirportTransferPriceBand.objects.create(max_guests=4, price=Decimal('25.00'))
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['transfer_rows'], [])
+        self.assertEqual(response.context['transfer_pricing_config']['bands'], [{'max_guests': 4, 'price': '25.00'}])
+
+    def test_post_persists_airport_transfer_with_computed_price(self):
+        AirportTransferPriceBand.objects.create(max_guests=4, price=Decimal('25.00'))
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['transfer_direction[]'] = ['inbound']
+        data['transfer_airport[]'] = ['faro']
+        data['transfer_flight_number[]'] = ['TP1234']
+        data['transfer_time[]'] = ['14:30']
+        data['transfer_adults[]'] = ['2']
+        data['transfer_children[]'] = ['1']
+        data['transfer_infants[]'] = ['0']
+        data['transfer_child_seats[]'] = ['1 booster seat']
+        data['transfer_excess_baggage[]'] = ['']
+        data['transfer_notes[]'] = ['']
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+
+        transfer = self.booking.airport_transfers.get()
+        self.assertEqual(transfer.direction, 'inbound')
+        self.assertTrue(transfer.is_faro)
+        self.assertEqual(transfer.flight_number, 'TP1234')
+        self.assertEqual(str(transfer.time), '14:30:00')
+        self.assertEqual(transfer.adults, 2)
+        self.assertEqual(transfer.children, 1)
+        self.assertEqual(transfer.child_seats, '1 booster seat')
+        self.assertEqual(transfer.price_at_request, Decimal('25.00'))
+
+    def test_post_with_invalid_transfer_time_is_rejected_and_persists_nothing(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['transfer_direction[]'] = ['inbound']
+        data['transfer_airport[]'] = ['faro']
+        data['transfer_flight_number[]'] = ['']
+        data['transfer_time[]'] = ['']
+        data['transfer_adults[]'] = ['1']
+        data['transfer_children[]'] = ['0']
+        data['transfer_infants[]'] = ['0']
+        data['transfer_child_seats[]'] = ['']
+        data['transfer_excess_baggage[]'] = ['']
+        data['transfer_notes[]'] = ['']
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['transfer_rows'][0]['errors'].get('time'))
+        self.assertEqual(self.booking.party.count(), 0)
+        self.assertEqual(self.booking.airport_transfers.count(), 0)
+
+    def test_post_transfer_with_zero_guests_is_rejected(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['transfer_direction[]'] = ['inbound']
+        data['transfer_airport[]'] = ['faro']
+        data['transfer_flight_number[]'] = ['']
+        data['transfer_time[]'] = ['09:00']
+        data['transfer_adults[]'] = ['0']
+        data['transfer_children[]'] = ['0']
+        data['transfer_infants[]'] = ['0']
+        data['transfer_child_seats[]'] = ['']
+        data['transfer_excess_baggage[]'] = ['']
+        data['transfer_notes[]'] = ['']
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['transfer_rows'][0]['errors'].get('guests'))
+        self.assertEqual(self.booking.airport_transfers.count(), 0)
+
+    def test_post_with_no_transfer_rows_is_not_an_error(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.assertEqual(self.booking.airport_transfers.count(), 0)
+
 
 class WelcomePackItemMatchesTests(TestCase):
     def test_variant_specific_item_only_matches_its_own_variant(self):

@@ -339,3 +339,116 @@
     margin: 0;
     max-width: none;
 }
+
+.transfer-rows {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.transfer-row {
+    position: relative;
+    border: 1px solid #ebebeb;
+    border-radius: 8px;
+    padding: 16px;
+}
+
+.transfer-row-remove {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 28px;
+    height: 28px;
+    background: none;
+    border: 1px solid var(--status-booked-color, #c1554f);
+    color: var(--status-booked-color, #c1554f);
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 1rem;
+    line-height: 1;
+    transition: background-color 0.2s;
+}
+
+.transfer-row-remove:hover {
+    background: var(--status-booked-bg, #fbe4e4);
+}
+
+.transfer-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    padding-right: 34px;
+}
+
+.transfer-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.transfer-field label {
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+}
+
+.transfer-field-full {
+    grid-column: 1 / -1;
+}
+
+.transfer-field input,
+.transfer-field select,
+.transfer-field textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+.transfer-field textarea {
+    resize: vertical;
+}
+
+.transfer-guests-error {
+    grid-column: 1 / -1;
+    margin: -4px 0 0;
+}
+
+.transfer-row-price {
+    margin: 12px 0 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.transfer-row-add {
+    margin-top: 16px;
+    padding: 8px 16px;
+    font-size: 0.9rem;
+    background: none;
+    border: 1px solid var(--primary-color);
+    color: var(--primary-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.transfer-row-add:hover {
+    background: rgba(44, 121, 185, 0.08);
+}
+
+@media (max-width: 640px) {
+    .transfer-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 420px) {
+    .transfer-grid {
+        grid-template-columns: 1fr;
+    }
+}

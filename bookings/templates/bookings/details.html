@@ -13,6 +13,7 @@
     <script type="module" src="{% static 'main/pay_countdown.js' %}"></script>
     <script type="module" src="{% static 'bookings/guest_list.js' %}"></script>
     <script type="module" src="{% static 'bookings/welcome_pack.js' %}"></script>
+    <script type="module" src="{% static 'bookings/airport_transfers.js' %}"></script>
 </head>
 <header>
     {% include 'header/header.html' %}
@@ -166,6 +167,136 @@
                     {% endfor %}
                 </div>
                 {% endif %}
+            </section>
+
+            <section class="details-section">
+                <h2 class="details-section-title">Airport Transfers</h2>
+                <p class="details-note">Everything below is paid in cash at check-in - it isn't included in the amount due now. Prices shown are estimates based on total headcount and pickup/drop-off time; we'll confirm the final price with you.</p>
+                <p class="details-note">Sharing a ride with another apartment's guests? Only one lead guest should submit the combined request with the total headcount - the other party shouldn't submit a separate one.</p>
+
+                {% if transfer_non_field_error %}
+                <div class="reserve-form-errors">
+                    <p>{{ transfer_non_field_error }}</p>
+                </div>
+                {% endif %}
+
+                <div class="transfer-rows" id="transfer-rows">
+                    {% for row in transfer_rows %}
+                    <div class="transfer-row">
+                        <button type="button" class="transfer-row-remove" aria-label="Remove transfer">&minus;</button>
+                        <div class="transfer-grid">
+                            <div class="transfer-field">
+                                <label>Direction</label>
+                                <select name="transfer_direction[]" class="reserve-input transfer-direction">
+                                    <option value="inbound" {% if row.direction == 'inbound' %}selected{% endif %}>Inbound (arrival)</option>
+                                    <option value="outbound" {% if row.direction == 'outbound' %}selected{% endif %}>Outbound (departure)</option>
+                                </select>
+                            </div>
+                            <div class="transfer-field">
+                                <label>Time</label>
+                                <input type="time" name="transfer_time[]" class="reserve-input transfer-time" value="{{ row.time }}">
+                                {% if row.errors.time %}<p class="reserve-form-error">{{ row.errors.time }}</p>{% endif %}
+                            </div>
+                            <div class="transfer-field">
+                                <label>Flight number</label>
+                                <input type="text" name="transfer_flight_number[]" class="reserve-input" value="{{ row.flight_number }}" placeholder="e.g. TP1234">
+                            </div>
+                            <div class="transfer-field">
+                                <label>Airport</label>
+                                <select name="transfer_airport[]" class="reserve-input">
+                                    <option value="faro" {% if row.is_faro %}selected{% endif %}>Faro</option>
+                                    <option value="other" {% if not row.is_faro %}selected{% endif %}>Other</option>
+                                </select>
+                            </div>
+                            <div class="transfer-field transfer-field-guests">
+                                <label>Adults</label>
+                                <input type="number" name="transfer_adults[]" class="reserve-input transfer-guests" value="{{ row.adults }}" min="0">
+                            </div>
+                            <div class="transfer-field transfer-field-guests">
+                                <label>Children</label>
+                                <input type="number" name="transfer_children[]" class="reserve-input transfer-guests" value="{{ row.children }}" min="0">
+                            </div>
+                            <div class="transfer-field transfer-field-guests">
+                                <label>Infants</label>
+                                <input type="number" name="transfer_infants[]" class="reserve-input transfer-guests" value="{{ row.infants }}" min="0">
+                            </div>
+                            {% if row.errors.guests %}<p class="reserve-form-error transfer-guests-error">{{ row.errors.guests }}</p>{% endif %}
+                            <div class="transfer-field">
+                                <label>Child seats needed</label>
+                                <input type="text" name="transfer_child_seats[]" class="reserve-input" value="{{ row.child_seats }}" placeholder="Optional">
+                            </div>
+                            <div class="transfer-field">
+                                <label>Excess baggage</label>
+                                <input type="text" name="transfer_excess_baggage[]" class="reserve-input" value="{{ row.excess_baggage }}" placeholder="Optional">
+                            </div>
+                            <div class="transfer-field transfer-field-full">
+                                <label>Notes</label>
+                                <textarea name="transfer_notes[]" class="reserve-input" rows="2">{{ row.notes }}</textarea>
+                            </div>
+                        </div>
+                        <p class="transfer-row-price">Estimated price: <span class="transfer-row-price-value">&ndash;</span></p>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <template id="transfer-row-template">
+                    <div class="transfer-row">
+                        <button type="button" class="transfer-row-remove" aria-label="Remove transfer">&minus;</button>
+                        <div class="transfer-grid">
+                            <div class="transfer-field">
+                                <label>Direction</label>
+                                <select name="transfer_direction[]" class="reserve-input transfer-direction">
+                                    <option value="inbound">Inbound (arrival)</option>
+                                    <option value="outbound">Outbound (departure)</option>
+                                </select>
+                            </div>
+                            <div class="transfer-field">
+                                <label>Time</label>
+                                <input type="time" name="transfer_time[]" class="reserve-input transfer-time">
+                            </div>
+                            <div class="transfer-field">
+                                <label>Flight number</label>
+                                <input type="text" name="transfer_flight_number[]" class="reserve-input" placeholder="e.g. TP1234">
+                            </div>
+                            <div class="transfer-field">
+                                <label>Airport</label>
+                                <select name="transfer_airport[]" class="reserve-input">
+                                    <option value="faro" selected>Faro</option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
+                            <div class="transfer-field transfer-field-guests">
+                                <label>Adults</label>
+                                <input type="number" name="transfer_adults[]" class="reserve-input transfer-guests" value="1" min="0">
+                            </div>
+                            <div class="transfer-field transfer-field-guests">
+                                <label>Children</label>
+                                <input type="number" name="transfer_children[]" class="reserve-input transfer-guests" value="0" min="0">
+                            </div>
+                            <div class="transfer-field transfer-field-guests">
+                                <label>Infants</label>
+                                <input type="number" name="transfer_infants[]" class="reserve-input transfer-guests" value="0" min="0">
+                            </div>
+                            <div class="transfer-field">
+                                <label>Child seats needed</label>
+                                <input type="text" name="transfer_child_seats[]" class="reserve-input" placeholder="Optional">
+                            </div>
+                            <div class="transfer-field">
+                                <label>Excess baggage</label>
+                                <input type="text" name="transfer_excess_baggage[]" class="reserve-input" placeholder="Optional">
+                            </div>
+                            <div class="transfer-field transfer-field-full">
+                                <label>Notes</label>
+                                <textarea name="transfer_notes[]" class="reserve-input" rows="2"></textarea>
+                            </div>
+                        </div>
+                        <p class="transfer-row-price">Estimated price: <span class="transfer-row-price-value">&ndash;</span></p>
+                    </div>
+                </template>
+
+                <button type="button" class="transfer-row-add" id="transfer-row-add">+ Add transfer</button>
+
+                {{ transfer_pricing_config|json_script:"transfer-pricing-config" }}
             </section>
 
             <button type="submit" class="reserve-form-submit">Make Payment</button>
