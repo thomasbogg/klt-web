@@ -14,7 +14,8 @@ from bookings.models import (
     WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
-    booking_confirmation_context, cancel_booking_hold, recalculate_costs_for_party, reservation_retry_url,
+    booking_confirmation_context, cancel_booking_hold, extras_summary, recalculate_costs_for_party,
+    reservation_retry_url,
 )
 from libraries.banking.revolut import Revolut
 
@@ -530,6 +531,7 @@ class BookingPaymentView(View):
             'pay_amount': pay_amount,
             'pay_currency': pay_currency,
             'hold_expired': booking.hold_expires_at is not None and booking.hold_expires_at <= timezone.now(),
+            'extras': extras_summary(booking),
         }
 
         if not context['hold_expired'] and payment.provider == 'revolut' and not payment.revolut_checkout_url:

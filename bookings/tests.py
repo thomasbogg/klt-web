@@ -6,11 +6,12 @@ from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import (
-    AirportTransferPriceBand, Booking, BookingDateAdjustment, BookingGuest, BookingSettings, Charge,
-    ExtrasSettings, Payment, RequestType, WelcomePackItem,
+    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, Booking, BookingDateAdjustment,
+    BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Extra, ExtrasSettings, Payment,
+    RequestType, WelcomePackItem,
 )
 from bookings.utils import (
-    add_business_days, determine_payment_provider, expire_stale_holds, guest_counts_by_age,
+    add_business_days, determine_payment_provider, expire_stale_holds, extras_summary, guest_counts_by_age,
     payment_clearing_expiry, recalculate_costs_for_party,
 )
 from guests.models import Guest
@@ -706,6 +707,58 @@ class ExtrasSettingsCotHighChairPricingTests(TestCase):
         self.settings.cot_and_high_chair_combo_discount = Decimal('1000.00')
         self.settings.save()
         self.assertEqual(self.settings.compute_cot_high_chair_price(5, True, True), Decimal('0'))
+
+
+class ExtrasSummaryTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property ES', short_title='TESTES')
+        self.guest = Guest.objects.create(first_name='Rui', last_name='Nunes', email='rui-es@example.com')
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=date.today() + timedelta(days=30), departure_date=date.today() + timedelta(days=35),
+            is_owner=False, enquiry_status='Awaiting payment', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_no_extras_requested_returns_empty_summary(self):
+        summary = extras_summary(self.booking)
+        self.assertEqual(summary['items'], [])
+        self.assertEqual(summary['total'], Decimal('0'))
+
+    def test_summary_itemises_every_requested_extra(self):
+        Extra.objects.create(
+            booking=self.booking,
+            welcome_pack=True, welcome_pack_food='vegan', welcome_pack_drinks='non_alcoholic',
+            welcome_pack_charge=Decimal('12.50'),
+            cot=True, high_chair=True, cot_high_chair_charge=Decimal('25.00'),
+            late_checkout=True, late_checkout_time=time(13, 0), late_checkout_charge=Decimal('30.00'),
+        )
+        AirportTransfer.objects.create(
+            booking=self.booking, direction=AirportTransferDirection.INBOUND,
+            flight_number='TP1234', time=time(14, 30), adults=2,
+            price_at_request=Decimal('25.00'),
+        )
+        bed = RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
+        BookingRequestedExtra.objects.create(
+            booking=self.booking, request_type=bed, quantity=2, price_at_request=Decimal('15.00'),
+        )
+
+        summary = extras_summary(self.booking)
+        labels = [item['label'] for item in summary['items']]
+        self.assertEqual(labels, [
+            'Welcome Pack (Vegan, Non-alcoholic)',
+            'Cot & High Chair',
+            'Late Checkout (13:00)',
+            'Airport Transfer - Inbound (arrival) (TP1234)',
+            'Extra bed x2',
+        ])
+        self.assertEqual(summary['total'], Decimal('12.50') + Decimal('25.00') + Decimal('30.00')
+                          + Decimal('25.00') + Decimal('30.00'))
+
+    def test_cot_only_uses_singular_label(self):
+        Extra.objects.create(booking=self.booking, cot=True, cot_high_chair_charge=Decimal('20.00'))
+        summary = extras_summary(self.booking)
+        self.assertEqual(summary['items'], [{'label': 'Cot', 'price': Decimal('20.00')}])
 
 
 class BookingDateAdjustmentTests(TestCase):

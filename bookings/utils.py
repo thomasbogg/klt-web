@@ -1,5 +1,6 @@
 import secrets
 from datetime import date, timedelta
+from decimal import Decimal
 from urllib.parse import urlencode
 
 from django.core.exceptions import ValidationError
@@ -223,6 +224,44 @@ def reservation_retry_url(booking):
         'guests': guests,
     })
     return f"{base_url}?{query}"
+
+
+def extras_summary(booking):
+    """Itemised list of everything the guest actually chose in the Extras section of Booking
+    Details, all cash-at-check-in (see bookings/views.py::BookingDetailsView._save_extras -
+    extras never touch Charge/Payment). Returns {'items': [{'label', 'price'}], 'total': Decimal}.
+    Cot/High Chair is a single line even when both are requested, since they're priced as one
+    combo charge (see ExtrasSettings.compute_cot_high_chair_price), not two separate amounts."""
+    extra = getattr(booking, 'extras', None)
+    items = []
+
+    if extra and extra.welcome_pack:
+        items.append({
+            'label': f"Welcome Pack ({extra.get_welcome_pack_food_display()}, {extra.get_welcome_pack_drinks_display()})",
+            'price': extra.welcome_pack_charge or 0,
+        })
+
+    if extra and (extra.cot or extra.high_chair):
+        parts = [label for wanted, label in ((extra.cot, 'Cot'), (extra.high_chair, 'High Chair')) if wanted]
+        items.append({'label': ' & '.join(parts), 'price': extra.cot_high_chair_charge or 0})
+
+    if extra and extra.late_checkout:
+        time_label = f" ({extra.late_checkout_time.strftime('%H:%M')})" if extra.late_checkout_time else ''
+        items.append({'label': f"Late Checkout{time_label}", 'price': extra.late_checkout_charge or 0})
+
+    for transfer in booking.airport_transfers.all():
+        detail = transfer.flight_number or (transfer.time.strftime('%H:%M') if transfer.time else '')
+        label = f"Airport Transfer - {transfer.get_direction_display()}"
+        items.append({'label': f"{label} ({detail})" if detail else label, 'price': transfer.price_at_request or 0})
+
+    for requested in booking.requested_extras.select_related('request_type').all():
+        label = requested.request_type.name
+        items.append({
+            'label': f"{label} x{requested.quantity}" if requested.quantity != 1 else label,
+            'price': requested.price_at_request * requested.quantity,
+        })
+
+    return {'items': items, 'total': sum((item['price'] for item in items), start=Decimal('0'))}
 
 
 def booking_confirmation_context(booking):

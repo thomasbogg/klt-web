@@ -57,6 +57,23 @@
             Reservation held for <span id="pay-countdown-time">--:--</span>
         </p>
 
+        {% if extras.items %}
+        <div class="pay-extras-breakdown">
+            <p class="pay-extras-breakdown-title">Your Extras</p>
+            {% for item in extras.items %}
+            <div class="pay-extras-breakdown-row">
+                <span>{{ item.label }}</span>
+                <span>&euro;{{ item.price|floatformat:2 }}</span>
+            </div>
+            {% endfor %}
+            <div class="pay-extras-breakdown-row pay-extras-breakdown-total">
+                <span>Total</span>
+                <span>&euro;{{ extras.total|floatformat:2 }}</span>
+            </div>
+            <p class="pay-extras-breakdown-note">Paid in cash at check-in - not included in the amount due now.</p>
+        </div>
+        {% endif %}
+
         {% if payment_error %}
         <div class="reserve-form-errors">
             <p>We couldn't set up card payment just now. Please reload this page to try again.</p>

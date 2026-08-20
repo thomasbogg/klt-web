@@ -120,6 +120,49 @@
     color: rgb(130, 130, 130);
 }
 
+.pay-extras-breakdown {
+    max-width: 420px;
+    margin: 24px auto 0;
+    text-align: left;
+    border-top: 1px solid #ebebeb;
+    padding-top: 16px;
+}
+
+.pay-extras-breakdown-title {
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+    margin: 0 0 8px;
+}
+
+.pay-extras-breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 6px 0;
+    font-size: 0.95rem;
+    color: rgb(80, 80, 80);
+}
+
+.pay-extras-breakdown-total {
+    font-family: var(--primary-font);
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: rgb(60, 60, 60);
+    border-top: 1px solid #ebebeb;
+    margin-top: 4px;
+    padding-top: 12px;
+}
+
+.pay-extras-breakdown-note {
+    margin-top: 8px;
+    font-size: 0.85rem;
+    color: rgb(130, 130, 130);
+}
+
 .confirmation-message {
     max-width: 480px;
     margin: 0 auto;
