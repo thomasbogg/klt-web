@@ -26,18 +26,10 @@ export class Datepicker extends Picker {
         this._disableAfter = this.#simplifyDate(disableAfter);
 
         // handle next month nav
-        this.nextBtn.addEventListener('click', () => {
-            if(this.month === 11) this.year++;
-            this.month = (this.month + 1) % 12;
-            this.display();
-        });
+        this.nextBtn.addEventListener('click', () => this.goToNextMonth());
 
         // handle prev month nav
-        this.prevBtn.addEventListener('click', () => {
-            if(this.month === 0) this.year--;
-            this.month = (this.month - 1 + 12) % 12;
-            this.display();
-        });
+        this.prevBtn.addEventListener('click', () => this.goToPrevMonth());
 
         // handle month nav
         this.monthInput.addEventListener('change', () => {
@@ -92,10 +84,14 @@ export class Datepicker extends Picker {
         const lastOfPrevMonth = new Date(this.year, this.month, 0);
 
         if(lastOfPrevMonth.getDay() < 6){
-         
+
             for(let i = 0; i <= lastOfPrevMonth.getDay(); i++) {
                 const text = lastOfPrevMonth.getDate() - lastOfPrevMonth.getDay() + i;
-                const button = this.createButton(text, true);
+                const button = this.createButton(text, false, false, true);
+                button.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.goToPrevMonth();
+                });
                 this.dates.appendChild(button);
             }
         }
@@ -120,10 +116,26 @@ export class Datepicker extends Picker {
 
             for(let i = firstOfNextMonth.getDay(); i <= 6; i++) {
                 const text = firstOfNextMonth.getDate() - firstOfNextMonth.getDay() + i;
-                const button = this.createButton(text, true);
+                const button = this.createButton(text, false, false, true);
+                button.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.goToNextMonth();
+                });
                 this.dates.appendChild(button);
             }
         }
+    }
+
+    goToNextMonth() {
+        if (this.month === 11) this.year++;
+        this.month = (this.month + 1) % 12;
+        this.display();
+    }
+
+    goToPrevMonth() {
+        if (this.month === 0) this.year--;
+        this.month = (this.month - 1 + 12) % 12;
+        this.display();
     }
 
     updateYearMonth() {
@@ -133,27 +145,32 @@ export class Datepicker extends Picker {
     
     handleDateClick(e) {
         const button = e.target;
-        
+
         // remove 'selected' class from other buttons
         const selected = this.dates.querySelector('.selected');
         selected && selected.classList.remove('selected');
-    
+
         // add the 'selected' class to current button
         button.classList.add('selected');
-    
+
         // set the selected date
         this._selectedDate = new Date(this.year, this.month, parseInt(button.textContent));
         this.inputter.value = this.getValueString();
-    
+
+        // a real, valid selection was made - as opposed to a click on a disabled/faded date
+        // that never reaches this handler at all - so listeners can safely advance to the next
+        // toolbar field on this event without also firing on meaningless clicks.
+        this.dates.dispatchEvent(new CustomEvent('dateselected'));
     }
-    
-    createButton(text, isDisabled = false, isToday = false) {
+
+    createButton(text, isDisabled = false, isToday = false, isOtherMonth = false) {
         const button = document.createElement('button');
         button.textContent = text;
         button.disabled = isDisabled;
         button.type = "button";
         button.classList.toggle('today', isToday);
         button.classList.toggle('selected', this.isSelectedDate(text));
+        button.classList.toggle('other-month', isOtherMonth);
         return button;
     }
     

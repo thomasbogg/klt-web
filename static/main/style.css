@@ -519,6 +519,17 @@ img {
     user-select: none;
 }
 
+/* Faded prev/next-month fill dates - unlike :disabled dates, these stay clickable so clicking
+   one navigates the calendar to that month instead of doing nothing (or, before this rule
+   existed, silently advancing the toolbar to the next field - see static/pickers/dates.js). */
+.container.picker.hidden button.other-month {
+    opacity: 0.5;
+}
+
+.container.picker.hidden button.other-month:hover {
+    opacity: 0.8;
+}
+
 .container.picker.hidden .picker.header {
     display: flex;
     justify-content: space-between;
