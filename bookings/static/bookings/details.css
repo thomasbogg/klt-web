@@ -10,6 +10,10 @@
     margin: 40px 0;
 }
 
+.details-section-hidden {
+    display: none;
+}
+
 /* Only draws a divider between sections when there's more than one - the adjacent-sibling
    combinator naturally does nothing until a second <section> exists (e.g. Extras, Arrival/
    Departure Day Plans), matching the site's existing thin-rule divider language (see
@@ -141,11 +145,26 @@
     cursor: pointer;
 }
 
+.details-checkbox-label-primary {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+.details-checkbox-label-primary input {
+    width: 18px;
+    height: 18px;
+}
+
 .welcome-pack-block {
     display: flex;
     flex-direction: column;
     gap: 8px;
     margin-bottom: 24px;
+    padding: 16px;
+    border: 1px solid var(--primary-color-soft, rgba(44, 121, 185, 0.25));
+    border-radius: 8px;
+    background: rgba(44, 121, 185, 0.04);
 }
 
 .cot-high-chair-block {

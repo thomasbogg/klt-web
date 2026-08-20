@@ -10,8 +10,8 @@ import env_settings
 from bookings.forms import BookingLookupForm
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, Booking, BookingCondition,
-    BookingGuest, BookingRequestedExtra, Extra, ExtrasSettings, RequestType, WelcomePackDrinksChoice,
-    WelcomePackFoodChoice, WelcomePackItem,
+    BookingGuest, BookingRequestedExtra, BookingSettings, Extra, ExtrasSettings, RequestType,
+    WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
     booking_confirmation_context, cancel_booking_hold, recalculate_costs_for_party, reservation_retry_url,
@@ -61,12 +61,16 @@ class BookingDetailsView(View):
             return redirect('bookings:confirmation', reference=reference)
 
         payment = booking.payment
+        rows = self._seed_or_prefill_rows(booking)
+        child_min_age = BookingSettings.load().child_min_age
         context = {
             'booking': booking,
-            'rows': self._seed_or_prefill_rows(booking),
+            'rows': rows,
             'max_guests': booking.property.specs.max_guests,
             'hold_expired': booking.hold_expires_at is not None and booking.hold_expires_at <= timezone.now(),
             'payment_in_progress': payment.status == 'in_progress',
+            'child_min_age': child_min_age,
+            'show_cot_high_chair': self._any_infant_age(rows, child_min_age),
         }
         context.update(self._extras_context(booking))
         context.update(self._transfer_context(booking))
@@ -87,6 +91,7 @@ class BookingDetailsView(View):
         max_guests = booking.property.specs.max_guests
         rows, non_field_error = self._parse_rows(request.POST)
         transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
+        child_min_age = BookingSettings.load().child_min_age
         context = {
             'booking': booking,
             'rows': rows,
@@ -94,6 +99,8 @@ class BookingDetailsView(View):
             'hold_expired': False,
             'payment_in_progress': False,
             'non_field_error': non_field_error,
+            'child_min_age': child_min_age,
+            'show_cot_high_chair': self._any_infant_age(rows, child_min_age),
         }
         context.update(self._extras_context(booking, post_data=request.POST))
         context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
@@ -265,6 +272,7 @@ class BookingDetailsView(View):
                 'high_chair_short': str(settings.high_chair_price_short_stay),
                 'high_chair_long': str(settings.high_chair_price_long_stay),
                 'combo_discount': str(settings.cot_and_high_chair_combo_discount),
+                'child_min_age': BookingSettings.load().child_min_age,
             },
             'request_rows': [
                 {'request_type': t, 'quantity': quantities[t.id], 'note': notes[t.id]}
@@ -397,6 +405,21 @@ class BookingDetailsView(View):
                 'errors': errors,
             })
         return rows, None
+
+    def _any_infant_age(self, rows, child_min_age):
+        """Whether any current guest-list row is age'd as an infant (below child_min_age) - the
+        sole condition for showing the Cot & High Chair section server-side on first render.
+        cot_high_chair.js recomputes this same check client-side as the guest edits ages, so the
+        section can appear/disappear live without a page reload - see that file. Deliberately does
+        NOT also consider Booking.babies (the original search's infant count): on a fresh booking
+        every age field starts blank regardless of what was picked in search (see
+        _seed_or_prefill_rows), so there's no age to check yet - the guest must actually type an
+        infant age into a row for either the initial render or the live JS check to show it."""
+        for row in rows:
+            age = str(row.get('age', '')).strip()
+            if age.isdigit() and int(age) < child_min_age:
+                return True
+        return False
 
     def _seed_or_prefill_rows(self, booking):
         """Row dicts in the same shape _parse_rows() produces, so the template has one rendering

@@ -110,67 +110,7 @@
                 <button type="button" class="guest-row-add" id="guest-row-add">+ Add guest</button>
             </section>
 
-            <section class="details-section">
-                <h2 class="details-section-title">Welcome Pack &amp; Requests</h2>
-                <p class="details-note">Everything below is paid in cash at check-in - it isn't included in the amount due now.</p>
-
-                <div class="welcome-pack-block">
-                    <label class="details-checkbox-label">
-                        <input type="checkbox" name="welcome_pack" id="welcome_pack_checkbox" {% if welcome_pack %}checked{% endif %}>
-                        I'd like a Welcome Pack
-                    </label>
-
-                    <div class="welcome-pack-picker" id="welcome-pack-picker">
-                        <div class="welcome-pack-choice-group">
-                            <span class="welcome-pack-choice-label">Food</span>
-                            <label><input type="radio" name="welcome_pack_food" value="standard" {% if welcome_pack_food == 'standard' %}checked{% endif %}> Standard</label>
-                            <label><input type="radio" name="welcome_pack_food" value="vegan" {% if welcome_pack_food == 'vegan' %}checked{% endif %}> Vegan</label>
-                        </div>
-                        <div class="welcome-pack-choice-group">
-                            <span class="welcome-pack-choice-label">Drinks</span>
-                            <label><input type="radio" name="welcome_pack_drinks" value="alcoholic" {% if welcome_pack_drinks == 'alcoholic' %}checked{% endif %}> Alcoholic</label>
-                            <label><input type="radio" name="welcome_pack_drinks" value="non_alcoholic" {% if welcome_pack_drinks == 'non_alcoholic' %}checked{% endif %}> Non-alcoholic</label>
-                        </div>
-
-                        {% if welcome_pack_items %}
-                        <ul class="welcome-pack-items" id="welcome-pack-items">
-                            {% for item in welcome_pack_items %}
-                            <li data-category="{{ item.category }}">{{ item.name }}</li>
-                            {% endfor %}
-                        </ul>
-                        {% endif %}
-
-                        <div class="welcome-pack-field">
-                            <label for="welcome_pack_note">Allergies or dietary notes (optional) - the pack's contents are fixed by your choices above.</label>
-                            <textarea name="welcome_pack_note" id="welcome_pack_note" class="reserve-input" rows="2">{{ welcome_pack_note }}</textarea>
-                        </div>
-                    </div>
-                </div>
-
-                {% if request_rows %}
-                <p class="details-note">Anything else you'd like waiting for you?</p>
-                <div class="request-rows">
-                    <div class="request-row request-row-header">
-                        <span>Item</span>
-                        <span>Qty</span>
-                        <span>Note</span>
-                    </div>
-                    {% for row in request_rows %}
-                    <div class="request-row">
-                        <span class="request-row-name">
-                            {{ row.request_type.name }}
-                            {% if row.request_type.default_price %}<span class="request-row-price">&euro;{{ row.request_type.default_price|floatformat:2 }}</span>{% endif %}
-                            {% if row.request_type.description %}<span class="request-row-desc">{{ row.request_type.description }}</span>{% endif %}
-                        </span>
-                        <input type="number" name="request_qty_{{ row.request_type.id }}" class="reserve-input" value="{{ row.quantity }}" min="0" max="20">
-                        <input type="text" name="request_note_{{ row.request_type.id }}" class="reserve-input" value="{{ row.note }}" placeholder="Optional note">
-                    </div>
-                    {% endfor %}
-                </div>
-                {% endif %}
-            </section>
-
-            <section class="details-section">
+            <section class="details-section{% if not show_cot_high_chair %} details-section-hidden{% endif %}" id="cot-high-chair-section">
                 <h2 class="details-section-title">Cot &amp; High Chair</h2>
                 <p class="details-note">Paid in cash at check-in - it isn't included in the amount due now. Pricing depends on the length of your stay, and requesting both together gets a discount.</p>
 
@@ -315,6 +255,66 @@
                 <button type="button" class="transfer-row-add" id="transfer-row-add">+ Add transfer</button>
 
                 {{ transfer_pricing_config|json_script:"transfer-pricing-config" }}
+            </section>
+
+            <section class="details-section">
+                <h2 class="details-section-title">Welcome Pack and Special Requests</h2>
+                <p class="details-note">Everything below is paid in cash at check-in - it isn't included in the amount due now.</p>
+
+                <div class="welcome-pack-block">
+                    <label class="details-checkbox-label details-checkbox-label-primary">
+                        <input type="checkbox" name="welcome_pack" id="welcome_pack_checkbox" {% if welcome_pack %}checked{% endif %}>
+                        I'd like a Welcome Pack
+                    </label>
+
+                    <div class="welcome-pack-picker" id="welcome-pack-picker">
+                        <div class="welcome-pack-choice-group">
+                            <span class="welcome-pack-choice-label">Food</span>
+                            <label><input type="radio" name="welcome_pack_food" value="standard" {% if welcome_pack_food == 'standard' %}checked{% endif %}> Standard</label>
+                            <label><input type="radio" name="welcome_pack_food" value="vegan" {% if welcome_pack_food == 'vegan' %}checked{% endif %}> Vegan</label>
+                        </div>
+                        <div class="welcome-pack-choice-group">
+                            <span class="welcome-pack-choice-label">Drinks</span>
+                            <label><input type="radio" name="welcome_pack_drinks" value="alcoholic" {% if welcome_pack_drinks == 'alcoholic' %}checked{% endif %}> Alcoholic</label>
+                            <label><input type="radio" name="welcome_pack_drinks" value="non_alcoholic" {% if welcome_pack_drinks == 'non_alcoholic' %}checked{% endif %}> Non-alcoholic</label>
+                        </div>
+
+                        {% if welcome_pack_items %}
+                        <ul class="welcome-pack-items" id="welcome-pack-items">
+                            {% for item in welcome_pack_items %}
+                            <li data-category="{{ item.category }}">{{ item.name }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+
+                        <div class="welcome-pack-field">
+                            <label for="welcome_pack_note">Allergies or dietary notes (optional) - the pack's contents are fixed by your choices above.</label>
+                            <textarea name="welcome_pack_note" id="welcome_pack_note" class="reserve-input" rows="2">{{ welcome_pack_note }}</textarea>
+                        </div>
+                    </div>
+                </div>
+
+                {% if request_rows %}
+                <p class="details-note">Anything else you'd like waiting for you?</p>
+                <div class="request-rows">
+                    <div class="request-row request-row-header">
+                        <span>Item</span>
+                        <span>Qty</span>
+                        <span>Note</span>
+                    </div>
+                    {% for row in request_rows %}
+                    <div class="request-row">
+                        <span class="request-row-name">
+                            {{ row.request_type.name }}
+                            {% if row.request_type.default_price %}<span class="request-row-price">&euro;{{ row.request_type.default_price|floatformat:2 }}</span>{% endif %}
+                            {% if row.request_type.description %}<span class="request-row-desc">{{ row.request_type.description }}</span>{% endif %}
+                        </span>
+                        <input type="number" name="request_qty_{{ row.request_type.id }}" class="reserve-input" value="{{ row.quantity }}" min="0" max="20">
+                        <input type="text" name="request_note_{{ row.request_type.id }}" class="reserve-input" value="{{ row.note }}" placeholder="Optional note">
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
             </section>
 
             <button type="submit" class="reserve-form-submit">Make Payment</button>

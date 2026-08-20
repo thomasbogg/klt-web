@@ -6,7 +6,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import (
-    AirportTransferPriceBand, Booking, BookingDateAdjustment, BookingSettings, Charge,
+    AirportTransferPriceBand, Booking, BookingDateAdjustment, BookingGuest, BookingSettings, Charge,
     ExtrasSettings, Payment, RequestType, WelcomePackItem,
 )
 from bookings.utils import (
@@ -365,6 +365,25 @@ class BookingDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('adult', response.context['non_field_error'])
         self.assertEqual(self.booking.party.count(), 0)
+
+    def test_get_hides_cot_high_chair_when_no_infant_age_is_present(self):
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['show_cot_high_chair'])
+
+    def test_get_shows_cot_high_chair_when_an_existing_party_member_is_an_infant(self):
+        BookingGuest.objects.create(booking=self.booking, first_name='Baby', last_name='Carvalho', age=1, is_lead=False)
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['show_cot_high_chair'])
+
+    def test_post_shows_cot_high_chair_when_a_submitted_age_is_an_infant(self):
+        self._set_session()
+        # Swapping the original 1 child for 1 infant changes the party's price bucket, which
+        # triggers the price-change interstitial (200, not a redirect) - convenient here since it
+        # means the re-rendered context is available to assert against directly.
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 1])
+        response = self.client.post(self.url, data)
+        self.assertTrue(response.context['price_changed'])
+        self.assertTrue(response.context['show_cot_high_chair'])
 
     def test_get_includes_active_request_types_and_welcome_pack_items(self):
         RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
