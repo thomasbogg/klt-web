@@ -396,6 +396,9 @@ class BookingDetailsViewTests(TestCase):
 
     def test_post_persists_welcome_pack_and_requested_extras(self):
         extra_bed = RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
+        settings = ExtrasSettings.load()
+        settings.welcome_pack_price = Decimal('12.50')
+        settings.save()
         self._set_session()
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
         data['welcome_pack'] = 'on'
@@ -412,13 +415,14 @@ class BookingDetailsViewTests(TestCase):
         self.assertEqual(self.booking.extras.welcome_pack_food, 'vegan')
         self.assertEqual(self.booking.extras.welcome_pack_drinks, 'non_alcoholic')
         self.assertEqual(self.booking.extras.welcome_pack_note, 'Nut allergy')
+        self.assertEqual(self.booking.extras.welcome_pack_charge, Decimal('12.50'))
         requested = self.booking.requested_extras.get()
         self.assertEqual(requested.request_type, extra_bed)
         self.assertEqual(requested.quantity, 1)
         self.assertEqual(requested.note, 'For the sofa bed')
         self.assertEqual(requested.price_at_request, Decimal('15.00'))
 
-    def test_post_without_welcome_pack_leaves_food_and_drinks_unset(self):
+    def test_post_without_welcome_pack_leaves_food_drinks_and_charge_unset(self):
         self._set_session()
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
         response = self.client.post(self.url, data)
@@ -427,6 +431,7 @@ class BookingDetailsViewTests(TestCase):
         self.assertFalse(self.booking.extras.welcome_pack)
         self.assertIsNone(self.booking.extras.welcome_pack_food)
         self.assertIsNone(self.booking.extras.welcome_pack_drinks)
+        self.assertIsNone(self.booking.extras.welcome_pack_charge)
 
     def test_post_persists_cot_and_high_chair_with_computed_combo_price(self):
         # self.start/self.end is a 7-night stay (short-stay tier, exactly at the boundary).

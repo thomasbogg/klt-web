@@ -188,6 +188,7 @@ class BookingDetailsView(View):
         was rebuilt from after the first version's freeform text field turned out to invite too
         much back-and-forth for a two-person operation)."""
         extra, _ = Extra.objects.get_or_create(booking=booking)
+        settings = ExtrasSettings.load()
         extra.welcome_pack = post_data.get('welcome_pack') == 'on'
         if extra.welcome_pack:
             food = post_data.get('welcome_pack_food', '')
@@ -197,23 +198,23 @@ class BookingDetailsView(View):
                 drinks if drinks in WelcomePackDrinksChoice.values else WelcomePackDrinksChoice.ALCOHOLIC
             )
             extra.welcome_pack_note = post_data.get('welcome_pack_note', '').strip()
+            extra.welcome_pack_charge = settings.welcome_pack_price
         else:
             extra.welcome_pack_food = None
             extra.welcome_pack_drinks = None
             extra.welcome_pack_note = ''
+            extra.welcome_pack_charge = None
 
         extra.cot = post_data.get('cot') == 'on'
         extra.high_chair = post_data.get('high_chair') == 'on'
         nights = (booking.departure_date - booking.arrival_date).days
-        extra.cot_high_chair_charge = ExtrasSettings.load().compute_cot_high_chair_price(
-            nights, extra.cot, extra.high_chair,
-        )
+        extra.cot_high_chair_charge = settings.compute_cot_high_chair_price(nights, extra.cot, extra.high_chair)
 
         extra.late_checkout, extra.late_checkout_time, _ = self._parse_late_checkout(post_data)
-        extra.late_checkout_charge = ExtrasSettings.load().late_checkout_price if extra.late_checkout else None
+        extra.late_checkout_charge = settings.late_checkout_price if extra.late_checkout else None
 
         extra.save(update_fields=[
-            'welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note',
+            'welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note', 'welcome_pack_charge',
             'cot', 'high_chair', 'cot_high_chair_charge',
             'late_checkout', 'late_checkout_time', 'late_checkout_charge',
         ])
@@ -278,6 +279,7 @@ class BookingDetailsView(View):
             'welcome_pack_food': welcome_pack_food,
             'welcome_pack_drinks': welcome_pack_drinks,
             'welcome_pack_note': welcome_pack_note,
+            'welcome_pack_price': settings.welcome_pack_price,
             'cot': cot,
             'high_chair': high_chair,
             'cot_high_chair_pricing_config': {

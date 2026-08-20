@@ -290,6 +290,7 @@
                     </label>
 
                     <div class="welcome-pack-picker" id="welcome-pack-picker">
+                        <p class="cot-high-chair-price">Flat fee: &euro;{{ welcome_pack_price|floatformat:2 }}</p>
                         <div class="welcome-pack-choice-group">
                             <span class="welcome-pack-choice-label">Food</span>
                             <label><input type="radio" name="welcome_pack_food" value="standard" {% if welcome_pack_food == 'standard' %}checked{% endif %}> Standard</label>

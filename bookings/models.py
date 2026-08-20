@@ -481,9 +481,12 @@ class Extra(models.Model):
     welcome_pack_note = models.TextField(blank=True, null=True,
                                           help_text="Allergies or dietary notes only - the pack's contents are "
                                                      "fixed by the food/drinks choice, not open to swap requests.")
-    welcome_pack_charge = models.DecimalField(max_digits=8, decimal_places=2, blank=True, null=True,
-                                               help_text="Staff-entered charge for a rare exception granted "
-                                                         "outside the standard fixed pack choices.")
+    welcome_pack_charge = models.DecimalField(
+        max_digits=8, decimal_places=2, blank=True, null=True,
+        help_text="Snapshotted from ExtrasSettings.welcome_pack_price at request time (same "
+                  "convention as every other Extras price field) - staff can hand-edit here "
+                  "afterward for a rare exception outside the standard fixed pack choices.",
+    )
     mid_stay_clean = models.BooleanField(blank=True, null=True)
     late_checkout = models.BooleanField(blank=True, null=True)
     late_checkout_time = models.TimeField(
@@ -620,6 +623,12 @@ class ExtrasSettings(models.Model):
         max_digits=8, decimal_places=2, default=0,
         help_text="Flat discount subtracted from the combined price when both a cot and a high "
                   "chair are requested together on the same booking.",
+    )
+
+    welcome_pack_price = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        help_text="Flat price for the standard Welcome Pack (the fixed food/drinks picker). Staff "
+                  "can hand-edit Extra.welcome_pack_charge afterward for a rare exception.",
     )
 
     late_checkout_price = models.DecimalField(
