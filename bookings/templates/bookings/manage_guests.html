@@ -1,0 +1,198 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guest List {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="module" src="{% static 'bookings/guest_list.js' %}"></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Guest List</h1>
+
+            <div class="confirmation-reference">
+                <span class="confirmation-reference-label">Booking Reference</span>
+                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+            </div>
+
+            {% if request.GET.guests_saved %}
+            <p class="details-note">Your guest list has been updated.</p>
+            {% endif %}
+            {% if request.GET.guest_added %}
+            <p class="details-note">Guest added - thanks! Any additional charge is payable in cash at check-in.</p>
+            {% endif %}
+
+            {% if stage == 'fully_paid' %}
+
+            <div class="guest-rows">
+                <div class="guest-row guest-row-header">
+                    <span></span>
+                    <span>First name</span>
+                    <span>Last name</span>
+                    <span>Age</span>
+                    <span></span>
+                </div>
+                {% for guest in party %}
+                <div class="guest-row">
+                    <span class="guest-row-index">{{ forloop.counter }}</span>
+                    <span>{{ guest.first_name }}</span>
+                    <span>{{ guest.last_name }}</span>
+                    <span>{{ guest.age }}</span>
+                    <span></span>
+                </div>
+                {% endfor %}
+            </div>
+
+            <h3 class="details-subsection-title">Add a guest</h3>
+            <p class="details-note">This property allows up to {{ max_guests }} guests. Adding a guest may add a cash charge, payable at check-in - we'll show you the amount before anything is confirmed.</p>
+
+            {% if guest_add_error %}
+            <div class="reserve-form-errors">
+                <p>{{ guest_add_error }}</p>
+            </div>
+            {% endif %}
+
+            <form method="post" action="{% url 'bookings:manage_hub_guest_add' reference=booking.reference %}" class="details-form">
+                {% csrf_token %}
+
+                <div class="guest-rows" id="guest-rows">
+                    <div class="guest-row guest-row-header">
+                        <span></span>
+                        <span>First name</span>
+                        <span>Last name</span>
+                        <span>Age</span>
+                        <span></span>
+                    </div>
+                    {% if guest_add_rows %}
+                    {% for row in guest_add_rows %}
+                    <div class="guest-row">
+                        <span class="guest-row-index">{{ forloop.counter }}</span>
+                        <div class="guest-row-field">
+                            <input type="text" name="first_name[]" class="reserve-input" value="{{ row.first_name }}" placeholder="First name">
+                            {% if row.errors.first_name %}<p class="reserve-form-error">{{ row.errors.first_name }}</p>{% endif %}
+                        </div>
+                        <div class="guest-row-field">
+                            <input type="text" name="last_name[]" class="reserve-input" value="{{ row.last_name }}" placeholder="Last name">
+                            {% if row.errors.last_name %}<p class="reserve-form-error">{{ row.errors.last_name }}</p>{% endif %}
+                        </div>
+                        <div class="guest-row-field guest-row-age">
+                            <input type="number" name="age[]" class="reserve-input" value="{{ row.age }}" min="0" max="120" placeholder="Age">
+                            {% if row.errors.age %}<p class="reserve-form-error">{{ row.errors.age }}</p>{% endif %}
+                        </div>
+                        <button type="button" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
+                    </div>
+                    {% endfor %}
+                    {% else %}
+                    <div class="guest-row">
+                        <span class="guest-row-index">1</span>
+                        <div class="guest-row-field">
+                            <input type="text" name="first_name[]" class="reserve-input" placeholder="First name">
+                        </div>
+                        <div class="guest-row-field">
+                            <input type="text" name="last_name[]" class="reserve-input" placeholder="Last name">
+                        </div>
+                        <div class="guest-row-field guest-row-age">
+                            <input type="number" name="age[]" class="reserve-input" min="0" max="120" placeholder="Age">
+                        </div>
+                        <button type="button" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <template id="guest-row-template">
+                    <div class="guest-row">
+                        <span class="guest-row-index"></span>
+                        <div class="guest-row-field">
+                            <input type="text" name="first_name[]" class="reserve-input" placeholder="First name">
+                        </div>
+                        <div class="guest-row-field">
+                            <input type="text" name="last_name[]" class="reserve-input" placeholder="Last name">
+                        </div>
+                        <div class="guest-row-field guest-row-age">
+                            <input type="number" name="age[]" class="reserve-input" min="0" max="120" placeholder="Age">
+                        </div>
+                        <button type="button" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
+                    </div>
+                </template>
+
+                <button type="button" class="guest-row-add" id="guest-row-add">+ Add another guest</button>
+                <button type="submit" class="reserve-form-submit">Add Guest(s)</button>
+
+                {% if pending_guest_addition %}
+                <div class="price-change-overlay" id="price-change-overlay">
+                    <div class="price-change-panel">
+                        <p class="price-change-title">Confirm the added guest(s)</p>
+                        <p class="price-change-body">Adding {{ pending_guest_addition.rows|length }} guest{{ pending_guest_addition.rows|length|pluralize }} adds an extra cost, payable in cash at check-in.</p>
+                        <div class="price-change-row price-change-new">
+                            <span>Additional charge</span>
+                            <span>&euro;{{ pending_guest_addition.additional_charge|floatformat:2 }}</span>
+                        </div>
+                        <div class="price-change-actions">
+                            <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Confirm and add</button>
+                            <button type="button" class="reserve-form-cancel" id="price-change-edit">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </form>
+
+            {% else %}
+
+            <form method="post" class="details-form">
+                {% csrf_token %}
+
+                {% if non_field_error %}
+                <div class="reserve-form-errors">
+                    <p>{{ non_field_error }}</p>
+                </div>
+                {% endif %}
+
+                {% include 'bookings/_guest_list_form.html' with guest_list_note="Removing guests can reduce your balance if applicable; adding guests may increase it - we'll show you the updated amount before anything is charged." %}
+
+                <button type="submit" class="reserve-form-submit">Save Guest List</button>
+
+                {% if price_changed %}
+                <div class="price-change-overlay" id="price-change-overlay">
+                    <div class="price-change-panel">
+                        <p class="price-change-title">The price for the party you entered differs from your current balance</p>
+                        <p class="price-change-body">This can happen if a guest's age puts them in a different pricing category, or the party size changed. Your deposit already paid isn't affected - only the balance still due.</p>
+                        <div class="price-change-row">
+                            <span>Previously quoted balance</span>
+                            <span>&euro;{{ old_charge.due_at_balance|floatformat:2 }}</span>
+                        </div>
+                        <div class="price-change-row price-change-new">
+                            <span>Recalculated balance</span>
+                            <span>&euro;{{ new_costs.due_at_balance|floatformat:2 }}</span>
+                        </div>
+                        <div class="price-change-actions">
+                            <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Save anyway</button>
+                            <button type="button" class="reserve-form-cancel" id="price-change-edit">Edit details</button>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </form>
+
+            {% endif %}
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

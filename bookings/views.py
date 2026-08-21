@@ -1,17 +1,20 @@
 from datetime import datetime
+from decimal import Decimal
 
 from django.db import transaction
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views import View
 
 import env_settings
 from bookings.forms import BookingLookupForm
 from bookings.models import (
-    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, BalancePayment, Booking,
-    BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, Extra, ExtrasSettings,
-    RequestType, WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
+    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, Arrival, BalancePayment,
+    Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, Departure, Extra,
+    ExtrasSettings, GuestListAdjustment, RequestType, WelcomePackDrinksChoice, WelcomePackFoodChoice,
+    WelcomePackItem,
 )
 from bookings.utils import (
     booking_confirmation_context, cancel_booking_hold, extras_summary, recalculate_balance_for_party,
@@ -35,6 +38,34 @@ def is_balance_paid(booking):
     nothing left to collect, so treat it as paid the same way is_paid() does for a missing Payment."""
     balance_payment = getattr(booking, 'balance_payment', None)
     return balance_payment is None or balance_payment.status == 'paid'
+
+
+def is_fully_paid(booking):
+    """Deposit paid, and (no balance stage at all, or the balance is paid too) - the single switch
+    the Manage Booking hub uses to decide whether a guest-list edit still goes through the existing
+    pre-balance-paid flows (BookingDetailsView/BookingBalanceDetailsView, which can still reprice
+    Charge) or the increases-only, cash-at-check-in GuestListAdjustment flow instead (Charge is
+    frozen for good by this point). is_balance_paid() alone is NOT sufficient here - it returns
+    True for a still-unpaid collapsed booking too (no BalancePayment row exists at all), so it must
+    always be combined with is_paid() first."""
+    return is_paid(booking) and is_balance_paid(booking)
+
+
+def extras_edit_locked(booking):
+    """Whether self-serve Extras editing via the Manage Booking hub has closed for this booking -
+    a pure fulfilment-lead-time cutoff (BookingSettings.extras_edit_cutoff_days_before_arrival),
+    unrelated to payment status: Extras are cash-at-check-in and were never priced into Charge (see
+    extras_summary()'s docstring), so there's nothing here for payment state to gate."""
+    days_until_arrival = (booking.arrival_date - timezone.now().date()).days
+    return days_until_arrival <= BookingSettings.load().extras_edit_cutoff_days_before_arrival
+
+
+def is_cancelled(booking):
+    """Guest self-service cancellation status - see BookingCancelView. Reuses the exact string
+    cancel_booking_hold() already uses for cancelling a not-yet-paid hold, since it's semantically
+    identical ("the guest cancelled") regardless of whether a deposit had been paid yet - that
+    older helper is a no-op on anything already paid, so there's no overlap between the two."""
+    return booking.enquiry_status == 'Cancelled by guest'
 
 
 class BookingConfirmationView(View):
@@ -399,6 +430,28 @@ class BookingFormMixin:
                 is_lead=(index == 0),
             )
             for index, row in enumerate(rows)
+        ])
+        booking.adults = new_guests['adults']
+        booking.children = new_guests['children']
+        booking.babies = new_guests['infants']
+        booking.last_updated = timezone.now()
+        booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
+
+    def _append_guest_rows(self, booking, rows, adjustment, new_guests):
+        """Used only by BookingManageGuestAddView, once the booking is already fully paid -
+        deliberately NOT _save_guest_list()'s delete-then-bulk_create pattern, since that would
+        wipe the identity (and added_via_adjustment tagging) of every already-saved BookingGuest
+        row. Only ever appends the new rows, tagged to the GuestListAdjustment that authorized them."""
+        BookingGuest.objects.bulk_create([
+            BookingGuest(
+                booking=booking,
+                first_name=row['first_name'],
+                last_name=row['last_name'],
+                age=int(row['age']),
+                is_lead=False,
+                added_via_adjustment=adjustment,
+            )
+            for row in rows
         ])
         booking.adults = new_guests['adults']
         booking.children = new_guests['children']
@@ -825,7 +878,10 @@ class BookingConditionsView(View):
 
 
 class ManageBookingView(View):
-    """Reference + email lookup for a guest returning later without their confirmation link."""
+    """Reference + email lookup for a guest returning later without their confirmation link. Once
+    the lookup succeeds, hands off to BookingManageHubView (bearer-readable by reference alone,
+    like every other post-deposit view here) rather than rendering the booking in place - so a
+    guest who bookmarks/reloads the hub URL doesn't need to re-prove their email every time."""
     template_name = 'bookings/manage.html'
 
     def get(self, request, *args, **kwargs):
@@ -842,7 +898,415 @@ class ManageBookingView(View):
             if booking is not None and not is_paid(booking):
                 return redirect('bookings:pay', reference=booking.reference)
             elif booking is not None:
-                context.update(booking_confirmation_context(booking))
+                return redirect('bookings:manage_hub', reference=booking.reference)
             else:
                 context['not_found'] = True
         return render(request, self.template_name, context)
+
+
+def _manage_nav_context(booking, active_section):
+    """Sidebar context shared by every Manage Booking hub section view, so the nav renders
+    identically (and highlights the right item) everywhere. show_pay_balance mirrors
+    BookingBalanceDetailsView's own gating - Pay Balance only makes sense to show while there's a
+    two-stage balance still outstanding; that view's own internal redirects handle every other case
+    (unpaid deposit, already paid, payment in progress), so this doesn't need to re-derive those.
+    show_cancel_booking is the single source of truth BookingCancelView's own gate also uses (never
+    show/allow it once already cancelled, for a platform-sourced booking Thomas doesn't control
+    cancellation for from this system, or once the stay has already started)."""
+    cancelled = is_cancelled(booking)
+    return {
+        'active_section': active_section,
+        'show_pay_balance': hasattr(booking, 'balance_payment') and not is_balance_paid(booking) and not cancelled,
+        'show_cancel_booking': (
+            not cancelled
+            and booking.enquiry_source not in env_settings.PLATFORMS
+            and booking.arrival_date > timezone.now().date()
+        ),
+        'cancelled': cancelled,
+        'stage': 'fully_paid' if is_fully_paid(booking) else 'pre_balance',
+    }
+
+
+def _manage_hub_context(booking):
+    """Context for the hub's landing ("Booking") section - just the booking summary plus nav."""
+    context = booking_confirmation_context(booking)
+    context.update(_manage_nav_context(booking, 'booking'))
+    return context
+
+
+class BookingManageHubView(View):
+    """The self-service "Manage Your Booking" hub's landing page - reached either via
+    ManageBookingView's email-gated lookup, or directly by a bookmarked/emailed reference link
+    (bearer-readable by reference alone, same norm as every other post-deposit view in this file).
+    Just the booking summary; Guest List/Arrival & Departure/Extras are their own sidebar-navigated
+    sections (BookingManageGuestsView/BookingManageArrivalDepartureView/BookingManageExtrasView),
+    each independently editable as soon as the deposit is paid - see the plan this was built from
+    for why that's a second, parallel entry point to the same edits BookingBalanceDetailsView
+    already supports, not a replacement for it. Pay Balance in the sidebar links to
+    bookings:balance_details (unchanged) rather than straight to payment, preserving that existing
+    review-before-pay click-through."""
+    template_name = 'bookings/manage_hub.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+        return render(request, self.template_name, _manage_hub_context(booking))
+
+
+class BookingManageGuestsView(BookingFormMixin, View):
+    """Guest List section of the Manage Booking hub - reachable as soon as the deposit is paid, no
+    balance-paid gate. Behavior branches on stage (see is_fully_paid()):
+
+    pre_balance: a full editable guest-list form, same underlying save mechanics
+    BookingBalanceDetailsView already uses (_parse_rows/recalculate_balance_for_party/the
+    price-change interstitial/_save_guest_list) - a second, independent entry point to the same
+    edit, not a replacement (see the plan this was built from). Unlike that view, saving here
+    redirects back to this same section rather than auto-advancing to payment - Pay Balance is now
+    its own deliberate sidebar action.
+
+    fully_paid: read-only party list + an add-guest mini-form, POSTing to the separate
+    BookingManageGuestAddView (increases-only, GuestListAdjustment-tracked) - this view's own POST
+    only exists for the pre_balance case."""
+    template_name = 'bookings/manage_guests.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        context = _manage_nav_context(booking, 'guests')
+        if context['stage'] == 'fully_paid':
+            context.update({
+                'booking': booking,
+                'party': booking.party.all(),
+                'max_guests': booking.property.specs.max_guests,
+            })
+            return render(request, self.template_name, context)
+
+        rows = self._seed_or_prefill_rows(booking)
+        context.update({
+            'booking': booking,
+            'rows': rows,
+            'max_guests': booking.property.specs.max_guests,
+        })
+        return render(request, self.template_name, context)
+
+    def post(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        nav = _manage_nav_context(booking, 'guests')
+        if nav['stage'] == 'fully_paid':
+            return redirect('bookings:manage_guests', reference=reference)
+
+        max_guests = booking.property.specs.max_guests
+        rows, non_field_error = self._parse_rows(request.POST)
+        context = {'booking': booking, 'rows': rows, 'max_guests': max_guests, 'non_field_error': non_field_error}
+        context.update(nav)
+
+        if non_field_error or any(row['errors'] for row in rows):
+            return render(request, self.template_name, context)
+
+        if len(rows) > max_guests:
+            context['non_field_error'] = f"This property allows a maximum of {max_guests} guests."
+            return render(request, self.template_name, context)
+
+        ages = [int(row['age']) for row in rows]
+        new_guests, new_costs, changed = recalculate_balance_for_party(booking, ages)
+        if new_guests is None:
+            context['non_field_error'] = (
+                "This stay can no longer be priced automatically - please contact us to complete your booking."
+            )
+            return render(request, self.template_name, context)
+        if new_guests['adults'] == 0:
+            context['non_field_error'] = "At least one adult must be included in the party."
+            return render(request, self.template_name, context)
+
+        if changed and request.POST.get('confirmed') != '1':
+            context['price_changed'] = True
+            context['old_charge'] = booking.charges
+            context['new_costs'] = new_costs
+            return render(request, self.template_name, context)
+
+        with transaction.atomic():
+            self._save_guest_list(booking, rows, new_guests)
+
+            charge = booking.charges
+            charge.basic_rental = new_costs['basic_rental']
+            charge.admin = new_costs['admin_fee']
+            charge.security = new_costs['security_deposit']
+            charge.due_at_balance = new_costs['due_at_balance']
+            charge.save(update_fields=['basic_rental', 'admin', 'security', 'due_at_balance'])
+
+            # Same reason BookingBalanceDetailsView clears this - a stale checkout URL would
+            # otherwise leave the guest paying an amount that no longer matches Charge.
+            balance_payment = booking.balance_payment
+            if changed and balance_payment.revolut_checkout_url:
+                balance_payment.revolut_order_id = None
+                balance_payment.revolut_checkout_url = None
+                balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
+
+        return redirect(f"{reverse('bookings:manage_guests', args=[booking.reference])}?guests_saved=1")
+
+
+class BookingManageArrivalDepartureView(View):
+    """Arrival & Departure section of the Manage Booking hub - available any time once the deposit
+    is paid, no cutoff (unlike Extras) and no stage distinction (unlike Guest List) - purely
+    informational, doesn't touch Charge or any pricing, so there's no reason to lock it the way
+    Extras is locked for fulfilment lead time. Airport is always Faro (mirrors AirportTransfer's
+    already-Faro-only convention - see the plan this was built from), never a guest choice. Check-in
+    preference is one fixed either/or radio, not two independent checkboxes, so self_check_in and
+    meet_greet can never contradict each other. clean/manual_date on Departure are staff/ops-only -
+    only ever supplied as creation defaults (via get_or_create), never touched on a later guest
+    save, so a staff edit made in admin afterward is never clobbered."""
+    template_name = 'bookings/manage_arrival_departure.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        arrival = getattr(booking, 'arrival', None)
+        departure = getattr(booking, 'departure', None)
+        context = {
+            'booking': booking,
+            'arrival_flight_number': arrival.flight_number if arrival else '',
+            'arrival_time': arrival.time.strftime('%H:%M') if arrival and arrival.time else '',
+            'arrival_details': arrival.details if arrival else '',
+            'check_in_preference': 'meet_greet' if (arrival and arrival.meet_greet) else 'self_check_in',
+            'departure_flight_number': departure.flight_number if departure else '',
+            'departure_time': departure.time.strftime('%H:%M') if departure and departure.time else '',
+            'departure_details': departure.details if departure else '',
+        }
+        context.update(_manage_nav_context(booking, 'arrival_departure'))
+        return render(request, self.template_name, context)
+
+    def post(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        def parsed_time(raw):
+            raw = (raw or '').strip()
+            if not raw:
+                return None
+            try:
+                return datetime.strptime(raw, '%H:%M').time()
+            except ValueError:
+                return None
+
+        check_in_preference = request.POST.get('check_in_preference')
+        meet_greet = check_in_preference == 'meet_greet'
+
+        arrival, _ = Arrival.objects.get_or_create(booking=booking, defaults={
+            'is_faro': True, 'self_check_in': not meet_greet, 'meet_greet': meet_greet,
+        })
+        arrival.flight_number = request.POST.get('arrival_flight_number', '').strip()
+        arrival.time = parsed_time(request.POST.get('arrival_time'))
+        arrival.details = request.POST.get('arrival_details', '').strip()
+        arrival.is_faro = True
+        arrival.self_check_in = not meet_greet
+        arrival.meet_greet = meet_greet
+        arrival.save(update_fields=['flight_number', 'time', 'details', 'is_faro', 'self_check_in', 'meet_greet'])
+
+        departure, _ = Departure.objects.get_or_create(
+            booking=booking, defaults={'is_faro': True, 'clean': False, 'manual_date': False},
+        )
+        departure.flight_number = request.POST.get('departure_flight_number', '').strip()
+        departure.time = parsed_time(request.POST.get('departure_time'))
+        departure.details = request.POST.get('departure_details', '').strip()
+        departure.is_faro = True
+        departure.save(update_fields=['flight_number', 'time', 'details', 'is_faro'])
+
+        return redirect(f"{reverse('bookings:manage_arrival_departure', args=[booking.reference])}?saved=1")
+
+
+class BookingManageGuestAddView(BookingFormMixin, View):
+    """Guest-list *increases* once a booking is already fully paid (see is_fully_paid()) - the
+    hub's only guest-list write path at that point, since Charge is frozen for good by then. Never
+    edits or deletes an existing BookingGuest row - only ever appends new ones, each tagged
+    added_via_adjustment so the cash owed for them is traceable back to its GuestListAdjustment
+    audit row. GET has nothing to show on its own, so it just bounces back to the Guest List
+    section; POST is stateless (two-step confirm via a repeated `confirmed` field, not session
+    state) for the same reason BookingBalanceDetailsView's POST is - this is reached from a
+    bookmarked/emailed link days or weeks later, no session continuity to lean on."""
+    template_name = 'bookings/manage_guests.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        return redirect('bookings:manage_guests', reference=reference)
+
+    def post(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_fully_paid(booking):
+            return redirect('bookings:manage_guests', reference=reference)
+
+        max_guests = booking.property.specs.max_guests
+        new_rows, non_field_error = self._parse_rows(request.POST)
+        context = {'booking': booking, 'party': booking.party.all(), 'max_guests': max_guests}
+        context.update(_manage_nav_context(booking, 'guests'))
+        context['guest_add_rows'] = new_rows
+        context['guest_add_error'] = non_field_error
+
+        if non_field_error or any(row['errors'] for row in new_rows):
+            return render(request, self.template_name, context)
+
+        existing_party = list(booking.party.all())
+        if len(existing_party) + len(new_rows) > max_guests:
+            context['guest_add_error'] = f"This property allows a maximum of {max_guests} guests."
+            return render(request, self.template_name, context)
+
+        ages = [guest.age for guest in existing_party] + [int(row['age']) for row in new_rows]
+        new_guests, new_costs, _ = recalculate_costs_for_party(booking, ages)
+        if new_guests is None:
+            context['guest_add_error'] = (
+                "This stay can no longer be priced automatically - please contact us to add a guest."
+            )
+            return render(request, self.template_name, context)
+
+        charge = booking.charges
+        additional_charge = max(new_costs['subtotal'] - (charge.basic_rental + charge.admin), Decimal('0'))
+
+        if request.POST.get('confirmed') != '1':
+            context['pending_guest_addition'] = {'rows': new_rows, 'additional_charge': additional_charge}
+            return render(request, self.template_name, context)
+
+        with transaction.atomic():
+            adjustment = GuestListAdjustment.objects.create(
+                booking=booking,
+                previous_party_size=len(existing_party),
+                new_party_size=len(existing_party) + len(new_rows),
+                additional_charge=additional_charge,
+            )
+            self._append_guest_rows(booking, new_rows, adjustment, new_guests)
+
+        return redirect(f"{reverse('bookings:manage_guests', args=[booking.reference])}?guest_added=1")
+
+
+class BookingManageExtrasView(BookingFormMixin, View):
+    """Extras section of the Manage Booking hub - reachable as soon as the deposit is paid, same as
+    Guest List and Arrival & Departure now (no balance-paid gate). Gated only by
+    extras_edit_locked()'s fulfilment-lead-time cutoff, not by payment status, since Extras are
+    cash-at-check-in and were never priced into Charge (see extras_summary()'s docstring). No
+    price-change interstitial needed here at all for the same reason."""
+    template_name = 'bookings/manage_extras.html'
+
+    def _get_gated_booking(self, reference):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return booking, redirect('bookings:details', reference=reference)
+        return booking, None
+
+    def _show_cot_high_chair(self, booking):
+        """Same infant-age check _any_infant_age() does for a freshly-typed guest-list form, but
+        against the booking's actual saved party - this page no longer has a guest-list form on it
+        to check ages from directly, since Guest List is now its own separate section."""
+        child_min_age = BookingSettings.load().child_min_age
+        rows = [{'age': guest.age} for guest in booking.party.all()]
+        return self._any_infant_age(rows, child_min_age)
+
+    def get(self, request, reference, *args, **kwargs):
+        booking, redirect_response = self._get_gated_booking(reference)
+        if redirect_response is not None:
+            return redirect_response
+
+        context = {'booking': booking, 'extras_locked': extras_edit_locked(booking),
+                   'show_cot_high_chair': self._show_cot_high_chair(booking)}
+        context.update(_manage_nav_context(booking, 'extras'))
+        context.update(self._extras_context(booking))
+        context.update(self._transfer_context(booking))
+        return render(request, self.template_name, context)
+
+    def post(self, request, reference, *args, **kwargs):
+        booking, redirect_response = self._get_gated_booking(reference)
+        if redirect_response is not None:
+            return redirect_response
+
+        if extras_edit_locked(booking):
+            return redirect('bookings:manage_extras', reference=reference)
+
+        transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
+        _, _, late_checkout_error = self._parse_late_checkout(request.POST)
+        context = {'booking': booking, 'extras_locked': False,
+                   'show_cot_high_chair': self._show_cot_high_chair(booking)}
+        context.update(_manage_nav_context(booking, 'extras'))
+        context.update(self._extras_context(booking, post_data=request.POST))
+        context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
+        context['late_checkout_error'] = late_checkout_error
+
+        if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
+            return render(request, self.template_name, context)
+        if late_checkout_error:
+            return render(request, self.template_name, context)
+
+        with transaction.atomic():
+            self._save_extras(booking, request.POST)
+            self._save_transfers(booking, transfer_rows)
+
+        return redirect(f"{reverse('bookings:manage_extras', args=[booking.reference])}?extras_saved=1")
+
+
+class BookingCancelView(View):
+    """Self-service cancellation of an already-paid booking - genuinely different from
+    cancel_booking_hold() (bookings/utils.py), which only ever acts on a not-yet-paid hold and is
+    explicitly a no-op on anything already paid. No refund logic here or anywhere else in this
+    codebase - Thomas confirmed cancelling here never refunds anything already paid, and the
+    confirm page states that explicitly rather than leaving it implicit. Hidden (and re-checked
+    server-side) for platform-sourced bookings, an already-cancelled booking, and a booking whose
+    stay has already started - see _manage_nav_context()'s show_cancel_booking, the single source
+    of truth this view's own gate reuses. Type-to-confirm (the guest must retype their own
+    reference) rather than a single click, given how consequential and irreversible this is."""
+    template_name = 'bookings/manage_cancel.html'
+
+    def _get_gated_booking(self, reference):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return booking, redirect('bookings:details', reference=reference)
+        nav = _manage_nav_context(booking, 'cancel')
+        if not nav['show_cancel_booking']:
+            return booking, redirect('bookings:manage_hub', reference=reference)
+        return booking, None
+
+    def get(self, request, reference, *args, **kwargs):
+        booking, redirect_response = self._get_gated_booking(reference)
+        if redirect_response is not None:
+            return redirect_response
+
+        context = {'booking': booking, 'reference_error': None}
+        context.update(_manage_nav_context(booking, 'cancel'))
+        return render(request, self.template_name, context)
+
+    def post(self, request, reference, *args, **kwargs):
+        booking, redirect_response = self._get_gated_booking(reference)
+        if redirect_response is not None:
+            return redirect_response
+
+        typed_reference = request.POST.get('reference_confirm', '').strip()
+        if typed_reference.upper() != booking.reference.upper():
+            context = {
+                'booking': booking,
+                'reference_error': "That doesn't match your booking reference - please try again.",
+            }
+            context.update(_manage_nav_context(booking, 'cancel'))
+            return render(request, self.template_name, context)
+
+        booking.enquiry_status = 'Cancelled by guest'
+        booking.save(update_fields=['enquiry_status'])
+        return redirect(f"{reverse('bookings:manage_hub', args=[booking.reference])}?cancelled=1")

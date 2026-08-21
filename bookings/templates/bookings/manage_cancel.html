@@ -1,0 +1,80 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cancel Booking {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="module" src="{% static 'bookings/cancel_confirm.js' %}"></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Cancel Booking</h1>
+
+            <div class="confirmation-reference">
+                <span class="confirmation-reference-label">Booking Reference</span>
+                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+            </div>
+
+            <div class="confirmation-summary">
+                <div class="confirmation-chip">
+                    <span class="confirmation-chip-label">Property</span>
+                    <span class="confirmation-chip-value">{{ booking.property }}</span>
+                </div>
+            </div>
+            <div class="confirmation-summary confirmation-summary-dates">
+                <div class="confirmation-chip">
+                    <span class="confirmation-chip-label">Check-in</span>
+                    <span class="confirmation-chip-value">{{ booking.arrival_date|date:"D, d M Y" }}</span>
+                </div>
+                <span class="confirmation-chip-arrow">&rarr;</span>
+                <div class="confirmation-chip">
+                    <span class="confirmation-chip-label">Check-out</span>
+                    <span class="confirmation-chip-value">{{ booking.departure_date|date:"D, d M Y" }}</span>
+                </div>
+            </div>
+
+            <div class="cancel-warning">
+                <p class="cancel-warning-title">This cannot be undone</p>
+                <p>Cancelling releases your dates back to general availability - if you change your mind afterward, the property may no longer be free.</p>
+                <p><strong>No refund is issued for any amount already paid.</strong> Any deposit or balance you've paid on this booking is non-refundable, regardless of when you cancel.</p>
+                <p>If you're unsure, please <a href="{% url 'bookings:manage_hub' reference=booking.reference %}">go back</a> and contact us instead of cancelling.</p>
+            </div>
+
+            {% if reference_error %}
+            <div class="reserve-form-errors">
+                <p>{{ reference_error }}</p>
+            </div>
+            {% endif %}
+
+            <form method="post" class="details-form">
+                {% csrf_token %}
+                <div class="reserve-form-row">
+                    <label for="reference_confirm">Type your booking reference (<strong>{{ booking.reference }}</strong>) to confirm</label>
+                    <input type="text" name="reference_confirm" id="reference_confirm" class="reserve-input" autocomplete="off" data-reference="{{ booking.reference }}">
+                </div>
+                <button type="submit" class="reserve-form-submit cancel-confirm-submit" id="cancel-confirm-submit" disabled>Cancel My Booking</button>
+            </form>
+
+            <a class="reserve-back-link" href="{% url 'bookings:manage_hub' reference=booking.reference %}">&larr; Never mind, take me back</a>
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

@@ -1,0 +1,24 @@
+{% comment %}
+Manage Booking hub sidebar - shared by manage_hub.html, manage_guests.html,
+manage_arrival_departure.html, manage_extras.html and manage_cancel.html. Expects `booking`,
+`active_section`, `show_pay_balance` and `show_cancel_booking` in context (all supplied by
+bookings/views.py::_manage_nav_context()).
+{% endcomment %}
+<nav class="manage-hub-nav">
+    <a class="manage-hub-nav-link{% if active_section == 'booking' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'bookings:manage_hub' reference=booking.reference %}">Booking</a>
+    <a class="manage-hub-nav-link{% if active_section == 'guests' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'bookings:manage_guests' reference=booking.reference %}">Guest List</a>
+    <a class="manage-hub-nav-link{% if active_section == 'arrival_departure' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'bookings:manage_arrival_departure' reference=booking.reference %}">Arrival &amp; Departure</a>
+    <a class="manage-hub-nav-link{% if active_section == 'extras' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'bookings:manage_extras' reference=booking.reference %}">Optional Extras</a>
+    {% if show_pay_balance %}
+    <a class="manage-hub-nav-link manage-hub-nav-link-cta"
+       href="{% url 'bookings:balance_details' reference=booking.reference %}">Pay Balance</a>
+    {% endif %}
+    {% if show_cancel_booking %}
+    <a class="manage-hub-nav-link manage-hub-nav-link-danger{% if active_section == 'cancel' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'bookings:manage_cancel' reference=booking.reference %}">Cancel Booking</a>
+    {% endif %}
+</nav>

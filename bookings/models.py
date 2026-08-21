@@ -47,6 +47,12 @@ class BookingSettings(models.Model):
                   "notice before the balance is actually due - the gap between the two is that "
                   "notice period."
     )
+    extras_edit_cutoff_days_before_arrival = models.PositiveIntegerField(
+        default=3,
+        help_text="How many days before arrival Extras (Welcome Pack, Cot/High Chair, Late "
+                  "Checkout, Airport Transfers, special requests) can still be edited self-serve "
+                  "via the Manage Booking hub."
+    )
     security_deposit_amount = models.DecimalField(
         max_digits=10, decimal_places=2, default=Decimal('200.00'),
         validators=[MinValueValidator(Decimal('0'))],
@@ -260,6 +266,11 @@ class BookingGuest(models.Model):
     last_name = models.CharField(max_length=100)
     age = models.PositiveIntegerField(validators=[MaxValueValidator(120)])
     is_lead = models.BooleanField(default=False)
+    added_via_adjustment = models.ForeignKey(
+        'GuestListAdjustment', on_delete=models.SET_NULL, null=True, blank=True, related_name='added_guests',
+        help_text="Set only when this row was added post-payment via the Manage Booking hub. Null "
+                  "for every guest present at the original deposit/balance stage."
+    )
 
     class Meta:
         db_table = 'booking_guests'
@@ -287,7 +298,12 @@ class BookingCondition(models.Model):
 
 
 class Arrival(models.Model):
-    """Booking arrival information."""
+    """Guest-facing arrival information, self-serve via the Manage Booking hub (see
+    bookings/views.py::BookingManageArrivalDepartureView) - editable any time once the deposit is
+    paid, no cutoff. is_faro is always True (Faro is the only airport served, same convention as
+    AirportTransfer) - the guest form doesn't expose a choice. self_check_in/meet_greet are always
+    set together as one fixed either/or choice by the view, never independently, so they can't end
+    up contradicting each other."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='arrival')
     flight_number = models.CharField(max_length=50, blank=True, null=True)
     is_faro = models.BooleanField(blank=True, null=True)
@@ -302,18 +318,22 @@ class Arrival(models.Model):
         verbose_name_plural = 'Arrivals'
 
     def __str__(self):
-        return f"{self.booking} - Arrival {self.date}"
+        return f"{self.booking} - Arrival {self.booking.arrival_date}"
 
 
 class Departure(models.Model):
-    """Booking departure information."""
+    """Guest-facing departure information, same self-serve role as Arrival above. clean and
+    manual_date are staff/ops-only flags (turnover-cleaning scheduling and a manual-date-override
+    marker respectively) - the guest-facing save path never touches them, only supplies these
+    defaults at row creation so the row can exist before staff have set anything, and never resets
+    them again afterward (see BookingManageArrivalDepartureView)."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='departure')
     flight_number = models.CharField(max_length=50, blank=True, null=True)
     is_faro = models.BooleanField(blank=True, null=True)
     time = models.TimeField(blank=True, null=True)
     details = models.TextField(blank=True, null=True)
-    clean = models.BooleanField()
-    manual_date = models.BooleanField(blank=True, null=True)
+    clean = models.BooleanField(default=False)
+    manual_date = models.BooleanField(blank=True, null=True, default=False)
 
     class Meta:
         db_table = 'booking_departures'
@@ -321,7 +341,7 @@ class Departure(models.Model):
         verbose_name_plural = 'Departures'
 
     def __str__(self):
-        return f"{self.booking} - Departure {self.date}"
+        return f"{self.booking} - Departure {self.booking.departure_date}"
 
 
 class Charge(models.Model):
@@ -852,6 +872,39 @@ class BookingDateAdjustment(models.Model):
             self.booking.departure_date = self.new_departure_date
             self.booking.manual_override = True
             self.booking.save(update_fields=['arrival_date', 'departure_date', 'manual_override'])
+
+
+class GuestListAdjustment(models.Model):
+    """Audit log of a guest-list addition made self-serve through the Manage Booking hub after the
+    booking is already fully paid (see bookings/views.py::is_fully_paid()) - i.e. after Charge is
+    frozen for good. Mirrors BookingDateAdjustment's role as an audit-log row for money that moves
+    outside the online Charge/Payment/BalancePayment flow once those are settled, but unlike that
+    model this one does not self-apply in save(): adding guests means bulk-creating new
+    BookingGuest rows, which doesn't fit a single new_x/previous_x field swap, so the view
+    orchestrates the new party rows and this audit row together in one atomic block instead.
+
+    Deliberately increases-only - there is no refund logic anywhere in this codebase, so the
+    guest-add flow this logs only ever appends new BookingGuest rows (see
+    BookingGuest.added_via_adjustment) and can never edit or delete an existing one.
+    additional_charge is the extra rental+admin cost of the added guest(s) - cash at check-in,
+    same convention as BookingDateAdjustment.additional_charge, never wired into Charge."""
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='guest_list_adjustments')
+    previous_party_size = models.PositiveIntegerField(editable=False)
+    new_party_size = models.PositiveIntegerField(editable=False)
+    additional_charge = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        help_text="Extra rental+admin cost of the added guest(s) - cash at check-in, not part of Charge."
+    )
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'booking_guest_list_adjustments'
+        verbose_name = 'Guest list adjustment'
+        ordering = ('created_at',)
+
+    def __str__(self):
+        return f"{self.booking} - +{self.new_party_size - self.previous_party_size} guest(s)"
 
 
 class Form(models.Model):

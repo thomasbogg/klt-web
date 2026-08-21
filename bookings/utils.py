@@ -305,17 +305,41 @@ def extras_summary(booking):
     return {'items': items, 'total': sum((item['price'] for item in items), start=Decimal('0'))}
 
 
+def has_completed_previous_stay(guest, exclude_booking_id=None):
+    """A genuinely returning guest: another Booking exists for their email with a departure_date
+    already in the past and a valid (non-cancelled/failed) status - not just a prior booking that
+    hasn't happened yet. Guards against Guest.email being blank (would otherwise match every other
+    blank-email guest via the iexact filter)."""
+    if not guest.email:
+        return False
+    from bookings.models import Booking
+    from env_settings import VALID_BOOKING_STATUSES
+
+    qs = Booking.objects.filter(
+        guest__email__iexact=guest.email, departure_date__lt=date.today(),
+        enquiry_status__in=VALID_BOOKING_STATUSES,
+    )
+    if exclude_booking_id:
+        qs = qs.exclude(pk=exclude_booking_id)
+    return qs.exists()
+
+
 def booking_confirmation_context(booking):
     """Display context shared by the post-booking redirect and the manage-lookup success state."""
     charge = booking.charges
     balance_payment = getattr(booking, 'balance_payment', None)
+    cancelled = booking.enquiry_status == 'Cancelled by guest'  # mirrors views.py::is_cancelled()
     return {
         'booking': booking,
         'charge': charge,
         'subtotal': charge.basic_rental + charge.admin,
         'nights': (booking.departure_date - booking.arrival_date).days,
         'costs_gbp': charge.costs_in_gbp(),
+        'cancelled': cancelled,
         # Self-serve entry point into the balance flow, for a guest who wants to pay early or lost
         # a manually-sent link (no automated reminder email yet - see BalancePayment's docstring).
-        'balance_due': balance_payment is not None and balance_payment.status != 'paid',
+        # Excludes a cancelled booking - there's nothing to pay toward a cancelled stay, even if
+        # the balance was technically never collected.
+        'balance_due': balance_payment is not None and balance_payment.status != 'paid' and not cancelled,
+        'returning_guest': has_completed_previous_stay(booking.guest, exclude_booking_id=booking.pk),
     }

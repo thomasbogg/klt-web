@@ -7,9 +7,9 @@ from django.utils import timezone
 
 from env_settings import VALID_BOOKING_STATUSES
 from .models import (
-    AirportTransfer, AirportTransferPriceBand, BalancePayment, Booking, BookingCondition,
-    BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Extra,
-    ExtrasSettings, Payment, PlatformPayout, RequestType, WelcomePackItem,
+    AirportTransfer, AirportTransferPriceBand, Arrival, BalancePayment, Booking, BookingCondition,
+    BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Departure,
+    Extra, ExtrasSettings, GuestListAdjustment, Payment, PlatformPayout, RequestType, WelcomePackItem,
 )
 from .utils import expire_stale_holds
 
@@ -77,6 +77,18 @@ class AirportTransferInline(admin.TabularInline):
     extra = 0
 
 
+class ArrivalInline(admin.StackedInline):
+    model = Arrival
+    max_num = 1
+
+
+class DepartureInline(admin.StackedInline):
+    """clean/manual_date are staff/ops-only - the guest-facing form never sets them beyond their
+    default, so this is where staff actually review/set them."""
+    model = Departure
+    max_num = 1
+
+
 class BookingDateAdjustmentInline(admin.TabularInline):
     """Staff only ever fill in new_arrival_date/new_departure_date/additional_charge/notes - the
     previous_* dates are auto-snapshotted by BookingDateAdjustment.save() and shown read-only here
@@ -88,10 +100,25 @@ class BookingDateAdjustmentInline(admin.TabularInline):
               'new_departure_date', 'additional_charge', 'notes', 'created_at')
 
 
+class GuestListAdjustmentInline(admin.TabularInline):
+    """Read-only audit trail only - unlike BookingDateAdjustment, this model has no save() override
+    to auto-snapshot previous_party_size, since it's only ever meant to be created by the
+    guest-facing Manage Booking hub alongside the actual new BookingGuest rows (see
+    BookingManageGuestAddView) - letting staff hand-create a row here would produce an adjustment
+    unlinked to any real added guest."""
+    model = GuestListAdjustment
+    extra = 0
+    max_num = 0
+    can_delete = False
+    readonly_fields = ('previous_party_size', 'new_party_size', 'additional_charge', 'notes', 'created_at')
+    fields = readonly_fields
+
+
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
     inlines = [ChargeInline, PaymentInline, BalancePaymentInline, BookingGuestInline, PlatformPayoutInline,
-               ExtraInline, BookingRequestedExtraInline, AirportTransferInline, BookingDateAdjustmentInline]
+               ExtraInline, BookingRequestedExtraInline, AirportTransferInline, ArrivalInline, DepartureInline,
+               BookingDateAdjustmentInline, GuestListAdjustmentInline]
     list_display = ('reference', 'property', 'guest', 'arrival_date', 'departure_date', 'enquiry_status', 'enquiry_source')
     list_filter = ('enquiry_status', 'enquiry_source', 'manual_override')
     search_fields = ('reference', 'guest__first_name', 'guest__last_name', 'guest__email')

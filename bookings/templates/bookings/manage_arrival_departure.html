@@ -1,0 +1,97 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arrival &amp; Departure {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Arrival &amp; Departure</h1>
+
+            <div class="confirmation-reference">
+                <span class="confirmation-reference-label">Booking Reference</span>
+                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+            </div>
+
+            {% if request.GET.saved %}
+            <p class="details-note">Your arrival and departure details have been updated.</p>
+            {% endif %}
+
+            <p class="details-note">Let us know your travel plans - you can change these any time before you arrive.</p>
+
+            <form method="post" class="details-form">
+                {% csrf_token %}
+
+                <section class="details-section">
+                    <h2 class="details-section-title">Arrival</h2>
+                    <p class="details-note">Faro Airport only.</p>
+
+                    <div class="transfer-grid">
+                        <div class="transfer-field">
+                            <label for="arrival_flight_number">Flight number</label>
+                            <input type="text" name="arrival_flight_number" id="arrival_flight_number" class="reserve-input" value="{{ arrival_flight_number }}" placeholder="e.g. TP1234">
+                        </div>
+                        <div class="transfer-field">
+                            <label for="arrival_time">Estimated arrival time</label>
+                            <input type="time" name="arrival_time" id="arrival_time" class="reserve-input" value="{{ arrival_time }}">
+                        </div>
+                    </div>
+
+                    <div class="welcome-pack-choice-group">
+                        <span class="welcome-pack-choice-label">Check-in</span>
+                        <label><input type="radio" name="check_in_preference" value="self_check_in" {% if check_in_preference == 'self_check_in' %}checked{% endif %}> Self check-in</label>
+                        <label><input type="radio" name="check_in_preference" value="meet_greet" {% if check_in_preference == 'meet_greet' %}checked{% endif %}> Meet &amp; greet</label>
+                    </div>
+
+                    <div class="welcome-pack-field">
+                        <label for="arrival_details">Anything else we should know about your arrival?</label>
+                        <textarea name="arrival_details" id="arrival_details" class="reserve-input" rows="2">{{ arrival_details }}</textarea>
+                    </div>
+                </section>
+
+                <section class="details-section">
+                    <h2 class="details-section-title">Departure</h2>
+                    <p class="details-note">Faro Airport only.</p>
+
+                    <div class="transfer-grid">
+                        <div class="transfer-field">
+                            <label for="departure_flight_number">Flight number</label>
+                            <input type="text" name="departure_flight_number" id="departure_flight_number" class="reserve-input" value="{{ departure_flight_number }}" placeholder="e.g. TP1234">
+                        </div>
+                        <div class="transfer-field">
+                            <label for="departure_time">Estimated departure time</label>
+                            <input type="time" name="departure_time" id="departure_time" class="reserve-input" value="{{ departure_time }}">
+                        </div>
+                    </div>
+
+                    <div class="welcome-pack-field">
+                        <label for="departure_details">Anything else we should know about your departure?</label>
+                        <textarea name="departure_details" id="departure_details" class="reserve-input" rows="2">{{ departure_details }}</textarea>
+                    </div>
+                </section>
+
+                <button type="submit" class="reserve-form-submit">Save Arrival &amp; Departure</button>
+            </form>
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

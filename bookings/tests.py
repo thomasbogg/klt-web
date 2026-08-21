@@ -6,13 +6,14 @@ from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import (
-    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, BalancePayment, Booking,
-    BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Extra,
-    ExtrasSettings, Payment, RequestType, WelcomePackItem,
+    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, Arrival, BalancePayment,
+    Booking, BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge,
+    Departure, Extra, ExtrasSettings, GuestListAdjustment, Payment, RequestType, WelcomePackItem,
 )
 from bookings.utils import (
     add_business_days, create_booking, determine_payment_provider, expire_stale_holds, extras_summary,
-    guest_counts_by_age, payment_clearing_expiry, recalculate_balance_for_party, recalculate_costs_for_party,
+    guest_counts_by_age, has_completed_previous_stay, payment_clearing_expiry, recalculate_balance_for_party,
+    recalculate_costs_for_party,
 )
 from guests.models import Guest
 from properties.models import Price, Property, PropertySpec
@@ -1344,3 +1345,728 @@ class BalanceReminderDueFilterTests(TestCase):
         result = self._filtered(value=None)
         self.assertIn(due, result)
         self.assertIn(not_due, result)
+
+
+class ManageBookingViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property MNG', short_title='TESTMNG')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Nuno', last_name='Rocha', email='nuno-mng@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.url = reverse('bookings:manage')
+
+    def _post(self, reference, email):
+        return self.client.post(self.url, {'reference': reference, 'email': email})
+
+    def test_unknown_reference_shows_not_found(self):
+        response = self._post('NOTAREF', self.guest.email)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['not_found'])
+
+    def test_unpaid_booking_redirects_to_pay(self):
+        Payment.objects.create(booking=self.booking, provider='revolut', status='pending')
+        response = self._post(self.booking.reference, self.guest.email)
+        self.assertRedirects(
+            response, reverse('bookings:pay', kwargs={'reference': self.booking.reference}),
+            fetch_redirect_response=False,
+        )
+
+    def test_paid_booking_redirects_to_manage_hub(self):
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        response = self._post(self.booking.reference, self.guest.email)
+        self.assertRedirects(
+            response, reverse('bookings:manage_hub', kwargs={'reference': self.booking.reference}),
+            fetch_redirect_response=False,
+        )
+
+
+class BookingManageHubViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property HUB', short_title='TESTHUB')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Elena', last_name='Costa', email='elena-hub@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        Price.objects.create(
+            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+        )
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        BookingGuest.objects.create(booking=self.booking, first_name='Elena', last_name='Costa', age=30, is_lead=True)
+        BookingGuest.objects.create(booking=self.booking, first_name='Marco', last_name='Costa', age=32, is_lead=False)
+        Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        self.url = reverse('bookings:manage_hub', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+        self.balance_details_url = reverse('bookings:balance_details', kwargs={'reference': self.booking.reference})
+
+    def test_not_paid_redirects_to_details(self):
+        Payment.objects.create(booking=self.booking, provider='revolut', status='pending')
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_two_stage_not_balance_paid_shows_pay_balance_nav_item(self):
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        BalancePayment.objects.create(booking=self.booking, provider='revolut', status='pending')
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['stage'], 'pre_balance')
+        self.assertTrue(response.context['show_pay_balance'])
+        self.assertEqual(response.context['active_section'], 'booking')
+        self.assertContains(response, self.balance_details_url)
+
+    def test_fully_paid_two_stage_hides_pay_balance_nav_item(self):
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        BalancePayment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['stage'], 'fully_paid')
+        self.assertFalse(response.context['show_pay_balance'])
+        self.assertNotContains(response, self.balance_details_url)
+
+    def test_collapsed_booking_paid_deposit_only_counts_as_fully_paid(self):
+        # No BalancePayment row at all - a collapsed (single-payment) booking.
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['stage'], 'fully_paid')
+
+    def test_sidebar_links_to_every_section(self):
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        response = self.client.get(self.url)
+        self.assertContains(response, reverse('bookings:manage_guests', kwargs={'reference': self.booking.reference}))
+        self.assertContains(
+            response, reverse('bookings:manage_arrival_departure', kwargs={'reference': self.booking.reference}),
+        )
+        self.assertContains(response, reverse('bookings:manage_extras', kwargs={'reference': self.booking.reference}))
+
+
+class BookingManageGuestAddViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property GAD', short_title='TESTGAD')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Elena', last_name='Costa', email='elena-gad@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        Price.objects.create(
+            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+        )
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.elena = BookingGuest.objects.create(booking=self.booking, first_name='Elena', last_name='Costa', age=30, is_lead=True)
+        self.marco = BookingGuest.objects.create(booking=self.booking, first_name='Marco', last_name='Costa', age=32, is_lead=False)
+        # 2 adults only: FREE_ADULTS=2 means this party is currently at the free-adult ceiling, so
+        # a 3rd adult genuinely adds extra_adult_rate - see RecalculateCostsForPartyTests for the
+        # same underlying pricing fixture.
+        self.charge = Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        BalancePayment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.url = reverse('bookings:manage_hub_guest_add', kwargs={'reference': self.booking.reference})
+        self.guests_url = reverse('bookings:manage_guests', kwargs={'reference': self.booking.reference})
+
+    def _post_data(self, first_names, last_names, ages, confirmed=False):
+        data = {
+            'first_name[]': first_names,
+            'last_name[]': last_names,
+            'age[]': [str(age) for age in ages],
+        }
+        if confirmed:
+            data['confirmed'] = '1'
+        return data
+
+    def test_get_redirects_to_hub_with_no_side_effects(self):
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.guests_url, fetch_redirect_response=False)
+        self.assertEqual(GuestListAdjustment.objects.count(), 0)
+
+    def test_post_while_not_fully_paid_redirects_and_does_nothing(self):
+        self.balance_payment = BalancePayment.objects.get(booking=self.booking)
+        self.balance_payment.status = 'pending'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.post(self.url, self._post_data(['Sofia'], ['Costa'], [25], confirmed=True))
+        self.assertRedirects(response, self.guests_url, fetch_redirect_response=False)
+        self.assertEqual(GuestListAdjustment.objects.count(), 0)
+        self.assertEqual(self.booking.party.count(), 2)
+
+    def test_unconfirmed_post_shows_confirmation_banner_and_writes_nothing(self):
+        response = self.client.post(self.url, self._post_data(['Sofia'], ['Costa'], [25]))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('pending_guest_addition', response.context)
+        self.assertGreater(response.context['pending_guest_addition']['additional_charge'], Decimal('0'))
+        self.assertEqual(GuestListAdjustment.objects.count(), 0)
+        self.assertEqual(self.booking.party.count(), 2)
+
+    def test_confirmed_post_adds_guest_without_touching_charge(self):
+        response = self.client.post(self.url, self._post_data(['Sofia'], ['Costa'], [25], confirmed=True))
+        self.assertRedirects(response, f"{self.guests_url}?guest_added=1", fetch_redirect_response=False)
+
+        self.assertEqual(GuestListAdjustment.objects.count(), 1)
+        adjustment = GuestListAdjustment.objects.get()
+        self.assertEqual(adjustment.previous_party_size, 2)
+        self.assertEqual(adjustment.new_party_size, 3)
+        self.assertGreater(adjustment.additional_charge, Decimal('0'))
+
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.party.count(), 3)
+        self.assertEqual(self.booking.adults, 3)
+        new_guest = self.booking.party.get(first_name='Sofia')
+        self.assertEqual(new_guest.added_via_adjustment, adjustment)
+
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.basic_rental, Decimal('700.00'))  # untouched
+        self.assertEqual(self.charge.due_at_balance, Decimal('553.87'))  # untouched
+
+    def test_existing_guests_are_never_modified(self):
+        self.client.post(self.url, self._post_data(['Sofia'], ['Costa'], [25], confirmed=True))
+        self.elena.refresh_from_db()
+        self.marco.refresh_from_db()
+        self.assertIsNone(self.elena.added_via_adjustment)
+        self.assertIsNone(self.marco.added_via_adjustment)
+        self.assertEqual(self.elena.age, 30)
+        self.assertEqual(self.marco.age, 32)
+
+    def test_max_guests_exceeded_is_rejected(self):
+        response = self.client.post(
+            self.url, self._post_data(['A', 'B', 'C'], ['X', 'X', 'X'], [20, 20, 20], confirmed=True),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('maximum', response.context['guest_add_error'])
+        self.assertEqual(GuestListAdjustment.objects.count(), 0)
+
+    def test_unpriceable_stay_shows_contact_us_error(self):
+        self.property.prices.all().delete()
+        response = self.client.post(self.url, self._post_data(['Sofia'], ['Costa'], [25], confirmed=True))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('contact us', response.context['guest_add_error'])
+        self.assertEqual(GuestListAdjustment.objects.count(), 0)
+
+    def test_additional_charge_floors_at_zero(self):
+        # An infant (priced at zero) added on top of a deliberately inflated existing charge can
+        # never make additional_charge negative - mirrors the balance-stage floor-at-zero test.
+        self.charge.basic_rental = Decimal('100000.00')
+        self.charge.admin = Decimal('0.00')
+        self.charge.save(update_fields=['basic_rental', 'admin'])
+        response = self.client.post(self.url, self._post_data(['Baby'], ['Costa'], [1], confirmed=True))
+        self.assertRedirects(response, f"{self.guests_url}?guest_added=1", fetch_redirect_response=False)
+        adjustment = GuestListAdjustment.objects.get()
+        self.assertEqual(adjustment.additional_charge, Decimal('0'))
+
+
+class BookingManageExtrasViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property MEX', short_title='TESTMEX')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Elena', last_name='Costa', email='elena-mex@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        Price.objects.create(
+            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+        )
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        BookingGuest.objects.create(booking=self.booking, first_name='Elena', last_name='Costa', age=30, is_lead=True)
+        Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        BalancePayment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        settings = ExtrasSettings.load()
+        settings.late_checkout_price = Decimal('20.00')
+        settings.save()
+        self.url = reverse('bookings:manage_extras', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+        self.balance_details_url = reverse('bookings:balance_details', kwargs={'reference': self.booking.reference})
+
+    def test_get_redirects_to_details_when_not_paid(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_get_is_accessible_when_two_stage_not_balance_paid(self):
+        # Extras are reachable as soon as the deposit is paid now - no balance-paid gate at all.
+        self.booking.balance_payment.status = 'pending'
+        self.booking.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+
+    def test_get_within_cutoff_is_editable(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context['extras_locked'])
+
+    def test_post_within_cutoff_persists_extras_without_touching_charge(self):
+        response = self.client.post(self.url, {'late_checkout': 'on', 'late_checkout_time': '13:00'})
+        self.assertRedirects(response, f"{self.url}?extras_saved=1", fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.extras.late_checkout)
+        self.assertEqual(self.booking.extras.late_checkout_charge, Decimal('20.00'))
+        charge = Charge.objects.get(booking=self.booking)
+        self.assertEqual(charge.basic_rental, Decimal('700.00'))  # untouched
+
+    def test_get_locked_past_cutoff_is_read_only(self):
+        settings = BookingSettings.load()
+        settings.extras_edit_cutoff_days_before_arrival = 3
+        settings.save()
+        self.booking.arrival_date = date.today() + timedelta(days=2)
+        self.booking.save(update_fields=['arrival_date'])
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['extras_locked'])
+
+    def test_post_locked_past_cutoff_is_a_no_op(self):
+        settings = BookingSettings.load()
+        settings.extras_edit_cutoff_days_before_arrival = 3
+        settings.save()
+        self.booking.arrival_date = date.today() + timedelta(days=2)
+        self.booking.save(update_fields=['arrival_date'])
+        response = self.client.post(self.url, {'late_checkout': 'on', 'late_checkout_time': '13:00'})
+        self.assertRedirects(response, self.url, fetch_redirect_response=False)
+        self.assertFalse(hasattr(self.booking, 'extras'))
+
+
+class GuestListAdjustmentTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property GLA', short_title='TESTGLA')
+        self.guest = Guest.objects.create(last_name='Guest')
+        self.start = date(2026, 9, 1)
+        self.end = date(2026, 9, 8)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_creation_persists_fields(self):
+        adjustment = GuestListAdjustment.objects.create(
+            booking=self.booking, previous_party_size=2, new_party_size=3,
+            additional_charge=Decimal('45.00'), notes='Added via hub',
+        )
+        adjustment.refresh_from_db()
+        self.assertEqual(adjustment.previous_party_size, 2)
+        self.assertEqual(adjustment.new_party_size, 3)
+        self.assertEqual(adjustment.additional_charge, Decimal('45.00'))
+        self.assertEqual(adjustment.notes, 'Added via hub')
+
+    def test_added_guests_relation(self):
+        adjustment = GuestListAdjustment.objects.create(
+            booking=self.booking, previous_party_size=2, new_party_size=3, additional_charge=Decimal('45.00'),
+        )
+        guest = BookingGuest.objects.create(
+            booking=self.booking, first_name='Sofia', last_name='Costa', age=25, added_via_adjustment=adjustment,
+        )
+        self.assertIn(guest, adjustment.added_guests.all())
+
+    def test_str(self):
+        adjustment = GuestListAdjustment(previous_party_size=2, new_party_size=3, booking=self.booking)
+        self.assertIn('+1 guest', str(adjustment))
+
+
+class HasCompletedPreviousStayTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property RG', short_title='TESTRG')
+        self.guest = Guest.objects.create(first_name='Rita', last_name='Alves', email='rita-rg@example.com')
+
+    def _make_booking(self, days_until_departure, enquiry_status='Booking confirmed', guest=None):
+        guest = guest or self.guest
+        departure = date.today() + timedelta(days=days_until_departure)
+        return Booking.objects.create(
+            property=self.property, guest=guest, arrival_date=departure - timedelta(days=7),
+            departure_date=departure, is_owner=False, enquiry_status=enquiry_status,
+            enquiry_source='Website', adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_no_prior_booking_returns_false(self):
+        self.assertFalse(has_completed_previous_stay(self.guest))
+
+    def test_prior_booking_with_future_departure_returns_false(self):
+        self._make_booking(days_until_departure=30)
+        self.assertFalse(has_completed_previous_stay(self.guest))
+
+    def test_prior_cancelled_booking_with_past_departure_returns_false(self):
+        self._make_booking(days_until_departure=-30, enquiry_status='Cancelled by guest')
+        self.assertFalse(has_completed_previous_stay(self.guest))
+
+    def test_genuinely_completed_prior_stay_returns_true(self):
+        self._make_booking(days_until_departure=-30, enquiry_status='Holiday completed')
+        self.assertTrue(has_completed_previous_stay(self.guest))
+
+    def test_exclude_booking_id_excludes_itself(self):
+        booking = self._make_booking(days_until_departure=-30, enquiry_status='Holiday completed')
+        self.assertFalse(has_completed_previous_stay(self.guest, exclude_booking_id=booking.pk))
+
+    def test_blank_email_guest_never_matches(self):
+        blank_guest_1 = Guest.objects.create(last_name='Blank1', email='')
+        blank_guest_2 = Guest.objects.create(last_name='Blank2', email='')
+        self._make_booking(days_until_departure=-30, enquiry_status='Holiday completed', guest=blank_guest_1)
+        self.assertFalse(has_completed_previous_stay(blank_guest_2))
+
+
+class BookingManageGuestsViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property MG', short_title='TESTMG')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Elena', last_name='Costa', email='elena-mg@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        Price.objects.create(
+            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+        )
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=1, babies=0, last_updated=timezone.now(),
+        )
+        BookingGuest.objects.create(booking=self.booking, first_name='Elena', last_name='Costa', age=30, is_lead=True)
+        BookingGuest.objects.create(booking=self.booking, first_name='Marco', last_name='Costa', age=32, is_lead=False)
+        BookingGuest.objects.create(booking=self.booking, first_name='Ines', last_name='Costa', age=10, is_lead=False)
+        self.charge = Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('735.00'), admin=Decimal('40.43'),
+            due_at_booking=Decimal('193.86'), due_at_balance=Decimal('581.57'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        self.payment = Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.balance_payment = BalancePayment.objects.create(booking=self.booking, provider='revolut')
+        self.url = reverse('bookings:manage_guests', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+
+    def _post_data(self, first_names, last_names, ages, confirmed=False):
+        data = {'first_name[]': first_names, 'last_name[]': last_names, 'age[]': [str(a) for a in ages]}
+        if confirmed:
+            data['confirmed'] = '1'
+        return data
+
+    def test_not_paid_redirects_to_details(self):
+        self.payment.status = 'pending'
+        self.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_pre_balance_get_prefills_party(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['stage'], 'pre_balance')
+        self.assertEqual(len(response.context['rows']), 3)
+
+    def test_pre_balance_removing_a_guest_shows_interstitial_then_saves_and_stays_on_page(self):
+        data = self._post_data(['Elena', 'Marco'], ['Costa', 'Costa'], [30, 32])
+        response = self.client.post(self.url, data)
+        self.assertTrue(response.context['price_changed'])
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.due_at_balance, Decimal('581.57'))  # not yet persisted
+
+        data['confirmed'] = '1'
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, f"{self.url}?guests_saved=1", fetch_redirect_response=False)
+        self.charge.refresh_from_db()
+        self.assertLess(self.charge.due_at_balance, Decimal('581.57'))
+        self.assertEqual(self.charge.due_at_booking, Decimal('193.86'))  # deposit stays frozen
+
+    def test_balance_never_goes_negative(self):
+        self.charge.due_at_booking = Decimal('100000.00')
+        self.charge.save(update_fields=['due_at_booking'])
+        response = self.client.post(self.url, self._post_data(['Elena'], ['Costa'], [30], confirmed=True))
+        self.assertRedirects(response, f"{self.url}?guests_saved=1", fetch_redirect_response=False)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.due_at_balance, Decimal('0'))
+
+    def test_price_change_clears_a_stale_revolut_checkout_url(self):
+        self.balance_payment.revolut_order_id = 'old-order-id'
+        self.balance_payment.revolut_checkout_url = 'https://checkout.revolut.com/old'
+        self.balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
+        self.client.post(self.url, self._post_data(['Elena'], ['Costa'], [30], confirmed=True))
+        self.balance_payment.refresh_from_db()
+        self.assertIsNone(self.balance_payment.revolut_checkout_url)
+
+    def test_fully_paid_get_shows_read_only_party_and_add_form(self):
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['stage'], 'fully_paid')
+        self.assertEqual(len(response.context['party']), 3)
+
+    def test_fully_paid_post_redirects_without_writing(self):
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.post(self.url, self._post_data(['Elena'], ['Costa'], [30]))
+        self.assertRedirects(response, self.url, fetch_redirect_response=False)
+        self.assertEqual(self.booking.party.count(), 3)  # untouched
+
+
+class ArrivalTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property ARR', short_title='TESTARR')
+        self.guest = Guest.objects.create(last_name='Guest')
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=date(2026, 9, 1), departure_date=date(2026, 9, 8),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_str_uses_booking_arrival_date(self):
+        arrival = Arrival.objects.create(booking=self.booking, meet_greet=False)
+        self.assertIn('2026-09-01', str(arrival))
+
+
+class DepartureTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property DEP', short_title='TESTDEP')
+        self.guest = Guest.objects.create(last_name='Guest')
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=date(2026, 9, 1), departure_date=date(2026, 9, 8),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_str_uses_booking_departure_date(self):
+        departure = Departure.objects.create(booking=self.booking)
+        self.assertIn('2026-09-08', str(departure))
+
+    def test_clean_and_manual_date_default_to_false(self):
+        departure = Departure.objects.create(booking=self.booking)
+        self.assertFalse(departure.clean)
+        self.assertFalse(departure.manual_date)
+
+
+class BookingManageArrivalDepartureViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property AD', short_title='TESTAD')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Elena', last_name='Costa', email='elena-ad@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.url = reverse('bookings:manage_arrival_departure', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+
+    def test_not_paid_redirects_to_details(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_get_with_no_existing_rows_renders_blank_form(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['arrival_flight_number'], '')
+        self.assertEqual(response.context['check_in_preference'], 'self_check_in')
+
+    def test_post_creates_arrival_and_departure_with_is_faro_true(self):
+        response = self.client.post(self.url, {
+            'arrival_flight_number': 'TP123', 'arrival_time': '14:00', 'arrival_details': 'Renting a car',
+            'check_in_preference': 'meet_greet',
+            'departure_flight_number': 'TP456', 'departure_time': '09:00', 'departure_details': 'Early flight',
+        })
+        self.assertRedirects(response, f"{self.url}?saved=1", fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.arrival.flight_number, 'TP123')
+        self.assertEqual(self.booking.arrival.time, time(14, 0))
+        self.assertTrue(self.booking.arrival.is_faro)
+        self.assertTrue(self.booking.arrival.meet_greet)
+        self.assertFalse(self.booking.arrival.self_check_in)
+        self.assertEqual(self.booking.departure.flight_number, 'TP456')
+        self.assertTrue(self.booking.departure.is_faro)
+        self.assertFalse(self.booking.departure.clean)
+        self.assertFalse(self.booking.departure.manual_date)
+
+    def test_check_in_preference_self_check_in_maps_correctly(self):
+        self.client.post(self.url, {'check_in_preference': 'self_check_in'})
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.arrival.self_check_in)
+        self.assertFalse(self.booking.arrival.meet_greet)
+
+    def test_second_post_never_resets_staff_set_ops_fields(self):
+        Departure.objects.create(booking=self.booking, clean=True, manual_date=True)
+        self.client.post(self.url, {'departure_flight_number': 'TP789'})
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.departure.clean)
+        self.assertTrue(self.booking.departure.manual_date)
+        self.assertEqual(self.booking.departure.flight_number, 'TP789')
+
+    def test_get_prefills_from_existing_rows(self):
+        Arrival.objects.create(booking=self.booking, flight_number='TP999', meet_greet=True, self_check_in=False)
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['arrival_flight_number'], 'TP999')
+        self.assertEqual(response.context['check_in_preference'], 'meet_greet')
+
+
+class ConfirmationDetailsDisplayTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property CD', short_title='TESTCD')
+        self.guest = Guest.objects.create(first_name='Nadia', last_name='Silva', email='nadia-cd@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.charge = Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('738.50'), due_at_balance=Decimal('0'), currency='EUR',
+            security=Decimal('200.00'), gbp_conversion_rate=Decimal('0.8600'),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.url = reverse('bookings:confirmation', kwargs={'reference': self.booking.reference})
+
+    def test_due_now_row_says_paid(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Paid')
+        self.assertNotContains(response, 'Due now')
+
+    def test_gbp_charge_shows_pound_amounts_with_no_toggle(self):
+        self.charge.currency = 'GBP'
+        self.charge.save(update_fields=['currency'])
+        response = self.client.get(self.url)
+        self.assertContains(response, '&pound;')
+        self.assertNotContains(response, 'currency-toggle')
+
+    def test_non_returning_guest_sees_the_real_security_amount(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, '&euro;200.00')
+        self.assertNotContains(response, 'Not required for a returning guest')
+
+    def test_returning_guest_sees_the_waiver_message(self):
+        Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start - timedelta(days=300),
+            departure_date=self.start - timedelta(days=293), is_owner=False,
+            enquiry_status='Holiday completed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Not required for a returning guest')
+
+
+class BookingCancelViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property CXL', short_title='TESTCXL')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Cara', last_name='Costa', email='cara-cxl@example.com')
+        self.start = date.today() + timedelta(days=100)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        BalancePayment.objects.create(booking=self.booking, provider='revolut', status='pending')
+        self.url = reverse('bookings:manage_cancel', kwargs={'reference': self.booking.reference})
+        self.hub_url = reverse('bookings:manage_hub', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+
+    def test_not_paid_redirects_to_details(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_get_shows_confirm_form(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.booking.reference)
+        self.assertContains(response, 'reference_confirm')
+
+    def test_platform_sourced_booking_blocks_direct_access(self):
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.hub_url, fetch_redirect_response=False)
+
+    def test_already_cancelled_redirects_to_hub(self):
+        self.booking.enquiry_status = 'Cancelled by guest'
+        self.booking.save(update_fields=['enquiry_status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.hub_url, fetch_redirect_response=False)
+
+    def test_arrival_already_passed_blocks_cancel(self):
+        self.booking.arrival_date = date.today() - timedelta(days=1)
+        self.booking.departure_date = date.today() + timedelta(days=5)
+        self.booking.save(update_fields=['arrival_date', 'departure_date'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.hub_url, fetch_redirect_response=False)
+
+    def test_post_with_wrong_reference_shows_error_and_does_not_cancel(self):
+        response = self.client.post(self.url, {'reference_confirm': 'WRONG-REF'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['reference_error'])
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_status, 'Booking confirmed')
+
+    def test_post_with_correct_reference_cancels_and_redirects(self):
+        response = self.client.post(self.url, {'reference_confirm': self.booking.reference})
+        self.assertRedirects(response, f"{self.hub_url}?cancelled=1", fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_status, 'Cancelled by guest')
+
+    def test_post_reference_match_is_case_insensitive(self):
+        response = self.client.post(self.url, {'reference_confirm': self.booking.reference.lower()})
+        self.assertRedirects(response, f"{self.hub_url}?cancelled=1", fetch_redirect_response=False)
+
+    def test_double_cancel_post_is_a_no_op(self):
+        self.client.post(self.url, {'reference_confirm': self.booking.reference})
+        response = self.client.post(self.url, {'reference_confirm': self.booking.reference})
+        self.assertRedirects(response, self.hub_url, fetch_redirect_response=False)
+
+    def test_hub_shows_cancel_link_for_direct_booking(self):
+        response = self.client.get(self.hub_url)
+        self.assertContains(response, self.url)
+
+    def test_hub_hides_cancel_link_for_platform_booking(self):
+        self.booking.enquiry_source = 'Booking.com'
+        self.booking.save(update_fields=['enquiry_source'])
+        response = self.client.get(self.hub_url)
+        self.assertNotContains(response, self.url)
+
+    def test_hub_shows_cancelled_banner_and_hides_pay_balance_after_cancelling(self):
+        self.booking.enquiry_status = 'Cancelled by guest'
+        self.booking.save(update_fields=['enquiry_status'])
+        response = self.client.get(self.hub_url)
+        self.assertContains(response, 'This booking has been cancelled')
+        self.assertFalse(response.context['show_pay_balance'])
+        self.assertNotContains(
+            response, reverse('bookings:balance_details', kwargs={'reference': self.booking.reference}),
+        )

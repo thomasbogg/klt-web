@@ -1,0 +1,61 @@
+{% comment %}
+Guest List section shared by details.html (deposit stage) and balance_details.html (balance
+stage). Expects `rows` and `max_guests` in the parent context (not passed via `with`, since
+{% include %} shares context by default), plus a `guest_list_note` string for the one sentence
+that differs between the two callers.
+{% endcomment %}
+<section class="details-section">
+    <h2 class="details-section-title">Guest List</h2>
+    <p class="details-note">Please enter details for all members of your party (including yourself). <strong>Use each guest's age at the time of your stay, not today.</strong></p>
+    <p class="details-note">This property allows up to {{ max_guests }} guests. {{ guest_list_note }}</p>
+
+    <div class="guest-rows" id="guest-rows">
+        <div class="guest-row guest-row-header">
+            <span></span>
+            <span>First name</span>
+            <span>Last name</span>
+            <span>Age</span>
+            <span></span>
+        </div>
+        {% for row in rows %}
+        <div class="guest-row">
+            <span class="guest-row-index">{{ forloop.counter }}</span>
+            <div class="guest-row-field">
+                <input type="text" name="first_name[]" class="reserve-input" value="{{ row.first_name }}" placeholder="First name">
+                {% if row.errors.first_name %}<p class="reserve-form-error">{{ row.errors.first_name }}</p>{% endif %}
+            </div>
+            <div class="guest-row-field">
+                <input type="text" name="last_name[]" class="reserve-input" value="{{ row.last_name }}" placeholder="Last name">
+                {% if row.errors.last_name %}<p class="reserve-form-error">{{ row.errors.last_name }}</p>{% endif %}
+            </div>
+            <div class="guest-row-field guest-row-age">
+                <input type="number" name="age[]" class="reserve-input" value="{{ row.age }}" min="0" max="120" placeholder="Age">
+                {% if row.errors.age %}<p class="reserve-form-error">{{ row.errors.age }}</p>{% endif %}
+            </div>
+            {% if forloop.first %}
+            <span class="guest-row-remove-placeholder"></span>
+            {% else %}
+            <button type="button" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    <template id="guest-row-template">
+        <div class="guest-row">
+            <span class="guest-row-index"></span>
+            <div class="guest-row-field">
+                <input type="text" name="first_name[]" class="reserve-input" placeholder="First name">
+            </div>
+            <div class="guest-row-field">
+                <input type="text" name="last_name[]" class="reserve-input" placeholder="Last name">
+            </div>
+            <div class="guest-row-field guest-row-age">
+                <input type="number" name="age[]" class="reserve-input" min="0" max="120" placeholder="Age">
+            </div>
+            <button type="button" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
+        </div>
+    </template>
+
+    <button type="button" class="guest-row-add" id="guest-row-add">+ Add guest</button>
+</section>

@@ -1,0 +1,235 @@
+{% comment %}
+Extras section (Cot & High Chair, Airport Transfers, Late Checkout, Welcome Pack & Special
+Requests) shared by details.html, balance_details.html, and manage_extras.html. Expects the usual
+_extras_context()/_transfer_context() variables in the parent context, plus a `due_phrase` string
+for the one substring that differs per caller ("the amount due now" / "your balance payment" /
+"any online payment").
+{% endcomment %}
+<section class="details-section{% if not show_cot_high_chair %} details-section-hidden{% endif %}" id="cot-high-chair-section">
+    <h2 class="details-section-title">Cot &amp; High Chair</h2>
+    <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}. Pricing depends on the length of your stay, and requesting both together gets a discount.</p>
+
+    <div class="cot-high-chair-block">
+        <label class="details-checkbox-label">
+            <input type="checkbox" name="cot" id="cot_checkbox" {% if cot %}checked{% endif %}>
+            I need a cot
+        </label>
+        <label class="details-checkbox-label">
+            <input type="checkbox" name="high_chair" id="high_chair_checkbox" {% if high_chair %}checked{% endif %}>
+            I need a high chair
+        </label>
+        <p class="cot-high-chair-price">Estimated price: <span id="cot-high-chair-price-value">&ndash;</span></p>
+    </div>
+
+    {{ cot_high_chair_pricing_config|json_script:"cot-high-chair-pricing-config" }}
+</section>
+
+<section class="details-section">
+    <h2 class="details-section-title">Airport Transfers (Faro Airport only)</h2>
+    <p class="details-note">Everything below is paid in cash at check-in - it isn't included in {{ due_phrase }}. Prices shown are estimates based on total headcount and pickup/drop-off time; we'll confirm the final price with you.</p>
+    <p class="details-note">Sharing a ride with another apartment's guests? Only one lead guest should submit the combined request with the total headcount - the other party shouldn't submit a separate one.</p>
+
+    {% if transfer_non_field_error %}
+    <div class="reserve-form-errors">
+        <p>{{ transfer_non_field_error }}</p>
+    </div>
+    {% endif %}
+
+    <div class="transfer-rows" id="transfer-rows">
+        {% for row in transfer_rows %}
+        <div class="transfer-row">
+            <button type="button" class="transfer-row-remove" aria-label="Remove transfer">&minus;</button>
+            <div class="transfer-grid">
+                <div class="transfer-field">
+                    <label>Direction</label>
+                    <select name="transfer_direction[]" class="reserve-input transfer-direction">
+                        <option value="inbound" {% if row.direction == 'inbound' %}selected{% endif %}>Inbound (arrival)</option>
+                        <option value="outbound" {% if row.direction == 'outbound' %}selected{% endif %}>Outbound (departure)</option>
+                    </select>
+                </div>
+                <div class="transfer-field">
+                    <label>Time</label>
+                    <input type="time" name="transfer_time[]" class="reserve-input transfer-time" value="{{ row.time }}">
+                    {% if row.errors.time %}<p class="reserve-form-error">{{ row.errors.time }}</p>{% endif %}
+                </div>
+                <div class="transfer-field">
+                    <label>Flight number</label>
+                    <input type="text" name="transfer_flight_number[]" class="reserve-input" value="{{ row.flight_number }}" placeholder="e.g. TP1234">
+                </div>
+                <div class="transfer-field">
+                    <label>Airport</label>
+                    <select name="transfer_airport[]" class="reserve-input">
+                        <option value="faro" selected>Faro</option>
+                    </select>
+                </div>
+                <div class="transfer-field transfer-field-guests">
+                    <label>Adults</label>
+                    <input type="number" name="transfer_adults[]" class="reserve-input transfer-guests" value="{{ row.adults }}" min="0">
+                </div>
+                <div class="transfer-field transfer-field-guests">
+                    <label>Children</label>
+                    <input type="number" name="transfer_children[]" class="reserve-input transfer-guests" value="{{ row.children }}" min="0">
+                </div>
+                <div class="transfer-field transfer-field-guests">
+                    <label>Infants</label>
+                    <input type="number" name="transfer_infants[]" class="reserve-input transfer-guests" value="{{ row.infants }}" min="0">
+                </div>
+                {% if row.errors.guests %}<p class="reserve-form-error transfer-guests-error">{{ row.errors.guests }}</p>{% endif %}
+                <div class="transfer-field">
+                    <label>Child seats needed</label>
+                    <input type="text" name="transfer_child_seats[]" class="reserve-input" value="{{ row.child_seats }}" placeholder="Optional">
+                </div>
+                <div class="transfer-field">
+                    <label>Excess baggage</label>
+                    <input type="text" name="transfer_excess_baggage[]" class="reserve-input" value="{{ row.excess_baggage }}" placeholder="Optional">
+                </div>
+                <div class="transfer-field transfer-field-full">
+                    <label>Notes</label>
+                    <textarea name="transfer_notes[]" class="reserve-input" rows="2">{{ row.notes }}</textarea>
+                </div>
+            </div>
+            <p class="transfer-row-price">Estimated price: <span class="transfer-row-price-value">&ndash;</span></p>
+        </div>
+        {% endfor %}
+    </div>
+
+    <template id="transfer-row-template">
+        <div class="transfer-row">
+            <button type="button" class="transfer-row-remove" aria-label="Remove transfer">&minus;</button>
+            <div class="transfer-grid">
+                <div class="transfer-field">
+                    <label>Direction</label>
+                    <select name="transfer_direction[]" class="reserve-input transfer-direction">
+                        <option value="inbound">Inbound (arrival)</option>
+                        <option value="outbound">Outbound (departure)</option>
+                    </select>
+                </div>
+                <div class="transfer-field">
+                    <label>Time</label>
+                    <input type="time" name="transfer_time[]" class="reserve-input transfer-time">
+                </div>
+                <div class="transfer-field">
+                    <label>Flight number</label>
+                    <input type="text" name="transfer_flight_number[]" class="reserve-input" placeholder="e.g. TP1234">
+                </div>
+                <div class="transfer-field">
+                    <label>Airport</label>
+                    <select name="transfer_airport[]" class="reserve-input">
+                        <option value="faro" selected>Faro</option>
+                    </select>
+                </div>
+                <div class="transfer-field transfer-field-guests">
+                    <label>Adults</label>
+                    <input type="number" name="transfer_adults[]" class="reserve-input transfer-guests" value="1" min="0">
+                </div>
+                <div class="transfer-field transfer-field-guests">
+                    <label>Children</label>
+                    <input type="number" name="transfer_children[]" class="reserve-input transfer-guests" value="0" min="0">
+                </div>
+                <div class="transfer-field transfer-field-guests">
+                    <label>Infants</label>
+                    <input type="number" name="transfer_infants[]" class="reserve-input transfer-guests" value="0" min="0">
+                </div>
+                <div class="transfer-field">
+                    <label>Child seats needed</label>
+                    <input type="text" name="transfer_child_seats[]" class="reserve-input" placeholder="Optional">
+                </div>
+                <div class="transfer-field">
+                    <label>Excess baggage</label>
+                    <input type="text" name="transfer_excess_baggage[]" class="reserve-input" placeholder="Optional">
+                </div>
+                <div class="transfer-field transfer-field-full">
+                    <label>Notes</label>
+                    <textarea name="transfer_notes[]" class="reserve-input" rows="2"></textarea>
+                </div>
+            </div>
+            <p class="transfer-row-price">Estimated price: <span class="transfer-row-price-value">&ndash;</span></p>
+        </div>
+    </template>
+
+    <button type="button" class="transfer-row-add" id="transfer-row-add">+ Add transfer</button>
+
+    {{ transfer_pricing_config|json_script:"transfer-pricing-config" }}
+</section>
+
+<section class="details-section">
+    <h2 class="details-section-title">Late Checkout</h2>
+    <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}. Let us know your preferred time and we'll confirm whether it's possible.</p>
+
+    <div class="welcome-pack-block">
+        <label class="details-checkbox-label details-checkbox-label-primary">
+            <input type="checkbox" name="late_checkout" id="late_checkout_checkbox" data-price="{{ late_checkout_price|floatformat:2 }}" {% if late_checkout %}checked{% endif %}>
+            I'd like a late checkout
+        </label>
+
+        <div class="welcome-pack-picker" id="late-checkout-picker">
+            <div class="welcome-pack-field">
+                <label for="late_checkout_time">Preferred checkout time</label>
+                <input type="time" name="late_checkout_time" id="late_checkout_time" class="reserve-input" value="{{ late_checkout_time }}">
+                {% if late_checkout_error %}<p class="reserve-form-error">{{ late_checkout_error }}</p>{% endif %}
+            </div>
+            <p class="cot-high-chair-price">Flat fee: &euro;{{ late_checkout_price|floatformat:2 }}</p>
+        </div>
+    </div>
+</section>
+
+<section class="details-section">
+    <h2 class="details-section-title">Welcome Pack and Special Requests</h2>
+    <p class="details-note">Everything below is paid in cash at check-in - it isn't included in {{ due_phrase }}.</p>
+
+    <div class="welcome-pack-block">
+        <label class="details-checkbox-label details-checkbox-label-primary">
+            <input type="checkbox" name="welcome_pack" id="welcome_pack_checkbox" data-price="{{ welcome_pack_price|floatformat:2 }}" {% if welcome_pack %}checked{% endif %}>
+            I'd like a Welcome Pack
+        </label>
+
+        <div class="welcome-pack-picker" id="welcome-pack-picker">
+            <p class="cot-high-chair-price">Flat fee: &euro;{{ welcome_pack_price|floatformat:2 }}</p>
+            <div class="welcome-pack-choice-group">
+                <span class="welcome-pack-choice-label">Food</span>
+                <label><input type="radio" name="welcome_pack_food" value="standard" {% if welcome_pack_food == 'standard' %}checked{% endif %}> Standard</label>
+                <label><input type="radio" name="welcome_pack_food" value="vegan" {% if welcome_pack_food == 'vegan' %}checked{% endif %}> Vegan</label>
+            </div>
+            <div class="welcome-pack-choice-group">
+                <span class="welcome-pack-choice-label">Drinks</span>
+                <label><input type="radio" name="welcome_pack_drinks" value="alcoholic" {% if welcome_pack_drinks == 'alcoholic' %}checked{% endif %}> Alcoholic</label>
+                <label><input type="radio" name="welcome_pack_drinks" value="non_alcoholic" {% if welcome_pack_drinks == 'non_alcoholic' %}checked{% endif %}> Non-alcoholic</label>
+            </div>
+
+            {% if welcome_pack_items %}
+            <ul class="welcome-pack-items" id="welcome-pack-items">
+                {% for item in welcome_pack_items %}
+                <li data-category="{{ item.category }}">{{ item.name }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
+            <div class="welcome-pack-field">
+                <label for="welcome_pack_note">Allergies or dietary notes (optional) - the pack's contents are fixed by your choices above.</label>
+                <textarea name="welcome_pack_note" id="welcome_pack_note" class="reserve-input" rows="2">{{ welcome_pack_note }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    {% if request_rows %}
+    <p class="details-note">Anything else you'd like waiting for you?</p>
+    <div class="request-rows">
+        <div class="request-row request-row-header">
+            <span>Item</span>
+            <span>Qty</span>
+            <span>Note</span>
+        </div>
+        {% for row in request_rows %}
+        <div class="request-row">
+            <span class="request-row-name">
+                {{ row.request_type.name }}
+                {% if row.request_type.default_price %}<span class="request-row-price">&euro;{{ row.request_type.default_price|floatformat:2 }}</span>{% endif %}
+                {% if row.request_type.description %}<span class="request-row-desc">{{ row.request_type.description }}</span>{% endif %}
+            </span>
+            <input type="number" name="request_qty_{{ row.request_type.id }}" class="reserve-input request-row-qty" data-price="{{ row.request_type.default_price|default:0|floatformat:2 }}" value="{{ row.quantity }}" min="0" max="20">
+            <input type="text" name="request_note_{{ row.request_type.id }}" class="reserve-input" value="{{ row.note }}" placeholder="Optional note">
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>
