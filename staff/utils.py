@@ -25,6 +25,44 @@ STATUS_BUCKETS = ('Valid', 'Invalid', 'Ended', 'All')
 # Guest list surname-index letters, mirroring PIMS' "Surname begins with" row.
 GUEST_LETTERS = tuple('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
 
+# properties.models.Amenity's ~30 boolean fields, in model declaration order, paired with a
+# display label - drives both the property detail page's checkbox grid (looped via the
+# staff_extras get_attr template filter, rather than hand-writing 30 near-identical <label>
+# blocks) and StaffPropertyDetailView._update_amenities' save loop, so the two can't drift apart.
+AMENITY_BOOLEAN_FIELDS = (
+    ('bathtub_and_shower', 'Bathtub & shower'),
+    ('walk_in_shower', 'Walk-in shower'),
+    ('hairdryer', 'Hairdryer'),
+    ('washing_machine', 'Washing machine'),
+    ('dryer', 'Dryer'),
+    ('iron', 'Iron'),
+    ('ironing_board', 'Ironing board'),
+    ('wifi', 'WiFi'),
+    ('tv', 'TV'),
+    ('iptv', 'IPTV'),
+    ('air_conditioning', 'Air conditioning'),
+    ('heating', 'Heating'),
+    ('kitchen', 'Kitchen'),
+    ('oven', 'Oven'),
+    ('hob', 'Hob'),
+    ('toaster', 'Toaster'),
+    ('kettle', 'Kettle'),
+    ('microwave', 'Microwave'),
+    ('fridge', 'Fridge'),
+    ('freezer', 'Freezer'),
+    ('dishwasher', 'Dishwasher'),
+    ('barbecue', 'Barbecue'),
+    ('pool', 'Pool'),
+    ('hot_tub', 'Hot tub'),
+    ('garden', 'Garden'),
+    ('air_conditioning_in_bedrooms', 'A/C in bedrooms'),
+    ('air_conditioning_in_living_room', 'A/C in living room'),
+    ('heating_in_bedrooms', 'Heating in bedrooms'),
+    ('heating_in_living_room', 'Heating in living room'),
+    ('sofa_bed', 'Sofa bed'),
+    ('safe', 'Safe'),
+)
+
 
 def status_bucket(stage):
     """Valid = still a real, active/upcoming/ongoing booking (Provisional/Confirmed/Holiday

@@ -1,0 +1,80 @@
+.staff-amenity-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 4px 12px;
+    margin: 8px 0 14px;
+}
+
+.staff-button-danger {
+    background: var(--status-booked-color, #c0392b);
+}
+
+.staff-button-danger:hover {
+    opacity: 0.85;
+}
+
+.staff-inline-delete {
+    display: inline;
+}
+
+.staff-price-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    margin-bottom: 12px;
+}
+
+.staff-price-table th {
+    text-align: left;
+    font-family: var(--secondary-font);
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #999;
+    padding: 0 6px 6px;
+    border-bottom: 1px solid #e5e5e5;
+    white-space: nowrap;
+}
+
+.staff-price-table td {
+    padding: 6px;
+    border-bottom: 1px solid #f2f2f2;
+    color: #444;
+    white-space: nowrap;
+}
+
+.staff-price-add-form {
+    align-items: flex-start;
+}
+
+.staff-price-add-form input[type="date"] {
+    min-width: 130px; /* native date-input placeholder (mm/dd/yyyy) gets clipped under the
+                          shared .staff-input-small max-width:100px used for the other fields */
+}
+
+.staff-photo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.staff-photo-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.staff-photo-card img {
+    width: 100%;
+    height: 90px;
+    object-fit: cover;
+    border-radius: 6px;
+}
+
+.staff-photo-caption {
+    font-size: 0.75rem;
+    color: #666;
+    margin: 0;
+}

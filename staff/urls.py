@@ -8,5 +8,8 @@ urlpatterns = [
     path('bookings/', views.StaffBookingLookupView.as_view(), name='booking_lookup'),
     path('guests/', views.StaffGuestListView.as_view(), name='guest_list'),
     path('guests/<int:pk>/', views.StaffGuestDetailView.as_view(), name='guest_detail'),
+    path('properties/', views.StaffPropertyListView.as_view(), name='property_list'),
+    path('properties/new/', views.StaffPropertyCreateView.as_view(), name='property_create'),
+    path('properties/<int:pk>/', views.StaffPropertyDetailView.as_view(), name='property_detail'),
     path('bookings/<str:reference>/', views.StaffBookingDetailView.as_view(), name='booking_detail'),
 ]

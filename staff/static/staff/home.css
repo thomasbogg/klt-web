@@ -18,9 +18,12 @@
 
 /* .staff-button defaults to align-self:flex-start (right for a vertical .staff-form, so the
    button hugs the left edge rather than stretching full-width) - here it's a direct row child
-   instead, so that same rule pins it to the row's top edge rather than level with the input.
-   Override back to the row's own flex-end so it lines up with the input's bottom edge. */
-.staff-home-filter-group > .staff-button {
+   instead (of .staff-home-filter-group, or of .staff-home-filters itself for a plain <a> button
+   like the property list's "+ Add new property" link), so that same rule pins it to the row's
+   top edge rather than level with the input. Override back to the row's own flex-end so it lines
+   up with the input's bottom edge. */
+.staff-home-filter-group > .staff-button,
+.staff-home-filters > .staff-button {
     align-self: flex-end;
 }
 

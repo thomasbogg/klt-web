@@ -1,0 +1,61 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Properties | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/home.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Properties</h1>
+        </header>
+
+        <div class="staff-home-filters">
+            <form method="get" class="staff-home-filter-group">
+                <label class="staff-field">Location
+                    <select name="location" class="staff-input" onchange="this.form.submit()">
+                        <option value="">All Locations</option>
+                        {% for location in locations %}
+                        <option value="{{ location.pk }}" {% if selected_location.pk == location.pk %}selected{% endif %}>{{ location }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <noscript><button type="submit" class="staff-button">Apply</button></noscript>
+            </form>
+            <a href="{% url 'staff:property_create' %}" class="staff-button">+ Add new property</a>
+        </div>
+
+        <div class="staff-home-reservations">
+            <table class="staff-reservations-table">
+                <thead>
+                    <tr>
+                        <th>Property</th>
+                        <th>Location</th>
+                        <th>Owner</th>
+                        <th>Manager</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for property in properties %}
+                    <tr>
+                        <td><a href="{% url 'staff:property_detail' pk=property.pk %}">{{ property }}</a></td>
+                        <td>{{ property.location|default:"" }}</td>
+                        <td>{{ property.owner|default:"" }}</td>
+                        <td>{{ property.manager|default:"" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="4" class="staff-empty">No properties match this filter.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

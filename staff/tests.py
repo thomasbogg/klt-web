@@ -2,17 +2,61 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import BalancePayment, Booking, Charge, Payment
 from guests.models import Guest
-from properties.models import Property
+from properties.models import (
+    Accountant, Amenity, Location, Manager, Owner, Price, Property, PropertyImage, PropertySpec,
+    SEFDetail, iCalLink,
+)
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
 from staff.utils import booking_stage, next_step_hint, status_bucket
 
 User = get_user_model()
+
+
+def make_owner(**overrides):
+    defaults = dict(
+        name='Test Owner', email='owner@example.com', default_clean=False, default_meet_greet=False,
+        takes_euros=True, takes_pounds=False, cleans_are_invoiced=False,
+        rental_commissions_are_invoiced=False, is_paid_regularly=True,
+    )
+    defaults.update(overrides)
+    return Owner.objects.create(**defaults)
+
+
+def make_manager(**overrides):
+    defaults = dict(
+        company='Test Management Co', head_name='Head Person', head_email='head@example.com',
+        head_phone='+351900000001', maintenance_name='Maint Person', maintenance_phone='+351900000002',
+        maintenance_email='maint@example.com', liaison_name='Liaison Person', liaison_phone='+351900000003',
+        liaison_email='liaison@example.com', cleaning_name='Cleaning Person', cleaning_phone='+351900000004',
+        cleaning_email='cleaning@example.com',
+    )
+    defaults.update(overrides)
+    return Manager.objects.create(**defaults)
+
+
+def make_accountant(**overrides):
+    defaults = dict(
+        company='Test Accounting Co', name='Accountant Person', email='accountant@example.com',
+        phone='+351900000005',
+    )
+    defaults.update(overrides)
+    return Accountant.objects.create(**defaults)
+
+
+def make_location(**overrides):
+    defaults = dict(
+        title='Test Location', street='1 Test Street', zip_code='8000-000', city='Faro',
+        coordinates='37.0,-7.9', map_link='https://maps.example.com/test',
+    )
+    defaults.update(overrides)
+    return Location.objects.create(**defaults)
 
 
 class StaffAuthGateTests(TestCase):
@@ -63,6 +107,16 @@ class StaffAuthGateTests(TestCase):
 
     def test_guest_detail_also_gated(self):
         response = self.client.get(reverse('staff:guest_detail', kwargs={'pk': self.guest.pk}))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/admin/login/', response.url)
+
+    def test_property_list_also_gated(self):
+        response = self.client.get(reverse('staff:property_list'))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/admin/login/', response.url)
+
+    def test_property_detail_also_gated(self):
+        response = self.client.get(reverse('staff:property_detail', kwargs={'pk': self.property.pk}))
         self.assertEqual(response.status_code, 302)
         self.assertIn('/admin/login/', response.url)
 
@@ -555,3 +609,220 @@ class StaffGuestDetailViewTests(TestCase):
         self.client.post(self.url, {'last_name': '   '})
         self.guest.refresh_from_db()
         self.assertEqual(self.guest.last_name, 'Adams')
+
+
+class StaffPropertyListViewTests(TestCase):
+    def setUp(self):
+        User.objects.create_user(username='property_list_staffer', password='pw', is_staff=True)
+        self.client.login(username='property_list_staffer', password='pw')
+
+        self.location_a = make_location(title='Location A')
+        self.location_b = make_location(title='Location B')
+        self.property_a = Property.objects.create(
+            title='Property A List', short_title='PROPALIST', location=self.location_a,
+        )
+        self.property_b = Property.objects.create(
+            title='Property B List', short_title='PROPBLIST', location=self.location_b,
+        )
+        self.url = reverse('staff:property_list')
+
+    def test_default_shows_all_properties(self):
+        response = self.client.get(self.url)
+        titles = {p.title for p in response.context['properties']}
+        self.assertEqual(titles, {'Property A List', 'Property B List'})
+
+    def test_location_filter_narrows_list(self):
+        response = self.client.get(self.url, {'location': self.location_a.pk})
+        titles = {p.title for p in response.context['properties']}
+        self.assertEqual(titles, {'Property A List'})
+
+    def test_malformed_location_param_falls_back_to_all(self):
+        response = self.client.get(self.url, {'location': 'not-a-real-id'})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.context['selected_location'])
+
+    def test_add_new_property_link_present(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, reverse('staff:property_create'))
+
+
+class StaffPropertyCreateViewTests(TestCase):
+    def setUp(self):
+        User.objects.create_user(username='property_create_staffer', password='pw', is_staff=True)
+        self.client.login(username='property_create_staffer', password='pw')
+        self.url = reverse('staff:property_create')
+
+    def test_get_renders_form(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+
+    def test_post_creates_property_and_redirects_to_detail(self):
+        owner, manager, location = make_owner(), make_manager(), make_location()
+        response = self.client.post(self.url, {
+            'title': 'Brand New Property', 'short_title': 'BRANDNEW', 'al_number': '12345',
+            'owner': owner.pk, 'manager': manager.pk, 'location': location.pk,
+            'standard_cleaning_fee': '75.00',
+        })
+        property = Property.objects.get(short_title='BRANDNEW')
+        self.assertRedirects(response, reverse('staff:property_detail', kwargs={'pk': property.pk}))
+        self.assertEqual(property.title, 'Brand New Property')
+        self.assertEqual(property.al_number, 12345)
+
+    def test_post_missing_owner_manager_location_shows_error_and_does_not_create(self):
+        """owner/manager/location are DB-nullable but not blank=True, so Django's own admin (and
+        this form, via full_clean()) has always required all three up front - not new behaviour,
+        just now exercised through this view too."""
+        response = self.client.post(self.url, {'title': 'Incomplete Property', 'short_title': 'INCOMPLETE'})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Property.objects.filter(short_title='INCOMPLETE').exists())
+
+    def test_post_duplicate_title_shows_error_and_does_not_create(self):
+        owner, manager, location = make_owner(), make_manager(), make_location()
+        Property.objects.create(
+            title='Existing Title', short_title='EXISTINGONE', owner=owner, manager=manager, location=location,
+        )
+        response = self.client.post(self.url, {
+            'title': 'Existing Title', 'short_title': 'EXISTINGTWO',
+            'owner': owner.pk, 'manager': manager.pk, 'location': location.pk,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Property.objects.filter(short_title='EXISTINGTWO').exists())
+
+
+class StaffPropertyDetailViewTests(TestCase):
+    def setUp(self):
+        User.objects.create_user(username='property_detail_staffer', password='pw', is_staff=True)
+        self.client.login(username='property_detail_staffer', password='pw')
+
+        self.owner = make_owner()
+        self.manager = make_manager()
+        self.accountant = make_accountant()
+        self.location = make_location()
+        self.property = Property.objects.create(title='Detail Property', short_title='DETAILPROP')
+        self.url = reverse('staff:property_detail', kwargs={'pk': self.property.pk})
+
+    def test_unknown_property_404s(self):
+        response = self.client.get(reverse('staff:property_detail', kwargs={'pk': 999999}))
+        self.assertEqual(response.status_code, 404)
+
+    def test_get_lazily_creates_spec_amenity_and_sef_records(self):
+        self.assertFalse(PropertySpec.objects.filter(property=self.property).exists())
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(PropertySpec.objects.filter(property=self.property).exists())
+        self.assertTrue(Amenity.objects.filter(property=self.property).exists())
+        self.assertTrue(SEFDetail.objects.filter(property=self.property).exists())
+
+    def test_update_property_info_saves_fields(self):
+        response = self.client.post(self.url, {
+            'action': 'update_property_info', 'title': 'Detail Property', 'short_title': 'DETAILPROP',
+            'door_number': '12B', 'owner': self.owner.pk, 'manager': self.manager.pk,
+            'location': self.location.pk, 'accountant': self.accountant.pk, 'al_number': '9999',
+            'we_book': 'on', 'booking_com_id': 'BDC123', 'standard_cleaning_fee': '90.00',
+        })
+        self.assertRedirects(response, self.url)
+        self.property.refresh_from_db()
+        self.assertEqual(self.property.door_number, '12B')
+        self.assertEqual(self.property.owner_id, self.owner.pk)
+        self.assertEqual(self.property.al_number, 9999)
+        self.assertTrue(self.property.we_book)
+        self.assertFalse(self.property.we_clean)
+        self.assertEqual(self.property.standard_cleaning_fee, Decimal('90.00'))
+
+    def test_update_property_info_rejects_duplicate_title(self):
+        Property.objects.create(title='Taken Title', short_title='TAKENSHORT')
+        self.client.post(self.url, {
+            'action': 'update_property_info', 'title': 'Taken Title', 'short_title': 'DETAILPROP',
+        })
+        self.property.refresh_from_db()
+        self.assertEqual(self.property.title, 'Detail Property')
+
+    def test_update_specification_saves_fields(self):
+        self.client.post(self.url, {
+            'action': 'update_specification', 'bedrooms': '3', 'bathrooms': '2', 'max_guests': '6',
+            'is_sea_view': 'on', 'pets_allowed': 'on', 'children_allowed': 'on',
+            'description': 'A lovely place.',
+        })
+        specs = PropertySpec.objects.get(property=self.property)
+        self.assertEqual(specs.bedrooms, 3)
+        self.assertEqual(specs.max_guests, 6)
+        self.assertTrue(specs.is_sea_view)
+        self.assertFalse(specs.is_pool_view)
+        self.assertEqual(specs.description, 'A lovely place.')
+
+    def test_update_amenities_saves_fields(self):
+        self.client.post(self.url, {
+            'action': 'update_amenities', 'wifi': 'on', 'pool': 'on', 'double_beds': '2',
+            'bed_sizes': '180 x 200',
+        })
+        amenities = Amenity.objects.get(property=self.property)
+        self.assertTrue(amenities.wifi)
+        self.assertTrue(amenities.pool)
+        self.assertFalse(amenities.hot_tub)
+        self.assertEqual(amenities.double_beds, 2)
+        self.assertEqual(amenities.bed_sizes, '180 x 200')
+
+    def test_update_sef_saves_fields(self):
+        self.client.post(self.url, {
+            'action': 'update_sef', 'unidade_hoteleira': 'UH123', 'estabelecimento': 'EST456',
+            'chave_de_autenticacao': 'KEY789',
+        })
+        sef = SEFDetail.objects.get(property=self.property)
+        self.assertEqual(sef.unidade_hoteleira, 'UH123')
+        self.assertEqual(sef.chave_de_autenticacao, 'KEY789')
+
+    def test_add_price_creates_price_line(self):
+        self.client.post(self.url, {
+            'action': 'add_price', 'name': 'Summer', 'start_date': '2027-06-01', 'end_date': '2027-08-31',
+            'rate': '150.00', 'weekly_discount_percent': '10',
+        })
+        price = Price.objects.get(property=self.property, name='Summer')
+        self.assertEqual(price.rate, Decimal('150.00'))
+
+    def test_add_price_rejects_overlap(self):
+        Price.objects.create(
+            property=self.property, name='Existing', start_date=date(2027, 6, 1), end_date=date(2027, 8, 31),
+        )
+        self.client.post(self.url, {
+            'action': 'add_price', 'name': 'Overlapping', 'start_date': '2027-07-01', 'end_date': '2027-07-15',
+            'rate': '100.00',
+        })
+        self.assertFalse(Price.objects.filter(property=self.property, name='Overlapping').exists())
+
+    def test_delete_price(self):
+        price = Price.objects.create(
+            property=self.property, name='ToDelete', start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
+        )
+        self.client.post(self.url, {'action': 'delete_price', 'price_id': price.pk})
+        self.assertFalse(Price.objects.filter(pk=price.pk).exists())
+
+    def test_add_ical_link(self):
+        self.client.post(self.url, {
+            'action': 'add_ical_link', 'ical_source': 'airbnb', 'ical_url': 'https://airbnb.com/feed.ics',
+        })
+        link = iCalLink.objects.get(property=self.property)
+        self.assertEqual(link.ical_source, 'airbnb')
+        self.assertEqual(link.ical_url, 'https://airbnb.com/feed.ics')
+
+    def test_add_ical_link_requires_url(self):
+        self.client.post(self.url, {'action': 'add_ical_link', 'ical_source': 'airbnb', 'ical_url': ''})
+        self.assertFalse(iCalLink.objects.filter(property=self.property).exists())
+
+    def test_delete_ical_link(self):
+        link = iCalLink.objects.create(property=self.property, ical_url='https://example.com/feed.ics')
+        self.client.post(self.url, {'action': 'delete_ical_link', 'link_id': link.pk})
+        self.assertFalse(iCalLink.objects.filter(pk=link.pk).exists())
+
+    def test_add_image_and_delete_image(self):
+        upload = SimpleUploadedFile('test.jpg', b'fake-image-bytes', content_type='image/jpeg')
+        self.client.post(self.url, {'action': 'add_image', 'image': upload, 'caption': 'Living room'})
+        image = PropertyImage.objects.get(property=self.property)
+        self.assertEqual(image.caption, 'Living room')
+
+        self.client.post(self.url, {'action': 'delete_image', 'image_id': image.pk})
+        self.assertFalse(PropertyImage.objects.filter(pk=image.pk).exists())
+        image.image.delete(save=False)
+
+    def test_unknown_action_is_a_noop(self):
+        response = self.client.post(self.url, {'action': 'not_a_real_action'})
+        self.assertRedirects(response, self.url)

@@ -203,6 +203,8 @@ body {
 }
 
 .staff-button {
+    display: inline-block; /* safe on <a> too - e.g. the property list's "+ Add new property"
+                               link - not just <button>, which is inline-block by default anyway */
     align-self: flex-start;
     background: var(--primary-color);
     color: #fff;
@@ -210,6 +212,7 @@ body {
     border-radius: 6px;
     padding: 8px 16px;
     font-size: 0.85rem;
+    text-decoration: none;
     cursor: pointer;
 }
 

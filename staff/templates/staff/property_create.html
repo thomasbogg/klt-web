@@ -1,0 +1,98 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New property | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+</head>
+<body>
+    <div class="staff-page staff-lookup-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">New property</h1>
+            <a href="{% url 'staff:property_list' %}" class="staff-header-link">&larr; All properties</a>
+        </header>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <section class="staff-panel">
+            <form method="post" class="staff-form">
+                {% csrf_token %}
+                <label class="staff-field">Title
+                    <input type="text" name="title" class="staff-input" required autofocus>
+                </label>
+                <label class="staff-field">Short title
+                    <input type="text" name="short_title" class="staff-input" required>
+                </label>
+                <label class="staff-field">Door number
+                    <input type="text" name="door_number" class="staff-input">
+                </label>
+                <label class="staff-field">Location
+                    <select name="location" class="staff-input">
+                        <option value="">-</option>
+                        {% for location in locations %}
+                        <option value="{{ location.pk }}">{{ location }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="staff-field">Owner
+                    <select name="owner" class="staff-input">
+                        <option value="">-</option>
+                        {% for owner in owners %}
+                        <option value="{{ owner.pk }}">{{ owner }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="staff-field">Manager
+                    <select name="manager" class="staff-input">
+                        <option value="">-</option>
+                        {% for manager in managers %}
+                        <option value="{{ manager.pk }}">{{ manager }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="staff-field">Accountant
+                    <select name="accountant" class="staff-input">
+                        <option value="">-</option>
+                        {% for accountant in accountants %}
+                        <option value="{{ accountant.pk }}">{{ accountant }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="staff-field">AL number
+                    <input type="text" name="al_number" class="staff-input">
+                </label>
+                <label class="staff-checkbox-label">
+                    <input type="checkbox" name="we_book"> We book
+                </label>
+                <label class="staff-checkbox-label">
+                    <input type="checkbox" name="we_clean"> We clean
+                </label>
+                <label class="staff-field">Booking.com ID
+                    <input type="text" name="booking_com_id" class="staff-input">
+                </label>
+                <label class="staff-field">Airbnb ID
+                    <input type="text" name="airbnb_id" class="staff-input">
+                </label>
+                <label class="staff-field">Vrbo ID
+                    <input type="text" name="vrbo_id" class="staff-input">
+                </label>
+                <label class="staff-field">Standard cleaning fee
+                    <input type="text" name="standard_cleaning_fee" class="staff-input">
+                </label>
+                <button type="submit" class="staff-button">Create property</button>
+            </form>
+        </section>
+    </div>
+</body>
+</html>

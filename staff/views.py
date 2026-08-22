@@ -15,9 +15,15 @@ from availability.utils import get_property_calendar
 from bookings.models import CURRENCY_CHOICES, PAYMENT_STATUS_CHOICES, Booking
 from bookings.utils import extras_summary
 from guests.models import Guest
-from properties.models import Property
+from properties.models import (
+    Accountant, Amenity, Location, Manager, Owner, Price, Property, PropertyImage, PropertySpec,
+    SEFDetail, iCalLink,
+)
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
-from staff.utils import GUEST_LETTERS, STAGE_TABS, STATUS_BUCKETS, booking_stage, next_step_hint, reservation_rows
+from staff.utils import (
+    AMENITY_BOOLEAN_FIELDS, GUEST_LETTERS, STAGE_TABS, STATUS_BUCKETS, booking_stage, next_step_hint,
+    reservation_rows,
+)
 
 
 @method_decorator(staff_member_required, name='dispatch')
@@ -180,6 +186,278 @@ def _parsed_decimal(raw):
         return Decimal(raw)
     except InvalidOperation:
         return None
+
+
+def _parsed_int(raw):
+    raw = (raw or '').strip()
+    return int(raw) if raw.isdigit() else None
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class StaffPropertyListView(View):
+    """PIMS puts property CRUD behind Settings rather than a dedicated list; klt-web instead
+    mirrors the Home/Guests list pattern already used elsewhere - a list filterable by Location
+    (Thomas's own suggestion) with an "+ Add new property" link above it."""
+    template_name = 'staff/property_list.html'
+
+    def get(self, request, *args, **kwargs):
+        locations = Location.objects.order_by('title')
+        selected_location = None
+        location_id = request.GET.get('location', '').strip()
+        if location_id.isdigit():
+            selected_location = locations.filter(pk=location_id).first()
+
+        properties = Property.objects.select_related('location', 'owner', 'manager').order_by('title')
+        if selected_location:
+            properties = properties.filter(location=selected_location)
+
+        context = {
+            'properties': properties,
+            'locations': locations,
+            'selected_location': selected_location,
+        }
+        return render(request, self.template_name, context)
+
+
+def _property_form_context():
+    return {
+        'owners': Owner.objects.order_by('name'),
+        'managers': Manager.objects.order_by('company'),
+        'locations': Location.objects.order_by('title'),
+        'accountants': Accountant.objects.order_by('company'),
+    }
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class StaffPropertyCreateView(View):
+    """A minimal create form for exactly the fields StaffPropertyDetailView's "Property info"
+    panel edits - everything else (specification, amenities, rate card, SEF details, iCal links,
+    photos) only makes sense once the property row exists, so those stay detail-page-only."""
+    template_name = 'staff/property_create.html'
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name, _property_form_context())
+
+    def post(self, request, *args, **kwargs):
+        post = request.POST
+        property = Property(
+            title=post.get('title', '').strip(),
+            short_title=post.get('short_title', '').strip(),
+            door_number=post.get('door_number', '').strip(),
+            owner_id=post.get('owner') or None,
+            manager_id=post.get('manager') or None,
+            location_id=post.get('location') or None,
+            accountant_id=post.get('accountant') or None,
+            al_number=_parsed_int(post.get('al_number')),
+            we_book=post.get('we_book') == 'on',
+            we_clean=post.get('we_clean') == 'on',
+            booking_com_id=post.get('booking_com_id', '').strip(),
+            airbnb_id=post.get('airbnb_id', '').strip(),
+            vrbo_id=post.get('vrbo_id', '').strip(),
+            standard_cleaning_fee=_parsed_decimal(post.get('standard_cleaning_fee')) or 0,
+        )
+        try:
+            property.full_clean()
+        except ValidationError as error:
+            messages.error(request, '; '.join(error.messages))
+            return render(request, self.template_name, _property_form_context())
+        property.save()
+        messages.success(request, "Property created.")
+        return redirect('staff:property_detail', pk=property.pk)
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class StaffPropertyDetailView(View):
+    """PIMS-style "Change Property" page - one panel per related model (info, specification,
+    amenities, SEF details), plus two add/delete-only lists (rate card, iCal import links) and a
+    photo gallery, matching the append-then-delete pattern already used for Deductions/Owner
+    Payments elsewhere in this app rather than in-place editing of list rows. Every OneToOne
+    side-model (PropertySpec/Amenity/SEFDetail) is get_or_create'd on load - all three have
+    defaults for every field, so a freshly created Property with none of them yet still renders
+    a fully fillable form instead of an empty-state message."""
+    template_name = 'staff/property_detail.html'
+
+    def _get_property(self, pk):
+        property = Property.objects.filter(pk=pk).first()
+        if property is None:
+            raise Http404("No property found.")
+        return property
+
+    def get(self, request, pk, *args, **kwargs):
+        property = self._get_property(pk)
+        return render(request, self.template_name, self._context(property))
+
+    def post(self, request, pk, *args, **kwargs):
+        property = self._get_property(pk)
+        handler = {
+            'update_property_info': self._update_property_info,
+            'update_specification': self._update_specification,
+            'update_amenities': self._update_amenities,
+            'update_sef': self._update_sef,
+            'add_price': self._add_price,
+            'delete_price': self._delete_price,
+            'add_ical_link': self._add_ical_link,
+            'delete_ical_link': self._delete_ical_link,
+            'add_image': self._add_image,
+            'delete_image': self._delete_image,
+        }.get(request.POST.get('action'))
+        if handler is not None:
+            handler(request, property)
+        return redirect('staff:property_detail', pk=property.pk)
+
+    def _context(self, property):
+        specs, _ = PropertySpec.objects.get_or_create(property=property)
+        amenities, _ = Amenity.objects.get_or_create(property=property)
+        sef_details, _ = SEFDetail.objects.get_or_create(property=property)
+        context = {
+            'property': property,
+            'specs': specs,
+            'amenities': amenities,
+            'amenity_fields': AMENITY_BOOLEAN_FIELDS,
+            'sef_details': sef_details,
+            'ical_links': property.ical_links.all(),
+            'ical_sources': iCalLink.Source.choices,
+            'images': property.images.all(),
+            'prices': property.prices.order_by('start_date'),
+        }
+        context.update(_property_form_context())
+        return context
+
+    def _update_property_info(self, request, property):
+        post = request.POST
+        property.title = post.get('title', property.title).strip() or property.title
+        property.short_title = post.get('short_title', property.short_title).strip() or property.short_title
+        property.door_number = post.get('door_number', '').strip()
+        property.owner_id = post.get('owner') or None
+        property.manager_id = post.get('manager') or None
+        property.location_id = post.get('location') or None
+        property.accountant_id = post.get('accountant') or None
+        property.al_number = _parsed_int(post.get('al_number'))
+        property.we_book = post.get('we_book') == 'on'
+        property.we_clean = post.get('we_clean') == 'on'
+        property.booking_com_id = post.get('booking_com_id', '').strip()
+        property.airbnb_id = post.get('airbnb_id', '').strip()
+        property.vrbo_id = post.get('vrbo_id', '').strip()
+        fee = _parsed_decimal(post.get('standard_cleaning_fee'))
+        if fee is not None:
+            property.standard_cleaning_fee = fee
+        try:
+            property.full_clean()
+        except ValidationError as error:
+            messages.error(request, '; '.join(error.messages))
+            return
+        property.save()
+        messages.success(request, "Property info updated.")
+
+    def _update_specification(self, request, property):
+        specs, _ = PropertySpec.objects.get_or_create(property=property)
+        post = request.POST
+        specs.is_sea_view = post.get('is_sea_view') == 'on'
+        specs.is_pool_view = post.get('is_pool_view') == 'on'
+        specs.is_upper_floor = post.get('is_upper_floor') == 'on'
+        specs.is_beachfront = post.get('is_beachfront') == 'on'
+        specs.children_allowed = post.get('children_allowed') == 'on'
+        specs.pets_allowed = post.get('pets_allowed') == 'on'
+        for field in ('bedrooms', 'bathrooms', 'half_bathrooms', 'square_metres', 'minimum_nights',
+                      'max_adults', 'max_guests'):
+            value = _parsed_int(post.get(field))
+            if value is not None:
+                setattr(specs, field, value)
+        specs.description = post.get('description', '').strip()
+        specs.save()
+        messages.success(request, "Property specification updated.")
+
+    def _update_amenities(self, request, property):
+        amenities, _ = Amenity.objects.get_or_create(property=property)
+        post = request.POST
+        for field, _label in AMENITY_BOOLEAN_FIELDS:
+            setattr(amenities, field, post.get(field) == 'on')
+        for field in ('double_beds', 'single_beds'):
+            value = _parsed_int(post.get(field))
+            if value is not None:
+                setattr(amenities, field, value)
+        bed_sizes = post.get('bed_sizes', '').strip()
+        if bed_sizes:
+            amenities.bed_sizes = bed_sizes
+        amenities.save()
+        messages.success(request, "Amenities updated.")
+
+    def _update_sef(self, request, property):
+        sef_details, _ = SEFDetail.objects.get_or_create(property=property)
+        post = request.POST
+        sef_details.unidade_hoteleira = post.get('unidade_hoteleira', '').strip()
+        sef_details.estabelecimento = post.get('estabelecimento', '').strip()
+        sef_details.chave_de_autenticacao = post.get('chave_de_autenticacao', '').strip()
+        sef_details.save()
+        messages.success(request, "SEF details updated.")
+
+    def _add_price(self, request, property):
+        post = request.POST
+        start_date = _parsed_date(post.get('start_date'))
+        end_date = _parsed_date(post.get('end_date'))
+        if not start_date or not end_date:
+            messages.error(request, "A price line needs both a start and end date.")
+            return
+        price = Price(
+            property=property,
+            name=post.get('name', '').strip() or 'Rate',
+            start_date=start_date,
+            end_date=end_date,
+            rate=_parsed_decimal(post.get('rate')) or 0,
+            weekly_discount_percent=_parsed_decimal(post.get('weekly_discount_percent')) or 0,
+            last_minute_discount_percent=_parsed_decimal(post.get('last_minute_discount_percent')) or 0,
+            last_minute_discount_days=_parsed_int(post.get('last_minute_discount_days')) or 7,
+            monthly_discount_percent=_parsed_decimal(post.get('monthly_discount_percent')) or 0,
+            extra_adult_rate=_parsed_decimal(post.get('extra_adult_rate')) or 0,
+            extra_child_rate=_parsed_decimal(post.get('extra_child_rate')) or 0,
+        )
+        try:
+            price.full_clean()
+        except ValidationError as error:
+            messages.error(request, '; '.join(error.messages))
+            return
+        price.save()
+        messages.success(request, "Price line added.")
+
+    def _delete_price(self, request, property):
+        Price.objects.filter(pk=request.POST.get('price_id'), property=property).delete()
+        messages.success(request, "Price line deleted.")
+
+    def _add_ical_link(self, request, property):
+        post = request.POST
+        source = post.get('ical_source', '').strip()
+        url = post.get('ical_url', '').strip()
+        if not url:
+            messages.error(request, "An iCal link needs a URL.")
+            return
+        iCalLink.objects.create(
+            property=property, ical_source=source or None, ical_url=url,
+        )
+        messages.success(request, "iCal link added.")
+
+    def _delete_ical_link(self, request, property):
+        iCalLink.objects.filter(pk=request.POST.get('link_id'), property=property).delete()
+        messages.success(request, "iCal link deleted.")
+
+    def _add_image(self, request, property):
+        image_file = request.FILES.get('image')
+        if not image_file:
+            messages.error(request, "Choose a file to upload.")
+            return
+        image = PropertyImage(
+            property=property, image=image_file, caption=request.POST.get('caption', '').strip(),
+        )
+        try:
+            image.full_clean()
+        except ValidationError as error:
+            messages.error(request, '; '.join(error.messages))
+            return
+        image.save()
+        messages.success(request, "Photo added.")
+
+    def _delete_image(self, request, property):
+        PropertyImage.objects.filter(pk=request.POST.get('image_id'), property=property).delete()
+        messages.success(request, "Photo deleted.")
 
 
 @method_decorator(staff_member_required, name='dispatch')

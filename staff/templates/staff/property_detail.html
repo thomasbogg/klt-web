@@ -1,0 +1,329 @@
+{% load static %}
+{% load staff_extras %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ property }} | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">{{ property }}</h1>
+            <a href="{% url 'staff:property_list' %}" class="staff-header-link">&larr; All properties</a>
+        </header>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="staff-panel-grid">
+            <div class="staff-panel-column">
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Property info</h2>
+                    <form method="post" class="staff-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_property_info">
+                        <label class="staff-field">Title
+                            <input type="text" name="title" class="staff-input" value="{{ property.title }}" required>
+                        </label>
+                        <label class="staff-field">Short title
+                            <input type="text" name="short_title" class="staff-input" value="{{ property.short_title }}" required>
+                        </label>
+                        <label class="staff-field">Door number
+                            <input type="text" name="door_number" class="staff-input" value="{{ property.door_number|default:'' }}">
+                        </label>
+                        <label class="staff-field">Location
+                            <select name="location" class="staff-input">
+                                <option value="">-</option>
+                                {% for location in locations %}
+                                <option value="{{ location.pk }}" {% if property.location_id == location.pk %}selected{% endif %}>{{ location }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label class="staff-field">Owner
+                            <select name="owner" class="staff-input">
+                                <option value="">-</option>
+                                {% for owner in owners %}
+                                <option value="{{ owner.pk }}" {% if property.owner_id == owner.pk %}selected{% endif %}>{{ owner }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label class="staff-field">Manager
+                            <select name="manager" class="staff-input">
+                                <option value="">-</option>
+                                {% for manager in managers %}
+                                <option value="{{ manager.pk }}" {% if property.manager_id == manager.pk %}selected{% endif %}>{{ manager }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label class="staff-field">Accountant
+                            <select name="accountant" class="staff-input">
+                                <option value="">-</option>
+                                {% for accountant in accountants %}
+                                <option value="{{ accountant.pk }}" {% if property.accountant_id == accountant.pk %}selected{% endif %}>{{ accountant }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label class="staff-field">AL number
+                            <input type="text" name="al_number" class="staff-input" value="{{ property.al_number|default:'' }}">
+                        </label>
+                        <label class="staff-checkbox-label">
+                            <input type="checkbox" name="we_book" {% if property.we_book %}checked{% endif %}> We book
+                        </label>
+                        <label class="staff-checkbox-label">
+                            <input type="checkbox" name="we_clean" {% if property.we_clean %}checked{% endif %}> We clean
+                        </label>
+                        <label class="staff-field">Booking.com ID
+                            <input type="text" name="booking_com_id" class="staff-input" value="{{ property.booking_com_id|default:'' }}">
+                        </label>
+                        <label class="staff-field">Airbnb ID
+                            <input type="text" name="airbnb_id" class="staff-input" value="{{ property.airbnb_id|default:'' }}">
+                        </label>
+                        <label class="staff-field">Vrbo ID
+                            <input type="text" name="vrbo_id" class="staff-input" value="{{ property.vrbo_id|default:'' }}">
+                        </label>
+                        <label class="staff-field">Standard cleaning fee
+                            <input type="text" name="standard_cleaning_fee" class="staff-input" value="{{ property.standard_cleaning_fee }}">
+                        </label>
+                        <label class="staff-field">iCal export token
+                            <input type="text" class="staff-input" value="{{ property.ical_export_token }}" readonly>
+                        </label>
+                        <button type="submit" class="staff-button">Update</button>
+                    </form>
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Property specification</h2>
+                    <form method="post" class="staff-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_specification">
+                        <div class="staff-field-row">
+                            <label class="staff-field">Bedrooms
+                                <input type="number" name="bedrooms" min="0" class="staff-input" value="{{ specs.bedrooms }}">
+                            </label>
+                            <label class="staff-field">Bathrooms
+                                <input type="number" name="bathrooms" min="0" class="staff-input" value="{{ specs.bathrooms }}">
+                            </label>
+                            <label class="staff-field">Half baths
+                                <input type="number" name="half_bathrooms" min="0" class="staff-input" value="{{ specs.half_bathrooms }}">
+                            </label>
+                        </div>
+                        <div class="staff-field-row">
+                            <label class="staff-field">Square metres
+                                <input type="number" name="square_metres" min="0" class="staff-input" value="{{ specs.square_metres }}">
+                            </label>
+                            <label class="staff-field">Minimum nights
+                                <input type="number" name="minimum_nights" min="0" class="staff-input" value="{{ specs.minimum_nights }}">
+                            </label>
+                        </div>
+                        <div class="staff-field-row">
+                            <label class="staff-field">Max adults
+                                <input type="number" name="max_adults" min="0" class="staff-input" value="{{ specs.max_adults }}">
+                            </label>
+                            <label class="staff-field">Max guests
+                                <input type="number" name="max_guests" min="0" class="staff-input" value="{{ specs.max_guests }}">
+                            </label>
+                        </div>
+                        <label class="staff-checkbox-label">
+                            <input type="checkbox" name="is_sea_view" {% if specs.is_sea_view %}checked{% endif %}> Sea view
+                        </label>
+                        <label class="staff-checkbox-label">
+                            <input type="checkbox" name="is_pool_view" {% if specs.is_pool_view %}checked{% endif %}> Pool view
+                        </label>
+                        <label class="staff-checkbox-label">
+                            <input type="checkbox" name="is_upper_floor" {% if specs.is_upper_floor %}checked{% endif %}> Upper floor
+                        </label>
+                        <label class="staff-checkbox-label">
+                            <input type="checkbox" name="is_beachfront" {% if specs.is_beachfront %}checked{% endif %}> Beachfront
+                        </label>
+                        <label class="staff-checkbox-label">
+                            <input type="checkbox" name="children_allowed" {% if specs.children_allowed %}checked{% endif %}> Children allowed
+                        </label>
+                        <label class="staff-checkbox-label">
+                            <input type="checkbox" name="pets_allowed" {% if specs.pets_allowed %}checked{% endif %}> Pets allowed
+                        </label>
+                        <label class="staff-field">Description
+                            <textarea name="description" class="staff-input" rows="4">{{ specs.description|default:'' }}</textarea>
+                        </label>
+                        <button type="submit" class="staff-button">Update</button>
+                    </form>
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">SEF details</h2>
+                    <form method="post" class="staff-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_sef">
+                        <label class="staff-field">Unidade hoteleira
+                            <input type="text" name="unidade_hoteleira" class="staff-input" value="{{ sef_details.unidade_hoteleira|default:'' }}">
+                        </label>
+                        <label class="staff-field">Estabelecimento
+                            <input type="text" name="estabelecimento" class="staff-input" value="{{ sef_details.estabelecimento|default:'' }}">
+                        </label>
+                        <label class="staff-field">Chave de autenticação
+                            <input type="text" name="chave_de_autenticacao" class="staff-input" value="{{ sef_details.chave_de_autenticacao|default:'' }}">
+                        </label>
+                        <button type="submit" class="staff-button">Update</button>
+                    </form>
+                </section>
+            </div>
+
+            <div class="staff-panel-column">
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Amenities</h2>
+                    <form method="post" class="staff-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_amenities">
+                        <div class="staff-field-row">
+                            <label class="staff-field">Double beds
+                                <input type="number" name="double_beds" min="0" class="staff-input" value="{{ amenities.double_beds }}">
+                            </label>
+                            <label class="staff-field">Single beds
+                                <input type="number" name="single_beds" min="0" class="staff-input" value="{{ amenities.single_beds }}">
+                            </label>
+                        </div>
+                        <label class="staff-field">Bed sizes
+                            <input type="text" name="bed_sizes" class="staff-input" value="{{ amenities.bed_sizes }}">
+                        </label>
+                        <div class="staff-amenity-grid">
+                            {% for field, label in amenity_fields %}
+                            <label class="staff-checkbox-label">
+                                <input type="checkbox" name="{{ field }}" {% if amenities|get_attr:field %}checked{% endif %}> {{ label }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                        <button type="submit" class="staff-button">Update</button>
+                    </form>
+                </section>
+            </div>
+
+            <div class="staff-panel-column">
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Rate card</h2>
+                    <table class="staff-price-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th><th>Start</th><th>End</th><th>Rate</th><th>Weekly %</th>
+                                <th>Monthly %</th><th>Last-min %</th><th>Last-min days</th>
+                                <th>Extra adult</th><th>Extra child</th><th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for price in prices %}
+                            <tr>
+                                <td>{{ price.name }}</td>
+                                <td>{{ price.start_date }}</td>
+                                <td>{{ price.end_date }}</td>
+                                <td>&euro;{{ price.rate }}</td>
+                                <td>{{ price.weekly_discount_percent }}</td>
+                                <td>{{ price.monthly_discount_percent }}</td>
+                                <td>{{ price.last_minute_discount_percent }}</td>
+                                <td>{{ price.last_minute_discount_days }}</td>
+                                <td>&euro;{{ price.extra_adult_rate }}</td>
+                                <td>&euro;{{ price.extra_child_rate }}</td>
+                                <td>
+                                    <form method="post" class="staff-inline-delete">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="delete_price">
+                                        <input type="hidden" name="price_id" value="{{ price.pk }}">
+                                        <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="11" class="staff-empty">No price lines yet.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    <form method="post" class="staff-inline-form staff-price-add-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="add_price">
+                        <input type="text" name="name" placeholder="Name" class="staff-input staff-input-small">
+                        <input type="date" name="start_date" class="staff-input staff-input-small">
+                        <input type="date" name="end_date" class="staff-input staff-input-small">
+                        <input type="text" name="rate" placeholder="Rate" class="staff-input staff-input-small">
+                        <input type="text" name="weekly_discount_percent" placeholder="Weekly %" class="staff-input staff-input-small">
+                        <input type="text" name="monthly_discount_percent" placeholder="Monthly %" class="staff-input staff-input-small">
+                        <input type="text" name="last_minute_discount_percent" placeholder="Last-min %" class="staff-input staff-input-small">
+                        <input type="text" name="last_minute_discount_days" placeholder="Last-min days" class="staff-input staff-input-small">
+                        <input type="text" name="extra_adult_rate" placeholder="Extra adult" class="staff-input staff-input-small">
+                        <input type="text" name="extra_child_rate" placeholder="Extra child" class="staff-input staff-input-small">
+                        <button type="submit" class="staff-button staff-button-small">+ Add price line</button>
+                    </form>
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">iCal import links</h2>
+                    <ul class="staff-list">
+                        {% for link in ical_links %}
+                        <li>
+                            {{ link.get_ical_source_display|default:"Unknown source" }} -
+                            <a href="{{ link.ical_url }}">{{ link.ical_url }}</a>
+                            {% if link.last_synced %}<span class="staff-list-date">last synced {{ link.last_synced|date:'d M Y H:i' }}</span>{% endif %}
+                            <form method="post" class="staff-inline-delete">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="delete_ical_link">
+                                <input type="hidden" name="link_id" value="{{ link.pk }}">
+                                <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                            </form>
+                        </li>
+                        {% empty %}
+                        <li class="staff-empty">No iCal import links yet.</li>
+                        {% endfor %}
+                    </ul>
+                    <form method="post" class="staff-inline-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="add_ical_link">
+                        <select name="ical_source" class="staff-input staff-input-small">
+                            <option value="">-</option>
+                            {% for value, label in ical_sources %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <input type="url" name="ical_url" placeholder="https://..." class="staff-input">
+                        <button type="submit" class="staff-button staff-button-small">+ Add iCal link</button>
+                    </form>
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Photos</h2>
+                    <div class="staff-photo-grid">
+                        {% for image in images %}
+                        <div class="staff-photo-card">
+                            <img src="{{ image.image.url }}" alt="{{ image.caption|default:property.title }}">
+                            {% if image.caption %}<p class="staff-photo-caption">{{ image.caption }}</p>{% endif %}
+                            <form method="post" class="staff-inline-delete">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="delete_image">
+                                <input type="hidden" name="image_id" value="{{ image.pk }}">
+                                <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                            </form>
+                        </div>
+                        {% empty %}
+                        <p class="staff-empty">No photos uploaded yet.</p>
+                        {% endfor %}
+                    </div>
+                    <form method="post" enctype="multipart/form-data" class="staff-inline-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="add_image">
+                        <input type="file" name="image" accept="image/*" class="staff-input">
+                        <input type="text" name="caption" placeholder="Caption (optional)" class="staff-input">
+                        <button type="submit" class="staff-button staff-button-small">+ Add photo</button>
+                    </form>
+                </section>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
