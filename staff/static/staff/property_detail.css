@@ -1,3 +1,88 @@
+/* CSS-only tab switcher: the seven radios are direct children of .staff-property-layout, same
+   level as .staff-property-sidebar and .staff-property-content, so a single :checked sibling
+   selector can reach both the matching label (to highlight it) and the matching pane (to show
+   it) without any JS - see property_detail.html for the markup this pairs with. */
+.staff-property-layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 24px;
+    align-items: start;
+}
+
+.staff-property-tab-radio {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.staff-property-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: var(--primary-box-shadow);
+    padding: 8px;
+    position: sticky;
+    top: 20px;
+}
+
+.staff-property-tab-label {
+    display: block;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-family: var(--secondary-font);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--secondary-color);
+    cursor: pointer;
+}
+
+.staff-property-tab-label:hover {
+    background: #f5f5f5;
+}
+
+.staff-property-content {
+    min-width: 0;
+}
+
+.staff-property-pane {
+    display: none;
+}
+
+#panel-info:checked ~ .staff-property-content #pane-info,
+#panel-spec:checked ~ .staff-property-content #pane-spec,
+#panel-amenities:checked ~ .staff-property-content #pane-amenities,
+#panel-sef:checked ~ .staff-property-content #pane-sef,
+#panel-rates:checked ~ .staff-property-content #pane-rates,
+#panel-ical:checked ~ .staff-property-content #pane-ical,
+#panel-photos:checked ~ .staff-property-content #pane-photos {
+    display: block;
+}
+
+#panel-info:checked ~ .staff-property-sidebar label[for="panel-info"],
+#panel-spec:checked ~ .staff-property-sidebar label[for="panel-spec"],
+#panel-amenities:checked ~ .staff-property-sidebar label[for="panel-amenities"],
+#panel-sef:checked ~ .staff-property-sidebar label[for="panel-sef"],
+#panel-rates:checked ~ .staff-property-sidebar label[for="panel-rates"],
+#panel-ical:checked ~ .staff-property-sidebar label[for="panel-ical"],
+#panel-photos:checked ~ .staff-property-sidebar label[for="panel-photos"] {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+@media (max-width: 800px) {
+    .staff-property-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .staff-property-sidebar {
+        position: static;
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+}
+
 .staff-amenity-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);

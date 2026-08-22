@@ -720,7 +720,7 @@ class StaffPropertyDetailViewTests(TestCase):
             'location': self.location.pk, 'accountant': self.accountant.pk, 'al_number': '9999',
             'we_book': 'on', 'booking_com_id': 'BDC123', 'standard_cleaning_fee': '90.00',
         })
-        self.assertRedirects(response, self.url)
+        self.assertRedirects(response, f'{self.url}?panel=info')
         self.property.refresh_from_db()
         self.assertEqual(self.property.door_number, '12B')
         self.assertEqual(self.property.owner_id, self.owner.pk)
@@ -825,4 +825,22 @@ class StaffPropertyDetailViewTests(TestCase):
 
     def test_unknown_action_is_a_noop(self):
         response = self.client.post(self.url, {'action': 'not_a_real_action'})
-        self.assertRedirects(response, self.url)
+        self.assertRedirects(response, f'{self.url}?panel=info')
+
+    def test_default_panel_is_info(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['active_panel'], 'info')
+
+    def test_panel_query_param_selects_active_panel(self):
+        response = self.client.get(self.url, {'panel': 'amenities'})
+        self.assertEqual(response.context['active_panel'], 'amenities')
+
+    def test_unrecognised_panel_query_param_falls_back_to_info(self):
+        response = self.client.get(self.url, {'panel': 'not-a-real-panel'})
+        self.assertEqual(response.context['active_panel'], 'info')
+
+    def test_save_redirects_back_to_the_panel_it_came_from(self):
+        response = self.client.post(self.url, {
+            'action': 'update_amenities', 'wifi': 'on',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=amenities')

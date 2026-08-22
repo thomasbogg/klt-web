@@ -7,6 +7,7 @@ from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
@@ -283,12 +284,32 @@ class StaffPropertyDetailView(View):
             raise Http404("No property found.")
         return property
 
+    # Maps each POST action to the sidebar tab it belongs to, so saving/deleting something in a
+    # given panel redirects back to that same panel (via ?panel=) instead of dropping the staffer
+    # back on "Property info" every time - see property_detail.html/.css for the tabs themselves.
+    ACTION_PANELS = {
+        'update_property_info': 'info',
+        'update_specification': 'spec',
+        'update_amenities': 'amenities',
+        'update_sef': 'sef',
+        'add_price': 'rates',
+        'delete_price': 'rates',
+        'add_ical_link': 'ical',
+        'delete_ical_link': 'ical',
+        'add_image': 'photos',
+        'delete_image': 'photos',
+    }
+    PANELS = ('info', 'spec', 'amenities', 'sef', 'rates', 'ical', 'photos')
+
     def get(self, request, pk, *args, **kwargs):
         property = self._get_property(pk)
-        return render(request, self.template_name, self._context(property))
+        panel = request.GET.get('panel', '')
+        active_panel = panel if panel in self.PANELS else 'info'
+        return render(request, self.template_name, self._context(property, active_panel))
 
     def post(self, request, pk, *args, **kwargs):
         property = self._get_property(pk)
+        action = request.POST.get('action')
         handler = {
             'update_property_info': self._update_property_info,
             'update_specification': self._update_specification,
@@ -300,17 +321,19 @@ class StaffPropertyDetailView(View):
             'delete_ical_link': self._delete_ical_link,
             'add_image': self._add_image,
             'delete_image': self._delete_image,
-        }.get(request.POST.get('action'))
+        }.get(action)
         if handler is not None:
             handler(request, property)
-        return redirect('staff:property_detail', pk=property.pk)
+        panel = self.ACTION_PANELS.get(action, 'info')
+        return redirect(f"{reverse('staff:property_detail', kwargs={'pk': property.pk})}?panel={panel}")
 
-    def _context(self, property):
+    def _context(self, property, active_panel):
         specs, _ = PropertySpec.objects.get_or_create(property=property)
         amenities, _ = Amenity.objects.get_or_create(property=property)
         sef_details, _ = SEFDetail.objects.get_or_create(property=property)
         context = {
             'property': property,
+            'active_panel': active_panel,
             'specs': specs,
             'amenities': amenities,
             'amenity_fields': AMENITY_BOOLEAN_FIELDS,

@@ -27,9 +27,32 @@
         </div>
         {% endif %}
 
-        <div class="staff-panel-grid">
-            <div class="staff-panel-column">
-                <section class="staff-panel">
+        {% comment %}
+        CSS-only tabs: each radio's checked state (set server-side from ?panel=, see
+        StaffPropertyDetailView) drives which .staff-property-pane shows and which sidebar
+        label is highlighted, entirely via sibling selectors in property_detail.css - no JS.
+        {% endcomment %}
+        <div class="staff-property-layout">
+            <input type="radio" name="property-panel" id="panel-info" class="staff-property-tab-radio" {% if active_panel == 'info' %}checked{% endif %}>
+            <input type="radio" name="property-panel" id="panel-spec" class="staff-property-tab-radio" {% if active_panel == 'spec' %}checked{% endif %}>
+            <input type="radio" name="property-panel" id="panel-amenities" class="staff-property-tab-radio" {% if active_panel == 'amenities' %}checked{% endif %}>
+            <input type="radio" name="property-panel" id="panel-sef" class="staff-property-tab-radio" {% if active_panel == 'sef' %}checked{% endif %}>
+            <input type="radio" name="property-panel" id="panel-rates" class="staff-property-tab-radio" {% if active_panel == 'rates' %}checked{% endif %}>
+            <input type="radio" name="property-panel" id="panel-ical" class="staff-property-tab-radio" {% if active_panel == 'ical' %}checked{% endif %}>
+            <input type="radio" name="property-panel" id="panel-photos" class="staff-property-tab-radio" {% if active_panel == 'photos' %}checked{% endif %}>
+
+            <nav class="staff-property-sidebar">
+                <label for="panel-info" class="staff-property-tab-label">Property info</label>
+                <label for="panel-spec" class="staff-property-tab-label">Property specification</label>
+                <label for="panel-amenities" class="staff-property-tab-label">Amenities</label>
+                <label for="panel-sef" class="staff-property-tab-label">SEF details</label>
+                <label for="panel-rates" class="staff-property-tab-label">Rate card</label>
+                <label for="panel-ical" class="staff-property-tab-label">iCal import links</label>
+                <label for="panel-photos" class="staff-property-tab-label">Photos</label>
+            </nav>
+
+            <div class="staff-property-content">
+                <section class="staff-panel staff-property-pane" id="pane-info">
                     <h2 class="staff-panel-title">Property info</h2>
                     <form method="post" class="staff-form">
                         {% csrf_token %}
@@ -103,7 +126,7 @@
                     </form>
                 </section>
 
-                <section class="staff-panel">
+                <section class="staff-panel staff-property-pane" id="pane-spec">
                     <h2 class="staff-panel-title">Property specification</h2>
                     <form method="post" class="staff-form">
                         {% csrf_token %}
@@ -160,27 +183,7 @@
                     </form>
                 </section>
 
-                <section class="staff-panel">
-                    <h2 class="staff-panel-title">SEF details</h2>
-                    <form method="post" class="staff-form">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="update_sef">
-                        <label class="staff-field">Unidade hoteleira
-                            <input type="text" name="unidade_hoteleira" class="staff-input" value="{{ sef_details.unidade_hoteleira|default:'' }}">
-                        </label>
-                        <label class="staff-field">Estabelecimento
-                            <input type="text" name="estabelecimento" class="staff-input" value="{{ sef_details.estabelecimento|default:'' }}">
-                        </label>
-                        <label class="staff-field">Chave de autenticação
-                            <input type="text" name="chave_de_autenticacao" class="staff-input" value="{{ sef_details.chave_de_autenticacao|default:'' }}">
-                        </label>
-                        <button type="submit" class="staff-button">Update</button>
-                    </form>
-                </section>
-            </div>
-
-            <div class="staff-panel-column">
-                <section class="staff-panel">
+                <section class="staff-panel staff-property-pane" id="pane-amenities">
                     <h2 class="staff-panel-title">Amenities</h2>
                     <form method="post" class="staff-form">
                         {% csrf_token %}
@@ -206,10 +209,26 @@
                         <button type="submit" class="staff-button">Update</button>
                     </form>
                 </section>
-            </div>
 
-            <div class="staff-panel-column">
-                <section class="staff-panel">
+                <section class="staff-panel staff-property-pane" id="pane-sef">
+                    <h2 class="staff-panel-title">SEF details</h2>
+                    <form method="post" class="staff-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_sef">
+                        <label class="staff-field">Unidade hoteleira
+                            <input type="text" name="unidade_hoteleira" class="staff-input" value="{{ sef_details.unidade_hoteleira|default:'' }}">
+                        </label>
+                        <label class="staff-field">Estabelecimento
+                            <input type="text" name="estabelecimento" class="staff-input" value="{{ sef_details.estabelecimento|default:'' }}">
+                        </label>
+                        <label class="staff-field">Chave de autenticação
+                            <input type="text" name="chave_de_autenticacao" class="staff-input" value="{{ sef_details.chave_de_autenticacao|default:'' }}">
+                        </label>
+                        <button type="submit" class="staff-button">Update</button>
+                    </form>
+                </section>
+
+                <section class="staff-panel staff-property-pane" id="pane-rates">
                     <h2 class="staff-panel-title">Rate card</h2>
                     <table class="staff-price-table">
                         <thead>
@@ -263,7 +282,7 @@
                     </form>
                 </section>
 
-                <section class="staff-panel">
+                <section class="staff-panel staff-property-pane" id="pane-ical">
                     <h2 class="staff-panel-title">iCal import links</h2>
                     <ul class="staff-list">
                         {% for link in ical_links %}
@@ -296,7 +315,7 @@
                     </form>
                 </section>
 
-                <section class="staff-panel">
+                <section class="staff-panel staff-property-pane" id="pane-photos">
                     <h2 class="staff-panel-title">Photos</h2>
                     <div class="staff-photo-grid">
                         {% for image in images %}
