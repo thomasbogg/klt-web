@@ -449,6 +449,16 @@
     display: none;
 }
 
+/* Extra breathing room between the arrival/departure method dropdown, its field-group row, and
+   the rows after it (check-in choice, "anything else" note) - scoped to this page's <form> class
+   rather than the bare .transfer-grid/.welcome-pack-choice-group/.welcome-pack-field rules, which
+   are shared with the Extras page and shouldn't change spacing there. */
+.arrival-departure-form .transfer-grid,
+.arrival-departure-form .welcome-pack-choice-group,
+.arrival-departure-form .welcome-pack-field {
+    margin-top: 24px;
+}
+
 .transfer-field {
     display: flex;
     flex-direction: column;
