@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="module" src="{% static 'bookings/arrival_departure.js' %}"></script>
 </head>
 <header>
     {% include 'header/header.html' %}
@@ -40,16 +41,46 @@
 
                 <section class="details-section">
                     <h2 class="details-section-title">Arrival</h2>
-                    <p class="details-note">Faro Airport only.</p>
+                    <p class="details-note">
+                        Tell us how you'll be travelling to Albufeira on {{ booking.arrival_date }} -
+                        if you're flying in the day before, tell us about the day itself, not the earlier flight.
+                    </p>
 
-                    <div class="transfer-grid">
+                    <div class="transfer-field">
+                        <label for="arrival_method">How are you travelling?</label>
+                        <select name="arrival_method" id="arrival_method" class="reserve-input">
+                            {% for value, label in travel_methods %}
+                            <option value="{{ value }}" {% if arrival_method == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="transfer-grid details-section-hidden" data-methods="flight_faro flight_lisbon">
                         <div class="transfer-field">
                             <label for="arrival_flight_number">Flight number</label>
                             <input type="text" name="arrival_flight_number" id="arrival_flight_number" class="reserve-input" value="{{ arrival_flight_number }}" placeholder="e.g. TP1234">
                         </div>
                         <div class="transfer-field">
-                            <label for="arrival_time">Estimated arrival time</label>
-                            <input type="time" name="arrival_time" id="arrival_time" class="reserve-input" value="{{ arrival_time }}">
+                            <label for="arrival_flight_time">Landing time</label>
+                            <input type="time" name="arrival_time" id="arrival_flight_time" class="reserve-input arrival-time-input" value="{{ arrival_time }}">
+                        </div>
+                    </div>
+
+                    <div class="transfer-grid details-section-hidden" data-methods="bus train">
+                        <div class="transfer-field">
+                            <label for="arrival_transit_time">Expected time in Albufeira</label>
+                            <input type="time" name="arrival_time" id="arrival_transit_time" class="reserve-input arrival-time-input" value="{{ arrival_time }}">
+                        </div>
+                    </div>
+
+                    <div class="transfer-grid details-section-hidden" data-methods="driving">
+                        <div class="transfer-field">
+                            <label for="arrival_travelling_from">Travelling from</label>
+                            <input type="text" name="arrival_travelling_from" id="arrival_travelling_from" class="reserve-input" value="{{ arrival_travelling_from }}" placeholder="e.g. Lisbon">
+                        </div>
+                        <div class="transfer-field">
+                            <label for="arrival_driving_time">Estimated arrival time</label>
+                            <input type="time" name="arrival_time" id="arrival_driving_time" class="reserve-input arrival-time-input" value="{{ arrival_time }}">
                         </div>
                     </div>
 
@@ -67,16 +98,46 @@
 
                 <section class="details-section">
                     <h2 class="details-section-title">Departure</h2>
-                    <p class="details-note">Faro Airport only.</p>
+                    <p class="details-note">
+                        Tell us how you'll be leaving Albufeira on {{ booking.departure_date }} -
+                        if you're staying elsewhere overnight afterwards, tell us about the day itself, not the later flight.
+                    </p>
 
-                    <div class="transfer-grid">
+                    <div class="transfer-field">
+                        <label for="departure_method">How are you travelling?</label>
+                        <select name="departure_method" id="departure_method" class="reserve-input">
+                            {% for value, label in travel_methods %}
+                            <option value="{{ value }}" {% if departure_method == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="transfer-grid details-section-hidden" data-methods="flight_faro flight_lisbon">
                         <div class="transfer-field">
                             <label for="departure_flight_number">Flight number</label>
                             <input type="text" name="departure_flight_number" id="departure_flight_number" class="reserve-input" value="{{ departure_flight_number }}" placeholder="e.g. TP1234">
                         </div>
                         <div class="transfer-field">
-                            <label for="departure_time">Estimated departure time</label>
-                            <input type="time" name="departure_time" id="departure_time" class="reserve-input" value="{{ departure_time }}">
+                            <label for="departure_flight_time">Take-off time</label>
+                            <input type="time" name="departure_time" id="departure_flight_time" class="reserve-input departure-time-input" value="{{ departure_time }}">
+                        </div>
+                    </div>
+
+                    <div class="transfer-grid details-section-hidden" data-methods="bus train">
+                        <div class="transfer-field">
+                            <label for="departure_transit_time">Time you need to leave Albufeira</label>
+                            <input type="time" name="departure_time" id="departure_transit_time" class="reserve-input departure-time-input" value="{{ departure_time }}">
+                        </div>
+                    </div>
+
+                    <div class="transfer-grid details-section-hidden" data-methods="driving">
+                        <div class="transfer-field">
+                            <label for="departure_travelling_from">Travelling to</label>
+                            <input type="text" name="departure_travelling_from" id="departure_travelling_from" class="reserve-input" value="{{ departure_travelling_from }}" placeholder="e.g. Lisbon">
+                        </div>
+                        <div class="transfer-field">
+                            <label for="departure_driving_time">Estimated departure time</label>
+                            <input type="time" name="departure_time" id="departure_driving_time" class="reserve-input departure-time-input" value="{{ departure_time }}">
                         </div>
                     </div>
 

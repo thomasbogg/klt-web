@@ -442,6 +442,13 @@
     padding-right: 34px;
 }
 
+/* .transfer-grid's own `display: grid` would otherwise win the cascade over
+   .details-section-hidden (same specificity, declared earlier) when both classes land on the
+   same element, e.g. the arrival/departure method field-groups. */
+.transfer-grid.details-section-hidden {
+    display: none;
+}
+
 .transfer-field {
     display: flex;
     flex-direction: column;

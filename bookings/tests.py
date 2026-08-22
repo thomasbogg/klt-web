@@ -1886,25 +1886,42 @@ class BookingManageArrivalDepartureViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['arrival_flight_number'], '')
+        self.assertEqual(response.context['arrival_method'], 'flight_faro')
+        self.assertEqual(response.context['departure_method'], 'flight_faro')
         self.assertEqual(response.context['check_in_preference'], 'self_check_in')
 
-    def test_post_creates_arrival_and_departure_with_is_faro_true(self):
+    def test_post_creates_arrival_and_departure_with_method(self):
         response = self.client.post(self.url, {
+            'arrival_method': 'flight_lisbon',
             'arrival_flight_number': 'TP123', 'arrival_time': '14:00', 'arrival_details': 'Renting a car',
             'check_in_preference': 'meet_greet',
+            'departure_method': 'flight_faro',
             'departure_flight_number': 'TP456', 'departure_time': '09:00', 'departure_details': 'Early flight',
         })
         self.assertRedirects(response, f"{self.url}?saved=1", fetch_redirect_response=False)
         self.booking.refresh_from_db()
+        self.assertEqual(self.booking.arrival.method, 'flight_lisbon')
         self.assertEqual(self.booking.arrival.flight_number, 'TP123')
         self.assertEqual(self.booking.arrival.time, time(14, 0))
-        self.assertTrue(self.booking.arrival.is_faro)
         self.assertTrue(self.booking.arrival.meet_greet)
         self.assertFalse(self.booking.arrival.self_check_in)
+        self.assertEqual(self.booking.departure.method, 'flight_faro')
         self.assertEqual(self.booking.departure.flight_number, 'TP456')
-        self.assertTrue(self.booking.departure.is_faro)
         self.assertFalse(self.booking.departure.clean)
         self.assertFalse(self.booking.departure.manual_date)
+
+    def test_post_driving_method_saves_travelling_from(self):
+        self.client.post(self.url, {
+            'arrival_method': 'driving', 'arrival_travelling_from': 'Lisbon', 'arrival_time': '16:00',
+        })
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.arrival.method, 'driving')
+        self.assertEqual(self.booking.arrival.travelling_from, 'Lisbon')
+
+    def test_post_invalid_method_falls_back_to_flight_faro(self):
+        self.client.post(self.url, {'arrival_method': 'hot-air-balloon'})
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.arrival.method, 'flight_faro')
 
     def test_check_in_preference_self_check_in_maps_correctly(self):
         self.client.post(self.url, {'check_in_preference': 'self_check_in'})
@@ -1921,9 +1938,14 @@ class BookingManageArrivalDepartureViewTests(TestCase):
         self.assertEqual(self.booking.departure.flight_number, 'TP789')
 
     def test_get_prefills_from_existing_rows(self):
-        Arrival.objects.create(booking=self.booking, flight_number='TP999', meet_greet=True, self_check_in=False)
+        Arrival.objects.create(
+            booking=self.booking, method='driving', travelling_from='Lisbon',
+            flight_number='TP999', meet_greet=True, self_check_in=False,
+        )
         response = self.client.get(self.url)
         self.assertEqual(response.context['arrival_flight_number'], 'TP999')
+        self.assertEqual(response.context['arrival_method'], 'driving')
+        self.assertEqual(response.context['arrival_travelling_from'], 'Lisbon')
         self.assertEqual(response.context['check_in_preference'], 'meet_greet')
 
 

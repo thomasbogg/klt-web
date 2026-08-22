@@ -297,16 +297,26 @@ class BookingCondition(models.Model):
         return self.text[:80]
 
 
+class TravelMethod(models.TextChoices):
+    FLIGHT_FARO = 'flight_faro', 'Flight to Faro'
+    FLIGHT_LISBON = 'flight_lisbon', 'Flight to Lisbon'
+    BUS = 'bus', 'Bus to Albufeira'
+    TRAIN = 'train', 'Train to Ferreiras (Albufeira)'
+    DRIVING = 'driving', 'Driving from another location'
+    OTHER = 'other', 'Other'
+
+
 class Arrival(models.Model):
     """Guest-facing arrival information, self-serve via the Manage Booking hub (see
     bookings/views.py::BookingManageArrivalDepartureView) - editable any time once the deposit is
-    paid, no cutoff. is_faro is always True (Faro is the only airport served, same convention as
-    AirportTransfer) - the guest form doesn't expose a choice. self_check_in/meet_greet are always
-    set together as one fixed either/or choice by the view, never independently, so they can't end
-    up contradicting each other."""
+    paid, no cutoff. method drives which of flight_number/time/travelling_from are relevant -
+    travelling_from is only meaningful for DRIVING. self_check_in/meet_greet are always set
+    together as one fixed either/or choice by the view, never independently, so they can't end up
+    contradicting each other."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='arrival')
+    method = models.CharField(max_length=20, choices=TravelMethod.choices, default=TravelMethod.FLIGHT_FARO)
     flight_number = models.CharField(max_length=50, blank=True, null=True)
-    is_faro = models.BooleanField(blank=True, null=True)
+    travelling_from = models.CharField(max_length=200, blank=True)
     time = models.TimeField(blank=True, null=True)
     details = models.TextField(blank=True, null=True)
     self_check_in = models.BooleanField(blank=True, null=True)
@@ -322,14 +332,16 @@ class Arrival(models.Model):
 
 
 class Departure(models.Model):
-    """Guest-facing departure information, same self-serve role as Arrival above. clean and
-    manual_date are staff/ops-only flags (turnover-cleaning scheduling and a manual-date-override
-    marker respectively) - the guest-facing save path never touches them, only supplies these
-    defaults at row creation so the row can exist before staff have set anything, and never resets
-    them again afterward (see BookingManageArrivalDepartureView)."""
+    """Guest-facing departure information, same self-serve role as Arrival above (see method's
+    docstring there - travelling_from is reused here as "travelling to", same field different
+    context). clean and manual_date are staff/ops-only flags (turnover-cleaning scheduling and a
+    manual-date-override marker respectively) - the guest-facing save path never touches them,
+    only supplies these defaults at row creation so the row can exist before staff have set
+    anything, and never resets them again afterward (see BookingManageArrivalDepartureView)."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='departure')
+    method = models.CharField(max_length=20, choices=TravelMethod.choices, default=TravelMethod.FLIGHT_FARO)
     flight_number = models.CharField(max_length=50, blank=True, null=True)
-    is_faro = models.BooleanField(blank=True, null=True)
+    travelling_from = models.CharField(max_length=200, blank=True)
     time = models.TimeField(blank=True, null=True)
     details = models.TextField(blank=True, null=True)
     clean = models.BooleanField(default=False)

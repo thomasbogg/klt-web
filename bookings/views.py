@@ -13,8 +13,8 @@ from bookings.forms import BookingLookupForm
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, Arrival, BalancePayment,
     Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, Departure, Extra,
-    ExtrasSettings, GuestListAdjustment, RequestType, WelcomePackDrinksChoice, WelcomePackFoodChoice,
-    WelcomePackItem,
+    ExtrasSettings, GuestListAdjustment, RequestType, TravelMethod, WelcomePackDrinksChoice,
+    WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
     booking_confirmation_context, cancel_booking_hold, extras_summary, recalculate_balance_for_party,
@@ -1061,10 +1061,12 @@ class BookingManageArrivalDepartureView(View):
     """Arrival & Departure section of the Manage Booking hub - available any time once the deposit
     is paid, no cutoff (unlike Extras) and no stage distinction (unlike Guest List) - purely
     informational, doesn't touch Charge or any pricing, so there's no reason to lock it the way
-    Extras is locked for fulfilment lead time. Airport is always Faro (mirrors AirportTransfer's
-    already-Faro-only convention - see the plan this was built from), never a guest choice. Check-in
-    preference is one fixed either/or radio, not two independent checkboxes, so self_check_in and
-    meet_greet can never contradict each other. clean/manual_date on Departure are staff/ops-only -
+    Extras is locked for fulfilment lead time. method is a guest-chosen TravelMethod (flight to
+    Faro/Lisbon, bus, train, driving, other) set independently for arrival and departure - falls
+    back to FLIGHT_FARO if missing/invalid, this section has never hard-required fields and
+    shouldn't start now. Check-in preference is one fixed either/or radio, not two independent
+    checkboxes, so self_check_in and meet_greet can never contradict each other. clean/manual_date
+    on Departure are staff/ops-only -
     only ever supplied as creation defaults (via get_or_create), never touched on a later guest
     save, so a staff edit made in admin afterward is never clobbered."""
     template_name = 'bookings/manage_arrival_departure.html'
@@ -1080,11 +1082,16 @@ class BookingManageArrivalDepartureView(View):
         departure = getattr(booking, 'departure', None)
         context = {
             'booking': booking,
+            'travel_methods': TravelMethod.choices,
+            'arrival_method': arrival.method if arrival else TravelMethod.FLIGHT_FARO,
             'arrival_flight_number': arrival.flight_number if arrival else '',
+            'arrival_travelling_from': arrival.travelling_from if arrival else '',
             'arrival_time': arrival.time.strftime('%H:%M') if arrival and arrival.time else '',
             'arrival_details': arrival.details if arrival else '',
             'check_in_preference': 'meet_greet' if (arrival and arrival.meet_greet) else 'self_check_in',
+            'departure_method': departure.method if departure else TravelMethod.FLIGHT_FARO,
             'departure_flight_number': departure.flight_number if departure else '',
+            'departure_travelling_from': departure.travelling_from if departure else '',
             'departure_time': departure.time.strftime('%H:%M') if departure and departure.time else '',
             'departure_details': departure.details if departure else '',
         }
@@ -1107,28 +1114,35 @@ class BookingManageArrivalDepartureView(View):
             except ValueError:
                 return None
 
+        def parsed_method(raw):
+            return raw if raw in TravelMethod.values else TravelMethod.FLIGHT_FARO
+
         check_in_preference = request.POST.get('check_in_preference')
         meet_greet = check_in_preference == 'meet_greet'
 
         arrival, _ = Arrival.objects.get_or_create(booking=booking, defaults={
-            'is_faro': True, 'self_check_in': not meet_greet, 'meet_greet': meet_greet,
+            'self_check_in': not meet_greet, 'meet_greet': meet_greet,
         })
+        arrival.method = parsed_method(request.POST.get('arrival_method'))
         arrival.flight_number = request.POST.get('arrival_flight_number', '').strip()
+        arrival.travelling_from = request.POST.get('arrival_travelling_from', '').strip()
         arrival.time = parsed_time(request.POST.get('arrival_time'))
         arrival.details = request.POST.get('arrival_details', '').strip()
-        arrival.is_faro = True
         arrival.self_check_in = not meet_greet
         arrival.meet_greet = meet_greet
-        arrival.save(update_fields=['flight_number', 'time', 'details', 'is_faro', 'self_check_in', 'meet_greet'])
+        arrival.save(update_fields=[
+            'method', 'flight_number', 'travelling_from', 'time', 'details', 'self_check_in', 'meet_greet',
+        ])
 
         departure, _ = Departure.objects.get_or_create(
-            booking=booking, defaults={'is_faro': True, 'clean': False, 'manual_date': False},
+            booking=booking, defaults={'clean': False, 'manual_date': False},
         )
+        departure.method = parsed_method(request.POST.get('departure_method'))
         departure.flight_number = request.POST.get('departure_flight_number', '').strip()
+        departure.travelling_from = request.POST.get('departure_travelling_from', '').strip()
         departure.time = parsed_time(request.POST.get('departure_time'))
         departure.details = request.POST.get('departure_details', '').strip()
-        departure.is_faro = True
-        departure.save(update_fields=['flight_number', 'time', 'details', 'is_faro'])
+        departure.save(update_fields=['method', 'flight_number', 'travelling_from', 'time', 'details'])
 
         return redirect(f"{reverse('bookings:manage_arrival_departure', args=[booking.reference])}?saved=1")
 
