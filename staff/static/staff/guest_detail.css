@@ -19,9 +19,13 @@
 }
 
 .staff-guest-reservations-header .staff-field {
+    flex: 0 0 auto; /* override .staff-field's flex:1 - it would otherwise expand to fill the
+                       header and pull "Status" right up against the title instead of the
+                       far-right edge that justify-content:space-between is meant to give it */
     flex-direction: row;
     align-items: center;
     gap: 8px;
+    margin-left: auto;
     font-family: var(--secondary-font);
     font-size: 0.8rem;
     font-weight: 700;
