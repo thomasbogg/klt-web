@@ -1,8 +1,11 @@
 from datetime import date, timedelta
 
 from django.test import TestCase
+from django.urls import reverse
+from django.utils import timezone
 
 from bookings.models import Booking
+from guests.models import Guest
 from properties.models import Location, Price, Property, PropertySpec
 
 
@@ -103,3 +106,52 @@ class ReserveOwnPendingBookingTests(TestCase):
         stranger.post(f'/bookings/{reference}/pay/cancel/')
         booking.refresh_from_db()
         self.assertEqual(booking.enquiry_status, 'Awaiting payment')
+
+
+class PropertyCalendarExportViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Export Test Property', short_title='EXPORTTEST')
+        self.guest = Guest.objects.create(first_name='Zbigniew', last_name='Guest', email='export-test@example.com')
+        self.start = date.today() + timedelta(days=100)
+        self.end = self.start + timedelta(days=7)
+        self.website_booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.url = reverse('properties:calendar_export', kwargs={'token': self.property.ical_export_token})
+
+    def test_wrong_token_404s(self):
+        response = self.client.get(reverse('properties:calendar_export', kwargs={'token': 'not-a-real-token'}))
+        self.assertEqual(response.status_code, 404)
+
+    def test_export_includes_our_own_booking_with_no_guest_pii(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/calendar; charset=utf-8')
+        content = response.content.decode()
+        self.assertIn(f"UID:{self.website_booking.reference}@algarvebeachapartments.com", content)
+        self.assertIn('SUMMARY:Reserved', content)
+        self.assertNotIn(self.guest.first_name, content)
+
+    def test_export_excludes_platform_sourced_bookings(self):
+        Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=self.start + timedelta(days=100), departure_date=self.end + timedelta(days=100),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Airbnb',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url)
+        content = response.content.decode()
+        self.assertEqual(content.count('BEGIN:VEVENT'), 1)
+
+    def test_export_excludes_non_holding_bookings(self):
+        Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=self.start + timedelta(days=200), departure_date=self.end + timedelta(days=200),
+            is_owner=False, enquiry_status='Cancelled by guest', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url)
+        content = response.content.decode()
+        self.assertEqual(content.count('BEGIN:VEVENT'), 1)

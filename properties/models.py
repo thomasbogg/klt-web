@@ -1,3 +1,5 @@
+import secrets
+
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
@@ -210,6 +212,13 @@ class Property(models.Model):
     vrbo_id = models.CharField(max_length=200, blank=True, null=True)
     standard_cleaning_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
+    # Opaque bearer token for this property's exported .ics feed (see
+    # properties/views.py::PropertyCalendarExportView) - not a booking-reference-style short code
+    # meant to be typed by a person, so no collision-retry loop like Booking.save()'s reference
+    # generation: 32 random bytes is astronomically collision-free, the unique=True constraint is
+    # just a backstop.
+    ical_export_token = models.CharField(max_length=64, unique=True, blank=True, null=True)
+
     @property
     def slug(self):
         return self.short_title.lower().replace(" ", "-")
@@ -221,6 +230,11 @@ class Property(models.Model):
 
     def __str__(self):
         return pretty_title(self.title)
+
+    def save(self, *args, **kwargs):
+        if not self.ical_export_token:
+            self.ical_export_token = secrets.token_urlsafe(32)
+        super().save(*args, **kwargs)
 
 
 class PropertyImage(models.Model):

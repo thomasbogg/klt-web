@@ -84,7 +84,9 @@ PROVISIONAL_BOOKING_STATUSES: tuple[str, ...] = (
 
 # 'Payment failed' (klt-hooks, on a Revolut decline/fail/cancel), 'Hold expired'
 # (bookings/utils.py::expire_stale_holds()), 'Cancelled by guest'
-# (bookings/utils.py::cancel_booking_hold()), and 'Payment received - needs review' (klt-hooks,
+# (bookings/utils.py::cancel_booking_hold()), 'Cancelled by platform' (bookings/utils.py::
+# sync_ical_link(), when a previously-imported platform booking's UID disappears from that
+# platform's latest iCal feed), and 'Payment received - needs review' (klt-hooks,
 # mark_payment_paid(), when ORDER_COMPLETED arrives for a booking whose hold already expired and
 # another booking now legitimately occupies the dates - the payment is real and recorded, but the
 # calendar conflict needs a human to resolve which guest keeps the dates) are deliberately NOT in

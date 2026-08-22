@@ -13,10 +13,10 @@ from bookings.models import (
 from bookings.utils import (
     add_business_days, create_booking, determine_payment_provider, expire_stale_holds, extras_summary,
     guest_counts_by_age, has_completed_previous_stay, payment_clearing_expiry, recalculate_balance_for_party,
-    recalculate_costs_for_party,
+    recalculate_costs_for_party, sync_ical_link,
 )
 from guests.models import Guest
-from properties.models import Price, Property, PropertySpec
+from properties.models import Price, Property, PropertySpec, iCalLink
 
 
 class DeterminePaymentProviderTests(TestCase):
@@ -2192,3 +2192,150 @@ class BookingCancelViewTests(TestCase):
         self.assertNotContains(
             response, reverse('bookings:balance_details', kwargs={'reference': self.booking.reference}),
         )
+
+
+def _ics_feed(events):
+    """events: list of (uid, start_date, end_date) tuples -> minimal valid .ics text, matching the
+    shape a real Airbnb/Booking.com/Vrbo reservations feed has (one all-day VEVENT per booking)."""
+    lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Test//EN']
+    for uid, start, end in events:
+        lines += [
+            'BEGIN:VEVENT',
+            f'UID:{uid}',
+            f'DTSTART;VALUE=DATE:{start.strftime("%Y%m%d")}',
+            f'DTEND;VALUE=DATE:{end.strftime("%Y%m%d")}',
+            'SUMMARY:Reserved',
+            'END:VEVENT',
+        ]
+    lines.append('END:VCALENDAR')
+    return '\r\n'.join(lines)
+
+
+class SyncIcalLinkTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Sync Test Property', short_title='SYNCTEST')
+        self.link = iCalLink.objects.create(
+            property=self.property, ical_source='airbnb', ical_url='https://example.com/feed.ics',
+        )
+        self.start = date.today() + timedelta(days=100)
+        self.end = self.start + timedelta(days=7)
+
+    def _other_booking(self, start, end, enquiry_source='Website', enquiry_status='Booking confirmed'):
+        guest = Guest.objects.create(last_name='Other Guest')
+        return Booking.objects.create(
+            property=self.property, guest=guest, arrival_date=start, departure_date=end,
+            is_owner=False, enquiry_status=enquiry_status, enquiry_source=enquiry_source,
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_creates_new_booking_from_feed_event(self):
+        summary = sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)]))
+        self.assertEqual(summary['created'], 1)
+        booking = Booking.objects.get(ical_uid='uid-1')
+        self.assertEqual(booking.property, self.property)
+        self.assertEqual(booking.arrival_date, self.start)
+        self.assertEqual(booking.departure_date, self.end)
+        self.assertEqual(booking.enquiry_source, 'Airbnb')
+        self.assertEqual(booking.enquiry_status, 'Booking confirmed')
+        self.assertEqual(booking.guest.last_name, 'Airbnb Guest')
+
+    def test_updates_existing_matched_bookings_dates(self):
+        existing = self._other_booking(self.start, self.end, enquiry_source='Airbnb')
+        existing.ical_uid = 'uid-1'
+        existing.save(update_fields=['ical_uid'])
+
+        new_start, new_end = self.start + timedelta(days=1), self.end + timedelta(days=1)
+        summary = sync_ical_link(self.link, _ics_feed([('uid-1', new_start, new_end)]))
+        self.assertEqual(summary['updated'], 1)
+        self.assertEqual(summary['created'], 0)
+        existing.refresh_from_db()
+        self.assertEqual(existing.arrival_date, new_start)
+        self.assertEqual(existing.departure_date, new_end)
+
+    def test_manual_override_blocks_date_update(self):
+        existing = self._other_booking(self.start, self.end, enquiry_source='Airbnb')
+        existing.ical_uid = 'uid-1'
+        existing.manual_override = True
+        existing.save(update_fields=['ical_uid', 'manual_override'])
+
+        new_start, new_end = self.start + timedelta(days=1), self.end + timedelta(days=1)
+        sync_ical_link(self.link, _ics_feed([('uid-1', new_start, new_end)]))
+        existing.refresh_from_db()
+        self.assertEqual(existing.arrival_date, self.start)
+        self.assertEqual(existing.departure_date, self.end)
+
+    def test_skips_new_event_that_overlaps_existing_booking(self):
+        self._other_booking(self.start, self.end)  # a direct booking already occupies these dates
+        summary = sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)]))
+        self.assertEqual(summary['created'], 0)
+        self.assertEqual(len(summary['conflicts']), 1)
+        self.assertFalse(Booking.objects.filter(ical_uid='uid-1').exists())
+
+    def test_skips_date_update_that_would_create_overlap(self):
+        existing = self._other_booking(self.start, self.end, enquiry_source='Airbnb')
+        existing.ical_uid = 'uid-1'
+        existing.save(update_fields=['ical_uid'])
+        conflict_start, conflict_end = self.start + timedelta(days=100), self.end + timedelta(days=100)
+        self._other_booking(conflict_start, conflict_end)  # occupies the dates uid-1 is about to move to
+
+        summary = sync_ical_link(self.link, _ics_feed([('uid-1', conflict_start, conflict_end)]))
+        self.assertEqual(summary['updated'], 0)
+        self.assertEqual(len(summary['conflicts']), 1)
+        existing.refresh_from_db()
+        self.assertEqual(existing.arrival_date, self.start)  # untouched
+
+    def test_cancels_booking_missing_from_latest_feed(self):
+        existing = self._other_booking(self.start, self.end, enquiry_source='Airbnb')
+        existing.ical_uid = 'uid-1'
+        existing.save(update_fields=['ical_uid'])
+
+        summary = sync_ical_link(self.link, _ics_feed([]))  # empty feed - uid-1 has disappeared
+        self.assertEqual(summary['cancelled'], 1)
+        existing.refresh_from_db()
+        self.assertEqual(existing.enquiry_status, 'Cancelled by platform')
+
+    def test_does_not_cancel_a_booking_that_has_already_departed(self):
+        past_start = date.today() - timedelta(days=30)
+        past_end = date.today() - timedelta(days=23)
+        existing = self._other_booking(past_start, past_end, enquiry_source='Airbnb')
+        existing.ical_uid = 'uid-1'
+        existing.save(update_fields=['ical_uid'])
+
+        summary = sync_ical_link(self.link, _ics_feed([]))
+        self.assertEqual(summary['cancelled'], 0)
+        existing.refresh_from_db()
+        self.assertEqual(existing.enquiry_status, 'Booking confirmed')
+
+    def test_resurrects_a_previously_cancelled_booking_that_reappears(self):
+        existing = self._other_booking(
+            self.start, self.end, enquiry_source='Airbnb', enquiry_status='Cancelled by platform',
+        )
+        existing.ical_uid = 'uid-1'
+        existing.save(update_fields=['ical_uid'])
+
+        summary = sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)]))
+        self.assertEqual(summary['resurrected'], 1)
+        existing.refresh_from_db()
+        self.assertEqual(existing.enquiry_status, 'Booking confirmed')
+
+    def test_never_touches_a_manually_entered_platform_booking_without_ical_uid(self):
+        manual_booking = self._other_booking(self.start, self.end, enquiry_source='Airbnb')
+        self.assertIsNone(manual_booking.ical_uid)
+
+        summary = sync_ical_link(self.link, _ics_feed([]))
+        self.assertEqual(summary['cancelled'], 0)
+        manual_booking.refresh_from_db()
+        self.assertEqual(manual_booking.enquiry_status, 'Booking confirmed')
+
+    def test_unrecognised_ical_source_is_a_noop(self):
+        self.link.ical_source = None
+        self.link.save(update_fields=['ical_source'])
+        summary = sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)]))
+        self.assertEqual(summary, {'created': 0, 'updated': 0, 'resurrected': 0, 'cancelled': 0, 'conflicts': []})
+        self.assertFalse(Booking.objects.filter(ical_uid='uid-1').exists())
+
+    def test_updates_last_synced(self):
+        self.assertIsNone(self.link.last_synced)
+        sync_ical_link(self.link, _ics_feed([]))
+        self.link.refresh_from_db()
+        self.assertIsNotNone(self.link.last_synced)

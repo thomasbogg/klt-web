@@ -1,5 +1,5 @@
 import secrets
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlencode
 
@@ -9,11 +9,21 @@ from django.template.defaultfilters import slugify
 from django.urls import reverse
 from django.utils import timezone
 
+from libraries.utils import logerror
+
 REFERENCE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTVWXYZ'  # no 0/O/1/I/L/U - avoids transcription errors
 REFERENCE_GROUP_LENGTH = 4
 REFERENCE_GROUPS = 2
 
 WISE_MONTHS = {11, 12, 1, 2, 3}  # Nov-Mar arrivals
+
+# iCalLink.ical_source (Source.choices) -> the exact-cased env_settings.PLATFORMS string a
+# platform-synced Booking.enquiry_source gets. Keep in sync with both.
+PLATFORM_NAMES_BY_ICAL_SOURCE = {
+    'airbnb': 'Airbnb',
+    'booking.com': 'Booking.com',
+    'vrbo': 'Vrbo',
+}
 
 
 def generate_reference_candidate():
@@ -343,3 +353,96 @@ def booking_confirmation_context(booking):
         'balance_due': balance_payment is not None and balance_payment.status != 'paid' and not cancelled,
         'returning_guest': has_completed_previous_stay(booking.guest, exclude_booking_id=booking.pk),
     }
+
+
+def sync_ical_link(link, ics_text):
+    """Sync one iCalLink's already-fetched feed text against our Bookings - pure function (no HTTP
+    of its own) so tests can hand it a canned .ics string directly. Called from
+    bookings/management/commands/sync_ical_feeds.py, which does the actual fetch and lets any
+    fetch/parse exception propagate up to its own per-property try/except (this function assumes
+    ics_text is a feed that parsed enough to be worth reading, not resilient to garbage).
+
+    Only ever touches Bookings this exact mechanism created (matched by ical_uid, property, and
+    the platform's own enquiry_source) - never a manually-entered platform booking without a UID.
+    A feed event whose dates would overlap an existing holding booking (a direct booking, or
+    another platform's own already-imported one) is skipped entirely rather than risk creating a
+    double-booked calendar entry - both for a brand new event and for an existing matched one whose
+    dates changed. manual_override (see Booking's own docstring) blocks date updates but not
+    cancellation-on-disappearance - it means "don't overwrite dates automatically", not "never let
+    sync touch this booking again". A previously-cancelled booking whose UID reappears in the feed
+    is resurrected back to 'Booking confirmed' - the platform un-cancelled it.
+
+    Returns a dict of counts (created/updated/resurrected/cancelled) plus a 'conflicts' list
+    ({'uid', 'start', 'end'} per skipped overlap) for the caller to report."""
+    from icalendar import Calendar
+
+    from bookings.models import Booking
+    from guests.models import Guest
+
+    summary = {'created': 0, 'updated': 0, 'resurrected': 0, 'cancelled': 0, 'conflicts': []}
+
+    platform_name = PLATFORM_NAMES_BY_ICAL_SOURCE.get(link.ical_source)
+    if platform_name is None:
+        logerror(f"iCal link {link.pk} for {link.property} has an unrecognised ical_source "
+                 f"({link.ical_source!r}) - skipped.")
+        return summary
+
+    def as_date(value):
+        return value.date() if isinstance(value, datetime) else value
+
+    calendar = Calendar.from_ical(ics_text)
+    feed_events = {}
+    for component in calendar.walk('VEVENT'):
+        uid = str(component.get('uid'))
+        feed_events[uid] = (as_date(component.get('dtstart').dt), as_date(component.get('dtend').dt))
+
+    for uid, (start, end) in feed_events.items():
+        existing = Booking.objects.filter(
+            property=link.property, enquiry_source=platform_name, ical_uid=uid,
+        ).first()
+
+        if existing is not None:
+            if not existing.manual_override and (existing.arrival_date, existing.departure_date) != (start, end):
+                if Booking.objects.overlapping(link.property, start, end).exclude(pk=existing.pk).exists():
+                    summary['conflicts'].append({'uid': uid, 'start': start, 'end': end})
+                else:
+                    existing.arrival_date = start
+                    existing.departure_date = end
+                    existing.save(update_fields=['arrival_date', 'departure_date'])
+                    summary['updated'] += 1
+            if existing.enquiry_status == 'Cancelled by platform':
+                existing.enquiry_status = 'Booking confirmed'
+                existing.save(update_fields=['enquiry_status'])
+                summary['resurrected'] += 1
+            continue
+
+        if Booking.objects.overlapping(link.property, start, end).exists():
+            summary['conflicts'].append({'uid': uid, 'start': start, 'end': end})
+            continue
+
+        guest = Guest.objects.create(last_name=f"{platform_name} Guest")
+        Booking.objects.create(
+            property=link.property, guest=guest,
+            arrival_date=start, departure_date=end,
+            is_owner=False, enquiry_status='Booking confirmed',
+            enquiry_date=date.today(), enquiry_source=platform_name,
+            adults=1, children=0, babies=0,
+            last_updated=timezone.now(), ical_uid=uid,
+        )
+        summary['created'] += 1
+
+    today = date.today()
+    previously_imported = Booking.objects.filter(
+        property=link.property, enquiry_source=platform_name, ical_uid__isnull=False,
+        departure_date__gte=today,
+    ).exclude(enquiry_status='Cancelled by platform')
+    for booking in previously_imported:
+        if booking.ical_uid not in feed_events:
+            booking.enquiry_status = 'Cancelled by platform'
+            booking.save(update_fields=['enquiry_status'])
+            summary['cancelled'] += 1
+
+    link.last_synced = timezone.now()
+    link.save(update_fields=['last_synced'])
+
+    return summary

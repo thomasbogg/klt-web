@@ -1,7 +1,11 @@
-from django.core.exceptions import ValidationError
-from django.shortcuts import get_object_or_404, redirect
-from django.views import generic
+from icalendar import Calendar, Event
 
+from django.core.exceptions import ValidationError
+from django.http import HttpResponse, Http404
+from django.shortcuts import get_object_or_404, redirect
+from django.views import View, generic
+
+import env_settings
 from .models import Property, Location, Price
 from .utils import get_stay_total_price
 from availability.utils import (
@@ -174,6 +178,43 @@ class ReserveView(generic.DetailView):
                 form.add_error(None, '; '.join(messages))
         context = self.get_context_data(form=form)
         return self.render_to_response(context)
+
+
+class PropertyCalendarExportView(View):
+    """One property's own bookings as a downloadable .ics feed, for Airbnb/Booking.com/Vrbo to
+    pull and block their own calendars against - never re-exports a booking already imported from
+    another platform (see bookings/utils.py::sync_ical_link()), only genuinely-ours ones, so the
+    three platforms' feeds can't loop off each other. Bearer-readable by the property's
+    ical_export_token alone (see Property.save()) - a 404 on an unknown/wrong token, not a 403, so
+    a guess doesn't confirm a token format is even in use. Events are deliberately content-free
+    ("Reserved", no guest name) - the point is purely to block dates on another platform, not to
+    hand guest PII to a competitor booking site."""
+
+    def get(self, request, token, *args, **kwargs):
+        property = Property.objects.filter(ical_export_token=token).first()
+        if property is None:
+            raise Http404("No property found for this calendar token.")
+
+        calendar = Calendar()
+        calendar.add('prodid', '-//Algarve Beach Apartments//klt-web//EN')
+        calendar.add('version', '2.0')
+
+        bookings = property.booking_set.holding().exclude(enquiry_source__in=env_settings.PLATFORMS)
+        for booking in bookings:
+            event = Event()
+            # reference should always be set for a genuine website booking (Booking.save() always
+            # generates one) - the pk fallback only guards against a row that bypassed save() (e.g.
+            # bulk_create), so two such rows can never collide on the same UID.
+            event.add('uid', f"{booking.reference or booking.pk}@algarvebeachapartments.com")
+            event.add('summary', 'Reserved')
+            event.add('dtstart', booking.arrival_date)
+            event.add('dtend', booking.departure_date)
+            event.add('dtstamp', booking.last_updated)
+            calendar.add_component(event)
+
+        response = HttpResponse(calendar.to_ical(), content_type='text/calendar; charset=utf-8')
+        response['Content-Disposition'] = f'attachment; filename="{property.slug}.ics"'
+        return response
 
 
 class DetailView(generic.DetailView):

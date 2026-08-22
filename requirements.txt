@@ -2,6 +2,7 @@ Django
 psycopg
 python-dotenv
 bs4
+icalendar
 python-dateutil
 deepl
 google-api-python-client

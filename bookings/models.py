@@ -192,7 +192,11 @@ class Booking(models.Model):
     reference = models.CharField(max_length=20, unique=True, blank=True, null=True, db_index=True)
     pims_id = models.IntegerField(blank=True, null=True)
     platform_id = models.CharField(max_length=200, blank=True, null=True)
-    ical_uid = models.URLField(blank=True, null=True)
+    # The imported platform VEVENT's UID (see bookings/utils.py::sync_ical_link()) - not a URL
+    # despite the field's history (was URLField, never actually populated by any live code path
+    # until iCal sync). Real UIDs are typically email-address-shaped (e.g. "xxxx@airbnb.com"), not
+    # a URL, so URLField would reject them if ever passed through full_clean()/a ModelForm.
+    ical_uid = models.CharField(max_length=255, blank=True, null=True)
 
     # Booking details
     arrival_date = models.DateField()
