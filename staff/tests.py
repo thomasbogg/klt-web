@@ -56,6 +56,11 @@ class StaffAuthGateTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn('/admin/login/', response.url)
 
+    def test_guest_list_also_gated(self):
+        response = self.client.get(reverse('staff:guest_list'))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/admin/login/', response.url)
+
 
 class StaffBookingDetailViewTests(TestCase):
     def setUp(self):
@@ -422,3 +427,74 @@ class StaffHomeViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.context['selected_property'])
         self.assertEqual(len(response.context['calendars']), 2)
+
+
+class StaffGuestListViewTests(TestCase):
+    def setUp(self):
+        User.objects.create_user(username='guests_staffer', password='pw', is_staff=True)
+        self.client.login(username='guests_staffer', password='pw')
+
+        self.property = Property.objects.create(title='Guest List Property', short_title='GUESTLISTPROP')
+        self.adams = Guest.objects.create(
+            first_name='Carly', last_name='Adams', email='carly.adams@example.com', phone='+351911222333',
+        )
+        self.ackroyd = Guest.objects.create(first_name='Nora', last_name='Ackroyd', email='nora.ackroyd@example.com')
+        self.baxter = Guest.objects.create(first_name='Bob', last_name='Baxter', email='bob.baxter@example.com')
+
+        self.adams_old_booking = Booking.objects.create(
+            property=self.property, guest=self.adams,
+            arrival_date=date.today() + timedelta(days=10), departure_date=date.today() + timedelta(days=17),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.adams_latest_booking = Booking.objects.create(
+            property=self.property, guest=self.adams,
+            arrival_date=date.today() + timedelta(days=40), departure_date=date.today() + timedelta(days=47),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.url = reverse('staff:guest_list')
+
+    def test_default_shows_only_first_letter(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['selected_letter'], 'A')
+        surnames = {row['guest'].last_name for row in response.context['rows']}
+        self.assertEqual(surnames, {'Adams', 'Ackroyd'})
+
+    def test_letter_filter_narrows_to_surname(self):
+        response = self.client.get(self.url, {'letter': 'B'})
+        surnames = {row['guest'].last_name for row in response.context['rows']}
+        self.assertEqual(surnames, {'Baxter'})
+
+    def test_all_letter_shows_every_guest(self):
+        response = self.client.get(self.url, {'letter': 'ALL'})
+        surnames = {row['guest'].last_name for row in response.context['rows']}
+        self.assertEqual(surnames, {'Adams', 'Ackroyd', 'Baxter'})
+
+    def test_search_by_name_overrides_letter_filter(self):
+        response = self.client.get(self.url, {'q': 'baxter'})
+        surnames = {row['guest'].last_name for row in response.context['rows']}
+        self.assertEqual(surnames, {'Baxter'})
+        self.assertEqual(response.context['selected_letter'], '')
+
+    def test_search_by_email(self):
+        response = self.client.get(self.url, {'q': 'carly.adams'})
+        surnames = {row['guest'].last_name for row in response.context['rows']}
+        self.assertEqual(surnames, {'Adams'})
+
+    def test_search_by_phone(self):
+        response = self.client.get(self.url, {'q': '911222333'})
+        surnames = {row['guest'].last_name for row in response.context['rows']}
+        self.assertEqual(surnames, {'Adams'})
+
+    def test_guest_links_to_most_recent_booking(self):
+        response = self.client.get(self.url, {'letter': 'A'})
+        rows = {row['guest'].pk: row['latest_booking'] for row in response.context['rows']}
+        self.assertEqual(rows[self.adams.pk], self.adams_latest_booking)
+        self.assertContains(response, reverse('staff:booking_detail', kwargs={'reference': self.adams_latest_booking.reference}))
+
+    def test_guest_with_no_booking_renders_without_error(self):
+        response = self.client.get(self.url, {'letter': 'B'})
+        self.assertEqual(response.status_code, 200)
+        row = next(row for row in response.context['rows'] if row['guest'].pk == self.baxter.pk)
+        self.assertIsNone(row['latest_booking'])

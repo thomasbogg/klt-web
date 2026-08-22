@@ -22,6 +22,9 @@ CLOSED_STATUSES = (
 # status_bucket() return value (that function only ever returns the first three).
 STATUS_BUCKETS = ('Valid', 'Invalid', 'Ended', 'All')
 
+# Guest list surname-index letters, mirroring PIMS' "Surname begins with" row.
+GUEST_LETTERS = tuple('ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+
 
 def status_bucket(stage):
     """Valid = still a real, active/upcoming/ongoing booking (Provisional/Confirmed/Holiday

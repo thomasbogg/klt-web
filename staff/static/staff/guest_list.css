@@ -1,0 +1,73 @@
+.staff-guest-search {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 18px;
+}
+
+.staff-guest-search .staff-field {
+    flex: 1;
+    max-width: 320px;
+}
+
+.staff-guest-letters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 20px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.staff-guest-letter {
+    font-family: var(--secondary-font);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.staff-guest-letter:hover {
+    text-decoration: underline;
+}
+
+.staff-guest-letter-active {
+    color: var(--status-booked-color);
+    text-decoration: underline;
+}
+
+.staff-guest-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: var(--primary-box-shadow);
+}
+
+.staff-guest-table th {
+    text-align: left;
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #999;
+    padding: 12px 12px 8px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.staff-guest-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #f2f2f2;
+    color: #444;
+}
+
+.staff-guest-table a {
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.staff-guest-table a:hover {
+    text-decoration: underline;
+}

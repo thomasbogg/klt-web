@@ -4,6 +4,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -13,9 +14,12 @@ from django.views import View
 from availability.utils import get_property_calendar
 from bookings.models import CURRENCY_CHOICES, PAYMENT_STATUS_CHOICES, Booking
 from bookings.utils import extras_summary
+from guests.models import Guest
 from properties.models import Property
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
-from staff.utils import CLOSED_STATUSES, STAGE_TABS, STATUS_BUCKETS, booking_stage, next_step_hint, status_bucket
+from staff.utils import (
+    CLOSED_STATUSES, GUEST_LETTERS, STAGE_TABS, STATUS_BUCKETS, booking_stage, next_step_hint, status_bucket,
+)
 
 
 @method_decorator(staff_member_required, name='dispatch')
@@ -97,6 +101,53 @@ class StaffBookingLookupView(View):
             return redirect('staff:booking_detail', reference=reference)
         messages.error(request, f'No booking found for reference "{reference}".')
         return render(request, self.template_name, {})
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class StaffGuestListView(View):
+    """PIMS-style "All Customers" list - an A-Z surname index plus a free-text search box (name,
+    email, or phone - phone included so an unfamiliar incoming call can be matched to a guest),
+    both over guests.models.Guest. klt-web's Guest has no address field (PIMS' own screenshot
+    shows one) so that column is simply dropped rather than faked. Each row links to the guest's
+    most recent booking (by arrival_date) since klt-web has no standalone guest detail page - a
+    Guest can be shared across several bookings (see the comment on BookingGuest in
+    bookings/models.py), so "most recent" is a reasonable single destination without building a
+    guest detail page."""
+    template_name = 'staff/guest_list.html'
+
+    def get(self, request, *args, **kwargs):
+        query = request.GET.get('q', '').strip()
+        letter = request.GET.get('letter', '').strip().upper()
+
+        guests = Guest.objects.all()
+        if query:
+            letter = ''
+            guests = guests.filter(
+                Q(first_name__icontains=query) | Q(last_name__icontains=query)
+                | Q(email__icontains=query) | Q(phone__icontains=query)
+            )
+        else:
+            # No letter in the URL yet (first visit) defaults to the first letter, matching PIMS'
+            # own behaviour rather than dumping every guest on first load; 'ALL' is a real,
+            # explicit choice ("anything") that bypasses the surname filter entirely.
+            letter = letter or GUEST_LETTERS[0]
+            if letter != 'ALL':
+                guests = guests.filter(last_name__istartswith=letter)
+        guests = guests.order_by('last_name', 'first_name')
+
+        # One extra query per row rather than a batched prefetch - guest counts are small for a
+        # single-business PMS, same tradeoff already made for the Home page's per-property
+        # calendar loop (see StaffHomeView).
+        rows = [{'guest': guest, 'latest_booking': guest.booking_set.order_by('-arrival_date').first()}
+                for guest in guests]
+
+        context = {
+            'rows': rows,
+            'letters': GUEST_LETTERS,
+            'selected_letter': letter,
+            'query': query,
+        }
+        return render(request, self.template_name, context)
 
 
 def _parsed_date(raw):
