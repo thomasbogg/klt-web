@@ -1,0 +1,25 @@
+{% comment %}Expects `calendar` in context: {'property': Property, 'months': get_property_calendar() output}{% endcomment %}
+<div class="staff-mini-calendar">
+    <h3 class="staff-mini-calendar-title">{{ calendar.property }}</h3>
+    <div class="staff-mini-calendar-grid">
+        {% for month in calendar.months %}
+        <div class="staff-mini-calendar-month">
+            <h4 class="staff-mini-calendar-month-label">{{ month.label }}</h4>
+            <div class="staff-mini-calendar-weekdays">
+                <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+            </div>
+            <div class="staff-mini-calendar-days">
+                {% for week in month.weeks %}
+                    {% for cell in week %}
+                        {% if cell %}
+                        <span class="staff-mini-calendar-day {{ cell.status }}{% if cell.is_today %} today{% endif %}">{{ cell.day }}</span>
+                        {% else %}
+                        <span class="staff-mini-calendar-day empty"></span>
+                        {% endif %}
+                    {% endfor %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>

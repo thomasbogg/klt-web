@@ -1,0 +1,303 @@
+body {
+    background: var(--background-color);
+    font-family: var(--secondary-font);
+    color: #333;
+    margin: 0;
+}
+
+.staff-page {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 24px 32px 60px;
+}
+
+.staff-lookup-page {
+    max-width: 480px;
+}
+
+.staff-lookup-page .staff-page-title {
+    margin-top: 40px;
+}
+
+.staff-nav {
+    display: flex;
+    gap: 18px;
+    padding-bottom: 12px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.staff-nav-link {
+    font-family: var(--secondary-font);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.staff-nav-link:hover {
+    text-decoration: underline;
+}
+
+.staff-nav-link-logout {
+    margin-left: auto;
+    color: var(--status-booked-color);
+}
+
+.staff-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.staff-page-title {
+    font-family: var(--primary-font);
+    color: var(--primary-color-dark);
+    margin: 0;
+    font-size: 1.7rem;
+}
+
+.staff-reference {
+    color: var(--secondary-color);
+}
+
+.staff-header-link {
+    font-family: var(--secondary-font);
+    font-size: 0.85rem;
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.staff-header-link:hover {
+    text-decoration: underline;
+}
+
+.staff-messages {
+    margin-bottom: 16px;
+}
+
+.staff-message {
+    margin: 0 0 8px;
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 0.88rem;
+}
+
+.staff-message-success {
+    background: var(--status-available-bg);
+    color: var(--status-available-color);
+}
+
+.staff-message-error {
+    background: var(--status-booked-bg);
+    color: var(--status-booked-color);
+}
+
+.staff-stage-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 20px;
+}
+
+.staff-stage-tab {
+    flex: 1 1 140px;
+    text-align: center;
+    padding: 10px 8px;
+    font-family: var(--secondary-font);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    color: #999;
+}
+
+.staff-stage-tab-active {
+    background: var(--status-provisional-bg);
+    color: var(--status-provisional-color);
+    border-color: var(--status-provisional-color);
+}
+
+.staff-panel-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    align-items: start;
+}
+
+.staff-panel-column {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.staff-panel {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: var(--primary-box-shadow);
+    padding: 18px 20px;
+}
+
+.staff-panel-highlight {
+    background: var(--secondary-color-soft);
+}
+
+.staff-panel-title {
+    font-family: var(--secondary-font);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+    margin: 0 0 14px;
+}
+
+.staff-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.staff-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.8rem;
+    color: #666;
+    flex: 1;
+}
+
+.staff-field-row {
+    display: flex;
+    gap: 10px;
+}
+
+.staff-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 7px 9px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.9rem;
+}
+
+.staff-input-small {
+    max-width: 100px;
+}
+
+.staff-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: #444;
+}
+
+.staff-button {
+    align-self: flex-start;
+    background: var(--primary-color);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.staff-button:hover {
+    background: var(--primary-color-dark);
+}
+
+.staff-button-small {
+    padding: 6px 12px;
+    font-size: 0.78rem;
+}
+
+.staff-list {
+    list-style: none;
+    margin: 0 0 12px;
+    padding: 0;
+    font-size: 0.85rem;
+    color: #444;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.staff-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px solid #f0f0f0;
+    padding-bottom: 6px;
+}
+
+.staff-list-amount, .staff-list-date {
+    color: #888;
+    white-space: nowrap;
+}
+
+.staff-list-total {
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: #333;
+    text-align: right;
+    margin: 0;
+}
+
+.staff-empty {
+    color: #999;
+    font-size: 0.85rem;
+    font-style: italic;
+    margin: 0 0 12px;
+}
+
+.staff-inline-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.staff-payments-summary {
+    font-size: 0.85rem;
+    color: #555;
+    line-height: 1.6;
+    margin: 4px 0;
+}
+
+.staff-next-step {
+    font-size: 0.95rem;
+    color: #444;
+    margin: 0;
+}
+
+.staff-lookup-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: #fff;
+    padding: 24px;
+    border-radius: 8px;
+    box-shadow: var(--primary-box-shadow);
+}
+
+.staff-lookup-form label {
+    font-size: 0.85rem;
+    color: #666;
+}
+
+@media (max-width: 1000px) {
+    .staff-panel-grid {
+        grid-template-columns: 1fr;
+    }
+}

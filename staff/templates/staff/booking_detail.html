@@ -1,0 +1,275 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Booking {{ booking.reference }} | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Booking <span class="staff-reference">{{ booking.reference }}</span></h1>
+            <a href="{% url 'staff:booking_lookup' %}" class="staff-header-link">&larr; Look up another booking</a>
+        </header>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <nav class="staff-stage-tabs">
+            {% for stage in stage_tabs %}
+            <span class="staff-stage-tab{% if stage == current_stage %} staff-stage-tab-active{% endif %}">{{ stage }}</span>
+            {% endfor %}
+        </nav>
+
+        <div class="staff-panel-grid">
+            <div class="staff-panel-column">
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Booking info</h2>
+                    <form method="post" class="staff-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_booking_info">
+                        <label class="staff-field">Property
+                            <select name="property" class="staff-input">
+                                {% for property in properties %}
+                                <option value="{{ property.pk }}" {% if property.pk == booking.property_id %}selected{% endif %}>{{ property }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <div class="staff-field-row">
+                            <label class="staff-field">Arrival
+                                <input type="date" name="arrival_date" class="staff-input" value="{{ booking.arrival_date|date:'Y-m-d' }}">
+                            </label>
+                            <label class="staff-field">Departure
+                                <input type="date" name="departure_date" class="staff-input" value="{{ booking.departure_date|date:'Y-m-d' }}">
+                            </label>
+                        </div>
+                        <div class="staff-field-row">
+                            <label class="staff-field">Adults
+                                <input type="number" name="adults" min="0" class="staff-input" value="{{ booking.adults }}">
+                            </label>
+                            <label class="staff-field">Children
+                                <input type="number" name="children" min="0" class="staff-input" value="{{ booking.children }}">
+                            </label>
+                            <label class="staff-field">Babies
+                                <input type="number" name="babies" min="0" class="staff-input" value="{{ booking.babies }}">
+                            </label>
+                        </div>
+                        <label class="staff-checkbox-label">
+                            <input type="checkbox" name="is_owner" {% if booking.is_owner %}checked{% endif %}> Owner booking
+                        </label>
+                        <button type="submit" class="staff-button">Update</button>
+                    </form>
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Guest info</h2>
+                    <form method="post" class="staff-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_guest_info">
+                        <label class="staff-field">First name
+                            <input type="text" name="first_name" class="staff-input" value="{{ guest.first_name|default:'' }}">
+                        </label>
+                        <label class="staff-field">Last name
+                            <input type="text" name="last_name" class="staff-input" value="{{ guest.last_name }}" required>
+                        </label>
+                        <label class="staff-field">Email
+                            <input type="email" name="email" class="staff-input" value="{{ guest.email|default:'' }}">
+                        </label>
+                        <label class="staff-field">Phone
+                            <input type="text" name="phone" class="staff-input" value="{{ guest.phone|default:'' }}">
+                        </label>
+                        <label class="staff-field">Portuguese NIF
+                            <input type="text" name="nif_number" class="staff-input" value="{{ guest.nif_number|default:'' }}">
+                        </label>
+                        <label class="staff-field">Nationality
+                            <input type="text" name="nationality" class="staff-input" value="{{ guest.nationality|default:'' }}">
+                        </label>
+                        <button type="submit" class="staff-button">Update</button>
+                    </form>
+                </section>
+            </div>
+
+            <div class="staff-panel-column">
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Rental charges</h2>
+                    {% if charge %}
+                    <form method="post" class="staff-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_charges">
+                        <label class="staff-field">Currency
+                            <select name="currency" class="staff-input">
+                                {% for value, label in currency_choices %}
+                                <option value="{{ value }}" {% if charge.currency == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label class="staff-field">Basic Rental
+                            <input type="text" name="basic_rental" class="staff-input" value="{{ charge.basic_rental|default:'' }}">
+                        </label>
+                        <label class="staff-field">Admin Fee
+                            <input type="text" name="admin" class="staff-input" value="{{ charge.admin|default:'' }}">
+                        </label>
+                        <label class="staff-field">Security Charge
+                            <input type="text" name="security" class="staff-input" value="{{ charge.security|default:'' }}">
+                        </label>
+                        <label class="staff-field">Due at Booking
+                            <input type="text" name="due_at_booking" class="staff-input" value="{{ charge.due_at_booking|default:'' }}">
+                        </label>
+                        <label class="staff-field">Due at Balance
+                            <input type="text" name="due_at_balance" class="staff-input" value="{{ charge.due_at_balance|default:'' }}">
+                        </label>
+                        <button type="submit" class="staff-button">Update</button>
+                    </form>
+                    {% else %}
+                    <p class="staff-empty">No Charge record for this booking.</p>
+                    {% endif %}
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Extras</h2>
+                    {% if extras.items %}
+                    <ul class="staff-list">
+                        {% for item in extras.items %}
+                        <li>{{ item.label }} <span class="staff-list-amount">&euro;{{ item.price|floatformat:2 }}</span></li>
+                        {% endfor %}
+                    </ul>
+                    <p class="staff-list-total">Total: &euro;{{ extras.total|floatformat:2 }}</p>
+                    {% else %}
+                    <p class="staff-empty">No extras requested.</p>
+                    {% endif %}
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Enquiry data</h2>
+                    <form method="post" class="staff-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_enquiry">
+                        <label class="staff-field">Source of enquiry
+                            <input type="text" name="enquiry_source" class="staff-input" value="{{ booking.enquiry_source }}">
+                        </label>
+                        <label class="staff-field">Date of enquiry
+                            <input type="date" name="enquiry_date" class="staff-input" value="{{ booking.enquiry_date|date:'Y-m-d' }}">
+                        </label>
+                        <label class="staff-field">Outcome / status
+                            <input type="text" name="enquiry_status" class="staff-input" value="{{ booking.enquiry_status }}">
+                        </label>
+                        <button type="submit" class="staff-button">Update</button>
+                    </form>
+                </section>
+            </div>
+
+            <div class="staff-panel-column">
+                <section class="staff-panel staff-panel-highlight">
+                    <h2 class="staff-panel-title">Next step(s)</h2>
+                    <p class="staff-next-step">{{ next_step }}</p>
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Payments from guest</h2>
+                    <form method="post" class="staff-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_payments">
+                        {% if payment %}
+                        <label class="staff-field">Deposit status
+                            <select name="payment_status" class="staff-input">
+                                {% for value, label in payment_status_choices %}
+                                <option value="{{ value }}" {% if payment.status == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        {% endif %}
+                        {% if balance_payment %}
+                        <label class="staff-field">Balance status
+                            <select name="balance_payment_status" class="staff-input">
+                                {% for value, label in payment_status_choices %}
+                                <option value="{{ value }}" {% if balance_payment.status == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        {% endif %}
+                        {% if charge %}
+                        <p class="staff-payments-summary">
+                            Due at booking: &euro;{{ charge.due_at_booking|default:'0.00'|floatformat:2 }}<br>
+                            Due at balance: &euro;{{ charge.due_at_balance|default:'0.00'|floatformat:2 }}
+                        </p>
+                        {% endif %}
+                        {% if payment or balance_payment %}
+                        <button type="submit" class="staff-button">Update</button>
+                        {% else %}
+                        <p class="staff-empty">No payment records for this booking.</p>
+                        {% endif %}
+                    </form>
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Payments to owner</h2>
+                    <ul class="staff-list">
+                        {% for owner_payment in owner_payments %}
+                        <li>{{ owner_payment.date }} - {{ owner_payment.amount }} {{ owner_payment.currency }}{% if owner_payment.note %} ({{ owner_payment.note }}){% endif %}</li>
+                        {% empty %}
+                        <li class="staff-empty">No payments recorded.</li>
+                        {% endfor %}
+                    </ul>
+                    <form method="post" class="staff-inline-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="add_owner_payment">
+                        <input type="text" name="amount" placeholder="Amount" class="staff-input staff-input-small">
+                        <select name="currency" class="staff-input staff-input-small">
+                            {% for value, label in currency_choices %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <input type="text" name="note" placeholder="Note (optional)" class="staff-input">
+                        <button type="submit" class="staff-button staff-button-small">+ ad-hoc Payment</button>
+                    </form>
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Deductions</h2>
+                    <ul class="staff-list">
+                        {% for deduction in deductions %}
+                        <li>{{ deduction.date }} - {{ deduction.description }} <span class="staff-list-amount">&euro;{{ deduction.amount|floatformat:2 }}</span></li>
+                        {% empty %}
+                        <li class="staff-empty">No deductions recorded for this booking.</li>
+                        {% endfor %}
+                    </ul>
+                    <form method="post" class="staff-inline-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="add_deduction">
+                        <input type="text" name="description" placeholder="Description" class="staff-input">
+                        <input type="text" name="amount" placeholder="Amount" class="staff-input staff-input-small">
+                        <button type="submit" class="staff-button staff-button-small">+ New deduction</button>
+                    </form>
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Task history</h2>
+                    <ul class="staff-list staff-task-history">
+                        {% for entry in task_history %}
+                        <li>{{ entry.description }} <span class="staff-list-date">{{ entry.created_at|date:'d M Y' }}</span></li>
+                        {% empty %}
+                        <li class="staff-empty">No history yet.</li>
+                        {% endfor %}
+                    </ul>
+                    <form method="post" class="staff-inline-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="add_task_note">
+                        <input type="text" name="description" placeholder="Add a note" class="staff-input">
+                        <button type="submit" class="staff-button staff-button-small">+ Add note</button>
+                    </form>
+                </section>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

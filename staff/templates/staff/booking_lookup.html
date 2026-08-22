@@ -1,0 +1,33 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Staff | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+</head>
+<body>
+    <div class="staff-page staff-lookup-page">
+        {% include 'staff/_nav.html' %}
+
+        <h1 class="staff-page-title">Staff</h1>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <form method="post" class="staff-lookup-form">
+            {% csrf_token %}
+            <label for="reference">Booking reference</label>
+            <input type="text" name="reference" id="reference" class="staff-input" placeholder="e.g. DDPP-3QSK" autofocus>
+            <button type="submit" class="staff-button staff-button-primary">Open booking</button>
+        </form>
+    </div>
+</body>
+</html>
