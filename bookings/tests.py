@@ -1004,6 +1004,45 @@ class BookingBalanceDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('contact us', response.context['non_field_error'])
 
+    def test_get_includes_arrival_departure_context_with_defaults(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['arrival_method'], 'flight_faro')
+        self.assertEqual(response.context['departure_method'], 'flight_faro')
+        self.assertEqual(dict(response.context['departure_travel_methods'])['flight_faro'], 'Flight from Faro')
+
+    def test_get_prefills_arrival_departure_from_existing_rows(self):
+        Arrival.objects.create(
+            booking=self.booking, method='driving', travelling_from='Lisbon', hiring_car=True, meet_greet=False,
+        )
+        Departure.objects.create(booking=self.booking, method='bus')
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['arrival_method'], 'driving')
+        self.assertEqual(response.context['arrival_travelling_from'], 'Lisbon')
+        self.assertTrue(response.context['arrival_hiring_car'])
+        self.assertEqual(response.context['departure_method'], 'bus')
+
+    def test_post_unchanged_party_saves_arrival_and_departure(self):
+        response = self.client.post(self.url, self._unchanged_party(
+            arrival_method='flight_lisbon', arrival_flight_number='TP123', arrival_hiring_car='yes',
+            departure_method='driving', departure_travelling_from='Lisbon',
+        ))
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.arrival.method, 'flight_lisbon')
+        self.assertEqual(self.booking.arrival.flight_number, 'TP123')
+        self.assertTrue(self.booking.arrival.hiring_car)
+        self.assertEqual(self.booking.departure.method, 'driving')
+        self.assertEqual(self.booking.departure.travelling_from, 'Lisbon')
+
+    def test_post_invalid_flight_number_rerenders_without_saving_anything(self):
+        response = self.client.post(self.url, self._unchanged_party(
+            arrival_method='flight_faro', arrival_flight_number='DDPP-3QSK', late_checkout='on', late_checkout_time='13:00',
+        ))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('arrival_flight_number', response.context['errors'])
+        self.assertFalse(hasattr(self.booking, 'arrival'))
+        self.assertFalse(hasattr(self.booking, 'extras'))  # nothing else silently saved either
+
 
 class BookingBalancePaymentViewTests(TestCase):
     """Uses a Wise-path booking throughout (arrival month in WISE_MONTHS) - Wise never calls the

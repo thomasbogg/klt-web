@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
     <script type="module" src="{% static 'bookings/guest_list.js' %}"></script>
+    <script type="module" src="{% static 'bookings/arrival_departure.js' %}"></script>
     <script type="module" src="{% static 'bookings/welcome_pack.js' %}"></script>
     <script type="module" src="{% static 'bookings/cot_high_chair.js' %}"></script>
     <script type="module" src="{% static 'bookings/airport_transfers.js' %}"></script>
@@ -29,7 +30,7 @@
             <span class="confirmation-reference-value">{{ booking.reference }}</span>
         </div>
 
-        <p class="details-note">Your balance payment is coming up. Check your guest list is still correct, and let us know if you'd like any extras before you pay - everything below the guest list is optional and paid in cash at check-in, separate from the balance itself.</p>
+        <p class="details-note">Your balance payment is coming up. Check your guest list is still correct, let us know your travel plans, and add any extras you'd like before you pay - extras are optional and paid in cash at check-in, separate from the balance itself.</p>
 
         <form method="post" class="details-form">
             {% csrf_token %}
@@ -41,6 +42,8 @@
             {% endif %}
 
             {% include 'bookings/_guest_list_form.html' with guest_list_note="Removing guests can reduce your balance if applicable; adding guests may increase it - we'll show you the updated amount before anything is charged." %}
+
+            {% include 'bookings/_arrival_departure_form.html' %}
 
             {% include 'bookings/_extras_form.html' with due_phrase="your balance payment" %}
 

@@ -457,9 +457,14 @@
 }
 
 /* Extra breathing room between the arrival/departure method dropdown, its field-group row, and
-   the rows after it (check-in choice, "anything else" note) - scoped to this page's <form> class
-   rather than the bare .transfer-grid/.welcome-pack-choice-group/.welcome-pack-field rules, which
-   are shared with the Extras page and shouldn't change spacing there. */
+   the rows after it (hiring-car choice, "anything else" note) - scoped to the two
+   .details-section.arrival-departure-form elements in _arrival_departure_form.html (the class
+   sits directly on each <section>, not on a wrapping div - a wrapper would break the
+   .details-section + .details-section divider rule below by breaking the direct-sibling
+   relationship with whatever section comes immediately before/after this partial, e.g. Guest List
+   on the Balance Details page) rather than the bare .transfer-grid/.welcome-pack-choice-group/
+   .welcome-pack-field rules, which are shared with the Extras section on both pages and shouldn't
+   change spacing there. */
 .arrival-departure-form .transfer-grid,
 .arrival-departure-form .welcome-pack-choice-group,
 .arrival-departure-form .welcome-pack-field {
