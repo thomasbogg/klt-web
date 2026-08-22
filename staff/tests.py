@@ -433,6 +433,11 @@ class StaffHomeViewTests(TestCase):
         self.assertIsNone(response.context['selected_property'])
         self.assertEqual(len(response.context['calendars']), 2)
 
+    def test_includes_inline_booking_lookup_form(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, f'action="{reverse("staff:booking_lookup")}"')
+        self.assertContains(response, 'name="reference"')
+
 
 class StaffGuestListViewTests(TestCase):
     def setUp(self):

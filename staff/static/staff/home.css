@@ -6,6 +6,24 @@
     flex-wrap: wrap;
 }
 
+/* The property/status filters and the booking lookup are separate <form>s (GET vs POST) sitting
+   side by side - this keeps each group's own fields laid out the same way the single outer form
+   used to, without nesting a form inside a form. */
+.staff-home-filter-group {
+    display: flex;
+    gap: 16px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+/* .staff-button defaults to align-self:flex-start (right for a vertical .staff-form, so the
+   button hugs the left edge rather than stretching full-width) - here it's a direct row child
+   instead, so that same rule pins it to the row's top edge rather than level with the input.
+   Override back to the row's own flex-end so it lines up with the input's bottom edge. */
+.staff-home-filter-group > .staff-button {
+    align-self: flex-end;
+}
+
 .staff-home-filters .staff-field {
     min-width: 200px;
 }

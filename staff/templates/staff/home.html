@@ -17,24 +17,33 @@
             <h1 class="staff-page-title">Home</h1>
         </header>
 
-        <form method="get" class="staff-home-filters">
-            <label class="staff-field">Property
-                <select name="property" class="staff-input" onchange="this.form.submit()">
-                    <option value="">All Properties</option>
-                    {% for property in properties %}
-                    <option value="{{ property.pk }}" {% if selected_property.pk == property.pk %}selected{% endif %}>{{ property }}</option>
-                    {% endfor %}
-                </select>
-            </label>
-            <label class="staff-field">Status
-                <select name="status" class="staff-input" onchange="this.form.submit()">
-                    {% for bucket in status_buckets %}
-                    <option value="{{ bucket }}" {% if status_filter == bucket %}selected{% endif %}>{{ bucket }}</option>
-                    {% endfor %}
-                </select>
-            </label>
-            <noscript><button type="submit" class="staff-button">Apply</button></noscript>
-        </form>
+        <div class="staff-home-filters">
+            <form method="get" class="staff-home-filter-group">
+                <label class="staff-field">Property
+                    <select name="property" class="staff-input" onchange="this.form.submit()">
+                        <option value="">All Properties</option>
+                        {% for property in properties %}
+                        <option value="{{ property.pk }}" {% if selected_property.pk == property.pk %}selected{% endif %}>{{ property }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="staff-field">Status
+                    <select name="status" class="staff-input" onchange="this.form.submit()">
+                        {% for bucket in status_buckets %}
+                        <option value="{{ bucket }}" {% if status_filter == bucket %}selected{% endif %}>{{ bucket }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <noscript><button type="submit" class="staff-button">Apply</button></noscript>
+            </form>
+            <form method="post" action="{% url 'staff:booking_lookup' %}" class="staff-home-filter-group">
+                {% csrf_token %}
+                <label class="staff-field">Search by reference
+                    <input type="text" name="reference" class="staff-input" placeholder="e.g. DDPP-3QSK">
+                </label>
+                <button type="submit" class="staff-button">Go</button>
+            </form>
+        </div>
 
         <div class="staff-home-layout{% if selected_property %} staff-home-layout-single{% endif %}">
             <div class="staff-home-calendars">
