@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from decimal import Decimal
 
@@ -1057,6 +1058,9 @@ class BookingManageGuestsView(BookingFormMixin, View):
         return redirect(f"{reverse('bookings:manage_guests', args=[booking.reference])}?guests_saved=1")
 
 
+FLIGHT_NUMBER_RE = re.compile(r'^(?=.*[A-Za-z])[A-Za-z0-9]{1,3}[ -]?\d{3,5}$')
+
+
 class BookingManageArrivalDepartureView(View):
     """Arrival & Departure section of the Manage Booking hub - available any time once the deposit
     is paid, no cutoff (unlike Extras) and no stage distinction (unlike Guest List) - purely
@@ -1064,11 +1068,19 @@ class BookingManageArrivalDepartureView(View):
     Extras is locked for fulfilment lead time. method is a guest-chosen TravelMethod (flight to
     Faro/Lisbon, bus, train, driving, other) set independently for arrival and departure - falls
     back to FLIGHT_FARO if missing/invalid, this section has never hard-required fields and
-    shouldn't start now. Check-in preference is one fixed either/or radio, not two independent
-    checkboxes, so self_check_in and meet_greet can never contradict each other. clean/manual_date
-    on Departure are staff/ops-only -
-    only ever supplied as creation defaults (via get_or_create), never touched on a later guest
-    save, so a staff edit made in admin afterward is never clobbered."""
+    shouldn't start now. Same stored TravelMethod values for both directions, but the dropdown
+    label wording differs (TravelMethod.departure_choices()) since "Flight to Faro" reads
+    backwards for a departing guest. details is capped at 140 chars server-side (also enforced via
+    maxlength in the template) - a short note, not a support channel. flight_number IS validated
+    (1-3 letters/digits, at least one letter, then 3-5 digits, e.g. TP1234 or U21234 - the
+    alphanumeric prefix accommodates real IATA codes like easyJet's "U2" that mix a digit in)
+    when a flight method is chosen and the field is non-blank - the one hard validation on this
+    page, added because guests kept pasting a (meaningless here) booking reference instead; on
+    failure the page re-renders with the guest's other entries preserved via _context(), same
+    pattern as BookingManageGuestAddView's row errors. self_check_in/meet_greet on Arrival and
+    clean/manual_date on Departure are all
+    staff/ops-only - only ever supplied as creation defaults (via get_or_create), never touched on
+    a later guest save, so a staff edit made in admin afterward is never clobbered."""
     template_name = 'bookings/manage_arrival_departure.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -1080,22 +1092,20 @@ class BookingManageArrivalDepartureView(View):
 
         arrival = getattr(booking, 'arrival', None)
         departure = getattr(booking, 'departure', None)
-        context = {
-            'booking': booking,
-            'travel_methods': TravelMethod.choices,
-            'arrival_method': arrival.method if arrival else TravelMethod.FLIGHT_FARO,
-            'arrival_flight_number': arrival.flight_number if arrival else '',
-            'arrival_travelling_from': arrival.travelling_from if arrival else '',
-            'arrival_time': arrival.time.strftime('%H:%M') if arrival and arrival.time else '',
-            'arrival_details': arrival.details if arrival else '',
-            'check_in_preference': 'meet_greet' if (arrival and arrival.meet_greet) else 'self_check_in',
-            'departure_method': departure.method if departure else TravelMethod.FLIGHT_FARO,
-            'departure_flight_number': departure.flight_number if departure else '',
-            'departure_travelling_from': departure.travelling_from if departure else '',
-            'departure_time': departure.time.strftime('%H:%M') if departure and departure.time else '',
-            'departure_details': departure.details if departure else '',
-        }
-        context.update(_manage_nav_context(booking, 'arrival_departure'))
+        context = self._context(booking, {
+            'method': arrival.method if arrival else TravelMethod.FLIGHT_FARO,
+            'flight_number': arrival.flight_number if arrival else '',
+            'travelling_from': arrival.travelling_from if arrival else '',
+            'hiring_car': arrival.hiring_car if arrival else False,
+            'time': arrival.time.strftime('%H:%M') if arrival and arrival.time else '',
+            'details': arrival.details if arrival else '',
+        }, {
+            'method': departure.method if departure else TravelMethod.FLIGHT_FARO,
+            'flight_number': departure.flight_number if departure else '',
+            'travelling_from': departure.travelling_from if departure else '',
+            'time': departure.time.strftime('%H:%M') if departure and departure.time else '',
+            'details': departure.details if departure else '',
+        })
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
@@ -1117,34 +1127,85 @@ class BookingManageArrivalDepartureView(View):
         def parsed_method(raw):
             return raw if raw in TravelMethod.values else TravelMethod.FLIGHT_FARO
 
-        check_in_preference = request.POST.get('check_in_preference')
-        meet_greet = check_in_preference == 'meet_greet'
+        arrival_data = {
+            'method': parsed_method(request.POST.get('arrival_method')),
+            'flight_number': request.POST.get('arrival_flight_number', '').strip(),
+            'travelling_from': request.POST.get('arrival_travelling_from', '').strip(),
+            'hiring_car': request.POST.get('arrival_hiring_car') == 'yes',
+            'time': request.POST.get('arrival_time', '').strip(),
+            'details': request.POST.get('arrival_details', '').strip()[:140],
+        }
+        departure_data = {
+            'method': parsed_method(request.POST.get('departure_method')),
+            'flight_number': request.POST.get('departure_flight_number', '').strip(),
+            'travelling_from': request.POST.get('departure_travelling_from', '').strip(),
+            'time': request.POST.get('departure_time', '').strip(),
+            'details': request.POST.get('departure_details', '').strip()[:140],
+        }
+
+        errors = {}
+        flight_number_hint = "That doesn't look like a flight number (e.g. TP1234) - please double-check it."
+        if not self._valid_flight_number(arrival_data['method'], arrival_data['flight_number']):
+            errors['arrival_flight_number'] = flight_number_hint
+        if not self._valid_flight_number(departure_data['method'], departure_data['flight_number']):
+            errors['departure_flight_number'] = flight_number_hint
+
+        if errors:
+            context = self._context(booking, arrival_data, departure_data)
+            context['errors'] = errors
+            return render(request, self.template_name, context)
 
         arrival, _ = Arrival.objects.get_or_create(booking=booking, defaults={
-            'self_check_in': not meet_greet, 'meet_greet': meet_greet,
+            'self_check_in': True, 'meet_greet': False,
         })
-        arrival.method = parsed_method(request.POST.get('arrival_method'))
-        arrival.flight_number = request.POST.get('arrival_flight_number', '').strip()
-        arrival.travelling_from = request.POST.get('arrival_travelling_from', '').strip()
-        arrival.time = parsed_time(request.POST.get('arrival_time'))
-        arrival.details = request.POST.get('arrival_details', '').strip()
-        arrival.self_check_in = not meet_greet
-        arrival.meet_greet = meet_greet
+        arrival.method = arrival_data['method']
+        arrival.flight_number = arrival_data['flight_number']
+        arrival.travelling_from = arrival_data['travelling_from']
+        arrival.hiring_car = arrival_data['hiring_car']
+        arrival.time = parsed_time(arrival_data['time'])
+        arrival.details = arrival_data['details']
         arrival.save(update_fields=[
-            'method', 'flight_number', 'travelling_from', 'time', 'details', 'self_check_in', 'meet_greet',
+            'method', 'flight_number', 'travelling_from', 'hiring_car', 'time', 'details',
         ])
 
         departure, _ = Departure.objects.get_or_create(
             booking=booking, defaults={'clean': False, 'manual_date': False},
         )
-        departure.method = parsed_method(request.POST.get('departure_method'))
-        departure.flight_number = request.POST.get('departure_flight_number', '').strip()
-        departure.travelling_from = request.POST.get('departure_travelling_from', '').strip()
-        departure.time = parsed_time(request.POST.get('departure_time'))
-        departure.details = request.POST.get('departure_details', '').strip()
+        departure.method = departure_data['method']
+        departure.flight_number = departure_data['flight_number']
+        departure.travelling_from = departure_data['travelling_from']
+        departure.time = parsed_time(departure_data['time'])
+        departure.details = departure_data['details']
         departure.save(update_fields=['method', 'flight_number', 'travelling_from', 'time', 'details'])
 
         return redirect(f"{reverse('bookings:manage_arrival_departure', args=[booking.reference])}?saved=1")
+
+    @staticmethod
+    def _valid_flight_number(method, flight_number):
+        if method not in (TravelMethod.FLIGHT_FARO, TravelMethod.FLIGHT_LISBON) or not flight_number:
+            return True
+        return bool(FLIGHT_NUMBER_RE.match(flight_number))
+
+    @staticmethod
+    def _context(booking, arrival_data, departure_data):
+        context = {
+            'booking': booking,
+            'arrival_travel_methods': TravelMethod.choices,
+            'departure_travel_methods': TravelMethod.departure_choices(),
+            'arrival_method': arrival_data['method'],
+            'arrival_flight_number': arrival_data['flight_number'],
+            'arrival_travelling_from': arrival_data['travelling_from'],
+            'arrival_hiring_car': arrival_data['hiring_car'],
+            'arrival_time': arrival_data['time'],
+            'arrival_details': arrival_data['details'],
+            'departure_method': departure_data['method'],
+            'departure_flight_number': departure_data['flight_number'],
+            'departure_travelling_from': departure_data['travelling_from'],
+            'departure_time': departure_data['time'],
+            'departure_details': departure_data['details'],
+        }
+        context.update(_manage_nav_context(booking, 'arrival_departure'))
+        return context
 
 
 class BookingManageGuestAddView(BookingFormMixin, View):

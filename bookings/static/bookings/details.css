@@ -228,6 +228,13 @@
     color: rgb(60, 60, 60);
 }
 
+/* Same cascade-tie issue as .transfer-grid.details-section-hidden above - this class's own
+   `display: flex` would otherwise win over .details-section-hidden (equal specificity, declared
+   earlier) when both land on the same element, e.g. the arrival method's "Hiring a car?" group. */
+.welcome-pack-choice-group.details-section-hidden {
+    display: none;
+}
+
 .welcome-pack-choice-label {
     font-family: var(--secondary-font);
     font-size: 0.78rem;

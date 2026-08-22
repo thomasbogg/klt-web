@@ -298,6 +298,9 @@ class BookingCondition(models.Model):
 
 
 class TravelMethod(models.TextChoices):
+    """Same stored values for Arrival and Departure - only the label wording differs by
+    direction (departure_choices() below), since "Flight to Faro" reads backwards for a guest
+    leaving via Faro. Never branch on direction anywhere except display label."""
     FLIGHT_FARO = 'flight_faro', 'Flight to Faro'
     FLIGHT_LISBON = 'flight_lisbon', 'Flight to Lisbon'
     BUS = 'bus', 'Bus to Albufeira'
@@ -305,18 +308,33 @@ class TravelMethod(models.TextChoices):
     DRIVING = 'driving', 'Driving from another location'
     OTHER = 'other', 'Other'
 
+    @classmethod
+    def departure_choices(cls):
+        labels = {
+            cls.FLIGHT_FARO: 'Flight from Faro',
+            cls.FLIGHT_LISBON: 'Flight from Lisbon',
+            cls.BUS: 'Bus from Albufeira',
+            cls.TRAIN: 'Train from Ferreiras (Albufeira)',
+            cls.DRIVING: 'Driving to another location',
+            cls.OTHER: 'Other',
+        }
+        return [(value, labels[value]) for value, _ in cls.choices]
+
 
 class Arrival(models.Model):
     """Guest-facing arrival information, self-serve via the Manage Booking hub (see
     bookings/views.py::BookingManageArrivalDepartureView) - editable any time once the deposit is
-    paid, no cutoff. method drives which of flight_number/time/travelling_from are relevant -
-    travelling_from is only meaningful for DRIVING. self_check_in/meet_greet are always set
-    together as one fixed either/or choice by the view, never independently, so they can't end up
-    contradicting each other."""
+    paid, no cutoff. method drives which of flight_number/time/travelling_from/hiring_car are
+    relevant - travelling_from is only meaningful for DRIVING, hiring_car only for the two flight
+    methods. self_check_in/meet_greet are staff/ops-only (decided by a different, not-yet-built
+    process - see Property.default_meet_greet) - only ever supplied as creation defaults (via
+    get_or_create), never touched on a later guest save, same pattern as Departure.clean/
+    manual_date below."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='arrival')
     method = models.CharField(max_length=20, choices=TravelMethod.choices, default=TravelMethod.FLIGHT_FARO)
     flight_number = models.CharField(max_length=50, blank=True, null=True)
     travelling_from = models.CharField(max_length=200, blank=True)
+    hiring_car = models.BooleanField(default=False)
     time = models.TimeField(blank=True, null=True)
     details = models.TextField(blank=True, null=True)
     self_check_in = models.BooleanField(blank=True, null=True)

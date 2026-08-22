@@ -49,7 +49,7 @@
                     <div class="transfer-field">
                         <label for="arrival_method">How are you travelling?</label>
                         <select name="arrival_method" id="arrival_method" class="reserve-input">
-                            {% for value, label in travel_methods %}
+                            {% for value, label in arrival_travel_methods %}
                             <option value="{{ value }}" {% if arrival_method == value %}selected{% endif %}>{{ label }}</option>
                             {% endfor %}
                         </select>
@@ -58,7 +58,8 @@
                     <div class="transfer-grid details-section-hidden" data-methods="flight_faro flight_lisbon">
                         <div class="transfer-field">
                             <label for="arrival_flight_number">Flight number</label>
-                            <input type="text" name="arrival_flight_number" id="arrival_flight_number" class="reserve-input" value="{{ arrival_flight_number }}" placeholder="e.g. TP1234">
+                            <input type="text" name="arrival_flight_number" id="arrival_flight_number" class="reserve-input" value="{{ arrival_flight_number }}" placeholder="e.g. TP1234" pattern="(?=.*[A-Za-z])[A-Za-z0-9]{1,3}[ \-]?[0-9]{3,5}" title="1-3 letters/numbers (e.g. an airline code) followed by 3-5 numbers, e.g. TP1234 or U21234">
+                            {% if errors.arrival_flight_number %}<p class="reserve-form-error">{{ errors.arrival_flight_number }}</p>{% endif %}
                         </div>
                         <div class="transfer-field">
                             <label for="arrival_flight_time">Landing time</label>
@@ -84,15 +85,15 @@
                         </div>
                     </div>
 
-                    <div class="welcome-pack-choice-group">
-                        <span class="welcome-pack-choice-label">Check-in</span>
-                        <label><input type="radio" name="check_in_preference" value="self_check_in" {% if check_in_preference == 'self_check_in' %}checked{% endif %}> Self check-in</label>
-                        <label><input type="radio" name="check_in_preference" value="meet_greet" {% if check_in_preference == 'meet_greet' %}checked{% endif %}> Meet &amp; greet</label>
+                    <div class="welcome-pack-choice-group details-section-hidden" data-methods="flight_faro flight_lisbon">
+                        <span class="welcome-pack-choice-label">Hiring a car?</span>
+                        <label><input type="radio" name="arrival_hiring_car" value="no" {% if not arrival_hiring_car %}checked{% endif %}> No</label>
+                        <label><input type="radio" name="arrival_hiring_car" value="yes" {% if arrival_hiring_car %}checked{% endif %}> Yes</label>
                     </div>
 
                     <div class="welcome-pack-field">
-                        <label for="arrival_details">Anything else we should know about your arrival?</label>
-                        <textarea name="arrival_details" id="arrival_details" class="reserve-input" rows="2">{{ arrival_details }}</textarea>
+                        <label for="arrival_details">Anything else we should know about your arrival? (140 characters max)</label>
+                        <textarea name="arrival_details" id="arrival_details" class="reserve-input" rows="2" maxlength="140">{{ arrival_details }}</textarea>
                     </div>
                 </section>
 
@@ -106,7 +107,7 @@
                     <div class="transfer-field">
                         <label for="departure_method">How are you travelling?</label>
                         <select name="departure_method" id="departure_method" class="reserve-input">
-                            {% for value, label in travel_methods %}
+                            {% for value, label in departure_travel_methods %}
                             <option value="{{ value }}" {% if departure_method == value %}selected{% endif %}>{{ label }}</option>
                             {% endfor %}
                         </select>
@@ -115,7 +116,8 @@
                     <div class="transfer-grid details-section-hidden" data-methods="flight_faro flight_lisbon">
                         <div class="transfer-field">
                             <label for="departure_flight_number">Flight number</label>
-                            <input type="text" name="departure_flight_number" id="departure_flight_number" class="reserve-input" value="{{ departure_flight_number }}" placeholder="e.g. TP1234">
+                            <input type="text" name="departure_flight_number" id="departure_flight_number" class="reserve-input" value="{{ departure_flight_number }}" placeholder="e.g. TP1234" pattern="(?=.*[A-Za-z])[A-Za-z0-9]{1,3}[ \-]?[0-9]{3,5}" title="1-3 letters/numbers (e.g. an airline code) followed by 3-5 numbers, e.g. TP1234 or U21234">
+                            {% if errors.departure_flight_number %}<p class="reserve-form-error">{{ errors.departure_flight_number }}</p>{% endif %}
                         </div>
                         <div class="transfer-field">
                             <label for="departure_flight_time">Take-off time</label>
@@ -142,8 +144,8 @@
                     </div>
 
                     <div class="welcome-pack-field">
-                        <label for="departure_details">Anything else we should know about your departure?</label>
-                        <textarea name="departure_details" id="departure_details" class="reserve-input" rows="2">{{ departure_details }}</textarea>
+                        <label for="departure_details">Anything else we should know about your departure? (140 characters max)</label>
+                        <textarea name="departure_details" id="departure_details" class="reserve-input" rows="2" maxlength="140">{{ departure_details }}</textarea>
                     </div>
                 </section>
 
