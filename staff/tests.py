@@ -61,6 +61,11 @@ class StaffAuthGateTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn('/admin/login/', response.url)
 
+    def test_guest_detail_also_gated(self):
+        response = self.client.get(reverse('staff:guest_detail', kwargs={'pk': self.guest.pk}))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/admin/login/', response.url)
+
 
 class StaffBookingDetailViewTests(TestCase):
     def setUp(self):
@@ -434,67 +439,114 @@ class StaffGuestListViewTests(TestCase):
         User.objects.create_user(username='guests_staffer', password='pw', is_staff=True)
         self.client.login(username='guests_staffer', password='pw')
 
-        self.property = Property.objects.create(title='Guest List Property', short_title='GUESTLISTPROP')
         self.adams = Guest.objects.create(
             first_name='Carly', last_name='Adams', email='carly.adams@example.com', phone='+351911222333',
         )
         self.ackroyd = Guest.objects.create(first_name='Nora', last_name='Ackroyd', email='nora.ackroyd@example.com')
         self.baxter = Guest.objects.create(first_name='Bob', last_name='Baxter', email='bob.baxter@example.com')
-
-        self.adams_old_booking = Booking.objects.create(
-            property=self.property, guest=self.adams,
-            arrival_date=date.today() + timedelta(days=10), departure_date=date.today() + timedelta(days=17),
-            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
-            adults=2, children=0, babies=0, last_updated=timezone.now(),
-        )
-        self.adams_latest_booking = Booking.objects.create(
-            property=self.property, guest=self.adams,
-            arrival_date=date.today() + timedelta(days=40), departure_date=date.today() + timedelta(days=47),
-            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
-            adults=2, children=0, babies=0, last_updated=timezone.now(),
-        )
         self.url = reverse('staff:guest_list')
 
     def test_default_shows_only_first_letter(self):
         response = self.client.get(self.url)
         self.assertEqual(response.context['selected_letter'], 'A')
-        surnames = {row['guest'].last_name for row in response.context['rows']}
+        surnames = {guest.last_name for guest in response.context['guests']}
         self.assertEqual(surnames, {'Adams', 'Ackroyd'})
 
     def test_letter_filter_narrows_to_surname(self):
         response = self.client.get(self.url, {'letter': 'B'})
-        surnames = {row['guest'].last_name for row in response.context['rows']}
+        surnames = {guest.last_name for guest in response.context['guests']}
         self.assertEqual(surnames, {'Baxter'})
 
     def test_all_letter_shows_every_guest(self):
         response = self.client.get(self.url, {'letter': 'ALL'})
-        surnames = {row['guest'].last_name for row in response.context['rows']}
+        surnames = {guest.last_name for guest in response.context['guests']}
         self.assertEqual(surnames, {'Adams', 'Ackroyd', 'Baxter'})
 
     def test_search_by_name_overrides_letter_filter(self):
         response = self.client.get(self.url, {'q': 'baxter'})
-        surnames = {row['guest'].last_name for row in response.context['rows']}
+        surnames = {guest.last_name for guest in response.context['guests']}
         self.assertEqual(surnames, {'Baxter'})
         self.assertEqual(response.context['selected_letter'], '')
 
     def test_search_by_email(self):
         response = self.client.get(self.url, {'q': 'carly.adams'})
-        surnames = {row['guest'].last_name for row in response.context['rows']}
+        surnames = {guest.last_name for guest in response.context['guests']}
         self.assertEqual(surnames, {'Adams'})
 
     def test_search_by_phone(self):
         response = self.client.get(self.url, {'q': '911222333'})
-        surnames = {row['guest'].last_name for row in response.context['rows']}
+        surnames = {guest.last_name for guest in response.context['guests']}
         self.assertEqual(surnames, {'Adams'})
 
-    def test_guest_links_to_most_recent_booking(self):
+    def test_guest_links_to_detail_page(self):
         response = self.client.get(self.url, {'letter': 'A'})
-        rows = {row['guest'].pk: row['latest_booking'] for row in response.context['rows']}
-        self.assertEqual(rows[self.adams.pk], self.adams_latest_booking)
-        self.assertContains(response, reverse('staff:booking_detail', kwargs={'reference': self.adams_latest_booking.reference}))
+        self.assertContains(response, reverse('staff:guest_detail', kwargs={'pk': self.adams.pk}))
 
-    def test_guest_with_no_booking_renders_without_error(self):
-        response = self.client.get(self.url, {'letter': 'B'})
-        self.assertEqual(response.status_code, 200)
-        row = next(row for row in response.context['rows'] if row['guest'].pk == self.baxter.pk)
-        self.assertIsNone(row['latest_booking'])
+
+class StaffGuestDetailViewTests(TestCase):
+    def setUp(self):
+        User.objects.create_user(username='guest_detail_staffer', password='pw', is_staff=True)
+        self.client.login(username='guest_detail_staffer', password='pw')
+
+        self.property = Property.objects.create(title='Guest Detail Property', short_title='GUESTDETAILPROP')
+        self.guest = Guest.objects.create(
+            first_name='Carly', last_name='Adams', email='carly.adams@example.com', phone='+351911222333',
+        )
+        self.other_guest = Guest.objects.create(first_name='Someone', last_name='Else', email='else@example.com')
+
+        self.confirmed_booking = Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=date.today() + timedelta(days=30), departure_date=date.today() + timedelta(days=37),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.cancelled_booking = Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=date.today() + timedelta(days=60), departure_date=date.today() + timedelta(days=67),
+            is_owner=False, enquiry_status='Cancelled by guest', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.other_guest_booking = Booking.objects.create(
+            property=self.property, guest=self.other_guest,
+            arrival_date=date.today() + timedelta(days=15), departure_date=date.today() + timedelta(days=20),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=1, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.url = reverse('staff:guest_detail', kwargs={'pk': self.guest.pk})
+
+    def test_unknown_guest_404s(self):
+        response = self.client.get(reverse('staff:guest_detail', kwargs={'pk': 999999}))
+        self.assertEqual(response.status_code, 404)
+
+    def test_default_shows_only_this_guests_valid_bookings(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['status_filter'], 'Valid')
+        booking_ids = {row['booking'].pk for row in response.context['rows']}
+        self.assertEqual(booking_ids, {self.confirmed_booking.pk})  # excludes cancelled + other guest
+
+    def test_all_status_filter_includes_cancelled_but_not_other_guest(self):
+        response = self.client.get(self.url, {'status': 'All'})
+        booking_ids = {row['booking'].pk for row in response.context['rows']}
+        self.assertEqual(booking_ids, {self.confirmed_booking.pk, self.cancelled_booking.pk})
+
+    def test_reservation_link_resolves_to_correct_booking(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, reverse('staff:booking_detail', kwargs={'reference': self.confirmed_booking.reference}))
+
+    def test_update_guest_info_saves_fields(self):
+        response = self.client.post(self.url, {
+            'first_name': 'Carly', 'last_name': 'Adams-Smith', 'email': 'new@example.com',
+            'phone': '+351900000000', 'id_card': 'X123456', 'nif_number': '123456789',
+            'nationality': 'British', 'preferred_language': 'PT',
+        })
+        self.assertRedirects(response, self.url)
+        self.guest.refresh_from_db()
+        self.assertEqual(self.guest.last_name, 'Adams-Smith')
+        self.assertEqual(self.guest.email, 'new@example.com')
+        self.assertEqual(self.guest.id_card, 'X123456')
+        self.assertEqual(self.guest.preferred_language, 'PT')
+
+    def test_update_guest_info_never_blanks_required_last_name(self):
+        self.client.post(self.url, {'last_name': '   '})
+        self.guest.refresh_from_db()
+        self.assertEqual(self.guest.last_name, 'Adams')

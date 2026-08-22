@@ -17,9 +17,7 @@ from bookings.utils import extras_summary
 from guests.models import Guest
 from properties.models import Property
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
-from staff.utils import (
-    CLOSED_STATUSES, GUEST_LETTERS, STAGE_TABS, STATUS_BUCKETS, booking_stage, next_step_hint, status_bucket,
-)
+from staff.utils import GUEST_LETTERS, STAGE_TABS, STATUS_BUCKETS, booking_stage, next_step_hint, reservation_rows
 
 
 @method_decorator(staff_member_required, name='dispatch')
@@ -49,31 +47,8 @@ class StaffHomeView(View):
         ]
 
         status_filter = request.GET.get('status', '').strip() or 'Valid'
-        # .holding() never returns a CLOSED_STATUSES booking (that's what makes it "holding"), so
-        # Invalid needs the complementary query instead, and All needs everything, unfiltered -
-        # Valid and Ended are both subsets of what .holding() returns.
-        if status_filter == 'Invalid':
-            reservations = Booking.objects.filter(enquiry_status__in=CLOSED_STATUSES)
-        elif status_filter == 'All':
-            reservations = Booking.objects.all()
-        else:
-            reservations = Booking.objects.holding()
-        reservations = reservations.select_related('property', 'guest')
-        if selected_property:
-            reservations = reservations.filter(property=selected_property)
-        reservations = reservations.order_by('arrival_date')
-
-        rows = []
-        for booking in reservations:
-            stage = booking_stage(booking)
-            bucket = status_bucket(stage)
-            if status_filter != 'All' and bucket != status_filter:
-                continue
-            # Bucketing collapses every dead/cancelled status into one "Closed" stage - not
-            # useful on its own, so Invalid rows show the real reason (e.g. "Payment failed")
-            # instead of the generic label.
-            status_label = booking.enquiry_status if bucket == 'Invalid' else stage
-            rows.append({'booking': booking, 'status_label': status_label})
+        base = Booking.objects.filter(property=selected_property) if selected_property else Booking.objects.all()
+        rows = reservation_rows(base, status_filter)
 
         context = {
             'properties': properties,
@@ -108,11 +83,8 @@ class StaffGuestListView(View):
     """PIMS-style "All Customers" list - an A-Z surname index plus a free-text search box (name,
     email, or phone - phone included so an unfamiliar incoming call can be matched to a guest),
     both over guests.models.Guest. klt-web's Guest has no address field (PIMS' own screenshot
-    shows one) so that column is simply dropped rather than faked. Each row links to the guest's
-    most recent booking (by arrival_date) since klt-web has no standalone guest detail page - a
-    Guest can be shared across several bookings (see the comment on BookingGuest in
-    bookings/models.py), so "most recent" is a reasonable single destination without building a
-    guest detail page."""
+    shows one) so that column is simply dropped rather than faked. Each row links to
+    StaffGuestDetailView, klt-web's equivalent of PIMS' "View/Modify Customer" page."""
     template_name = 'staff/guest_list.html'
 
     def get(self, request, *args, **kwargs):
@@ -135,19 +107,59 @@ class StaffGuestListView(View):
                 guests = guests.filter(last_name__istartswith=letter)
         guests = guests.order_by('last_name', 'first_name')
 
-        # One extra query per row rather than a batched prefetch - guest counts are small for a
-        # single-business PMS, same tradeoff already made for the Home page's per-property
-        # calendar loop (see StaffHomeView).
-        rows = [{'guest': guest, 'latest_booking': guest.booking_set.order_by('-arrival_date').first()}
-                for guest in guests]
-
         context = {
-            'rows': rows,
+            'guests': guests,
             'letters': GUEST_LETTERS,
             'selected_letter': letter,
             'query': query,
         }
         return render(request, self.template_name, context)
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class StaffGuestDetailView(View):
+    """PIMS-style "View/Modify Customer" page - a guest-info form on the left (PIMS' own address/
+    flight/extras/discount fields have no klt-web equivalent - those are per-booking concepts
+    already covered on the booking detail page - so the fields shown here are exactly what
+    guests.models.Guest actually stores) and, on the right, that guest's reservations using the
+    same Valid/Invalid/Ended/All filter as StaffHomeView (via the shared reservation_rows()
+    helper) but without a property selector - Thomas confirmed one guest's own booking list
+    doesn't need that extra granularity."""
+    template_name = 'staff/guest_detail.html'
+
+    def _get_guest(self, pk):
+        guest = Guest.objects.filter(pk=pk).first()
+        if guest is None:
+            raise Http404("No guest found.")
+        return guest
+
+    def get(self, request, pk, *args, **kwargs):
+        guest = self._get_guest(pk)
+        status_filter = request.GET.get('status', '').strip() or 'Valid'
+        context = {
+            'guest': guest,
+            'rows': reservation_rows(Booking.objects.filter(guest=guest), status_filter),
+            'status_buckets': STATUS_BUCKETS,
+            'status_filter': status_filter,
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request, pk, *args, **kwargs):
+        guest = self._get_guest(pk)
+        post = request.POST
+        guest.first_name = post.get('first_name', guest.first_name or '').strip()
+        guest.last_name = post.get('last_name', guest.last_name).strip() or guest.last_name
+        guest.email = post.get('email', guest.email or '').strip()
+        guest.phone = post.get('phone', guest.phone or '').strip()
+        guest.id_card = post.get('id_card', guest.id_card or '').strip()
+        guest.nif_number = post.get('nif_number', guest.nif_number or '').strip()
+        guest.nationality = post.get('nationality', guest.nationality or '').strip()
+        preferred_language = post.get('preferred_language', '').strip()
+        if preferred_language:
+            guest.preferred_language = preferred_language
+        guest.save()
+        messages.success(request, "Guest info updated.")
+        return redirect('staff:guest_detail', pk=guest.pk)
 
 
 def _parsed_date(raw):

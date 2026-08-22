@@ -1,0 +1,39 @@
+.staff-guest-detail-layout {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    gap: 24px;
+    align-items: start;
+}
+
+.staff-guest-reservations-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.staff-guest-reservations-header .staff-panel-title {
+    margin: 0;
+}
+
+.staff-guest-reservations-header .staff-field {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--secondary-font);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--secondary-color);
+}
+
+.staff-guest-reservations-header select.staff-input {
+    width: auto;
+}
+
+@media (max-width: 900px) {
+    .staff-guest-detail-layout {
+        grid-template-columns: 1fr;
+    }
+}

@@ -55,6 +55,32 @@ def booking_stage(booking):
     return 'Confirmed Booking'
 
 
+def reservation_rows(queryset, status_filter):
+    """Applies one of STATUS_BUCKETS to a Booking queryset already scoped to whatever the caller
+    cares about (a property, a guest, everything) and returns [{'booking', 'status_label'}, ...]
+    ordered by arrival_date. Shared by StaffHomeView and StaffGuestDetailView so the Valid/
+    Invalid/Ended/All rules (see STATUS_BUCKETS above) live in exactly one place. 'Invalid' needs
+    its own explicit filter and 'All' needs none at all, since .holding() (the base for Valid/
+    Ended) never returns a CLOSED_STATUSES booking to begin with."""
+    if status_filter == 'Invalid':
+        queryset = queryset.filter(enquiry_status__in=CLOSED_STATUSES)
+    elif status_filter != 'All':
+        queryset = queryset.holding()
+    queryset = queryset.select_related('property', 'guest').order_by('arrival_date')
+
+    rows = []
+    for booking in queryset:
+        stage = booking_stage(booking)
+        bucket = status_bucket(stage)
+        if status_filter != 'All' and bucket != status_filter:
+            continue
+        # Bucketing collapses every dead/cancelled status into one "Closed" stage - not useful
+        # on its own, so Invalid rows show the real reason (e.g. "Payment failed") instead.
+        status_label = booking.enquiry_status if bucket == 'Invalid' else stage
+        rows.append({'booking': booking, 'status_label': status_label})
+    return rows
+
+
 def next_step_hint(booking, charge, balance_payment):
     """A short computed "what's next" line - not PIMS' separate configurable reminders system
     (deferred, see the staff booking detail page plan), just a direct read of existing state."""

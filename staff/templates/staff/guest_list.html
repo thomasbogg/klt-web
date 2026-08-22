@@ -41,18 +41,12 @@
                 </tr>
             </thead>
             <tbody>
-                {% for row in rows %}
+                {% for guest in guests %}
                 <tr>
-                    <td>
-                        {% if row.latest_booking %}
-                        <a href="{% url 'staff:booking_detail' reference=row.latest_booking.reference %}">{{ row.guest.last_name }}</a>
-                        {% else %}
-                        {{ row.guest.last_name }}
-                        {% endif %}
-                    </td>
-                    <td>{{ row.guest.first_name|default:"" }}</td>
-                    <td>{{ row.guest.email|default:"" }}</td>
-                    <td>{{ row.guest.phone|default:"" }}</td>
+                    <td><a href="{% url 'staff:guest_detail' pk=guest.pk %}">{{ guest.last_name }}</a></td>
+                    <td>{{ guest.first_name|default:"" }}</td>
+                    <td>{{ guest.email|default:"" }}</td>
+                    <td>{{ guest.phone|default:"" }}</td>
                 </tr>
                 {% empty %}
                 <tr><td colspan="4" class="staff-empty">No guests match this filter.</td></tr>
