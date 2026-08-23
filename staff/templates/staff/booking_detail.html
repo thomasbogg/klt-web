@@ -7,6 +7,9 @@
     <title>Booking {{ booking.reference }} | Staff</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
+    <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
+    <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
 </head>
 <body>
     <div class="staff-page">
@@ -47,10 +50,10 @@
                         </label>
                         <div class="staff-field-row">
                             <label class="staff-field">Arrival
-                                <input type="date" name="arrival_date" class="staff-input" value="{{ booking.arrival_date|date:'Y-m-d' }}">
+                                <input type="text" name="arrival_date" class="staff-input staff-date-input staff-date-start" value="{{ booking.arrival_date|date:'Y-m-d' }}" autocomplete="off">
                             </label>
                             <label class="staff-field">Departure
-                                <input type="date" name="departure_date" class="staff-input" value="{{ booking.departure_date|date:'Y-m-d' }}">
+                                <input type="text" name="departure_date" class="staff-input staff-date-input staff-date-end" value="{{ booking.departure_date|date:'Y-m-d' }}" autocomplete="off">
                             </label>
                         </div>
                         <div class="staff-field-row">
