@@ -5,7 +5,7 @@ from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.exceptions import ValidationError
 from django.db.models import Q
-from django.http import Http404
+from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -22,8 +22,8 @@ from properties.models import (
 )
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
 from staff.utils import (
-    AMENITY_BOOLEAN_FIELDS, GUEST_LETTERS, STAGE_TABS, STATUS_BUCKETS, booking_stage, next_step_hint,
-    reservation_rows,
+    AMENITY_BOOLEAN_FIELDS, GUEST_LETTERS, OWNER_BOOLEAN_FIELDS, STAGE_TABS, STATUS_BUCKETS,
+    booking_stage, next_step_hint, reservation_rows,
 )
 
 
@@ -239,6 +239,7 @@ def _property_form_context():
         'managers': Manager.objects.order_by('company'),
         'locations': Location.objects.order_by('title'),
         'accountants': Accountant.objects.order_by('company'),
+        'owner_boolean_fields': OWNER_BOOLEAN_FIELDS,
     }
 
 
@@ -278,6 +279,77 @@ class StaffPropertyCreateView(View):
         property.save()
         messages.success(request, "Property created.")
         return redirect('staff:property_detail', pk=property.pk)
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class StaffQuickAddView(View):
+    """Backs the "+ New" quick-add panels next to the Location/Owner/Manager/Accountant dropdowns
+    on the Create Property page - fetch()-only (no full-page navigation), so creating one of these
+    can never disturb whatever's already been typed into the rest of the Create Property form.
+    Returns the new row as JSON so the calling page's <select> can just gain a new, pre-selected
+    option in place. Only touches full_clean()-valid rows; unique-field clashes (e.g. a duplicate
+    Owner email) come back as a normal JSON error for the panel to display inline."""
+
+    def post(self, request, model, *args, **kwargs):
+        builder = {
+            'location': self._build_location,
+            'owner': self._build_owner,
+            'manager': self._build_manager,
+            'accountant': self._build_accountant,
+        }.get(model)
+        if builder is None:
+            return JsonResponse({'error': 'Unknown type.'}, status=404)
+        instance = builder(request.POST)
+        try:
+            instance.full_clean()
+        except ValidationError as error:
+            return JsonResponse({'error': '; '.join(dict.fromkeys(error.messages))}, status=400)
+        instance.save()
+        return JsonResponse({'id': instance.pk, 'label': str(instance)})
+
+    def _build_location(self, post):
+        return Location(
+            title=post.get('title', '').strip(),
+            street=post.get('street', '').strip(),
+            zip_code=post.get('zip_code', '').strip(),
+            city=post.get('city', '').strip(),
+            coordinates=post.get('coordinates', '').strip(),
+            map_link=post.get('map_link', '').strip(),
+        )
+
+    def _build_owner(self, post):
+        fields = {name: post.get(name) == 'on' for name, _ in OWNER_BOOLEAN_FIELDS}
+        return Owner(
+            name=post.get('name', '').strip(),
+            email=post.get('email', '').strip(),
+            **fields,
+        )
+
+    def _build_manager(self, post):
+        # "Just the essentials" - only the head contact is asked for here; the other four contact
+        # roles (maintenance/liaison/cleaning/finance) have no sensible universal default and no
+        # model-level default of their own (unlike Manager.finance_* alone), so they start out as
+        # copies of the head contact rather than being left blank/invalid. Thomas can fill in the
+        # real per-role contacts later via /admin/properties/manager/.
+        head_name = post.get('head_name', '').strip()
+        head_email = post.get('head_email', '').strip()
+        head_phone = post.get('head_phone', '').strip()
+        return Manager(
+            company=post.get('company', '').strip(),
+            head_name=head_name, head_email=head_email, head_phone=head_phone,
+            maintenance_name=head_name, maintenance_email=head_email, maintenance_phone=head_phone,
+            liaison_name=head_name, liaison_email=head_email, liaison_phone=head_phone,
+            cleaning_name=head_name, cleaning_email=head_email, cleaning_phone=head_phone,
+            finance_name=head_name, finance_email=head_email, finance_phone=head_phone,
+        )
+
+    def _build_accountant(self, post):
+        return Accountant(
+            company=post.get('company', '').strip(),
+            name=post.get('name', '').strip(),
+            email=post.get('email', '').strip(),
+            phone=post.get('phone', '').strip(),
+        )
 
 
 @method_decorator(staff_member_required, name='dispatch')

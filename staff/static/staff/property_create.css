@@ -1,0 +1,46 @@
+.staff-field-with-action {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.staff-field-with-action select {
+    flex: 1;
+}
+
+.staff-quick-add-panel {
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    margin: -4px 0 10px;
+    padding: 12px;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    background: #fafafa;
+}
+
+.staff-quick-add-panel.staff-quick-add-open {
+    display: flex;
+}
+
+.staff-quick-add-hint {
+    margin: 0;
+    font-size: 0.82rem;
+    color: #666;
+}
+
+.staff-quick-add-checkbox-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 6px 16px;
+}
+
+.staff-quick-add-error {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--status-booked-color);
+}
+
+.staff-quick-add-error:empty {
+    display: none;
+}

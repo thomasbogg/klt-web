@@ -7,6 +7,8 @@
     <title>New property | Staff</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/property_create.css' %}">
+    <script src="{% static 'staff/property_create.js' %}" defer></script>
 </head>
 <body>
     <div class="staff-page staff-lookup-page">
@@ -38,37 +40,124 @@
                     <input type="text" name="door_number" class="staff-input">
                 </label>
                 <label class="staff-field">Location
-                    <select name="location" class="staff-input">
-                        <option value="">-</option>
-                        {% for location in locations %}
-                        <option value="{{ location.pk }}">{{ location }}</option>
-                        {% endfor %}
-                    </select>
+                    <div class="staff-field-with-action">
+                        <select name="location" class="staff-input">
+                            <option value="">-</option>
+                            {% for location in locations %}
+                            <option value="{{ location.pk }}">{{ location }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="button" class="staff-button staff-button-small staff-quick-add-toggle" data-target="location">+ New</button>
+                    </div>
                 </label>
+                <div class="staff-quick-add-panel" data-quick-add="location" data-endpoint="{% url 'staff:quick_add' model='location' %}">
+                    <label class="staff-field">Title
+                        <input type="text" data-field="title" class="staff-input">
+                    </label>
+                    <label class="staff-field">Street
+                        <input type="text" data-field="street" class="staff-input">
+                    </label>
+                    <label class="staff-field">Zip code
+                        <input type="text" data-field="zip_code" class="staff-input">
+                    </label>
+                    <label class="staff-field">City
+                        <input type="text" data-field="city" class="staff-input">
+                    </label>
+                    <label class="staff-field">Coordinates
+                        <input type="text" data-field="coordinates" class="staff-input" placeholder="lat, lon">
+                    </label>
+                    <label class="staff-field">Map link
+                        <input type="text" data-field="map_link" class="staff-input">
+                    </label>
+                    <p class="staff-quick-add-error"></p>
+                    <button type="button" class="staff-button staff-button-small staff-quick-add-submit">Add location</button>
+                </div>
+
                 <label class="staff-field">Owner
-                    <select name="owner" class="staff-input">
-                        <option value="">-</option>
-                        {% for owner in owners %}
-                        <option value="{{ owner.pk }}">{{ owner }}</option>
-                        {% endfor %}
-                    </select>
+                    <div class="staff-field-with-action">
+                        <select name="owner" class="staff-input">
+                            <option value="">-</option>
+                            {% for owner in owners %}
+                            <option value="{{ owner.pk }}">{{ owner }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="button" class="staff-button staff-button-small staff-quick-add-toggle" data-target="owner">+ New</button>
+                    </div>
                 </label>
+                <div class="staff-quick-add-panel" data-quick-add="owner" data-endpoint="{% url 'staff:quick_add' model='owner' %}">
+                    <label class="staff-field">Name
+                        <input type="text" data-field="name" class="staff-input">
+                    </label>
+                    <label class="staff-field">Email
+                        <input type="email" data-field="email" class="staff-input">
+                    </label>
+                    <div class="staff-quick-add-checkbox-grid">
+                        {% for field, label in owner_boolean_fields %}
+                        <label class="staff-checkbox-label">
+                            <input type="checkbox" data-field="{{ field }}"> {{ label }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <p class="staff-quick-add-error"></p>
+                    <button type="button" class="staff-button staff-button-small staff-quick-add-submit">Add owner</button>
+                </div>
+
                 <label class="staff-field">Manager
-                    <select name="manager" class="staff-input">
-                        <option value="">-</option>
-                        {% for manager in managers %}
-                        <option value="{{ manager.pk }}">{{ manager }}</option>
-                        {% endfor %}
-                    </select>
+                    <div class="staff-field-with-action">
+                        <select name="manager" class="staff-input">
+                            <option value="">-</option>
+                            {% for manager in managers %}
+                            <option value="{{ manager.pk }}">{{ manager }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="button" class="staff-button staff-button-small staff-quick-add-toggle" data-target="manager">+ New</button>
+                    </div>
                 </label>
+                <div class="staff-quick-add-panel" data-quick-add="manager" data-endpoint="{% url 'staff:quick_add' model='manager' %}">
+                    <p class="staff-quick-add-hint">Just the head contact for now - the maintenance, liaison, cleaning and finance contacts default to the same details, editable later from Django admin.</p>
+                    <label class="staff-field">Company
+                        <input type="text" data-field="company" class="staff-input">
+                    </label>
+                    <label class="staff-field">Head contact name
+                        <input type="text" data-field="head_name" class="staff-input">
+                    </label>
+                    <label class="staff-field">Head contact email
+                        <input type="email" data-field="head_email" class="staff-input">
+                    </label>
+                    <label class="staff-field">Head contact phone
+                        <input type="text" data-field="head_phone" class="staff-input">
+                    </label>
+                    <p class="staff-quick-add-error"></p>
+                    <button type="button" class="staff-button staff-button-small staff-quick-add-submit">Add manager</button>
+                </div>
+
                 <label class="staff-field">Accountant
-                    <select name="accountant" class="staff-input">
-                        <option value="">-</option>
-                        {% for accountant in accountants %}
-                        <option value="{{ accountant.pk }}">{{ accountant }}</option>
-                        {% endfor %}
-                    </select>
+                    <div class="staff-field-with-action">
+                        <select name="accountant" class="staff-input">
+                            <option value="">-</option>
+                            {% for accountant in accountants %}
+                            <option value="{{ accountant.pk }}">{{ accountant }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="button" class="staff-button staff-button-small staff-quick-add-toggle" data-target="accountant">+ New</button>
+                    </div>
                 </label>
+                <div class="staff-quick-add-panel" data-quick-add="accountant" data-endpoint="{% url 'staff:quick_add' model='accountant' %}">
+                    <label class="staff-field">Company
+                        <input type="text" data-field="company" class="staff-input">
+                    </label>
+                    <label class="staff-field">Name
+                        <input type="text" data-field="name" class="staff-input">
+                    </label>
+                    <label class="staff-field">Email
+                        <input type="email" data-field="email" class="staff-input">
+                    </label>
+                    <label class="staff-field">Phone
+                        <input type="text" data-field="phone" class="staff-input">
+                    </label>
+                    <p class="staff-quick-add-error"></p>
+                    <button type="button" class="staff-button staff-button-small staff-quick-add-submit">Add accountant</button>
+                </div>
                 <label class="staff-field">AL number
                     <input type="text" name="al_number" class="staff-input">
                 </label>
