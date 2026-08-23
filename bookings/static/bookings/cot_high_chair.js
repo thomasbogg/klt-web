@@ -17,7 +17,7 @@ function computePrice() {
         total += parseFloat(isLongStay ? config.high_chair_long : config.high_chair_short);
     }
     if (cotCheckbox.checked && highChairCheckbox.checked) {
-        total -= parseFloat(config.combo_discount);
+        total -= total * (parseFloat(config.combo_discount_percent) / 100);
     }
     total = Math.max(total, 0);
 

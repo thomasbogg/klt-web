@@ -198,7 +198,7 @@ class BookingFormMixin:
                 'cot_long': str(settings.cot_price_long_stay),
                 'high_chair_short': str(settings.high_chair_price_short_stay),
                 'high_chair_long': str(settings.high_chair_price_long_stay),
-                'combo_discount': str(settings.cot_and_high_chair_combo_discount),
+                'combo_discount_percent': str(settings.cot_and_high_chair_combo_discount_percent),
                 'child_min_age': BookingSettings.load().child_min_age,
             },
             'late_checkout': late_checkout,

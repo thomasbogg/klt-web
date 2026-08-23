@@ -690,13 +690,12 @@ class WelcomePackItem(models.Model):
 
     name = models.CharField(max_length=100)
     category = models.CharField(max_length=24, choices=Category.choices, default=Category.FOOD_COMMON)
-    order = models.PositiveIntegerField(default=0)
     active = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'welcome_pack_items'
         verbose_name = 'Welcome pack item'
-        ordering = ('category', 'order', 'name')
+        ordering = ('category', 'name')
 
     def __str__(self):
         return f"{self.name} ({self.get_category_display()})"
@@ -747,9 +746,10 @@ class ExtrasSettings(models.Model):
                                                        help_text="Flat price for a stay of up to 7 nights.")
     high_chair_price_long_stay = models.DecimalField(max_digits=8, decimal_places=2, default=0,
                                                       help_text="Flat price for a stay of more than 7 nights.")
-    cot_and_high_chair_combo_discount = models.DecimalField(
-        max_digits=8, decimal_places=2, default=0,
-        help_text="Flat discount subtracted from the combined price when both a cot and a high "
+    cot_and_high_chair_combo_discount_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="Percentage discount applied to the combined price when both a cot and a high "
                   "chair are requested together on the same booking.",
     )
 
@@ -805,8 +805,8 @@ class ExtrasSettings(models.Model):
         """nights is the length of the stay (departure_date - arrival_date), not a per-request
         value - cot/high chair pricing covers the whole stay, so a 7-night stay is "short" and an
         8-night stay is "long" (see cot_price_short_stay/cot_price_long_stay). The combo discount
-        only applies when both are requested on the same booking; clamped at 0 so a discount
-        larger than the combined price can never make this negative."""
+        is a percentage of the combined price, only applied when both are requested on the same
+        booking; clamped at 0 so a discount over 100% can never make this negative."""
         is_long_stay = nights > 7
         total = Decimal('0')
         if wants_cot:
@@ -814,7 +814,7 @@ class ExtrasSettings(models.Model):
         if wants_high_chair:
             total += self.high_chair_price_long_stay if is_long_stay else self.high_chair_price_short_stay
         if wants_cot and wants_high_chair:
-            total -= self.cot_and_high_chair_combo_discount
+            total -= total * (self.cot_and_high_chair_combo_discount_percent / Decimal('100'))
         return max(total, Decimal('0'))
 
 

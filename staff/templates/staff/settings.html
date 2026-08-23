@@ -97,20 +97,11 @@
 
                 <section class="staff-settings-pane" id="settings-pane-extras">
                     <div class="staff-panel">
-                        <h2 class="staff-panel-title">Extras settings</h2>
+                        <h2 class="staff-panel-title">Cot &amp; high chair</h2>
                         <form method="post" class="staff-form staff-settings-form">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="update_extras_settings">
-                            <div class="staff-settings-field-grid">
-                                <label class="staff-field">Airport transfer night surcharge (&euro;)
-                                    <input type="text" name="airport_transfer_night_surcharge" class="staff-input" value="{{ extras_settings.airport_transfer_night_surcharge }}">
-                                </label>
-                                <label class="staff-field">Night surcharge window start
-                                    <input type="time" name="airport_transfer_night_window_start" class="staff-input" value="{{ extras_settings.airport_transfer_night_window_start|time:'H:i' }}">
-                                </label>
-                                <label class="staff-field">Night surcharge window end
-                                    <input type="time" name="airport_transfer_night_window_end" class="staff-input" value="{{ extras_settings.airport_transfer_night_window_end|time:'H:i' }}">
-                                </label>
+                            <div class="staff-settings-field-grid-compact">
                                 <label class="staff-field">Cot price - short stay (&le;7 nights)
                                     <input type="text" name="cot_price_short_stay" class="staff-input" value="{{ extras_settings.cot_price_short_stay }}">
                                 </label>
@@ -123,38 +114,39 @@
                                 <label class="staff-field">High chair price - long stay
                                     <input type="text" name="high_chair_price_long_stay" class="staff-input" value="{{ extras_settings.high_chair_price_long_stay }}">
                                 </label>
-                                <label class="staff-field">Cot + high chair combo discount (&euro;)
-                                    <input type="text" name="cot_and_high_chair_combo_discount" class="staff-input" value="{{ extras_settings.cot_and_high_chair_combo_discount }}">
-                                </label>
-                                <label class="staff-field">Welcome pack price (&euro;)
-                                    <input type="text" name="welcome_pack_price" class="staff-input" value="{{ extras_settings.welcome_pack_price }}">
-                                </label>
-                                <label class="staff-field">Late checkout price (&euro;)
-                                    <input type="text" name="late_checkout_price" class="staff-input" value="{{ extras_settings.late_checkout_price }}">
+                                <label class="staff-field">Cot + high chair combo discount (%)
+                                    <input type="text" name="cot_and_high_chair_combo_discount_percent" class="staff-input" value="{{ extras_settings.cot_and_high_chair_combo_discount_percent }}">
                                 </label>
                             </div>
-                            <button type="submit" class="staff-button">Save extras settings</button>
+                            <button type="submit" class="staff-button">Save cot &amp; high chair settings</button>
                         </form>
                     </div>
 
                     <div class="staff-panel">
-                        <h2 class="staff-panel-title">Welcome pack items</h2>
-                        <table class="staff-price-table">
+                        <h2 class="staff-panel-title">Welcome pack</h2>
+                        <form method="post" class="staff-form staff-settings-form">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_extras_settings">
+                            <label class="staff-field">Welcome pack price (&euro;)
+                                <input type="text" name="welcome_pack_price" class="staff-input" value="{{ extras_settings.welcome_pack_price }}">
+                            </label>
+                            <button type="submit" class="staff-button">Save welcome pack price</button>
+                        </form>
+                        <table class="staff-price-table staff-extras-aligned-table staff-welcome-pack-table">
                             <thead>
-                                <tr><th>Name</th><th>Category</th><th>Order</th><th>Active</th><th></th></tr>
+                                <tr><th>Name</th><th>Category</th><th>Active</th><th></th></tr>
                             </thead>
                             <tbody>
                                 {% for item in welcome_pack_items %}
                                 <tr>
                                     <td><input type="text" name="name" form="wpi-form-{{ item.pk }}" value="{{ item.name }}" class="staff-input"></td>
                                     <td>
-                                        <select name="category" form="wpi-form-{{ item.pk }}" class="staff-input staff-input-small">
+                                        <select name="category" form="wpi-form-{{ item.pk }}" class="staff-input">
                                             {% for value, label in welcome_pack_categories %}
                                             <option value="{{ value }}" {% if item.category == value %}selected{% endif %}>{{ label }}</option>
                                             {% endfor %}
                                         </select>
                                     </td>
-                                    <td><input type="text" name="order" form="wpi-form-{{ item.pk }}" value="{{ item.order }}" class="staff-input staff-input-small"></td>
                                     <td><input type="checkbox" name="active" form="wpi-form-{{ item.pk }}" {% if item.active %}checked{% endif %}></td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="wpi-form-{{ item.pk }}" class="staff-button staff-button-small">Save</button>
@@ -167,18 +159,17 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="5" class="staff-empty">No welcome pack items yet.</td></tr>
+                                <tr><td colspan="4" class="staff-empty">No welcome pack items yet.</td></tr>
                                 {% endfor %}
                                 <tr class="staff-price-row-new">
                                     <td><input type="text" name="name" form="wpi-form-new" class="staff-input"></td>
                                     <td>
-                                        <select name="category" form="wpi-form-new" class="staff-input staff-input-small">
+                                        <select name="category" form="wpi-form-new" class="staff-input">
                                             {% for value, label in welcome_pack_categories %}
                                             <option value="{{ value }}">{{ label }}</option>
                                             {% endfor %}
                                         </select>
                                     </td>
-                                    <td><input type="text" name="order" form="wpi-form-new" value="0" class="staff-input staff-input-small"></td>
                                     <td><input type="checkbox" name="active" form="wpi-form-new" checked></td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="wpi-form-new" class="staff-button staff-button-small">Add</button>
@@ -200,8 +191,8 @@
                     </div>
 
                     <div class="staff-panel">
-                        <h2 class="staff-panel-title">Request types</h2>
-                        <table class="staff-price-table">
+                        <h2 class="staff-panel-title">Special requests</h2>
+                        <table class="staff-price-table staff-extras-aligned-table staff-special-requests-table">
                             <thead>
                                 <tr><th>Name</th><th>Description</th><th>Default price &euro;</th><th>Active</th><th></th></tr>
                             </thead>
@@ -223,7 +214,7 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="5" class="staff-empty">No request types yet.</td></tr>
+                                <tr><td colspan="5" class="staff-empty">No special requests yet.</td></tr>
                                 {% endfor %}
                                 <tr class="staff-price-row-new">
                                     <td><input type="text" name="name" form="rt-form-new" class="staff-input"></td>
@@ -250,16 +241,46 @@
                     </div>
 
                     <div class="staff-panel">
-                        <h2 class="staff-panel-title">Airport transfer price bands</h2>
-                        <table class="staff-price-table">
+                        <h2 class="staff-panel-title">Late checkout</h2>
+                        <form method="post" class="staff-form staff-settings-form">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_extras_settings">
+                            <label class="staff-field">Late checkout price (&euro;)
+                                <input type="text" name="late_checkout_price" class="staff-input" value="{{ extras_settings.late_checkout_price }}">
+                            </label>
+                            <button type="submit" class="staff-button">Save late checkout price</button>
+                        </form>
+                    </div>
+
+                    <div class="staff-panel">
+                        <h2 class="staff-panel-title">Airport transfers</h2>
+                        <form method="post" class="staff-form staff-settings-form">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_extras_settings">
+                            <div class="staff-settings-field-grid">
+                                <label class="staff-field">Night surcharge (&euro;)
+                                    <input type="text" name="airport_transfer_night_surcharge" class="staff-input" value="{{ extras_settings.airport_transfer_night_surcharge }}">
+                                </label>
+                                <label class="staff-field">Night surcharge window start
+                                    <input type="time" name="airport_transfer_night_window_start" class="staff-input" value="{{ extras_settings.airport_transfer_night_window_start|time:'H:i' }}">
+                                </label>
+                                <label class="staff-field">Night surcharge window end
+                                    <input type="time" name="airport_transfer_night_window_end" class="staff-input" value="{{ extras_settings.airport_transfer_night_window_end|time:'H:i' }}">
+                                </label>
+                            </div>
+                            <button type="submit" class="staff-button">Save airport transfer settings</button>
+                        </form>
+                        <p class="staff-settings-hint">Each price band covers a transfer carrying up to that many guests in total (adults, children, and infants combined) - the smallest matching band is used.</p>
+                        <table class="staff-price-table staff-extras-aligned-table staff-transfer-bands-table">
                             <thead>
-                                <tr><th>Up to guests</th><th>Price &euro;</th><th></th></tr>
+                                <tr><th>Up to guests</th><th>Price &euro;</th><th></th><th></th></tr>
                             </thead>
                             <tbody>
                                 {% for band in transfer_bands %}
                                 <tr>
-                                    <td><input type="text" name="max_guests" form="band-form-{{ band.pk }}" value="{{ band.max_guests }}" class="staff-input staff-input-small"></td>
-                                    <td><input type="text" name="price" form="band-form-{{ band.pk }}" value="{{ band.price }}" class="staff-input staff-input-small"></td>
+                                    <td><input type="text" name="max_guests" form="band-form-{{ band.pk }}" value="{{ band.max_guests }}" class="staff-input"></td>
+                                    <td><input type="text" name="price" form="band-form-{{ band.pk }}" value="{{ band.price }}" class="staff-input"></td>
+                                    <td></td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="band-form-{{ band.pk }}" class="staff-button staff-button-small">Save</button>
                                         <form method="post" class="staff-inline-delete">
@@ -271,11 +292,12 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="3" class="staff-empty">No price bands yet.</td></tr>
+                                <tr><td colspan="4" class="staff-empty">No price bands yet.</td></tr>
                                 {% endfor %}
                                 <tr class="staff-price-row-new">
-                                    <td><input type="text" name="max_guests" form="band-form-new" class="staff-input staff-input-small"></td>
-                                    <td><input type="text" name="price" form="band-form-new" class="staff-input staff-input-small"></td>
+                                    <td><input type="text" name="max_guests" form="band-form-new" class="staff-input"></td>
+                                    <td><input type="text" name="price" form="band-form-new" class="staff-input"></td>
+                                    <td></td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="band-form-new" class="staff-button staff-button-small">Add</button>
                                     </td>

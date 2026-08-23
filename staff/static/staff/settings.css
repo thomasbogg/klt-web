@@ -84,6 +84,7 @@
 
 .staff-settings-form {
     max-width: none;
+    margin-bottom: 16px;
 }
 
 .staff-settings-field-grid {
@@ -93,8 +94,82 @@
     margin-bottom: 14px;
 }
 
+/* For a handful of short fields that should sit in one row rather than stretch full width.
+   align-self stops the parent .staff-form's flex stretch, but a fr-based track still grows to
+   fill whatever space that leaves (each .staff-input is width:100%, which defeats the grid's own
+   intrinsic/max-content sizing) - so the width is capped explicitly instead of left to shrink-to-
+   fit, sized for 5 columns just wide enough for the longest label ("Cot + high chair combo
+   discount"). */
+.staff-settings-field-grid-compact {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(190px, 1fr));
+    gap: 10px 16px;
+    margin-bottom: 14px;
+    max-width: 1150px;
+    align-self: flex-start;
+}
+
+@media (max-width: 900px) {
+    .staff-settings-field-grid-compact {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        align-self: stretch;
+    }
+}
+
 .staff-settings-hint {
     margin: 8px 0;
     font-size: 0.82rem;
     color: #666;
+}
+
+/* The three Extras list tables (Welcome pack, Special requests, Airport transfer bands) sit
+   stacked in the same pane, so their Save/Delete buttons need to land at the same x-position for
+   the pane to read as one coherent list rather than three independently-sized ones. Leaving each
+   table on its default auto layout doesn't guarantee that: auto layout distributes width based on
+   each table's own content, so two tables can each be genuinely 100% wide and still land their
+   actions column at different x-positions. Fixed layout with an identical explicit width on every
+   table's last column removes the guesswork - the actions column's left edge is then always
+   (table width - this width), the same in all three regardless of content. */
+.staff-extras-aligned-table {
+    table-layout: fixed;
+}
+
+.staff-extras-aligned-table th:last-child,
+.staff-extras-aligned-table td:last-child {
+    width: 150px;
+}
+
+.staff-extras-aligned-table .staff-price-row-actions {
+    justify-content: flex-end;
+}
+
+/* Narrow, fixed-content columns get an explicit width same as elsewhere in the app (e.g. Special
+   requests' Default price); each table's one or two genuinely free-text columns are left
+   unspecified so they absorb whatever's left - same role Name/Description already play, and here
+   Airport transfer bands' otherwise-empty spacer column plays that role too. */
+.staff-welcome-pack-table th:nth-child(2),
+.staff-welcome-pack-table td:nth-child(2) {
+    width: 260px;
+}
+
+.staff-welcome-pack-table th:nth-child(3),
+.staff-welcome-pack-table td:nth-child(3) {
+    width: 70px;
+}
+
+.staff-special-requests-table th:nth-child(3),
+.staff-special-requests-table td:nth-child(3) {
+    width: 110px;
+}
+
+.staff-special-requests-table th:nth-child(4),
+.staff-special-requests-table td:nth-child(4) {
+    width: 70px;
+}
+
+.staff-transfer-bands-table th:first-child,
+.staff-transfer-bands-table td:first-child,
+.staff-transfer-bands-table th:nth-child(2),
+.staff-transfer-bands-table td:nth-child(2) {
+    width: 150px;
 }

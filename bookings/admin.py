@@ -185,11 +185,11 @@ class RequestTypeAdmin(admin.ModelAdmin):
 
 @admin.register(WelcomePackItem)
 class WelcomePackItemAdmin(admin.ModelAdmin):
-    list_display = ('name', 'category', 'order', 'active')
+    list_display = ('name', 'category', 'active')
     list_display_links = ('name',)
-    list_editable = ('category', 'order', 'active')
+    list_editable = ('category', 'active')
     list_filter = ('category',)
-    ordering = ('category', 'order')
+    ordering = ('category', 'name')
 
 
 @admin.register(ExtrasSettings)

@@ -477,7 +477,7 @@ class StaffSettingsView(View):
         for field in (
             'airport_transfer_night_surcharge', 'cot_price_short_stay', 'cot_price_long_stay',
             'high_chair_price_short_stay', 'high_chair_price_long_stay',
-            'cot_and_high_chair_combo_discount', 'welcome_pack_price', 'late_checkout_price',
+            'cot_and_high_chair_combo_discount_percent', 'welcome_pack_price', 'late_checkout_price',
         ):
             value = _parsed_decimal(post.get(field))
             if value is not None:
@@ -501,7 +501,6 @@ class StaffSettingsView(View):
         item = WelcomePackItem(
             name=post.get('name', '').strip(),
             category=post.get('category') or WelcomePackItem.Category.FOOD_COMMON,
-            order=_parsed_int(post.get('order')) or 0,
             active=post.get('active') == 'on',
         )
         try:
@@ -520,7 +519,6 @@ class StaffSettingsView(View):
         post = request.POST
         item.name = post.get('name', '').strip()
         item.category = post.get('category') or item.category
-        item.order = _parsed_int(post.get('order')) or 0
         item.active = post.get('active') == 'on'
         try:
             item.full_clean()

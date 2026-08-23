@@ -558,7 +558,7 @@ class BookingDetailsViewTests(TestCase):
     def test_get_includes_active_request_types_and_welcome_pack_items(self):
         RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
         RequestType.objects.create(name='Discontinued item', default_price=Decimal('5.00'), active=False)
-        WelcomePackItem.objects.create(name='Red wine', order=1)
+        WelcomePackItem.objects.create(name='Red wine')
         response = self.client.get(self.url)
         request_type_names = [row['request_type'].name for row in response.context['request_rows']]
         self.assertEqual(request_type_names, ['Extra bed'])
@@ -608,7 +608,7 @@ class BookingDetailsViewTests(TestCase):
         settings = ExtrasSettings.load()
         settings.cot_price_short_stay = Decimal('20.00')
         settings.high_chair_price_short_stay = Decimal('15.00')
-        settings.cot_and_high_chair_combo_discount = Decimal('10.00')
+        settings.cot_and_high_chair_combo_discount_percent = Decimal('10.00')
         settings.save()
         self._set_session()
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
@@ -619,7 +619,8 @@ class BookingDetailsViewTests(TestCase):
         self.booking.refresh_from_db()
         self.assertTrue(self.booking.extras.cot)
         self.assertTrue(self.booking.extras.high_chair)
-        self.assertEqual(self.booking.extras.cot_high_chair_charge, Decimal('25.00'))
+        # 20 + 15 = 35, minus a 10% combo discount = 31.50
+        self.assertEqual(self.booking.extras.cot_high_chair_charge, Decimal('31.50'))
 
     def test_post_without_cot_or_high_chair_charges_nothing(self):
         self._set_session()
@@ -1183,7 +1184,7 @@ class ExtrasSettingsCotHighChairPricingTests(TestCase):
         self.settings.cot_price_long_stay = Decimal('35.00')
         self.settings.high_chair_price_short_stay = Decimal('15.00')
         self.settings.high_chair_price_long_stay = Decimal('25.00')
-        self.settings.cot_and_high_chair_combo_discount = Decimal('10.00')
+        self.settings.cot_and_high_chair_combo_discount_percent = Decimal('10.00')
         self.settings.save()
 
     def test_cot_only_short_stay(self):
@@ -1202,13 +1203,14 @@ class ExtrasSettingsCotHighChairPricingTests(TestCase):
         self.assertEqual(self.settings.compute_cot_high_chair_price(10, False, False), Decimal('0'))
 
     def test_combo_discount_applies_only_when_both_requested(self):
-        # short stay: 20 + 15 - 10 = 25
-        self.assertEqual(self.settings.compute_cot_high_chair_price(5, True, True), Decimal('25.00'))
-        # long stay: 35 + 25 - 10 = 50
-        self.assertEqual(self.settings.compute_cot_high_chair_price(10, True, True), Decimal('50.00'))
+        # short stay: (20 + 15) * 0.90 = 31.50
+        self.assertEqual(self.settings.compute_cot_high_chair_price(5, True, True), Decimal('31.50'))
+        # long stay: (35 + 25) * 0.90 = 54.00
+        self.assertEqual(self.settings.compute_cot_high_chair_price(10, True, True), Decimal('54.00'))
 
     def test_combo_discount_never_makes_price_negative(self):
-        self.settings.cot_and_high_chair_combo_discount = Decimal('1000.00')
+        # a discount over 100% (bypassing the field's normal 0-100 validator here) should still clamp at 0
+        self.settings.cot_and_high_chair_combo_discount_percent = Decimal('999.00')
         self.settings.save()
         self.assertEqual(self.settings.compute_cot_high_chair_price(5, True, True), Decimal('0'))
 

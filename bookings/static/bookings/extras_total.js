@@ -27,7 +27,7 @@ function cotHighChairPrice() {
     let total = 0;
     if (cotCheckbox.checked) total += parseFloat(isLongStay ? config.cot_long : config.cot_short);
     if (highChairCheckbox.checked) total += parseFloat(isLongStay ? config.high_chair_long : config.high_chair_short);
-    if (cotCheckbox.checked && highChairCheckbox.checked) total -= parseFloat(config.combo_discount);
+    if (cotCheckbox.checked && highChairCheckbox.checked) total -= total * (parseFloat(config.combo_discount_percent) / 100);
     return Math.max(total, 0);
 }
 
