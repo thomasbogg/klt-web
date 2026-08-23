@@ -5,7 +5,7 @@ from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -375,12 +375,21 @@ class StaffSettingsView(View):
     Rate card's inline-edit-plus-blank-bottom-row table pattern). Staff is deliberately basic
     Django User management only (list/add accounts, toggle is_staff/is_superuser/is_active) -
     there's no existing role/permission concept anywhere in the app to build real roles on top
-    of, and Thomas asked for this scope specifically rather than a new Role model. Payments is a
-    new PaymentSettings singleton storing default owner-payout/commission percentages that
-    nothing else in the app reads yet - a deliberate starting point, not a finished payout
-    system."""
+    of, and Thomas asked for this scope specifically rather than a new Role model. People gives
+    Owner/Manager/Accountant full CRUD (previously select-only on the Property forms, see
+    StaffQuickAddView) via the same inline-edit-plus-blank-bottom-row table pattern as Extras'
+    catalog lists - Manager's table shows the head contact inline, with the other four contact
+    roles (maintenance/liaison/cleaning/finance) editable via a per-row "More fields" toggle
+    (staff-manager-details-row, see settings.html/settings.js) rather than a table column each,
+    since 5 roles x 3 fields doesn't fit a table row; left blank on add they still default to a
+    copy of the head contact. Each of the three tables also shows a live count of properties
+    currently pointing at that row and warns (client-side, settings.js) before a delete that would
+    orphan them, since Property's owner/manager/accountant FKs are SET_NULL rather than
+    protected. Payments is a new PaymentSettings singleton storing default owner-payout/commission
+    percentages that nothing else in the app reads yet - a deliberate starting point, not a
+    finished payout system."""
     template_name = 'staff/settings.html'
-    PANELS = ('bookings', 'extras', 'staff', 'payments')
+    PANELS = ('bookings', 'extras', 'staff', 'people', 'payments')
     ACTION_PANELS = {
         'update_booking_settings': 'bookings',
         'update_extras_settings': 'extras',
@@ -392,6 +401,15 @@ class StaffSettingsView(View):
         'delete_request_type': 'extras',
         'add_staff_user': 'staff',
         'update_staff_user': 'staff',
+        'add_owner': 'people',
+        'update_owner': 'people',
+        'delete_owner': 'people',
+        'add_manager': 'people',
+        'update_manager': 'people',
+        'delete_manager': 'people',
+        'add_accountant': 'people',
+        'update_accountant': 'people',
+        'delete_accountant': 'people',
         'update_payment_settings': 'payments',
     }
 
@@ -413,6 +431,15 @@ class StaffSettingsView(View):
             'delete_request_type': self._delete_request_type,
             'add_staff_user': self._add_staff_user,
             'update_staff_user': self._update_staff_user,
+            'add_owner': self._add_owner,
+            'update_owner': self._update_owner,
+            'delete_owner': self._delete_owner,
+            'add_manager': self._add_manager,
+            'update_manager': self._update_manager,
+            'delete_manager': self._delete_manager,
+            'add_accountant': self._add_accountant,
+            'update_accountant': self._update_accountant,
+            'delete_accountant': self._delete_accountant,
             'update_payment_settings': self._update_payment_settings,
         }.get(action)
         if handler is not None:
@@ -431,6 +458,14 @@ class StaffSettingsView(View):
             'welcome_pack_categories': WelcomePackItem.Category.choices,
             'request_types': RequestType.objects.all(),
             'staff_users': User.objects.order_by('username'),
+            # property_count (via the reverse FK's default accessor - Property.owner/manager/
+            # accountant have no related_name) drives the confirm-before-delete warning in
+            # settings.js, so staff can see how many properties would be orphaned (SET_NULL, not
+            # blocked) before deleting one of these.
+            'owners': Owner.objects.annotate(property_count=Count('property')).order_by('name'),
+            'managers': Manager.objects.annotate(property_count=Count('property')).order_by('company'),
+            'accountants': Accountant.objects.annotate(property_count=Count('property')).order_by('company'),
+            'owner_boolean_fields': OWNER_BOOLEAN_FIELDS,
         }
 
     # --- Bookings ---
@@ -597,6 +632,143 @@ class StaffSettingsView(View):
         user.is_active = post.get('is_active') == 'on'
         user.save()
         messages.success(request, f'"{user.username}" updated.')
+
+    # --- People (Owners / Managers / Accountants) ---
+
+    def _add_owner(self, request):
+        post = request.POST
+        owner = Owner(
+            name=post.get('name', '').strip(),
+            email=post.get('email', '').strip(),
+            phone=post.get('phone', '').strip() or None,
+            nif_number=post.get('nif_number', '').strip() or None,
+            **{field: post.get(field) == 'on' for field, _label in OWNER_BOOLEAN_FIELDS},
+        )
+        try:
+            owner.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        owner.save()
+        messages.success(request, "Owner added.")
+
+    def _update_owner(self, request):
+        owner = Owner.objects.filter(pk=request.POST.get('owner_id')).first()
+        if owner is None:
+            messages.error(request, "That owner no longer exists.")
+            return
+        post = request.POST
+        owner.name = post.get('name', '').strip()
+        owner.email = post.get('email', '').strip()
+        owner.phone = post.get('phone', '').strip() or None
+        owner.nif_number = post.get('nif_number', '').strip() or None
+        for field, _label in OWNER_BOOLEAN_FIELDS:
+            setattr(owner, field, post.get(field) == 'on')
+        try:
+            owner.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        owner.save()
+        messages.success(request, "Owner updated.")
+
+    def _delete_owner(self, request):
+        Owner.objects.filter(pk=request.POST.get('owner_id')).delete()
+        messages.success(request, "Owner deleted.")
+
+    # The four non-head contact roles (each name/email/phone), used both to build a new Manager
+    # and to update an existing one - the Settings table only shows the head contact inline, with
+    # these tucked behind each row's "More fields" toggle (see staff-manager-details-row in
+    # settings.html / settings.js).
+    MANAGER_CONTACT_ROLES = ('maintenance', 'liaison', 'cleaning', 'finance')
+
+    def _add_manager(self, request):
+        # Same head-contact-first spirit as StaffQuickAddView._build_manager, extended: any of the
+        # other four contacts left blank falls back to a copy of the head contact (no sensible
+        # universal default otherwise), but a staff member can now fill them in directly via the
+        # "More fields" toggle on the blank add row instead of only editing them later in Django
+        # admin.
+        post = request.POST
+        head_name = post.get('head_name', '').strip()
+        head_email = post.get('head_email', '').strip()
+        head_phone = post.get('head_phone', '').strip()
+        fields = {'head_name': head_name, 'head_email': head_email, 'head_phone': head_phone}
+        for role in self.MANAGER_CONTACT_ROLES:
+            fields[f'{role}_name'] = post.get(f'{role}_name', '').strip() or head_name
+            fields[f'{role}_email'] = post.get(f'{role}_email', '').strip() or head_email
+            fields[f'{role}_phone'] = post.get(f'{role}_phone', '').strip() or head_phone
+        manager = Manager(company=post.get('company', '').strip(), **fields)
+        try:
+            manager.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        manager.save()
+        messages.success(request, "Manager added.")
+
+    def _update_manager(self, request):
+        manager = Manager.objects.filter(pk=request.POST.get('manager_id')).first()
+        if manager is None:
+            messages.error(request, "That manager no longer exists.")
+            return
+        post = request.POST
+        manager.company = post.get('company', '').strip()
+        manager.head_name = post.get('head_name', '').strip()
+        manager.head_email = post.get('head_email', '').strip()
+        manager.head_phone = post.get('head_phone', '').strip()
+        for role in self.MANAGER_CONTACT_ROLES:
+            setattr(manager, f'{role}_name', post.get(f'{role}_name', '').strip())
+            setattr(manager, f'{role}_email', post.get(f'{role}_email', '').strip())
+            setattr(manager, f'{role}_phone', post.get(f'{role}_phone', '').strip())
+        try:
+            manager.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        manager.save()
+        messages.success(request, "Manager updated.")
+
+    def _delete_manager(self, request):
+        Manager.objects.filter(pk=request.POST.get('manager_id')).delete()
+        messages.success(request, "Manager deleted.")
+
+    def _add_accountant(self, request):
+        post = request.POST
+        accountant = Accountant(
+            company=post.get('company', '').strip(),
+            name=post.get('name', '').strip(),
+            email=post.get('email', '').strip(),
+            phone=post.get('phone', '').strip(),
+        )
+        try:
+            accountant.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        accountant.save()
+        messages.success(request, "Accountant added.")
+
+    def _update_accountant(self, request):
+        accountant = Accountant.objects.filter(pk=request.POST.get('accountant_id')).first()
+        if accountant is None:
+            messages.error(request, "That accountant no longer exists.")
+            return
+        post = request.POST
+        accountant.company = post.get('company', '').strip()
+        accountant.name = post.get('name', '').strip()
+        accountant.email = post.get('email', '').strip()
+        accountant.phone = post.get('phone', '').strip()
+        try:
+            accountant.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        accountant.save()
+        messages.success(request, "Accountant updated.")
+
+    def _delete_accountant(self, request):
+        Accountant.objects.filter(pk=request.POST.get('accountant_id')).delete()
+        messages.success(request, "Accountant deleted.")
 
     # --- Payments ---
 

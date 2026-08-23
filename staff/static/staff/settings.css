@@ -58,6 +58,7 @@
 #settings-panel-bookings:checked ~ .staff-settings-content #settings-pane-bookings,
 #settings-panel-extras:checked ~ .staff-settings-content #settings-pane-extras,
 #settings-panel-staff:checked ~ .staff-settings-content #settings-pane-staff,
+#settings-panel-people:checked ~ .staff-settings-content #settings-pane-people,
 #settings-panel-payments:checked ~ .staff-settings-content #settings-pane-payments {
     display: flex;
 }
@@ -65,6 +66,7 @@
 #settings-panel-bookings:checked ~ .staff-settings-sidebar label[for="settings-panel-bookings"],
 #settings-panel-extras:checked ~ .staff-settings-sidebar label[for="settings-panel-extras"],
 #settings-panel-staff:checked ~ .staff-settings-sidebar label[for="settings-panel-staff"],
+#settings-panel-people:checked ~ .staff-settings-sidebar label[for="settings-panel-people"],
 #settings-panel-payments:checked ~ .staff-settings-sidebar label[for="settings-panel-payments"] {
     background: var(--primary-color);
     color: #fff;
@@ -164,4 +166,128 @@
 .staff-special-requests-table th:nth-child(4),
 .staff-special-requests-table td:nth-child(4) {
     width: 70px;
+}
+
+/* Owners' 7 boolean columns push the table past its panel width (4 text columns + 7 checkbox
+   columns + actions) - a horizontal-scroll wrapper keeps the panel itself from stretching/
+   overflowing the page, matching the general Artifact-page rule of scrolling wide content in its
+   own container rather than letting the body scroll sideways. */
+.staff-table-scroll {
+    overflow-x: auto;
+}
+
+/* table-layout: fixed is required for the explicit widths below to actually hold - on auto
+   layout, the 7 boolean headers' own text ("Cleans included by default" etc.) forces those
+   columns wide regardless of any width set on them, squeezing Name/Email/Phone/NIF down to
+   near-nothing (confirmed via screenshot, not assumed). */
+.staff-owners-table {
+    table-layout: fixed;
+}
+
+.staff-owners-table th:nth-child(1), .staff-owners-table td:nth-child(1) { width: 140px; }
+.staff-owners-table th:nth-child(2), .staff-owners-table td:nth-child(2) { width: 190px; }
+.staff-owners-table th:nth-child(3), .staff-owners-table td:nth-child(3) { width: 110px; }
+.staff-owners-table th:nth-child(4), .staff-owners-table td:nth-child(4) { width: 90px; }
+
+.staff-owners-table th:nth-child(n+5):nth-child(-n+11),
+.staff-owners-table td:nth-child(n+5):nth-child(-n+11) {
+    width: 95px;
+    text-align: center;
+}
+
+.staff-owners-table th:nth-child(n+5):nth-child(-n+11) {
+    white-space: normal;
+    font-size: 0.68rem;
+    line-height: 1.2;
+    padding: 6px 4px;
+    vertical-align: bottom;
+}
+
+.staff-owners-table td:nth-child(n+5):nth-child(-n+11) input[type="checkbox"] {
+    margin: 0 auto;
+    display: block;
+}
+
+.staff-owners-table th:nth-child(12),
+.staff-owners-table td:nth-child(12) {
+    width: 80px;
+}
+
+.staff-owners-table th:last-child,
+.staff-owners-table td:last-child {
+    width: 190px;
+}
+
+.staff-owners-table .staff-price-row-actions {
+    justify-content: flex-end;
+}
+
+/* Shared by Owners/Managers/Accountants - the read-only property-assignment count column. */
+.staff-property-count-cell {
+    text-align: center;
+    color: #666;
+}
+
+.staff-managers-table th:nth-child(5),
+.staff-managers-table td:nth-child(5),
+.staff-accountants-table th:nth-child(5),
+.staff-accountants-table td:nth-child(5) {
+    width: 80px;
+}
+
+.staff-managers-table th:last-child,
+.staff-managers-table td:last-child,
+.staff-accountants-table th:last-child,
+.staff-accountants-table td:last-child {
+    width: 220px;
+}
+
+.staff-managers-table .staff-price-row-actions,
+.staff-accountants-table .staff-price-row-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+/* The "More fields" toggle reveals staff-manager-details-row (a full-width <tr> holding the
+   maintenance/liaison/cleaning/finance contacts) directly below a manager's summary row - a real
+   <tr>, not a CSS-only sibling trick like the page's tab switchers, since here the trigger button
+   lives inside a <td> nested inside the summary row rather than as a true CSS sibling of the row
+   being revealed; see settings.js for the (small, delegated) toggle handler. */
+.staff-manager-details-row td {
+    padding: 14px 10px;
+    background: #fafafa;
+}
+
+.staff-manager-contacts-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+}
+
+.staff-manager-contact-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.staff-manager-contact-title {
+    margin: 0;
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--primary-color);
+}
+
+@media (max-width: 900px) {
+    .staff-manager-contacts-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 550px) {
+    .staff-manager-contacts-grid {
+        grid-template-columns: 1fr;
+    }
 }
