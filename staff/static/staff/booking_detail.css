@@ -203,14 +203,20 @@ body {
 }
 
 .staff-button {
-    display: inline-block; /* safe on <a> too - e.g. the property list's "+ Add new property"
-                               link - not just <button>, which is inline-block by default anyway */
+    display: inline-flex; /* safe on <a> too - e.g. the property list's "+ Add new property" link
+                              - not just <button> */
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: 33px; /* matches .staff-input's rendered height (padding+border), which padding alone
+                     doesn't reliably do once font-size/border differ from the input's - see the
+                     .staff-button-small buttons that sit directly beside table/inline-form inputs */
     align-self: flex-start;
     background: var(--primary-color);
     color: #fff;
     border: none;
     border-radius: 6px;
-    padding: 8px 16px;
+    padding: 0 16px;
     font-size: 0.85rem;
     text-decoration: none;
     cursor: pointer;
@@ -221,7 +227,7 @@ body {
 }
 
 .staff-button-small {
-    padding: 6px 12px;
+    padding: 0 12px;
     font-size: 0.78rem;
 }
 

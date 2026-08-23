@@ -270,7 +270,6 @@
     border: 1px solid #e5e5e5;
     border-radius: 8px;
     padding: 12px 14px;
-    margin-bottom: 18px;
 }
 
 .staff-ical-export-label {
@@ -301,4 +300,21 @@
     flex: 1 1 auto;
     min-width: 0;
     width: auto;
+}
+
+/* Same one-row treatment as .staff-ical-add-form: the file picker keeps a sane fixed-ish width
+   (native file inputs don't shrink gracefully below a certain point anyway) and the button stays
+   its natural size, so the caption field is the one that flexes to fill the remaining space. */
+.staff-photo-add-form input[type="file"] {
+    flex: 0 1 260px;
+}
+
+.staff-photo-add-form input[type="text"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+}
+
+.staff-photo-add-form button {
+    flex: 0 0 auto;
 }

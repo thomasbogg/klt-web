@@ -336,46 +336,52 @@
                     </div>
                 </section>
 
-                <section class="staff-panel staff-property-pane" id="pane-ical">
-                    <h2 class="staff-panel-title">iCal links</h2>
+                <section class="staff-property-pane" id="pane-ical">
+                    <div class="staff-panel-column">
+                        <div class="staff-panel">
+                            <h2 class="staff-panel-title">iCal Export</h2>
+                            <div class="staff-ical-export">
+                                <span class="staff-ical-export-label">This property's iCal export link - paste it into Airbnb/Booking.com/Vrbo's calendar sync settings</span>
+                                <div class="staff-ical-export-row">
+                                    <input type="text" class="staff-input" value="{{ export_url }}" readonly id="ical-export-url">
+                                    <button type="button" class="staff-button staff-button-small" data-copy-target="ical-export-url">Copy</button>
+                                </div>
+                            </div>
+                        </div>
 
-                    <div class="staff-ical-export">
-                        <span class="staff-ical-export-label">This property's iCal export link - paste it into Airbnb/Booking.com/Vrbo's calendar sync settings</span>
-                        <div class="staff-ical-export-row">
-                            <input type="text" class="staff-input" value="{{ export_url }}" readonly id="ical-export-url">
-                            <button type="button" class="staff-button staff-button-small" data-copy-target="ical-export-url">Copy</button>
+                        <div class="staff-panel">
+                            <h2 class="staff-panel-title">iCal Imports</h2>
+                            <ul class="staff-list">
+                                {% for link in ical_links %}
+                                <li>
+                                    {{ link.get_ical_source_display|default:"Unknown source" }}
+                                    <a href="{{ link.ical_url }}">{{ link.ical_url }}</a>
+                                    {% if link.last_synced %}<span class="staff-list-date">last synced {{ link.last_synced|date:'d M Y H:i' }}</span>{% endif %}
+                                    <form method="post" class="staff-inline-delete">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="delete_ical_link">
+                                        <input type="hidden" name="link_id" value="{{ link.pk }}">
+                                        <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                                    </form>
+                                </li>
+                                {% empty %}
+                                <li class="staff-empty">No iCal import links yet.</li>
+                                {% endfor %}
+                            </ul>
+                            <form method="post" class="staff-inline-form staff-ical-add-form">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="add_ical_link">
+                                <select name="ical_source" class="staff-input staff-input-small">
+                                    <option value="">-</option>
+                                    {% for value, label in ical_sources %}
+                                    <option value="{{ value }}">{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                                <input type="url" name="ical_url" placeholder="https://..." class="staff-input">
+                                <button type="submit" class="staff-button staff-button-small">+ Add iCal link</button>
+                            </form>
                         </div>
                     </div>
-
-                    <ul class="staff-list">
-                        {% for link in ical_links %}
-                        <li>
-                            {{ link.get_ical_source_display|default:"Unknown source" }}
-                            <a href="{{ link.ical_url }}">{{ link.ical_url }}</a>
-                            {% if link.last_synced %}<span class="staff-list-date">last synced {{ link.last_synced|date:'d M Y H:i' }}</span>{% endif %}
-                            <form method="post" class="staff-inline-delete">
-                                {% csrf_token %}
-                                <input type="hidden" name="action" value="delete_ical_link">
-                                <input type="hidden" name="link_id" value="{{ link.pk }}">
-                                <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
-                            </form>
-                        </li>
-                        {% empty %}
-                        <li class="staff-empty">No iCal import links yet.</li>
-                        {% endfor %}
-                    </ul>
-                    <form method="post" class="staff-inline-form staff-ical-add-form">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="add_ical_link">
-                        <select name="ical_source" class="staff-input staff-input-small">
-                            <option value="">-</option>
-                            {% for value, label in ical_sources %}
-                            <option value="{{ value }}">{{ label }}</option>
-                            {% endfor %}
-                        </select>
-                        <input type="url" name="ical_url" placeholder="https://..." class="staff-input">
-                        <button type="submit" class="staff-button staff-button-small">+ Add iCal link</button>
-                    </form>
                 </section>
 
                 <section class="staff-panel staff-property-pane" id="pane-photos">
@@ -396,7 +402,7 @@
                         <p class="staff-empty">No photos uploaded yet.</p>
                         {% endfor %}
                     </div>
-                    <form method="post" enctype="multipart/form-data" class="staff-inline-form">
+                    <form method="post" enctype="multipart/form-data" class="staff-inline-form staff-photo-add-form">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="add_image">
                         <input type="file" name="image" accept="image/*" class="staff-input">
