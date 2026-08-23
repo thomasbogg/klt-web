@@ -50,8 +50,7 @@
     display: none;
 }
 
-#panel-info:checked ~ .staff-property-content #pane-info,
-#panel-spec:checked ~ .staff-property-content #pane-spec,
+#panel-main:checked ~ .staff-property-content #pane-main,
 #panel-amenities:checked ~ .staff-property-content #pane-amenities,
 #panel-sef:checked ~ .staff-property-content #pane-sef,
 #panel-rates:checked ~ .staff-property-content #pane-rates,
@@ -60,8 +59,7 @@
     display: block;
 }
 
-#panel-info:checked ~ .staff-property-sidebar label[for="panel-info"],
-#panel-spec:checked ~ .staff-property-sidebar label[for="panel-spec"],
+#panel-main:checked ~ .staff-property-sidebar label[for="panel-main"],
 #panel-amenities:checked ~ .staff-property-sidebar label[for="panel-amenities"],
 #panel-sef:checked ~ .staff-property-sidebar label[for="panel-sef"],
 #panel-rates:checked ~ .staff-property-sidebar label[for="panel-rates"],
@@ -83,11 +81,87 @@
     }
 }
 
-.staff-amenity-grid {
+/* Property info + Property specification share the "Main info" tab - two cards side by side on
+   wide viewports (Thomas found a single 1000px+-wide column of text inputs hard to scan), one
+   column again once there's not enough room for both at a sane width. */
+.staff-property-main-columns {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 4px 12px;
+    grid-template-columns: 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+@media (min-width: 950px) {
+    .staff-property-main-columns {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+/* Scoped to property-page forms specifically (not .staff-inline-form, which deliberately wants
+   the full row width for the rate-card/iCal/photo add-forms) - stops a lone text input from
+   stretching edge-to-edge of a wide pane, the same complaint that motivated the two-column split
+   above. Amenities and SEF details are exempted just below - both use the responsive field-row
+   grid instead, which wants the extra width rather than being boxed into 480px with the rest of
+   the (much wider) pane sitting empty next to it. */
+.staff-property-content .staff-form {
+    max-width: 480px;
+}
+
+#pane-amenities .staff-form,
+#pane-sef .staff-form,
+#pane-rates .staff-form {
+    max-width: none;
+}
+
+/* auto-fit rather than an explicit breakpoint scheme: each group here has a small, fixed field
+   count (4, 4, then 2), so unlike the amenities checkbox grid there's no risk of it ballooning
+   into too many columns on a wide screen - auto-fit naturally caps at "one column per field".
+   No group headings (Name/Start/End/Rate, discounts, extra guests) - the field labels alone were
+   judged clear enough - so a slightly larger gap between rows does the job of separating them. */
+.staff-price-form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+/* Explicit column counts per breakpoint, not auto-fit - auto-fit with a max-width cap kept the
+   column count at 3 on wide screens, but left the grid itself narrow and the rest of the (much
+   wider) pane empty. This instead always fills the pane's full width, just with 1/2/3 columns
+   depending on how much of it there is. Shared by the Amenities bed-details row, the Amenities
+   checkbox grid, and the SEF details row so all three stay visually aligned. */
+.staff-amenity-beds-row,
+.staff-amenity-grid,
+.staff-sef-fields-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+}
+
+.staff-amenity-grid {
+    gap: 4px 16px;
     margin: 8px 0 14px;
+}
+
+.staff-amenity-beds-row,
+.staff-sef-fields-row {
+    margin-bottom: 14px;
+}
+
+@media (min-width: 550px) {
+    .staff-amenity-beds-row,
+    .staff-amenity-grid,
+    .staff-sef-fields-row {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (min-width: 900px) {
+    .staff-amenity-beds-row,
+    .staff-amenity-grid,
+    .staff-sef-fields-row {
+        grid-template-columns: repeat(3, 1fr);
+    }
 }
 
 .staff-button-danger {
@@ -123,19 +197,44 @@
 }
 
 .staff-price-table td {
-    padding: 6px;
+    padding: 4px;
     border-bottom: 1px solid #f2f2f2;
     color: #444;
+}
+
+.staff-price-table input.staff-input-small {
+    min-width: 60px;
+}
+
+.staff-price-table input[type="date"] {
+    min-width: 130px; /* native date-input placeholder (mm/dd/yyyy) gets clipped under the
+                          shared .staff-input-small max-width:100px used for the other fields */
+}
+
+.staff-price-row-actions {
+    display: flex;
+    gap: 6px;
     white-space: nowrap;
 }
 
-.staff-price-add-form {
-    align-items: flex-start;
+/* The browser's own calendar-icon button eats into the already-tight table cells, clipping the
+   year (see the Rate card date fields). Hiding it and stretching it invisibly over the full
+   input keeps the picker a click away from anywhere in the field, at the cost of no longer being
+   able to type a date by hand - an accepted tradeoff. WebKit/Blink-only (Chrome/Edge/Safari);
+   Firefox just keeps its native icon, so this degrades gracefully rather than breaking there. */
+.staff-property-content input[type="date"] {
+    position: relative;
 }
 
-.staff-price-add-form input[type="date"] {
-    min-width: 130px; /* native date-input placeholder (mm/dd/yyyy) gets clipped under the
-                          shared .staff-input-small max-width:100px used for the other fields */
+.staff-property-content input[type="date"]::-webkit-calendar-picker-indicator {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    opacity: 0;
+    cursor: pointer;
 }
 
 .staff-photo-grid {

@@ -720,7 +720,7 @@ class StaffPropertyDetailViewTests(TestCase):
             'location': self.location.pk, 'accountant': self.accountant.pk, 'al_number': '9999',
             'we_book': 'on', 'booking_com_id': 'BDC123', 'standard_cleaning_fee': '90.00',
         })
-        self.assertRedirects(response, f'{self.url}?panel=info')
+        self.assertRedirects(response, f'{self.url}?panel=main')
         self.property.refresh_from_db()
         self.assertEqual(self.property.door_number, '12B')
         self.assertEqual(self.property.owner_id, self.owner.pk)
@@ -789,6 +789,49 @@ class StaffPropertyDetailViewTests(TestCase):
         })
         self.assertFalse(Price.objects.filter(property=self.property, name='Overlapping').exists())
 
+    def test_update_price_saves_fields(self):
+        price = Price.objects.create(
+            property=self.property, name='Original', start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
+            rate=Decimal('100.00'),
+        )
+        response = self.client.post(self.url, {
+            'action': 'update_price', 'price_id': price.pk, 'name': 'Renamed',
+            'start_date': '2027-01-01', 'end_date': '2027-02-15', 'rate': '125.50',
+            'weekly_discount_percent': '15',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=rates')
+        price.refresh_from_db()
+        self.assertEqual(price.name, 'Renamed')
+        self.assertEqual(price.end_date, date(2027, 2, 15))
+        self.assertEqual(price.rate, Decimal('125.50'))
+        self.assertEqual(price.weekly_discount_percent, Decimal('15'))
+
+    def test_update_price_rejects_overlap_with_another_line(self):
+        Price.objects.create(
+            property=self.property, name='Other', start_date=date(2027, 5, 1), end_date=date(2027, 5, 31),
+        )
+        price = Price.objects.create(
+            property=self.property, name='Mine', start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
+        )
+        self.client.post(self.url, {
+            'action': 'update_price', 'price_id': price.pk, 'name': 'Mine',
+            'start_date': '2027-05-15', 'end_date': '2027-06-15', 'rate': '100.00',
+        })
+        price.refresh_from_db()
+        self.assertEqual(price.start_date, date(2027, 1, 1))  # unchanged - rejected by overlap check
+
+    def test_update_price_editing_its_own_unchanged_dates_does_not_self_conflict(self):
+        price = Price.objects.create(
+            property=self.property, name='Mine', start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
+            rate=Decimal('100.00'),
+        )
+        self.client.post(self.url, {
+            'action': 'update_price', 'price_id': price.pk, 'name': 'Mine',
+            'start_date': '2027-01-01', 'end_date': '2027-01-31', 'rate': '110.00',
+        })
+        price.refresh_from_db()
+        self.assertEqual(price.rate, Decimal('110.00'))
+
     def test_delete_price(self):
         price = Price.objects.create(
             property=self.property, name='ToDelete', start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
@@ -825,11 +868,11 @@ class StaffPropertyDetailViewTests(TestCase):
 
     def test_unknown_action_is_a_noop(self):
         response = self.client.post(self.url, {'action': 'not_a_real_action'})
-        self.assertRedirects(response, f'{self.url}?panel=info')
+        self.assertRedirects(response, f'{self.url}?panel=main')
 
     def test_default_panel_is_info(self):
         response = self.client.get(self.url)
-        self.assertEqual(response.context['active_panel'], 'info')
+        self.assertEqual(response.context['active_panel'], 'main')
 
     def test_panel_query_param_selects_active_panel(self):
         response = self.client.get(self.url, {'panel': 'amenities'})
@@ -837,7 +880,14 @@ class StaffPropertyDetailViewTests(TestCase):
 
     def test_unrecognised_panel_query_param_falls_back_to_info(self):
         response = self.client.get(self.url, {'panel': 'not-a-real-panel'})
-        self.assertEqual(response.context['active_panel'], 'info')
+        self.assertEqual(response.context['active_panel'], 'main')
+
+    def test_adding_a_price_redirects_to_the_rates_panel(self):
+        response = self.client.post(self.url, {
+            'action': 'add_price', 'name': 'Autumn', 'start_date': '2027-09-01', 'end_date': '2027-10-31',
+            'rate': '90.00',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=rates')
 
     def test_save_redirects_back_to_the_panel_it_came_from(self):
         response = self.client.post(self.url, {

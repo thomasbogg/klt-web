@@ -270,12 +270,14 @@ class StaffPropertyCreateView(View):
 @method_decorator(staff_member_required, name='dispatch')
 class StaffPropertyDetailView(View):
     """PIMS-style "Change Property" page - one panel per related model (info, specification,
-    amenities, SEF details), plus two add/delete-only lists (rate card, iCal import links) and a
-    photo gallery, matching the append-then-delete pattern already used for Deductions/Owner
-    Payments elsewhere in this app rather than in-place editing of list rows. Every OneToOne
-    side-model (PropertySpec/Amenity/SEFDetail) is get_or_create'd on load - all three have
-    defaults for every field, so a freshly created Property with none of them yet still renders
-    a fully fillable form instead of an empty-state message."""
+    amenities, SEF details), the rate card (each row directly editable in place - via the input
+    `form=` attribute, since a <form> can't legally wrap several <td>s in one row - stacked above
+    a separate "Add price line" card in the same tab for creating new ones), an add/delete-only
+    iCal import links list (matching the append-then-delete pattern used for Deductions/Owner
+    Payments elsewhere in this app), and a photo gallery. Every OneToOne side-model (PropertySpec/
+    Amenity/SEFDetail) is get_or_create'd on load - all three have defaults for every field, so a
+    freshly created Property with none of them yet still renders a fully fillable form instead of
+    an empty-state message."""
     template_name = 'staff/property_detail.html'
 
     def _get_property(self, pk):
@@ -286,12 +288,15 @@ class StaffPropertyDetailView(View):
 
     # Maps each POST action to the sidebar tab it belongs to, so saving/deleting something in a
     # given panel redirects back to that same panel (via ?panel=) instead of dropping the staffer
-    # back on "Property info" every time - see property_detail.html/.css for the tabs themselves.
+    # back on "Main info" every time - see property_detail.html/.css for the tabs themselves.
+    # Property info and Property specification share the 'main' tab (shown side by side there on
+    # wide viewports), so both actions map to the same slug.
     ACTION_PANELS = {
-        'update_property_info': 'info',
-        'update_specification': 'spec',
+        'update_property_info': 'main',
+        'update_specification': 'main',
         'update_amenities': 'amenities',
         'update_sef': 'sef',
+        'update_price': 'rates',
         'add_price': 'rates',
         'delete_price': 'rates',
         'add_ical_link': 'ical',
@@ -299,12 +304,12 @@ class StaffPropertyDetailView(View):
         'add_image': 'photos',
         'delete_image': 'photos',
     }
-    PANELS = ('info', 'spec', 'amenities', 'sef', 'rates', 'ical', 'photos')
+    PANELS = ('main', 'amenities', 'sef', 'rates', 'ical', 'photos')
 
     def get(self, request, pk, *args, **kwargs):
         property = self._get_property(pk)
         panel = request.GET.get('panel', '')
-        active_panel = panel if panel in self.PANELS else 'info'
+        active_panel = panel if panel in self.PANELS else 'main'
         return render(request, self.template_name, self._context(property, active_panel))
 
     def post(self, request, pk, *args, **kwargs):
@@ -315,6 +320,7 @@ class StaffPropertyDetailView(View):
             'update_specification': self._update_specification,
             'update_amenities': self._update_amenities,
             'update_sef': self._update_sef,
+            'update_price': self._update_price,
             'add_price': self._add_price,
             'delete_price': self._delete_price,
             'add_ical_link': self._add_ical_link,
@@ -324,7 +330,7 @@ class StaffPropertyDetailView(View):
         }.get(action)
         if handler is not None:
             handler(request, property)
-        panel = self.ACTION_PANELS.get(action, 'info')
+        panel = self.ACTION_PANELS.get(action, 'main')
         return redirect(f"{reverse('staff:property_detail', kwargs={'pk': property.pk})}?panel={panel}")
 
     def _context(self, property, active_panel):
@@ -441,6 +447,37 @@ class StaffPropertyDetailView(View):
             return
         price.save()
         messages.success(request, "Price line added.")
+
+    def _update_price(self, request, property):
+        price = Price.objects.filter(pk=request.POST.get('price_id'), property=property).first()
+        if price is None:
+            messages.error(request, "That price line no longer exists.")
+            return
+        post = request.POST
+        start_date = _parsed_date(post.get('start_date'))
+        end_date = _parsed_date(post.get('end_date'))
+        if not start_date or not end_date:
+            messages.error(request, "A price line needs both a start and end date.")
+            return
+        price.name = post.get('name', '').strip() or price.name
+        price.start_date = start_date
+        price.end_date = end_date
+        price.rate = _parsed_decimal(post.get('rate')) or 0
+        price.weekly_discount_percent = _parsed_decimal(post.get('weekly_discount_percent')) or 0
+        price.monthly_discount_percent = _parsed_decimal(post.get('monthly_discount_percent')) or 0
+        price.last_minute_discount_percent = _parsed_decimal(post.get('last_minute_discount_percent')) or 0
+        price.last_minute_discount_days = _parsed_int(post.get('last_minute_discount_days')) or 7
+        price.extra_adult_rate = _parsed_decimal(post.get('extra_adult_rate')) or 0
+        price.extra_child_rate = _parsed_decimal(post.get('extra_child_rate')) or 0
+        try:
+            # Price.clean() excludes price.pk from its own overlap check, so editing dates that
+            # still just cover this same row's existing slot won't falsely flag against itself.
+            price.full_clean()
+        except ValidationError as error:
+            messages.error(request, '; '.join(error.messages))
+            return
+        price.save()
+        messages.success(request, "Price line updated.")
 
     def _delete_price(self, request, property):
         Price.objects.filter(pk=request.POST.get('price_id'), property=property).delete()
