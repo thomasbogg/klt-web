@@ -161,7 +161,7 @@
                             <input type="text" name="enquiry_source" class="staff-input" value="{{ booking.enquiry_source }}">
                         </label>
                         <label class="staff-field">Date of enquiry
-                            <input type="date" name="enquiry_date" class="staff-input" value="{{ booking.enquiry_date|date:'Y-m-d' }}">
+                            <input type="text" name="enquiry_date" class="staff-input staff-date-input" value="{{ booking.enquiry_date|date:'Y-m-d' }}" autocomplete="off">
                         </label>
                         <label class="staff-field">Outcome / status
                             <input type="text" name="enquiry_status" class="staff-input" value="{{ booking.enquiry_status }}">

@@ -28,4 +28,8 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         }));
     });
+
+    document.querySelectorAll('.staff-date-input:not(.staff-date-start):not(.staff-date-end)').forEach(function (input) {
+        flatpickr(input, { dateFormat: 'Y-m-d', altInput: true, altFormat: 'd/m/Y', allowInput: true });
+    });
 });
