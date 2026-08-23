@@ -254,10 +254,17 @@
 
                     <div class="staff-panel">
                         <h2 class="staff-panel-title">Airport transfers</h2>
+                        <p class="staff-settings-hint">A single transfer only ever carries up to 8 guests total (adults, children, and infants combined) - more than that needs a second transfer, so there are just the two fixed prices below rather than an open-ended list.</p>
                         <form method="post" class="staff-form staff-settings-form">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="update_extras_settings">
                             <div class="staff-settings-field-grid">
+                                <label class="staff-field">Price for 1-4 guests (&euro;)
+                                    <input type="text" name="airport_transfer_price_1_4_guests" class="staff-input" value="{{ extras_settings.airport_transfer_price_1_4_guests }}">
+                                </label>
+                                <label class="staff-field">Price for 5-8 guests (&euro;)
+                                    <input type="text" name="airport_transfer_price_5_8_guests" class="staff-input" value="{{ extras_settings.airport_transfer_price_5_8_guests }}">
+                                </label>
                                 <label class="staff-field">Night surcharge (&euro;)
                                     <input type="text" name="airport_transfer_night_surcharge" class="staff-input" value="{{ extras_settings.airport_transfer_night_surcharge }}">
                                 </label>
@@ -269,51 +276,6 @@
                                 </label>
                             </div>
                             <button type="submit" class="staff-button">Save airport transfer settings</button>
-                        </form>
-                        <p class="staff-settings-hint">Each price band covers a transfer carrying up to that many guests in total (adults, children, and infants combined) - the smallest matching band is used.</p>
-                        <table class="staff-price-table staff-extras-aligned-table staff-transfer-bands-table">
-                            <thead>
-                                <tr><th>Up to guests</th><th>Price &euro;</th><th></th><th></th></tr>
-                            </thead>
-                            <tbody>
-                                {% for band in transfer_bands %}
-                                <tr>
-                                    <td><input type="text" name="max_guests" form="band-form-{{ band.pk }}" value="{{ band.max_guests }}" class="staff-input"></td>
-                                    <td><input type="text" name="price" form="band-form-{{ band.pk }}" value="{{ band.price }}" class="staff-input"></td>
-                                    <td></td>
-                                    <td class="staff-price-row-actions">
-                                        <button type="submit" form="band-form-{{ band.pk }}" class="staff-button staff-button-small">Save</button>
-                                        <form method="post" class="staff-inline-delete">
-                                            {% csrf_token %}
-                                            <input type="hidden" name="action" value="delete_transfer_band">
-                                            <input type="hidden" name="item_id" value="{{ band.pk }}">
-                                            <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
-                                        </form>
-                                    </td>
-                                </tr>
-                                {% empty %}
-                                <tr><td colspan="4" class="staff-empty">No price bands yet.</td></tr>
-                                {% endfor %}
-                                <tr class="staff-price-row-new">
-                                    <td><input type="text" name="max_guests" form="band-form-new" class="staff-input"></td>
-                                    <td><input type="text" name="price" form="band-form-new" class="staff-input"></td>
-                                    <td></td>
-                                    <td class="staff-price-row-actions">
-                                        <button type="submit" form="band-form-new" class="staff-button staff-button-small">Add</button>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                        {% for band in transfer_bands %}
-                        <form method="post" id="band-form-{{ band.pk }}">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="update_transfer_band">
-                            <input type="hidden" name="item_id" value="{{ band.pk }}">
-                        </form>
-                        {% endfor %}
-                        <form method="post" id="band-form-new">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="add_transfer_band">
                         </form>
                     </div>
                 </section>

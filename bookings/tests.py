@@ -6,7 +6,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import (
-    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, Arrival, BalancePayment,
+    AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge,
     Departure, Extra, ExtrasSettings, GuestListAdjustment, Payment, RequestType, WelcomePackItem,
 )
@@ -700,13 +700,21 @@ class BookingDetailsViewTests(TestCase):
         self.assertEqual(self.booking.requested_extras.count(), 0)
 
     def test_get_includes_transfer_pricing_config_and_existing_rows(self):
-        AirportTransferPriceBand.objects.create(max_guests=4, price=Decimal('25.00'))
+        settings = ExtrasSettings.load()
+        settings.airport_transfer_price_1_4_guests = Decimal('25.00')
+        settings.airport_transfer_price_5_8_guests = Decimal('45.00')
+        settings.save()
         response = self.client.get(self.url)
         self.assertEqual(response.context['transfer_rows'], [])
-        self.assertEqual(response.context['transfer_pricing_config']['bands'], [{'max_guests': 4, 'price': '25.00'}])
+        self.assertEqual(
+            response.context['transfer_pricing_config']['bands'],
+            [{'max_guests': 4, 'price': '25.00'}, {'max_guests': 8, 'price': '45.00'}],
+        )
 
     def test_post_persists_airport_transfer_with_computed_price(self):
-        AirportTransferPriceBand.objects.create(max_guests=4, price=Decimal('25.00'))
+        settings = ExtrasSettings.load()
+        settings.airport_transfer_price_1_4_guests = Decimal('25.00')
+        settings.save()
         self._set_session()
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
         data['transfer_direction[]'] = ['inbound']
@@ -1124,30 +1132,28 @@ class WelcomePackItemMatchesTests(TestCase):
         self.assertTrue(water.matches(food_choice='vegan', drinks_choice='non_alcoholic'))
 
 
-class AirportTransferPriceBandTests(TestCase):
-    def setUp(self):
-        AirportTransferPriceBand.objects.create(max_guests=4, price=Decimal('25.00'))
-        AirportTransferPriceBand.objects.create(max_guests=8, price=Decimal('45.00'))
-        AirportTransferPriceBand.objects.create(max_guests=12, price=Decimal('70.00'))
-
-    def test_picks_the_smallest_band_that_fits(self):
-        self.assertEqual(AirportTransferPriceBand.for_guest_count(1).max_guests, 4)
-        self.assertEqual(AirportTransferPriceBand.for_guest_count(4).max_guests, 4)
-        self.assertEqual(AirportTransferPriceBand.for_guest_count(5).max_guests, 8)
-        self.assertEqual(AirportTransferPriceBand.for_guest_count(12).max_guests, 12)
-
-    def test_returns_none_when_guest_count_exceeds_every_band(self):
-        self.assertIsNone(AirportTransferPriceBand.for_guest_count(13))
-
-
 class ExtrasSettingsTransferPricingTests(TestCase):
     def setUp(self):
-        AirportTransferPriceBand.objects.create(max_guests=4, price=Decimal('25.00'))
         self.settings = ExtrasSettings.load()
+        self.settings.airport_transfer_price_1_4_guests = Decimal('25.00')
+        self.settings.airport_transfer_price_5_8_guests = Decimal('45.00')
         self.settings.airport_transfer_night_surcharge = Decimal('10.00')
         self.settings.airport_transfer_night_window_start = time(22, 0)
         self.settings.airport_transfer_night_window_end = time(6, 0)
         self.settings.save()
+
+    def test_one_to_four_guests_uses_the_lower_tier(self):
+        self.assertEqual(self.settings.compute_transfer_price(1, time(14, 0)), Decimal('25.00'))
+        self.assertEqual(self.settings.compute_transfer_price(4, time(14, 0)), Decimal('25.00'))
+
+    def test_five_to_eight_guests_uses_the_higher_tier(self):
+        self.assertEqual(self.settings.compute_transfer_price(5, time(14, 0)), Decimal('45.00'))
+        self.assertEqual(self.settings.compute_transfer_price(8, time(14, 0)), Decimal('45.00'))
+
+    def test_more_than_eight_guests_returns_none(self):
+        # more guests than a single transfer can carry - staff book separate transfers instead of
+        # there being a third price tier (see compute_transfer_price's docstring).
+        self.assertIsNone(self.settings.compute_transfer_price(9, time(14, 0)))
 
     def test_daytime_transfer_has_no_surcharge(self):
         self.assertEqual(self.settings.compute_transfer_price(2, time(14, 0)), Decimal('25.00'))
@@ -1165,9 +1171,6 @@ class ExtrasSettingsTransferPricingTests(TestCase):
     def test_transfer_just_outside_window_has_no_surcharge(self):
         self.assertEqual(self.settings.compute_transfer_price(2, time(21, 59)), Decimal('25.00'))
         self.assertEqual(self.settings.compute_transfer_price(2, time(6, 1)), Decimal('25.00'))
-
-    def test_unbanded_guest_count_returns_none(self):
-        self.assertIsNone(self.settings.compute_transfer_price(99, time(14, 0)))
 
     def test_non_wrapping_window_still_works(self):
         self.settings.airport_transfer_night_window_start = time(1, 0)

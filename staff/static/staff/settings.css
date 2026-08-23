@@ -144,9 +144,8 @@
 }
 
 /* Narrow, fixed-content columns get an explicit width same as elsewhere in the app (e.g. Special
-   requests' Default price); each table's one or two genuinely free-text columns are left
-   unspecified so they absorb whatever's left - same role Name/Description already play, and here
-   Airport transfer bands' otherwise-empty spacer column plays that role too. */
+   requests' Default price); each table's one genuinely free-text column is left unspecified so
+   it absorbs whatever's left - same role Name/Description already play. */
 .staff-welcome-pack-table th:nth-child(2),
 .staff-welcome-pack-table td:nth-child(2) {
     width: 260px;
@@ -165,11 +164,4 @@
 .staff-special-requests-table th:nth-child(4),
 .staff-special-requests-table td:nth-child(4) {
     width: 70px;
-}
-
-.staff-transfer-bands-table th:first-child,
-.staff-transfer-bands-table td:first-child,
-.staff-transfer-bands-table th:nth-child(2),
-.staff-transfer-bands-table td:nth-child(2) {
-    width: 150px;
 }

@@ -15,7 +15,7 @@ from django.views import View
 
 from availability.utils import get_property_calendar
 from bookings.models import (
-    CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, AirportTransferPriceBand, Booking,
+    CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Booking,
     BookingSettings, ExtrasSettings, PaymentSettings, RequestType, WelcomePackItem,
 )
 from bookings.utils import extras_summary
@@ -390,9 +390,6 @@ class StaffSettingsView(View):
         'add_request_type': 'extras',
         'update_request_type': 'extras',
         'delete_request_type': 'extras',
-        'add_transfer_band': 'extras',
-        'update_transfer_band': 'extras',
-        'delete_transfer_band': 'extras',
         'add_staff_user': 'staff',
         'update_staff_user': 'staff',
         'update_payment_settings': 'payments',
@@ -414,9 +411,6 @@ class StaffSettingsView(View):
             'add_request_type': self._add_request_type,
             'update_request_type': self._update_request_type,
             'delete_request_type': self._delete_request_type,
-            'add_transfer_band': self._add_transfer_band,
-            'update_transfer_band': self._update_transfer_band,
-            'delete_transfer_band': self._delete_transfer_band,
             'add_staff_user': self._add_staff_user,
             'update_staff_user': self._update_staff_user,
             'update_payment_settings': self._update_payment_settings,
@@ -436,7 +430,6 @@ class StaffSettingsView(View):
             'welcome_pack_items': WelcomePackItem.objects.all(),
             'welcome_pack_categories': WelcomePackItem.Category.choices,
             'request_types': RequestType.objects.all(),
-            'transfer_bands': AirportTransferPriceBand.objects.all(),
             'staff_users': User.objects.order_by('username'),
         }
 
@@ -475,6 +468,7 @@ class StaffSettingsView(View):
         settings = ExtrasSettings.load()
         post = request.POST
         for field in (
+            'airport_transfer_price_1_4_guests', 'airport_transfer_price_5_8_guests',
             'airport_transfer_night_surcharge', 'cot_price_short_stay', 'cot_price_long_stay',
             'high_chair_price_short_stay', 'high_chair_price_long_stay',
             'cot_and_high_chair_combo_discount_percent', 'welcome_pack_price', 'late_checkout_price',
@@ -569,40 +563,6 @@ class StaffSettingsView(View):
     def _delete_request_type(self, request):
         RequestType.objects.filter(pk=request.POST.get('item_id')).delete()
         messages.success(request, "Request type deleted.")
-
-    def _add_transfer_band(self, request):
-        post = request.POST
-        band = AirportTransferPriceBand(
-            max_guests=_parsed_int(post.get('max_guests')) or 0,
-            price=_parsed_decimal(post.get('price')) or 0,
-        )
-        try:
-            band.full_clean()
-        except ValidationError as error:
-            _flash_validation_error(request, error)
-            return
-        band.save()
-        messages.success(request, "Airport transfer price band added.")
-
-    def _update_transfer_band(self, request):
-        band = AirportTransferPriceBand.objects.filter(pk=request.POST.get('item_id')).first()
-        if band is None:
-            messages.error(request, "That price band no longer exists.")
-            return
-        post = request.POST
-        band.max_guests = _parsed_int(post.get('max_guests')) or 0
-        band.price = _parsed_decimal(post.get('price')) or 0
-        try:
-            band.full_clean()
-        except ValidationError as error:
-            _flash_validation_error(request, error)
-            return
-        band.save()
-        messages.success(request, "Airport transfer price band updated.")
-
-    def _delete_transfer_band(self, request):
-        AirportTransferPriceBand.objects.filter(pk=request.POST.get('item_id')).delete()
-        messages.success(request, "Airport transfer price band deleted.")
 
     # --- Staff ---
 

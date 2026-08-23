@@ -12,7 +12,7 @@ from django.views import View
 import env_settings
 from bookings.forms import BookingLookupForm
 from bookings.models import (
-    AirportTransfer, AirportTransferDirection, AirportTransferPriceBand, Arrival, BalancePayment,
+    AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, Departure, Extra,
     ExtrasSettings, GuestListAdjustment, RequestType, TravelMethod, WelcomePackDrinksChoice,
     WelcomePackFoodChoice, WelcomePackItem,
@@ -211,8 +211,8 @@ class BookingFormMixin:
         }
 
     def _save_transfers(self, booking, rows):
-        """Prices are always recomputed here from ExtrasSettings/AirportTransferPriceBand, never
-        trusted from the client - the JS-side estimate in airport_transfers.js is display-only."""
+        """Prices are always recomputed here from ExtrasSettings, never trusted from the client -
+        the JS-side estimate in airport_transfers.js is display-only."""
         booking.airport_transfers.all().delete()
         settings = ExtrasSettings.load()
         new_transfers = []
@@ -235,10 +235,13 @@ class BookingFormMixin:
         AirportTransfer.objects.bulk_create(new_transfers)
 
     def _transfer_context(self, booking, rows=None, non_field_error=None):
-        """Airport Transfer row context, plus the pricing config (bands + night-surcharge window)
-        embedded for the client-side live price estimate in airport_transfers.js - purely a
-        display convenience, the authoritative price is always recomputed server-side in
-        _save_transfers(), never trusted from the client."""
+        """Airport Transfer row context, plus the pricing config (the two fixed guest-count
+        tiers + night-surcharge window) embedded for the client-side live price estimate in
+        airport_transfers.js - purely a display convenience, the authoritative price is always
+        recomputed server-side in _save_transfers(), never trusted from the client. Still shaped
+        as a 'bands' list (rather than the two ExtrasSettings fields directly) so
+        airport_transfers.js's smallest-fitting-band lookup needs no changes even though there
+        are now always exactly two, fixed at 4 and 8 guests (see ExtrasSettings.compute_transfer_price)."""
         if rows is None:
             rows = [
                 {
@@ -256,8 +259,8 @@ class BookingFormMixin:
             'transfer_non_field_error': non_field_error,
             'transfer_pricing_config': {
                 'bands': [
-                    {'max_guests': band.max_guests, 'price': str(band.price)}
-                    for band in AirportTransferPriceBand.objects.all()
+                    {'max_guests': 4, 'price': str(settings.airport_transfer_price_1_4_guests)},
+                    {'max_guests': 8, 'price': str(settings.airport_transfer_price_5_8_guests)},
                 ],
                 'night_start': settings.airport_transfer_night_window_start.strftime('%H:%M'),
                 'night_end': settings.airport_transfer_night_window_end.strftime('%H:%M'),

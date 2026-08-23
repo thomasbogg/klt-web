@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from env_settings import VALID_BOOKING_STATUSES
 from .models import (
-    AirportTransfer, AirportTransferPriceBand, Arrival, BalancePayment, Booking, BookingCondition,
+    AirportTransfer, Arrival, BalancePayment, Booking, BookingCondition,
     BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Departure,
     Extra, ExtrasSettings, GuestListAdjustment, Payment, PaymentSettings, PlatformPayout, RequestType,
     WelcomePackItem,
@@ -205,13 +205,6 @@ class ExtrasSettingsAdmin(admin.ModelAdmin):
     def changelist_view(self, request, extra_context=None):
         settings = ExtrasSettings.load()
         return redirect(reverse('admin:bookings_extrassettings_change', args=[settings.pk]))
-
-
-@admin.register(AirportTransferPriceBand)
-class AirportTransferPriceBandAdmin(admin.ModelAdmin):
-    list_display = ('max_guests', 'price')
-    list_editable = ('price',)
-    ordering = ('max_guests',)
 
 
 @admin.register(PaymentSettings)

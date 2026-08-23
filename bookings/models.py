@@ -709,31 +709,21 @@ class WelcomePackItem(models.Model):
         return True
 
 
-class AirportTransferPriceBand(models.Model):
-    """A flat price for an airport transfer carrying up to max_guests people total (adults +
-    children + infants) - e.g. rows of (4, 25.00), (8, 45.00), (12, 70.00) for "up to 4", "up to
-    8", "up to 12". AirportTransferPriceBand.for_guest_count() picks the smallest band that fits."""
-    max_guests = models.PositiveIntegerField(unique=True)
-    price = models.DecimalField(max_digits=8, decimal_places=2)
-
-    class Meta:
-        db_table = 'airport_transfer_price_bands'
-        verbose_name = 'Airport transfer price band'
-        ordering = ('max_guests',)
-
-    def __str__(self):
-        return f"Up to {self.max_guests} guests - €{self.price}"
-
-    @classmethod
-    def for_guest_count(cls, total_guests):
-        return cls.objects.filter(max_guests__gte=total_guests).order_by('max_guests').first()
-
-
 class ExtrasSettings(models.Model):
     """Singleton admin settings for Extras pricing that doesn't fit BookingSettings - kept separate
     because these pricing shapes (guest-count bands, a night-surcharge window) are a genuinely
     different concern from BookingSettings' flat percentages/day-counts (see the plan this was
     built from). Same singleton pattern as BookingSettings.load()."""
+    airport_transfer_price_1_4_guests = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        help_text="Flat price for a transfer carrying 1 to 4 guests total (adults + children + infants).",
+    )
+    airport_transfer_price_5_8_guests = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        help_text="Flat price for a transfer carrying 5 to 8 guests total. More than 8 guests "
+                  "needs a separate transfer booked at one of these two prices, rather than a "
+                  "third tier - in practice there's never been a need for one.",
+    )
     airport_transfer_night_surcharge = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     airport_transfer_night_window_start = models.TimeField(default=time(22, 0))
     airport_transfer_night_window_end = models.TimeField(default=time(6, 0))
@@ -791,12 +781,15 @@ class ExtrasSettings(models.Model):
         return pickup_time >= start or pickup_time <= end
 
     def compute_transfer_price(self, total_guests, pickup_time):
-        """Returns None if total_guests exceeds every configured band (nothing priced that high
-        yet) - the caller is responsible for deciding what that means (e.g. flag for staff)."""
-        band = AirportTransferPriceBand.for_guest_count(total_guests)
-        if band is None:
+        """Two fixed tiers only (1-4 guests, 5-8 guests) - a single transfer vehicle's real
+        capacity, not an arbitrary pricing choice. Returns None above 8 guests; the caller is
+        responsible for deciding what that means (in practice, booking a second transfer)."""
+        if total_guests <= 4:
+            price = self.airport_transfer_price_1_4_guests
+        elif total_guests <= 8:
+            price = self.airport_transfer_price_5_8_guests
+        else:
             return None
-        price = band.price
         if self.is_night_time(pickup_time):
             price += self.airport_transfer_night_surcharge
         return price
