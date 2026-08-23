@@ -221,18 +221,20 @@
                     <form method="post" class="staff-form">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="update_sef">
-                        <div class="staff-sef-fields-row">
-                            <label class="staff-field">Unidade hoteleira
-                                <input type="text" name="unidade_hoteleira" class="staff-input" value="{{ sef_details.unidade_hoteleira|default:'' }}">
-                            </label>
-                            <label class="staff-field">Estabelecimento
-                                <input type="text" name="estabelecimento" class="staff-input" value="{{ sef_details.estabelecimento|default:'' }}">
-                            </label>
-                            <label class="staff-field">Chave de autenticação
-                                <input type="text" name="chave_de_autenticacao" class="staff-input" value="{{ sef_details.chave_de_autenticacao|default:'' }}">
-                            </label>
+                        <div class="staff-sef-row-with-button">
+                            <div class="staff-sef-fields-row">
+                                <label class="staff-field">Unidade hoteleira
+                                    <input type="text" name="unidade_hoteleira" class="staff-input" value="{{ sef_details.unidade_hoteleira|default:'' }}">
+                                </label>
+                                <label class="staff-field">Estabelecimento
+                                    <input type="text" name="estabelecimento" class="staff-input" value="{{ sef_details.estabelecimento|default:'' }}">
+                                </label>
+                                <label class="staff-field">Chave de autenticação
+                                    <input type="text" name="chave_de_autenticacao" class="staff-input" value="{{ sef_details.chave_de_autenticacao|default:'' }}">
+                                </label>
+                            </div>
+                            <button type="submit" class="staff-button">Update</button>
                         </div>
-                        <button type="submit" class="staff-button">Update</button>
                     </form>
                 </section>
 
@@ -405,7 +407,7 @@
                         </tbody>
                     </table>
 
-                    <h2 class="staff-panel-title">Record handover</h2>
+                    <h2 class="staff-panel-title staff-ownership-record-handover-title">Record handover</h2>
                     <form method="post" class="staff-form staff-record-handover-form">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="record_handover">

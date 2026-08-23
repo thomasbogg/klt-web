@@ -127,22 +127,29 @@
 }
 
 #pane-amenities .staff-form,
-#pane-sef .staff-form {
+#pane-sef .staff-form,
+#pane-ownership .staff-form {
     max-width: none;
 }
 
 /* Record handover's three fields (New owner / Effective date / the submit button) sit in one row
-   rather than the page's usual stacked .staff-form - needs the 480px cap lifted, same reasoning
-   as Amenities/SEF above, plus the same align-self fix already used for Home's "Go" button
-   (.staff-button's base align-self: flex-start pins it to the row's top, matching its usual home
-   stacked above/below a field rather than beside one - flex-end lines its bottom edge up with the
-   input instead). */
-.staff-record-handover-form {
-    max-width: none;
-}
-
+   rather than the page's usual stacked .staff-form, and (per Thomas) that row should span the
+   panel's full width like Amenities/SEF's own field grids do - the max-width lift above handles
+   the .staff-form itself, .staff-field's existing flex: 1 (see booking_detail.css) then does the
+   rest for the two fields automatically. The button also needs the same align-self fix already
+   used for Home's "Go" button (.staff-button's base align-self: flex-start pins it to the row's
+   top, matching its usual home stacked above/below a field rather than beside one - flex-end
+   lines its bottom edge up with the input instead). */
 .staff-record-handover-row > .staff-button {
     align-self: flex-end;
+    flex: 0 0 auto;
+}
+
+/* Thomas asked for more breathing room between the history table and the Record handover form
+   below it - .staff-panel-title already carries its own top margin from being a second <h2> in
+   the same panel, this adds extra space above that. */
+.staff-ownership-record-handover-title {
+    margin-top: 28px;
 }
 
 /* Explicit column counts per breakpoint, not auto-fit - auto-fit with a max-width cap kept the
@@ -181,6 +188,23 @@
     .staff-amenity-grid,
     .staff-sef-fields-row {
         grid-template-columns: repeat(3, 1fr);
+    }
+
+    /* Below this breakpoint, .staff-sef-row-with-button is left as a plain block (no rule below)
+       so .staff-sef-fields-row and the Update button stack exactly as they already did - only at
+       900px+, where the fields are already 3-across, does the button join them on the same row
+       (Thomas asked for parity with the Ownership tab's Record handover row, but only "for the
+       wider viewports" - SEF's fields already collapse to fewer columns below this, so the button
+       joining them there too would just look cramped). */
+    .staff-sef-row-with-button {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+    }
+
+    .staff-sef-row-with-button .staff-sef-fields-row {
+        flex: 1;
+        margin-bottom: 0;
     }
 }
 
