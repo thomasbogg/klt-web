@@ -310,7 +310,11 @@ class StaffPropertyDetailView(View):
         property = self._get_property(pk)
         panel = request.GET.get('panel', '')
         active_panel = panel if panel in self.PANELS else 'main'
-        return render(request, self.template_name, self._context(property, active_panel))
+        context = self._context(property, active_panel)
+        context['export_url'] = request.build_absolute_uri(
+            reverse('properties:calendar_export', kwargs={'token': property.ical_export_token})
+        )
+        return render(request, self.template_name, context)
 
     def post(self, request, pk, *args, **kwargs):
         property = self._get_property(pk)

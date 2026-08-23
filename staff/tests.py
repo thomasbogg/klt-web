@@ -713,6 +713,11 @@ class StaffPropertyDetailViewTests(TestCase):
         self.assertTrue(Amenity.objects.filter(property=self.property).exists())
         self.assertTrue(SEFDetail.objects.filter(property=self.property).exists())
 
+    def test_context_includes_absolute_ical_export_url(self):
+        response = self.client.get(self.url)
+        self.assertIn(self.property.ical_export_token, response.context['export_url'])
+        self.assertTrue(response.context['export_url'].startswith('http'))
+
     def test_update_property_info_saves_fields(self):
         response = self.client.post(self.url, {
             'action': 'update_property_info', 'title': 'Detail Property', 'short_title': 'DETAILPROP',

@@ -264,3 +264,41 @@
     color: #666;
     margin: 0;
 }
+
+.staff-ical-export {
+    background: #f7f7f7;
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 18px;
+}
+
+.staff-ical-export-label {
+    display: block;
+    font-size: 0.78rem;
+    color: #666;
+    margin-bottom: 8px;
+}
+
+.staff-ical-export-row {
+    display: flex;
+    gap: 8px;
+}
+
+.staff-ical-export-row .staff-input {
+    background: #fff;
+}
+
+/* The dropdown and button keep their natural width; only the URL field shrinks to make room, so
+   all three fit on one row instead of the URL field's default full-width pulling the button onto
+   a line of its own. */
+.staff-ical-add-form select,
+.staff-ical-add-form button {
+    flex: 0 0 auto;
+}
+
+.staff-ical-add-form input[type="url"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+}

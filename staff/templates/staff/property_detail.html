@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
     <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}">
+    <script src="{% static 'staff/property_detail.js' %}" defer></script>
 </head>
 <body>
     <div class="staff-page">
@@ -45,7 +46,7 @@
                 <label for="panel-amenities" class="staff-property-tab-label">Amenities</label>
                 <label for="panel-sef" class="staff-property-tab-label">SEF details</label>
                 <label for="panel-rates" class="staff-property-tab-label">Rate card</label>
-                <label for="panel-ical" class="staff-property-tab-label">iCal import links</label>
+                <label for="panel-ical" class="staff-property-tab-label">iCal links</label>
                 <label for="panel-photos" class="staff-property-tab-label">Photos</label>
             </nav>
 
@@ -336,11 +337,20 @@
                 </section>
 
                 <section class="staff-panel staff-property-pane" id="pane-ical">
-                    <h2 class="staff-panel-title">iCal import links</h2>
+                    <h2 class="staff-panel-title">iCal links</h2>
+
+                    <div class="staff-ical-export">
+                        <span class="staff-ical-export-label">This property's iCal export link - paste it into Airbnb/Booking.com/Vrbo's calendar sync settings</span>
+                        <div class="staff-ical-export-row">
+                            <input type="text" class="staff-input" value="{{ export_url }}" readonly id="ical-export-url">
+                            <button type="button" class="staff-button staff-button-small" data-copy-target="ical-export-url">Copy</button>
+                        </div>
+                    </div>
+
                     <ul class="staff-list">
                         {% for link in ical_links %}
                         <li>
-                            {{ link.get_ical_source_display|default:"Unknown source" }} -
+                            {{ link.get_ical_source_display|default:"Unknown source" }}
                             <a href="{{ link.ical_url }}">{{ link.ical_url }}</a>
                             {% if link.last_synced %}<span class="staff-list-date">last synced {{ link.last_synced|date:'d M Y H:i' }}</span>{% endif %}
                             <form method="post" class="staff-inline-delete">
@@ -354,7 +364,7 @@
                         <li class="staff-empty">No iCal import links yet.</li>
                         {% endfor %}
                     </ul>
-                    <form method="post" class="staff-inline-form">
+                    <form method="post" class="staff-inline-form staff-ical-add-form">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="add_ical_link">
                         <select name="ical_source" class="staff-input staff-input-small">
