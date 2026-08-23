@@ -206,37 +206,15 @@
     min-width: 60px;
 }
 
-.staff-price-table input[type="date"] {
-    min-width: 165px; /* wide enough for "mm/dd/yyyy" plus the browser's own calendar-icon button
-                          in every browser, not just the ones the ::-webkit-calendar-picker-
-                          indicator trick below covers - Firefox ignores that rule entirely and
-                          needs the extra room on its own. */
+.staff-price-table input.staff-date-input {
+    min-width: 100px; /* wide enough for "31/12/2026" as rendered by flatpickr's altInput,
+                          locale-independent so no browser-specific padding is needed. */
 }
 
 .staff-price-row-actions {
     display: flex;
     gap: 6px;
     white-space: nowrap;
-}
-
-/* The browser's own calendar-icon button eats into the already-tight table cells, clipping the
-   year (see the Rate card date fields). Hiding it and stretching it invisibly over the full
-   input keeps the picker a click away from anywhere in the field, at the cost of no longer being
-   able to type a date by hand - an accepted tradeoff. WebKit/Blink-only (Chrome/Edge/Safari);
-   Firefox just keeps its native icon, so this degrades gracefully rather than breaking there. */
-.staff-property-content input[type="date"] {
-    position: relative;
-}
-
-.staff-property-content input[type="date"]::-webkit-calendar-picker-indicator {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    opacity: 0;
-    cursor: pointer;
 }
 
 .staff-photo-grid {

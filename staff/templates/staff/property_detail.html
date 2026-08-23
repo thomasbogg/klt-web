@@ -9,6 +9,8 @@
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
     <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
+    <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
     <script src="{% static 'staff/property_detail.js' %}" defer></script>
 </head>
 <body>
@@ -255,8 +257,8 @@
                                 <tbody>
                                     {% for price in prices %}
                                     <tr>
-                                        <td><input type="date" name="start_date" form="price-form-{{ price.pk }}" value="{{ price.start_date|date:'Y-m-d' }}" class="staff-input staff-input-small"></td>
-                                        <td><input type="date" name="end_date" form="price-form-{{ price.pk }}" value="{{ price.end_date|date:'Y-m-d' }}" class="staff-input staff-input-small"></td>
+                                        <td><input type="text" name="start_date" form="price-form-{{ price.pk }}" value="{{ price.start_date|date:'Y-m-d' }}" class="staff-input staff-input-small staff-date-input staff-date-start" autocomplete="off"></td>
+                                        <td><input type="text" name="end_date" form="price-form-{{ price.pk }}" value="{{ price.end_date|date:'Y-m-d' }}" class="staff-input staff-input-small staff-date-input staff-date-end" autocomplete="off"></td>
                                         <td><input type="text" name="rate" form="price-form-{{ price.pk }}" value="{{ price.rate }}" class="staff-input staff-input-small"></td>
                                         <td><input type="text" name="weekly_discount_percent" form="price-form-{{ price.pk }}" value="{{ price.weekly_discount_percent }}" class="staff-input staff-input-small"></td>
                                         <td><input type="text" name="monthly_discount_percent" form="price-form-{{ price.pk }}" value="{{ price.monthly_discount_percent }}" class="staff-input staff-input-small"></td>
@@ -296,10 +298,10 @@
 
                                 <div class="staff-price-form-row">
                                     <label class="staff-field">Start date
-                                        <input type="date" name="start_date" class="staff-input">
+                                        <input type="text" name="start_date" class="staff-input staff-date-input staff-date-start" autocomplete="off">
                                     </label>
                                     <label class="staff-field">End date
-                                        <input type="date" name="end_date" class="staff-input">
+                                        <input type="text" name="end_date" class="staff-input staff-date-input staff-date-end" autocomplete="off">
                                     </label>
                                     <label class="staff-field">Nightly rate (&euro;)
                                         <input type="text" name="rate" class="staff-input">
