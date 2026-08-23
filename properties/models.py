@@ -304,16 +304,23 @@ class Price(models.Model):
     def __str__(self):
         return f"{self.property.title} - {self.start_date} to {self.end_date}"
 
+    @staticmethod
+    def overlapping(property_id, start_date, end_date, exclude_pk=None):
+        qs = Price.objects.filter(
+            property_id=property_id,
+            start_date__lte=end_date,
+            end_date__gte=start_date,
+        )
+        if exclude_pk is not None:
+            qs = qs.exclude(pk=exclude_pk)
+        return qs
+
     def clean(self):
         super().clean()
         if self.start_date and self.end_date and self.start_date > self.end_date:
             raise ValidationError({'end_date': 'End date must be on or after the start date.'})
         if self.property_id and self.start_date and self.end_date:
-            overlap = Price.objects.filter(
-                property_id=self.property_id,
-                start_date__lte=self.end_date,
-                end_date__gte=self.start_date,
-            ).exclude(pk=self.pk).first()
+            overlap = self.overlapping(self.property_id, self.start_date, self.end_date, exclude_pk=self.pk).first()
             if overlap:
                 message = f"Overlaps with the {overlap.start_date} to {overlap.end_date} price line."
                 raise ValidationError({'start_date': message, 'end_date': message})

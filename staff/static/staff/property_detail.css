@@ -98,31 +98,18 @@
 }
 
 /* Scoped to property-page forms specifically (not .staff-inline-form, which deliberately wants
-   the full row width for the rate-card/iCal/photo add-forms) - stops a lone text input from
-   stretching edge-to-edge of a wide pane, the same complaint that motivated the two-column split
-   above. Amenities and SEF details are exempted just below - both use the responsive field-row
-   grid instead, which wants the extra width rather than being boxed into 480px with the rest of
-   the (much wider) pane sitting empty next to it. */
+   the full row width for the iCal/photo add-forms) - stops a lone text input from stretching
+   edge-to-edge of a wide pane, the same complaint that motivated the two-column split above.
+   Amenities and SEF details are exempted just below - both use the responsive field-row grid
+   instead, which wants the extra width rather than being boxed into 480px with the rest of the
+   (much wider) pane sitting empty next to it. */
 .staff-property-content .staff-form {
     max-width: 480px;
 }
 
 #pane-amenities .staff-form,
-#pane-sef .staff-form,
-#pane-rates .staff-form {
+#pane-sef .staff-form {
     max-width: none;
-}
-
-/* auto-fit rather than an explicit breakpoint scheme: each group here has a small, fixed field
-   count (4, 4, then 2), so unlike the amenities checkbox grid there's no risk of it ballooning
-   into too many columns on a wide screen - auto-fit naturally caps at "one column per field".
-   No group headings (Name/Start/End/Rate, discounts, extra guests) - the field labels alone were
-   judged clear enough - so a slightly larger gap between rows does the job of separating them. */
-.staff-price-form-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 12px;
-    margin-bottom: 16px;
 }
 
 /* Explicit column counts per breakpoint, not auto-fit - auto-fit with a max-width cap kept the
@@ -215,6 +202,14 @@
     display: flex;
     gap: 6px;
     white-space: nowrap;
+}
+
+.staff-price-row-conflict {
+    background: var(--status-booked-bg);
+}
+
+.staff-price-row-conflict td {
+    border-bottom-color: var(--status-booked-color);
 }
 
 .staff-photo-grid {

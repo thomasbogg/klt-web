@@ -179,6 +179,19 @@ def _parsed_date(raw):
         return None
 
 
+def _flash_validation_error(request, error):
+    """ValidationError.messages repeats a message once per field it's attached to (e.g. an
+    overlap error raised against both start_date and end_date), so dedupe before joining."""
+    messages.error(request, '; '.join(dict.fromkeys(error.messages)))
+
+
+def _conflict_query(queryset):
+    """Query-string fragment carrying which rows to highlight after a redirect, for handlers
+    whose validation failure should flag existing conflicting rows (e.g. a Price overlap)."""
+    ids = ','.join(str(pk) for pk in queryset.values_list('pk', flat=True))
+    return f"conflict={ids}" if ids else None
+
+
 def _parsed_decimal(raw):
     raw = (raw or '').strip()
     if not raw:
@@ -260,7 +273,7 @@ class StaffPropertyCreateView(View):
         try:
             property.full_clean()
         except ValidationError as error:
-            messages.error(request, '; '.join(error.messages))
+            _flash_validation_error(request, error)
             return render(request, self.template_name, _property_form_context())
         property.save()
         messages.success(request, "Property created.")
@@ -314,6 +327,8 @@ class StaffPropertyDetailView(View):
         context['export_url'] = request.build_absolute_uri(
             reverse('properties:calendar_export', kwargs={'token': property.ical_export_token})
         )
+        conflict = request.GET.get('conflict', '')
+        context['conflict_price_ids'] = {int(pk) for pk in conflict.split(',') if pk.isdigit()}
         return render(request, self.template_name, context)
 
     def post(self, request, pk, *args, **kwargs):
@@ -332,10 +347,12 @@ class StaffPropertyDetailView(View):
             'add_image': self._add_image,
             'delete_image': self._delete_image,
         }.get(action)
-        if handler is not None:
-            handler(request, property)
+        extra_query = handler(request, property) if handler is not None else None
         panel = self.ACTION_PANELS.get(action, 'main')
-        return redirect(f"{reverse('staff:property_detail', kwargs={'pk': property.pk})}?panel={panel}")
+        url = f"{reverse('staff:property_detail', kwargs={'pk': property.pk})}?panel={panel}"
+        if extra_query:
+            url += f"&{extra_query}"
+        return redirect(url)
 
     def _context(self, property, active_panel):
         specs, _ = PropertySpec.objects.get_or_create(property=property)
@@ -377,7 +394,7 @@ class StaffPropertyDetailView(View):
         try:
             property.full_clean()
         except ValidationError as error:
-            messages.error(request, '; '.join(error.messages))
+            _flash_validation_error(request, error)
             return
         property.save()
         messages.success(request, "Property info updated.")
@@ -446,8 +463,8 @@ class StaffPropertyDetailView(View):
         try:
             price.full_clean()
         except ValidationError as error:
-            messages.error(request, '; '.join(error.messages))
-            return
+            _flash_validation_error(request, error)
+            return _conflict_query(Price.overlapping(property.pk, start_date, end_date))
         price.save()
         messages.success(request, "Price line added.")
 
@@ -476,8 +493,8 @@ class StaffPropertyDetailView(View):
             # still just cover this same row's existing slot won't falsely flag against itself.
             price.full_clean()
         except ValidationError as error:
-            messages.error(request, '; '.join(error.messages))
-            return
+            _flash_validation_error(request, error)
+            return _conflict_query(Price.overlapping(property.pk, start_date, end_date, exclude_pk=price.pk))
         price.save()
         messages.success(request, "Price line updated.")
 
@@ -512,7 +529,7 @@ class StaffPropertyDetailView(View):
         try:
             image.full_clean()
         except ValidationError as error:
-            messages.error(request, '; '.join(error.messages))
+            _flash_validation_error(request, error)
             return
         image.save()
         messages.success(request, "Photo added.")
@@ -602,7 +619,7 @@ class StaffBookingDetailView(View):
         try:
             booking.full_clean()
         except ValidationError as error:
-            messages.error(request, '; '.join(error.messages))
+            _flash_validation_error(request, error)
             return
         booking.save()
         messages.success(request, "Booking info updated.")

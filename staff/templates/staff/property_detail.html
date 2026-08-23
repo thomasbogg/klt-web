@@ -250,14 +250,14 @@
                             <table class="staff-price-table">
                                 <thead>
                                     <tr>
-                                        <th>Start</th><th>End</th><th>Rate</th><th>Weekly %</th>
+                                        <th>Start</th><th>End</th><th>Rate &euro;</th><th>Weekly %</th>
                                         <th>Monthly %</th><th>Last-min %</th><th>Last-min days</th>
-                                        <th>Extra adult</th><th>Extra child</th><th></th>
+                                        <th>Extra adult &euro;</th><th>Extra child &euro;</th><th></th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {% for price in prices %}
-                                    <tr>
+                                    <tr{% if price.pk in conflict_price_ids %} class="staff-price-row-conflict"{% endif %}>
                                         <td><input type="text" name="start_date" form="price-form-{{ price.pk }}" value="{{ price.start_date|date:'Y-m-d' }}" class="staff-input staff-input-small staff-date-input staff-date-start" autocomplete="off"></td>
                                         <td><input type="text" name="end_date" form="price-form-{{ price.pk }}" value="{{ price.end_date|date:'Y-m-d' }}" class="staff-input staff-input-small staff-date-input staff-date-end" autocomplete="off"></td>
                                         <td><input type="text" name="rate" form="price-form-{{ price.pk }}" value="{{ price.rate }}" class="staff-input staff-input-small"></td>
@@ -280,6 +280,20 @@
                                     {% empty %}
                                     <tr><td colspan="10" class="staff-empty">No price lines yet.</td></tr>
                                     {% endfor %}
+                                    <tr class="staff-price-row-new">
+                                        <td><input type="text" name="start_date" form="price-form-new" class="staff-input staff-input-small staff-date-input staff-date-start" autocomplete="off"></td>
+                                        <td><input type="text" name="end_date" form="price-form-new" class="staff-input staff-input-small staff-date-input staff-date-end" autocomplete="off"></td>
+                                        <td><input type="text" name="rate" form="price-form-new" class="staff-input staff-input-small"></td>
+                                        <td><input type="text" name="weekly_discount_percent" form="price-form-new" class="staff-input staff-input-small"></td>
+                                        <td><input type="text" name="monthly_discount_percent" form="price-form-new" class="staff-input staff-input-small"></td>
+                                        <td><input type="text" name="last_minute_discount_percent" form="price-form-new" class="staff-input staff-input-small"></td>
+                                        <td><input type="text" name="last_minute_discount_days" form="price-form-new" value="7" class="staff-input staff-input-small"></td>
+                                        <td><input type="text" name="extra_adult_rate" form="price-form-new" class="staff-input staff-input-small"></td>
+                                        <td><input type="text" name="extra_child_rate" form="price-form-new" class="staff-input staff-input-small"></td>
+                                        <td class="staff-price-row-actions">
+                                            <button type="submit" form="price-form-new" class="staff-button staff-button-small">Add</button>
+                                        </td>
+                                    </tr>
                                 </tbody>
                             </table>
                             {% for price in prices %}
@@ -289,51 +303,9 @@
                                 <input type="hidden" name="price_id" value="{{ price.pk }}">
                             </form>
                             {% endfor %}
-                        </div>
-
-                        <div class="staff-panel">
-                            <h2 class="staff-panel-title">Add price line</h2>
-                            <form method="post" class="staff-form">
+                            <form method="post" id="price-form-new">
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="add_price">
-
-                                <div class="staff-price-form-row">
-                                    <label class="staff-field">Start date
-                                        <input type="text" name="start_date" class="staff-input staff-date-input staff-date-start" autocomplete="off">
-                                    </label>
-                                    <label class="staff-field">End date
-                                        <input type="text" name="end_date" class="staff-input staff-date-input staff-date-end" autocomplete="off">
-                                    </label>
-                                    <label class="staff-field">Nightly rate (&euro;)
-                                        <input type="text" name="rate" class="staff-input">
-                                    </label>
-                                </div>
-
-                                <div class="staff-price-form-row">
-                                    <label class="staff-field">Weekly discount %
-                                        <input type="text" name="weekly_discount_percent" class="staff-input">
-                                    </label>
-                                    <label class="staff-field">Monthly discount %
-                                        <input type="text" name="monthly_discount_percent" class="staff-input">
-                                    </label>
-                                    <label class="staff-field">Last-minute discount %
-                                        <input type="text" name="last_minute_discount_percent" class="staff-input">
-                                    </label>
-                                    <label class="staff-field">Last-minute window (days)
-                                        <input type="text" name="last_minute_discount_days" class="staff-input" value="7">
-                                    </label>
-                                </div>
-
-                                <div class="staff-price-form-row">
-                                    <label class="staff-field">Extra adult (&euro;/night)
-                                        <input type="text" name="extra_adult_rate" class="staff-input">
-                                    </label>
-                                    <label class="staff-field">Extra child (&euro;/night)
-                                        <input type="text" name="extra_child_rate" class="staff-input">
-                                    </label>
-                                </div>
-
-                                <button type="submit" class="staff-button">Add price line</button>
                             </form>
                         </div>
                     </div>

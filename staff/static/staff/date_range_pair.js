@@ -3,7 +3,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     var containers = new Set();
     document.querySelectorAll('.staff-date-start, .staff-date-end').forEach(function (input) {
-        var container = input.closest('tr') || input.closest('.staff-price-form-row') || input.closest('.staff-field-row');
+        var container = input.closest('tr') || input.closest('.staff-field-row');
         if (container) containers.add(container);
     });
 
