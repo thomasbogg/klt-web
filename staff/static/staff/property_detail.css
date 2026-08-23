@@ -302,17 +302,21 @@
     width: auto;
 }
 
-/* Same one-row treatment as .staff-ical-add-form: the file picker keeps a sane fixed-ish width
-   (native file inputs don't shrink gracefully below a certain point anyway) and the button stays
-   its natural size, so the caption field is the one that flexes to fill the remaining space. */
+/* One-row treatment, flex priority the other way round from .staff-ical-add-form: the caption is
+   the least important field here, so it gets a small fixed width while the file picker (where
+   seeing the selected filename actually matters) takes the freed-up space; the button stays its
+   natural size. Chrome's own "Choose File" button renders a native <input type="file"> a few px
+   taller than a plain text input at identical padding/border (measured: 38px vs 33px) - an
+   explicit height forces it back in line with everything else in the row. */
 .staff-photo-add-form input[type="file"] {
-    flex: 0 1 260px;
+    flex: 3 1 200px;
+    min-width: 0;
+    height: 33px;
 }
 
 .staff-photo-add-form input[type="text"] {
-    flex: 1 1 auto;
+    flex: 1 1 120px;
     min-width: 0;
-    width: auto;
 }
 
 .staff-photo-add-form button {
