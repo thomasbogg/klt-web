@@ -207,8 +207,10 @@
 }
 
 .staff-price-table input[type="date"] {
-    min-width: 130px; /* native date-input placeholder (mm/dd/yyyy) gets clipped under the
-                          shared .staff-input-small max-width:100px used for the other fields */
+    min-width: 165px; /* wide enough for "mm/dd/yyyy" plus the browser's own calendar-icon button
+                          in every browser, not just the ones the ::-webkit-calendar-picker-
+                          indicator trick below covers - Firefox ignores that rule entirely and
+                          needs the extra room on its own. */
 }
 
 .staff-price-row-actions {
