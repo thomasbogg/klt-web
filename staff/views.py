@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.http import Http404, JsonResponse
@@ -13,7 +14,10 @@ from django.utils.decorators import method_decorator
 from django.views import View
 
 from availability.utils import get_property_calendar
-from bookings.models import CURRENCY_CHOICES, PAYMENT_STATUS_CHOICES, Booking
+from bookings.models import (
+    CURRENCY_CHOICES, PAYMENT_STATUS_CHOICES, AirportTransferPriceBand, Booking, BookingSettings,
+    ExtrasSettings, PaymentSettings, RequestType, WelcomePackItem,
+)
 from bookings.utils import extras_summary
 from guests.models import Guest
 from properties.models import (
@@ -207,6 +211,16 @@ def _parsed_int(raw):
     return int(raw) if raw.isdigit() else None
 
 
+def _parsed_time(raw):
+    raw = (raw or '').strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, '%H:%M').time()
+    except ValueError:
+        return None
+
+
 @method_decorator(staff_member_required, name='dispatch')
 class StaffPropertyListView(View):
     """PIMS puts property CRUD behind Settings rather than a dedicated list; klt-web instead
@@ -350,6 +364,300 @@ class StaffQuickAddView(View):
             email=post.get('email', '').strip(),
             phone=post.get('phone', '').strip(),
         )
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class StaffSettingsView(View):
+    """Site-wide configuration the Staff admin doesn't have a page for yet, pulled out of
+    Django-admin-only territory into one CSS-only tabbed page (same radio-input sidebar
+    technique as StaffPropertyDetailView). Bookings/Extras wrap the existing BookingSettings/
+    ExtrasSettings singletons (plus Extras' three admin-only catalog lists, each following the
+    Rate card's inline-edit-plus-blank-bottom-row table pattern). Staff is deliberately basic
+    Django User management only (list/add accounts, toggle is_staff/is_superuser/is_active) -
+    there's no existing role/permission concept anywhere in the app to build real roles on top
+    of, and Thomas asked for this scope specifically rather than a new Role model. Payments is a
+    new PaymentSettings singleton storing default owner-payout/commission percentages that
+    nothing else in the app reads yet - a deliberate starting point, not a finished payout
+    system."""
+    template_name = 'staff/settings.html'
+    PANELS = ('bookings', 'extras', 'staff', 'payments')
+    ACTION_PANELS = {
+        'update_booking_settings': 'bookings',
+        'update_extras_settings': 'extras',
+        'add_welcome_pack_item': 'extras',
+        'update_welcome_pack_item': 'extras',
+        'delete_welcome_pack_item': 'extras',
+        'add_request_type': 'extras',
+        'update_request_type': 'extras',
+        'delete_request_type': 'extras',
+        'add_transfer_band': 'extras',
+        'update_transfer_band': 'extras',
+        'delete_transfer_band': 'extras',
+        'add_staff_user': 'staff',
+        'update_staff_user': 'staff',
+        'update_payment_settings': 'payments',
+    }
+
+    def get(self, request, *args, **kwargs):
+        panel = request.GET.get('panel', '')
+        active_panel = panel if panel in self.PANELS else 'bookings'
+        return render(request, self.template_name, self._context(active_panel))
+
+    def post(self, request, *args, **kwargs):
+        action = request.POST.get('action')
+        handler = {
+            'update_booking_settings': self._update_booking_settings,
+            'update_extras_settings': self._update_extras_settings,
+            'add_welcome_pack_item': self._add_welcome_pack_item,
+            'update_welcome_pack_item': self._update_welcome_pack_item,
+            'delete_welcome_pack_item': self._delete_welcome_pack_item,
+            'add_request_type': self._add_request_type,
+            'update_request_type': self._update_request_type,
+            'delete_request_type': self._delete_request_type,
+            'add_transfer_band': self._add_transfer_band,
+            'update_transfer_band': self._update_transfer_band,
+            'delete_transfer_band': self._delete_transfer_band,
+            'add_staff_user': self._add_staff_user,
+            'update_staff_user': self._update_staff_user,
+            'update_payment_settings': self._update_payment_settings,
+        }.get(action)
+        if handler is not None:
+            handler(request)
+        panel = self.ACTION_PANELS.get(action, 'bookings')
+        return redirect(f"{reverse('staff:settings')}?panel={panel}")
+
+    def _context(self, active_panel):
+        return {
+            'active_panel': active_panel,
+            'booking_settings': BookingSettings.load(),
+            'extras_settings': ExtrasSettings.load(),
+            'payment_settings': PaymentSettings.load(),
+            'welcome_pack_items': WelcomePackItem.objects.all(),
+            'welcome_pack_categories': WelcomePackItem.Category.choices,
+            'request_types': RequestType.objects.all(),
+            'transfer_bands': AirportTransferPriceBand.objects.all(),
+            'staff_users': User.objects.order_by('username'),
+        }
+
+    # --- Bookings ---
+
+    def _update_booking_settings(self, request):
+        settings = BookingSettings.load()
+        post = request.POST
+        for field in (
+            'admin_fee_percent', 'deposit_percent_at_booking', 'security_deposit_amount',
+            'gbp_conversion_rate',
+        ):
+            value = _parsed_decimal(post.get(field))
+            if value is not None:
+                setattr(settings, field, value)
+        for field in (
+            'balance_due_days_before_arrival', 'balance_reminder_days_before_arrival',
+            'extras_edit_cutoff_days_before_arrival', 'monthly_discount_min_nights',
+            'revolut_hold_minutes', 'revolut_hold_extension_minutes',
+            'payment_clearing_business_days', 'adult_min_age', 'child_min_age',
+        ):
+            value = _parsed_int(post.get(field))
+            if value is not None:
+                setattr(settings, field, value)
+        try:
+            settings.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        settings.save()
+        messages.success(request, "Booking settings updated.")
+
+    # --- Extras ---
+
+    def _update_extras_settings(self, request):
+        settings = ExtrasSettings.load()
+        post = request.POST
+        for field in (
+            'airport_transfer_night_surcharge', 'cot_price_short_stay', 'cot_price_long_stay',
+            'high_chair_price_short_stay', 'high_chair_price_long_stay',
+            'cot_and_high_chair_combo_discount', 'welcome_pack_price', 'late_checkout_price',
+        ):
+            value = _parsed_decimal(post.get(field))
+            if value is not None:
+                setattr(settings, field, value)
+        night_start = _parsed_time(post.get('airport_transfer_night_window_start'))
+        if night_start is not None:
+            settings.airport_transfer_night_window_start = night_start
+        night_end = _parsed_time(post.get('airport_transfer_night_window_end'))
+        if night_end is not None:
+            settings.airport_transfer_night_window_end = night_end
+        try:
+            settings.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        settings.save()
+        messages.success(request, "Extras settings updated.")
+
+    def _add_welcome_pack_item(self, request):
+        post = request.POST
+        item = WelcomePackItem(
+            name=post.get('name', '').strip(),
+            category=post.get('category') or WelcomePackItem.Category.FOOD_COMMON,
+            order=_parsed_int(post.get('order')) or 0,
+            active=post.get('active') == 'on',
+        )
+        try:
+            item.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        item.save()
+        messages.success(request, "Welcome pack item added.")
+
+    def _update_welcome_pack_item(self, request):
+        item = WelcomePackItem.objects.filter(pk=request.POST.get('item_id')).first()
+        if item is None:
+            messages.error(request, "That welcome pack item no longer exists.")
+            return
+        post = request.POST
+        item.name = post.get('name', '').strip()
+        item.category = post.get('category') or item.category
+        item.order = _parsed_int(post.get('order')) or 0
+        item.active = post.get('active') == 'on'
+        try:
+            item.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        item.save()
+        messages.success(request, "Welcome pack item updated.")
+
+    def _delete_welcome_pack_item(self, request):
+        WelcomePackItem.objects.filter(pk=request.POST.get('item_id')).delete()
+        messages.success(request, "Welcome pack item deleted.")
+
+    def _add_request_type(self, request):
+        post = request.POST
+        item = RequestType(
+            name=post.get('name', '').strip(),
+            description=post.get('description', '').strip(),
+            default_price=_parsed_decimal(post.get('default_price')) or 0,
+            active=post.get('active') == 'on',
+        )
+        try:
+            item.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        item.save()
+        messages.success(request, "Request type added.")
+
+    def _update_request_type(self, request):
+        item = RequestType.objects.filter(pk=request.POST.get('item_id')).first()
+        if item is None:
+            messages.error(request, "That request type no longer exists.")
+            return
+        post = request.POST
+        item.name = post.get('name', '').strip()
+        item.description = post.get('description', '').strip()
+        item.default_price = _parsed_decimal(post.get('default_price')) or 0
+        item.active = post.get('active') == 'on'
+        try:
+            item.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        item.save()
+        messages.success(request, "Request type updated.")
+
+    def _delete_request_type(self, request):
+        RequestType.objects.filter(pk=request.POST.get('item_id')).delete()
+        messages.success(request, "Request type deleted.")
+
+    def _add_transfer_band(self, request):
+        post = request.POST
+        band = AirportTransferPriceBand(
+            max_guests=_parsed_int(post.get('max_guests')) or 0,
+            price=_parsed_decimal(post.get('price')) or 0,
+        )
+        try:
+            band.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        band.save()
+        messages.success(request, "Airport transfer price band added.")
+
+    def _update_transfer_band(self, request):
+        band = AirportTransferPriceBand.objects.filter(pk=request.POST.get('item_id')).first()
+        if band is None:
+            messages.error(request, "That price band no longer exists.")
+            return
+        post = request.POST
+        band.max_guests = _parsed_int(post.get('max_guests')) or 0
+        band.price = _parsed_decimal(post.get('price')) or 0
+        try:
+            band.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        band.save()
+        messages.success(request, "Airport transfer price band updated.")
+
+    def _delete_transfer_band(self, request):
+        AirportTransferPriceBand.objects.filter(pk=request.POST.get('item_id')).delete()
+        messages.success(request, "Airport transfer price band deleted.")
+
+    # --- Staff ---
+
+    def _add_staff_user(self, request):
+        post = request.POST
+        username = post.get('username', '').strip()
+        password = post.get('password', '')
+        if not username or not password:
+            messages.error(request, "A new staff account needs both a username and a password.")
+            return
+        if User.objects.filter(username=username).exists():
+            messages.error(request, f'A user named "{username}" already exists.')
+            return
+        user = User.objects.create_user(
+            username=username,
+            email=post.get('email', '').strip(),
+            password=password,
+        )
+        user.is_staff = True
+        user.is_superuser = post.get('is_superuser') == 'on'
+        user.save()
+        messages.success(request, f'Staff account "{username}" created.')
+
+    def _update_staff_user(self, request):
+        user = User.objects.filter(pk=request.POST.get('user_id')).first()
+        if user is None:
+            messages.error(request, "That user no longer exists.")
+            return
+        post = request.POST
+        user.is_staff = post.get('is_staff') == 'on'
+        user.is_superuser = post.get('is_superuser') == 'on'
+        user.is_active = post.get('is_active') == 'on'
+        user.save()
+        messages.success(request, f'"{user.username}" updated.')
+
+    # --- Payments ---
+
+    def _update_payment_settings(self, request):
+        settings = PaymentSettings.load()
+        post = request.POST
+        for field in (
+            'default_owner_payout_percent', 'default_rental_commission_percent',
+            'default_cleaning_commission_percent',
+        ):
+            value = _parsed_decimal(post.get(field))
+            if value is not None:
+                setattr(settings, field, value)
+        try:
+            settings.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        settings.save()
+        messages.success(request, "Payment settings updated.")
 
 
 @method_decorator(staff_member_required, name='dispatch')

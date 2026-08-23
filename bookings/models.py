@@ -815,6 +815,49 @@ class ExtrasSettings(models.Model):
         return max(total, Decimal('0'))
 
 
+class PaymentSettings(models.Model):
+    """Site-wide default owner-payout/commission figures - same singleton pattern as
+    BookingSettings/ExtrasSettings. A starting point only: nothing in the payout system reads
+    these yet (PlatformPayout's gross/commission/payout amounts are still entered per-booking by
+    hand), since per-owner overrides and how these feed into an actual calculation haven't been
+    decided. Kept here purely as a place to record the defaults while that design settles."""
+    default_owner_payout_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('80.00'),
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="Default share of rental income paid to the owner, before any per-owner override."
+    )
+    default_rental_commission_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('20.00'),
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="Default management commission on rental income."
+    )
+    default_cleaning_commission_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('0'),
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="Default management commission on cleaning fees, separate from the rental commission above."
+    )
+
+    class Meta:
+        db_table = 'payment_settings'
+        verbose_name = 'Payment Settings'
+        verbose_name_plural = 'Payment Settings'
+
+    def __str__(self):
+        return "Payment Settings"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls):
+        settings, _ = cls.objects.get_or_create(pk=1)
+        return settings
+
+
 class AirportTransferDirection(models.TextChoices):
     INBOUND = 'inbound', 'Inbound (arrival)'
     OUTBOUND = 'outbound', 'Outbound (departure)'

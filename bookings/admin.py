@@ -9,7 +9,8 @@ from env_settings import VALID_BOOKING_STATUSES
 from .models import (
     AirportTransfer, AirportTransferPriceBand, Arrival, BalancePayment, Booking, BookingCondition,
     BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Departure,
-    Extra, ExtrasSettings, GuestListAdjustment, Payment, PlatformPayout, RequestType, WelcomePackItem,
+    Extra, ExtrasSettings, GuestListAdjustment, Payment, PaymentSettings, PlatformPayout, RequestType,
+    WelcomePackItem,
 )
 from .utils import expire_stale_holds
 
@@ -211,3 +212,18 @@ class AirportTransferPriceBandAdmin(admin.ModelAdmin):
     list_display = ('max_guests', 'price')
     list_editable = ('price',)
     ordering = ('max_guests',)
+
+
+@admin.register(PaymentSettings)
+class PaymentSettingsAdmin(admin.ModelAdmin):
+    """Singleton admin: skips the changelist and goes straight to the one row's edit form."""
+
+    def has_add_permission(self, request):
+        return not PaymentSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        settings = PaymentSettings.load()
+        return redirect(reverse('admin:bookings_paymentsettings_change', args=[settings.pk]))

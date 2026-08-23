@@ -11,6 +11,7 @@ urlpatterns = [
     path('properties/', views.StaffPropertyListView.as_view(), name='property_list'),
     path('properties/new/', views.StaffPropertyCreateView.as_view(), name='property_create'),
     path('quick-add/<str:model>/', views.StaffQuickAddView.as_view(), name='quick_add'),
+    path('settings/', views.StaffSettingsView.as_view(), name='settings'),
     path('properties/<int:pk>/', views.StaffPropertyDetailView.as_view(), name='property_detail'),
     path('bookings/<str:reference>/', views.StaffBookingDetailView.as_view(), name='booking_detail'),
 ]

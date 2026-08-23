@@ -1,0 +1,100 @@
+/* CSS-only tab switcher - same technique as .staff-property-layout in property_detail.css, just
+   with its own class names since this page isn't property-scoped. */
+.staff-settings-layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 24px;
+    align-items: start;
+}
+
+.staff-settings-tab-radio {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.staff-settings-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: var(--primary-box-shadow);
+    padding: 10px;
+    position: sticky;
+    top: 16px;
+}
+
+.staff-settings-tab-label {
+    display: block;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-family: var(--secondary-font);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--primary-color);
+    cursor: pointer;
+}
+
+.staff-settings-tab-label:hover {
+    background: #f5f5f5;
+}
+
+.staff-settings-content {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.staff-settings-pane {
+    display: none;
+    flex-direction: column;
+    gap: 16px;
+}
+
+#settings-panel-bookings:checked ~ .staff-settings-content #settings-pane-bookings,
+#settings-panel-extras:checked ~ .staff-settings-content #settings-pane-extras,
+#settings-panel-staff:checked ~ .staff-settings-content #settings-pane-staff,
+#settings-panel-payments:checked ~ .staff-settings-content #settings-pane-payments {
+    display: flex;
+}
+
+#settings-panel-bookings:checked ~ .staff-settings-sidebar label[for="settings-panel-bookings"],
+#settings-panel-extras:checked ~ .staff-settings-sidebar label[for="settings-panel-extras"],
+#settings-panel-staff:checked ~ .staff-settings-sidebar label[for="settings-panel-staff"],
+#settings-panel-payments:checked ~ .staff-settings-sidebar label[for="settings-panel-payments"] {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+@media (max-width: 800px) {
+    .staff-settings-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .staff-settings-sidebar {
+        position: static;
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+}
+
+.staff-settings-form {
+    max-width: none;
+}
+
+.staff-settings-field-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px 16px;
+    margin-bottom: 14px;
+}
+
+.staff-settings-hint {
+    margin: 8px 0 0;
+    font-size: 0.82rem;
+    color: #666;
+}
