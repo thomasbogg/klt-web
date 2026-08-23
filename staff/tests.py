@@ -773,48 +773,47 @@ class StaffPropertyDetailViewTests(TestCase):
 
     def test_add_price_creates_price_line(self):
         self.client.post(self.url, {
-            'action': 'add_price', 'name': 'Summer', 'start_date': '2027-06-01', 'end_date': '2027-08-31',
+            'action': 'add_price', 'start_date': '2027-06-01', 'end_date': '2027-08-31',
             'rate': '150.00', 'weekly_discount_percent': '10',
         })
-        price = Price.objects.get(property=self.property, name='Summer')
+        price = Price.objects.get(property=self.property, start_date=date(2027, 6, 1))
         self.assertEqual(price.rate, Decimal('150.00'))
 
     def test_add_price_rejects_overlap(self):
         Price.objects.create(
-            property=self.property, name='Existing', start_date=date(2027, 6, 1), end_date=date(2027, 8, 31),
+            property=self.property, start_date=date(2027, 6, 1), end_date=date(2027, 8, 31),
         )
         self.client.post(self.url, {
-            'action': 'add_price', 'name': 'Overlapping', 'start_date': '2027-07-01', 'end_date': '2027-07-15',
+            'action': 'add_price', 'start_date': '2027-07-01', 'end_date': '2027-07-15',
             'rate': '100.00',
         })
-        self.assertFalse(Price.objects.filter(property=self.property, name='Overlapping').exists())
+        self.assertFalse(Price.objects.filter(property=self.property, start_date=date(2027, 7, 1)).exists())
 
     def test_update_price_saves_fields(self):
         price = Price.objects.create(
-            property=self.property, name='Original', start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
+            property=self.property, start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
             rate=Decimal('100.00'),
         )
         response = self.client.post(self.url, {
-            'action': 'update_price', 'price_id': price.pk, 'name': 'Renamed',
+            'action': 'update_price', 'price_id': price.pk,
             'start_date': '2027-01-01', 'end_date': '2027-02-15', 'rate': '125.50',
             'weekly_discount_percent': '15',
         })
         self.assertRedirects(response, f'{self.url}?panel=rates')
         price.refresh_from_db()
-        self.assertEqual(price.name, 'Renamed')
         self.assertEqual(price.end_date, date(2027, 2, 15))
         self.assertEqual(price.rate, Decimal('125.50'))
         self.assertEqual(price.weekly_discount_percent, Decimal('15'))
 
     def test_update_price_rejects_overlap_with_another_line(self):
         Price.objects.create(
-            property=self.property, name='Other', start_date=date(2027, 5, 1), end_date=date(2027, 5, 31),
+            property=self.property, start_date=date(2027, 5, 1), end_date=date(2027, 5, 31),
         )
         price = Price.objects.create(
-            property=self.property, name='Mine', start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
+            property=self.property, start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
         )
         self.client.post(self.url, {
-            'action': 'update_price', 'price_id': price.pk, 'name': 'Mine',
+            'action': 'update_price', 'price_id': price.pk,
             'start_date': '2027-05-15', 'end_date': '2027-06-15', 'rate': '100.00',
         })
         price.refresh_from_db()
@@ -822,11 +821,11 @@ class StaffPropertyDetailViewTests(TestCase):
 
     def test_update_price_editing_its_own_unchanged_dates_does_not_self_conflict(self):
         price = Price.objects.create(
-            property=self.property, name='Mine', start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
+            property=self.property, start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
             rate=Decimal('100.00'),
         )
         self.client.post(self.url, {
-            'action': 'update_price', 'price_id': price.pk, 'name': 'Mine',
+            'action': 'update_price', 'price_id': price.pk,
             'start_date': '2027-01-01', 'end_date': '2027-01-31', 'rate': '110.00',
         })
         price.refresh_from_db()
@@ -834,7 +833,7 @@ class StaffPropertyDetailViewTests(TestCase):
 
     def test_delete_price(self):
         price = Price.objects.create(
-            property=self.property, name='ToDelete', start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
+            property=self.property, start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
         )
         self.client.post(self.url, {'action': 'delete_price', 'price_id': price.pk})
         self.assertFalse(Price.objects.filter(pk=price.pk).exists())
@@ -884,7 +883,7 @@ class StaffPropertyDetailViewTests(TestCase):
 
     def test_adding_a_price_redirects_to_the_rates_panel(self):
         response = self.client.post(self.url, {
-            'action': 'add_price', 'name': 'Autumn', 'start_date': '2027-09-01', 'end_date': '2027-10-31',
+            'action': 'add_price', 'start_date': '2027-09-01', 'end_date': '2027-10-31',
             'rate': '90.00',
         })
         self.assertRedirects(response, f'{self.url}?panel=rates')

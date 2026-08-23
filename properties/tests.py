@@ -26,7 +26,7 @@ class ReserveOwnPendingBookingTests(TestCase):
         self.start = date.today() + timedelta(days=330)
         self.end = self.start + timedelta(days=5)
         Price.objects.create(
-            property=self.property, name='Test Rate',
+            property=self.property,
             start_date=date.today(), end_date=self.end + timedelta(days=30), rate=100,
         )
         self.reserve_url = f'/properties/{self.location.slug}/retrytest/reserve/'

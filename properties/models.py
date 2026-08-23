@@ -257,7 +257,6 @@ class PropertyImage(models.Model):
 class Price(models.Model):
     """Property pricing information by year."""
     property = models.ForeignKey('Property', on_delete=models.CASCADE, related_name='prices')
-    name = models.CharField(max_length=100)
     start_date = models.DateField(verbose_name='start')
     end_date = models.DateField(verbose_name='end')
     rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -303,7 +302,7 @@ class Price(models.Model):
         verbose_name_plural = 'Property Prices'
 
     def __str__(self):
-        return f"{self.property.title} - {self.name} - {self.start_date} to {self.end_date}"
+        return f"{self.property.title} - {self.start_date} to {self.end_date}"
 
     def clean(self):
         super().clean()
@@ -316,7 +315,7 @@ class Price(models.Model):
                 end_date__gte=self.start_date,
             ).exclude(pk=self.pk).first()
             if overlap:
-                message = f"Overlaps with '{overlap.name}' ({overlap.start_date} to {overlap.end_date})."
+                message = f"Overlaps with the {overlap.start_date} to {overlap.end_date} price line."
                 raise ValidationError({'start_date': message, 'end_date': message})
 
 

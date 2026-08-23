@@ -246,7 +246,7 @@
                             <table class="staff-price-table">
                                 <thead>
                                     <tr>
-                                        <th>Name</th><th>Start</th><th>End</th><th>Rate</th><th>Weekly %</th>
+                                        <th>Start</th><th>End</th><th>Rate</th><th>Weekly %</th>
                                         <th>Monthly %</th><th>Last-min %</th><th>Last-min days</th>
                                         <th>Extra adult</th><th>Extra child</th><th></th>
                                     </tr>
@@ -254,7 +254,6 @@
                                 <tbody>
                                     {% for price in prices %}
                                     <tr>
-                                        <td><input type="text" name="name" form="price-form-{{ price.pk }}" value="{{ price.name }}" class="staff-input staff-input-small"></td>
                                         <td><input type="date" name="start_date" form="price-form-{{ price.pk }}" value="{{ price.start_date|date:'Y-m-d' }}" class="staff-input staff-input-small"></td>
                                         <td><input type="date" name="end_date" form="price-form-{{ price.pk }}" value="{{ price.end_date|date:'Y-m-d' }}" class="staff-input staff-input-small"></td>
                                         <td><input type="text" name="rate" form="price-form-{{ price.pk }}" value="{{ price.rate }}" class="staff-input staff-input-small"></td>
@@ -275,7 +274,7 @@
                                         </td>
                                     </tr>
                                     {% empty %}
-                                    <tr><td colspan="11" class="staff-empty">No price lines yet.</td></tr>
+                                    <tr><td colspan="10" class="staff-empty">No price lines yet.</td></tr>
                                     {% endfor %}
                                 </tbody>
                             </table>
@@ -295,9 +294,6 @@
                                 <input type="hidden" name="action" value="add_price">
 
                                 <div class="staff-price-form-row">
-                                    <label class="staff-field">Name
-                                        <input type="text" name="name" class="staff-input">
-                                    </label>
                                     <label class="staff-field">Start date
                                         <input type="date" name="start_date" class="staff-input">
                                     </label>

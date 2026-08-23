@@ -268,7 +268,7 @@ class RecalculateCostsForPartyTests(TestCase):
         self.start = date.today() + timedelta(days=60)
         self.end = self.start + timedelta(days=7)
         Price.objects.create(
-            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            property=self.property, start_date=self.start, end_date=self.end,
             rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
         )
         self.booking = Booking.objects.create(
@@ -313,7 +313,7 @@ class RecalculateBalanceForPartyTests(TestCase):
         self.start = date.today() + timedelta(days=200)
         self.end = self.start + timedelta(days=7)
         Price.objects.create(
-            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            property=self.property, start_date=self.start, end_date=self.end,
             rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
         )
         self.booking = Booking.objects.create(
@@ -374,7 +374,7 @@ class CreateBookingTests(TestCase):
 
     def _make_price(self, start, end):
         Price.objects.create(
-            property=self.property, name='Test', start_date=start, end_date=end,
+            property=self.property, start_date=start, end_date=end,
             rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
         )
 
@@ -408,7 +408,7 @@ class BookingDetailsViewTests(TestCase):
         self.start = date.today() + timedelta(days=60)
         self.end = self.start + timedelta(days=7)
         Price.objects.create(
-            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            property=self.property, start_date=self.start, end_date=self.end,
             rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
         )
         self.booking = Booking.objects.create(
@@ -782,7 +782,7 @@ class BookingDetailsViewTests(TestCase):
         self.booking.departure_date = self.booking.arrival_date + timedelta(days=7)
         self.booking.save(update_fields=['arrival_date', 'departure_date'])
         Price.objects.create(
-            property=self.property, name='Far-out', start_date=self.booking.arrival_date,
+            property=self.property, start_date=self.booking.arrival_date,
             end_date=self.booking.departure_date, rate=Decimal('100.00'),
             extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
         )
@@ -812,7 +812,7 @@ class BookingBalanceDetailsViewTests(TestCase):
         self.start = date.today() + timedelta(days=200)
         self.end = self.start + timedelta(days=7)
         Price.objects.create(
-            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            property=self.property, start_date=self.start, end_date=self.end,
             rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
         )
         self.booking = Booking.objects.create(
@@ -1433,7 +1433,7 @@ class BookingManageHubViewTests(TestCase):
         self.start = date.today() + timedelta(days=200)
         self.end = self.start + timedelta(days=7)
         Price.objects.create(
-            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            property=self.property, start_date=self.start, end_date=self.end,
             rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
         )
         self.booking = Booking.objects.create(
@@ -1502,7 +1502,7 @@ class BookingManageGuestAddViewTests(TestCase):
         self.start = date.today() + timedelta(days=200)
         self.end = self.start + timedelta(days=7)
         Price.objects.create(
-            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            property=self.property, start_date=self.start, end_date=self.end,
             rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
         )
         self.booking = Booking.objects.create(
@@ -1622,7 +1622,7 @@ class BookingManageExtrasViewTests(TestCase):
         self.start = date.today() + timedelta(days=200)
         self.end = self.start + timedelta(days=7)
         Price.objects.create(
-            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            property=self.property, start_date=self.start, end_date=self.end,
             rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
         )
         self.booking = Booking.objects.create(
@@ -1779,7 +1779,7 @@ class BookingManageGuestsViewTests(TestCase):
         self.start = date.today() + timedelta(days=200)
         self.end = self.start + timedelta(days=7)
         Price.objects.create(
-            property=self.property, name='Test', start_date=self.start, end_date=self.end,
+            property=self.property, start_date=self.start, end_date=self.end,
             rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
         )
         self.booking = Booking.objects.create(

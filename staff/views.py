@@ -429,7 +429,6 @@ class StaffPropertyDetailView(View):
             return
         price = Price(
             property=property,
-            name=post.get('name', '').strip() or 'Rate',
             start_date=start_date,
             end_date=end_date,
             rate=_parsed_decimal(post.get('rate')) or 0,
@@ -459,7 +458,6 @@ class StaffPropertyDetailView(View):
         if not start_date or not end_date:
             messages.error(request, "A price line needs both a start and end date.")
             return
-        price.name = post.get('name', '').strip() or price.name
         price.start_date = start_date
         price.end_date = end_date
         price.rate = _parsed_decimal(post.get('rate')) or 0

@@ -70,7 +70,7 @@ class PropertyAdmin(admin.ModelAdmin):
 class PriceAdmin(admin.ModelAdmin):
     """Landing page lists properties; clicking one filters to that property's editable price rows."""
     list_display = (
-        'name', 'start_date', 'end_date', 'rate',
+        'start_date', 'end_date', 'rate',
         'weekly_discount_percent',
         'monthly_discount_percent',
         'last_minute_discount_percent', 'last_minute_discount_days',
@@ -85,6 +85,8 @@ class PriceAdmin(admin.ModelAdmin):
     )
     list_filter = ('property',)
     ordering = ('start_date',)
+    list_display_links = None  # every list_display column is also list_editable now that 'name'
+                                # (the old link column) is gone - fully inline-editable instead
 
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         formfield = super().formfield_for_dbfield(db_field, request, **kwargs)
