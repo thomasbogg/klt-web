@@ -17,7 +17,7 @@ NARROW_FIELD_WIDTHS = {
 
 # Register your models here.
 from .models import (
-    Property, Price, Location, Owner, Manager, Accountant,
+    Property, Price, Location, Owner, Manager, Accountant, PropertyOwnership,
     Amenity, PropertySpec, SEFDetail, iCalLink, PropertyImage,
     LocationImage, LocationSpec, LocationRules,
 )
@@ -63,8 +63,16 @@ class LocationRulesInline(admin.StackedInline):
     max_num = 1
 
 
+class PropertyOwnershipInline(admin.TabularInline):
+    model = PropertyOwnership
+    extra = 1
+
+
 class PropertyAdmin(admin.ModelAdmin):
-    inlines = [SpecInline, AmenityInline, SEFDetailInline, iCalLinkInline, PropertyImageInline]
+    inlines = [
+        SpecInline, AmenityInline, SEFDetailInline, iCalLinkInline, PropertyImageInline,
+        PropertyOwnershipInline,
+    ]
 
 
 class PriceAdmin(admin.ModelAdmin):

@@ -1,8 +1,9 @@
 import secrets
+from datetime import timedelta
 
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
-from django.db import models
+from django.db import models, transaction
 from properties.utils import pretty_title, location_image_path, property_image_path
 
 
@@ -324,6 +325,96 @@ class Price(models.Model):
             if overlap:
                 message = f"Overlaps with the {overlap.start_date} to {overlap.end_date} price line."
                 raise ValidationError({'start_date': message, 'end_date': message})
+
+
+class PropertyOwnership(models.Model):
+    """One row per continuous ownership window. NULL start_date means 'owned since before
+    klt-web began tracking ownership history' - used only by the one-time backfill migration and
+    by record_initial_ownership() (a brand-new Property/Owner pairing has the same 'we don't
+    actually know when this started' problem). NULL end_date means this is the current/ongoing
+    owner - at most one NULL-end_date row should exist per property at a time, enforced by
+    overlapping()/clean() below, not a DB constraint (same convention as Price.overlapping())."""
+    property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='ownership_history')
+    owner = models.ForeignKey(Owner, on_delete=models.PROTECT, related_name='ownership_history')
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'property_ownership_history'
+        verbose_name = 'Property Ownership'
+        verbose_name_plural = 'Property Ownership History'
+        # Postgres's default NULL ordering for DESC is NULLS FIRST - a plain '-start_date' would
+        # put the "owned since before tracking" row at the top of a newest-first list instead of
+        # the bottom, so nulls_last is explicit here.
+        ordering = [models.F('start_date').desc(nulls_last=True)]
+
+    def __str__(self):
+        return f"{self.property.title} - {self.owner} ({self.start_date or '…'} to {self.end_date or 'present'})"
+
+    @staticmethod
+    def overlapping(property_id, start_date, end_date, exclude_pk=None):
+        """NULL-safe interval overlap check, modeled on Price.overlapping() but treating a NULL
+        start_date as unbounded-past and a NULL end_date as unbounded-future/ongoing."""
+        qs = PropertyOwnership.objects.filter(property_id=property_id)
+        start_ok = models.Q() if end_date is None else (
+            models.Q(start_date__isnull=True) | models.Q(start_date__lte=end_date)
+        )
+        end_ok = models.Q() if start_date is None else (
+            models.Q(end_date__isnull=True) | models.Q(end_date__gte=start_date)
+        )
+        qs = qs.filter(start_ok & end_ok)
+        if exclude_pk is not None:
+            qs = qs.exclude(pk=exclude_pk)
+        return qs
+
+    def clean(self):
+        super().clean()
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValidationError({'end_date': 'End date must be on or after the start date.'})
+        if self.property_id:
+            overlap = self.overlapping(self.property_id, self.start_date, self.end_date, exclude_pk=self.pk).first()
+            if overlap:
+                message = (
+                    f"Overlaps with {overlap.owner}'s ownership window "
+                    f"({overlap.start_date or 'the beginning'} to {overlap.end_date or 'ongoing'})."
+                )
+                raise ValidationError({'start_date': message, 'end_date': message})
+
+    @classmethod
+    def record_initial_ownership(cls, property, owner):
+        """Called once, right after a brand-new Property is saved with an owner already chosen
+        on the create form - not for later changes, see record_handover()."""
+        row = cls(property=property, owner=owner, start_date=None, end_date=None)
+        row.full_clean()
+        row.save()
+        return row
+
+    @classmethod
+    @transaction.atomic
+    def record_handover(cls, property, new_owner, effective_date):
+        """The one sanctioned way to change who currently owns a property once it has ownership
+        history: closes the current open-ended row (end_date = effective_date - 1 day, so the
+        old and new windows are adjacent and non-overlapping), opens a new row for new_owner
+        starting effective_date, and syncs Property.owner - atomically. If the property has no
+        current owner yet, the close-out step is skipped."""
+        current = cls.objects.filter(property=property, end_date__isnull=True).order_by('-start_date').first()
+        if current is not None:
+            if current.owner_id == new_owner.pk:
+                raise ValidationError("This owner is already the current owner.")
+            if current.start_date is not None and effective_date <= current.start_date:
+                raise ValidationError(
+                    f"Effective date must be after the current owner's start date ({current.start_date})."
+                )
+            current.end_date = effective_date - timedelta(days=1)
+            current.full_clean()
+            current.save()
+        new_row = cls(property=property, owner=new_owner, start_date=effective_date, end_date=None)
+        new_row.full_clean()
+        new_row.save()
+        property.owner = new_owner
+        property.save(update_fields=['owner'])
+        return new_row
 
 
 class PropertySpec(models.Model):

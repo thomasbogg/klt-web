@@ -10,8 +10,8 @@ from django.utils import timezone
 from bookings.models import BalancePayment, Booking, Charge, Payment
 from guests.models import Guest
 from properties.models import (
-    Accountant, Amenity, Location, Manager, Owner, Price, Property, PropertyImage, PropertySpec,
-    SEFDetail, iCalLink,
+    Accountant, Amenity, Location, Manager, Owner, Price, Property, PropertyImage, PropertyOwnership,
+    PropertySpec, SEFDetail, iCalLink,
 )
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
 from staff.utils import booking_stage, next_step_hint, status_bucket
@@ -667,6 +667,10 @@ class StaffPropertyCreateViewTests(TestCase):
         self.assertRedirects(response, reverse('staff:property_detail', kwargs={'pk': property.pk}))
         self.assertEqual(property.title, 'Brand New Property')
         self.assertEqual(property.al_number, 12345)
+        ownership = PropertyOwnership.objects.get(property=property)
+        self.assertEqual(ownership.owner, owner)
+        self.assertIsNone(ownership.start_date)
+        self.assertIsNone(ownership.end_date)
 
     def test_post_missing_owner_manager_location_shows_error_and_does_not_create(self):
         """owner/manager/location are DB-nullable but not blank=True, so Django's own admin (and
@@ -698,7 +702,13 @@ class StaffPropertyDetailViewTests(TestCase):
         self.manager = make_manager()
         self.accountant = make_accountant()
         self.location = make_location()
-        self.property = Property.objects.create(title='Detail Property', short_title='DETAILPROP')
+        # Property.owner is blank=False (required by full_clean(), not just DB-nullable - see
+        # StaffPropertyCreateViewTests), so every property here starts with a real owner + matching
+        # ownership-history row, mirroring exactly what StaffPropertyCreateView itself does on
+        # create - not just Property.objects.create(owner=...) alone, which would leave the two out
+        # of sync for these ownership-focused tests specifically.
+        self.property = Property.objects.create(title='Detail Property', short_title='DETAILPROP', owner=self.owner)
+        PropertyOwnership.record_initial_ownership(self.property, self.owner)
         self.url = reverse('staff:property_detail', kwargs={'pk': self.property.pk})
 
     def test_unknown_property_404s(self):
@@ -721,18 +731,30 @@ class StaffPropertyDetailViewTests(TestCase):
     def test_update_property_info_saves_fields(self):
         response = self.client.post(self.url, {
             'action': 'update_property_info', 'title': 'Detail Property', 'short_title': 'DETAILPROP',
-            'door_number': '12B', 'owner': self.owner.pk, 'manager': self.manager.pk,
+            'door_number': '12B', 'manager': self.manager.pk,
             'location': self.location.pk, 'accountant': self.accountant.pk, 'al_number': '9999',
             'we_book': 'on', 'booking_com_id': 'BDC123', 'standard_cleaning_fee': '90.00',
         })
         self.assertRedirects(response, f'{self.url}?panel=main')
         self.property.refresh_from_db()
         self.assertEqual(self.property.door_number, '12B')
-        self.assertEqual(self.property.owner_id, self.owner.pk)
         self.assertEqual(self.property.al_number, 9999)
         self.assertTrue(self.property.we_book)
         self.assertFalse(self.property.we_clean)
         self.assertEqual(self.property.standard_cleaning_fee, Decimal('90.00'))
+
+    def test_update_property_info_no_longer_accepts_an_owner_field(self):
+        # Regression guard: Property.owner must only ever change via PropertyOwnership.
+        # record_handover() (the Ownership tab / record_handover action below) - posting an
+        # 'owner' field to this action should have no effect, even though the raw field name
+        # would otherwise map straight onto Property.owner_id.
+        other_owner = make_owner(name='Other Owner', email='other-owner@example.com')
+        self.client.post(self.url, {
+            'action': 'update_property_info', 'title': 'Detail Property', 'short_title': 'DETAILPROP',
+            'owner': other_owner.pk,
+        })
+        self.property.refresh_from_db()
+        self.assertEqual(self.property.owner_id, self.owner.pk)
 
     def test_update_property_info_rejects_duplicate_title(self):
         Property.objects.create(title='Taken Title', short_title='TAKENSHORT')
@@ -898,3 +920,81 @@ class StaffPropertyDetailViewTests(TestCase):
             'action': 'update_amenities', 'wifi': 'on',
         })
         self.assertRedirects(response, f'{self.url}?panel=amenities')
+
+    def test_ownership_tab_shows_history_newest_first(self):
+        # setUp already gave self.property its initial (null-start, open-ended) ownership row for
+        # self.owner - this only adds the handover on top of it.
+        newer_owner = make_owner(name='Newer Owner', email='newer-owner@example.com')
+        PropertyOwnership.record_handover(self.property, newer_owner, date(2027, 1, 1))
+        response = self.client.get(self.url, {'panel': 'ownership'})
+        history = list(response.context['ownership_history'])
+        self.assertEqual(history[0].owner, newer_owner)
+        self.assertEqual(history[1].owner, self.owner)
+
+    def test_record_handover_creates_ownership_row_and_updates_property_owner(self):
+        new_owner = make_owner(name='Handover Owner', email='handover-owner@example.com')
+        response = self.client.post(self.url, {
+            'action': 'record_handover', 'new_owner': new_owner.pk, 'effective_date': '2027-03-01',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=ownership')
+        self.property.refresh_from_db()
+        self.assertEqual(self.property.owner, new_owner)
+        row = PropertyOwnership.objects.get(property=self.property, owner=new_owner)
+        self.assertEqual(row.start_date, date(2027, 3, 1))
+        self.assertIsNone(row.end_date)
+
+    def test_record_handover_closes_out_previous_owners_row(self):
+        new_owner = make_owner(name='Handover New Owner', email='handover-new-owner@example.com')
+        self.client.post(self.url, {
+            'action': 'record_handover', 'new_owner': new_owner.pk, 'effective_date': '2027-03-01',
+        })
+        prior = PropertyOwnership.objects.get(property=self.property, owner=self.owner)
+        self.assertEqual(prior.end_date, date(2027, 2, 28))
+
+    def test_record_handover_rejects_missing_new_owner_or_date(self):
+        response = self.client.post(self.url, {'action': 'record_handover', 'new_owner': '', 'effective_date': ''})
+        self.assertRedirects(response, f'{self.url}?panel=ownership')
+        # Only the initial ownership row from setUp - nothing new created from the bad POST.
+        self.assertEqual(PropertyOwnership.objects.filter(property=self.property).count(), 1)
+
+    def test_record_handover_flashes_validation_error_on_invalid_effective_date(self):
+        # A real start_date is needed on the *current* owner's row for the date-order check to
+        # bite (setUp's initial row has start_date=None, "since before tracking" - unbounded, so
+        # nothing before it can violate it) - one legitimate handover establishes that first.
+        interim_owner = make_owner(name='Interim Owner', email='interim-owner@example.com')
+        PropertyOwnership.record_handover(self.property, interim_owner, date(2027, 3, 1))
+        another_owner = make_owner(name='Another Owner', email='another-owner@example.com')
+        response = self.client.post(self.url, {
+            'action': 'record_handover', 'new_owner': another_owner.pk, 'effective_date': '2027-01-01',
+        }, follow=True)
+        messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('start date' in m for m in messages))
+        self.assertFalse(PropertyOwnership.objects.filter(property=self.property, owner=another_owner).exists())
+
+    def test_record_handover_redirects_to_ownership_panel(self):
+        new_owner = make_owner(name='Redirect Owner', email='redirect-owner@example.com')
+        response = self.client.post(self.url, {
+            'action': 'record_handover', 'new_owner': new_owner.pk, 'effective_date': '2027-03-01',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=ownership')
+
+
+class StaffSettingsViewTests(TestCase):
+    def setUp(self):
+        User.objects.create_user(username='settings_staffer', password='pw', is_staff=True)
+        self.client.login(username='settings_staffer', password='pw')
+        self.url = reverse('staff:settings')
+
+    def test_delete_owner_with_ownership_history_is_blocked_with_friendly_message(self):
+        # PropertyOwnership.owner is on_delete=PROTECT (a permanent record, unlike Property.owner's
+        # own SET_NULL) - this guards that the resulting ProtectedError is caught and flashed
+        # rather than bubbling up as a 500.
+        owner = make_owner()
+        property = Property.objects.create(title='Settings Delete Property', short_title='SETTINGSDEL')
+        PropertyOwnership.record_initial_ownership(property, owner)
+        response = self.client.post(self.url, {
+            'action': 'delete_owner', 'owner_id': owner.pk,
+        }, follow=True)
+        self.assertTrue(Owner.objects.filter(pk=owner.pk).exists())
+        messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('ownership history' in m for m in messages))

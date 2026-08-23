@@ -43,6 +43,7 @@
             <input type="radio" name="property-panel" id="panel-rates" class="staff-property-tab-radio" {% if active_panel == 'rates' %}checked{% endif %}>
             <input type="radio" name="property-panel" id="panel-ical" class="staff-property-tab-radio" {% if active_panel == 'ical' %}checked{% endif %}>
             <input type="radio" name="property-panel" id="panel-photos" class="staff-property-tab-radio" {% if active_panel == 'photos' %}checked{% endif %}>
+            <input type="radio" name="property-panel" id="panel-ownership" class="staff-property-tab-radio" {% if active_panel == 'ownership' %}checked{% endif %}>
 
             <nav class="staff-property-sidebar">
                 <label for="panel-main" class="staff-property-tab-label">Main info</label>
@@ -51,6 +52,7 @@
                 <label for="panel-rates" class="staff-property-tab-label">Rate card</label>
                 <label for="panel-ical" class="staff-property-tab-label">iCal links</label>
                 <label for="panel-photos" class="staff-property-tab-label">Photos</label>
+                <label for="panel-ownership" class="staff-property-tab-label">Ownership</label>
             </nav>
 
             <div class="staff-property-content">
@@ -79,12 +81,10 @@
                                     </select>
                                 </label>
                                 <label class="staff-field">Owner
-                                    <select name="owner" class="staff-input">
-                                        <option value="">-</option>
-                                        {% for owner in owners %}
-                                        <option value="{{ owner.pk }}" {% if property.owner_id == owner.pk %}selected{% endif %}>{{ owner }}</option>
-                                        {% endfor %}
-                                    </select>
+                                    <div class="staff-field-with-action">
+                                        <input type="text" class="staff-input" value="{{ property.owner|default:'—' }}" disabled>
+                                        <a href="?panel=ownership" class="staff-button staff-button-small">Change owner</a>
+                                    </div>
                                 </label>
                                 <label class="staff-field">Manager
                                     <select name="manager" class="staff-input">
@@ -383,6 +383,46 @@
                         <input type="file" name="image" accept="image/*" class="staff-input">
                         <input type="text" name="caption" placeholder="Caption (optional)" class="staff-input">
                         <button type="submit" class="staff-button staff-button-small">+ Add photo</button>
+                    </form>
+                </section>
+
+                <section class="staff-panel staff-property-pane" id="pane-ownership">
+                    <h2 class="staff-panel-title">Ownership history</h2>
+                    <table class="staff-price-table">
+                        <thead>
+                            <tr><th>Owner</th><th>From</th><th>To</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for row in ownership_history %}
+                            <tr>
+                                <td>{{ row.owner }}</td>
+                                <td>{{ row.start_date|default:"Since before tracking" }}</td>
+                                <td>{{ row.end_date|default:"Current" }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="3" class="staff-empty">No ownership recorded yet.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+
+                    <h2 class="staff-panel-title">Record handover</h2>
+                    <form method="post" class="staff-form staff-record-handover-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="record_handover">
+                        <div class="staff-field-row staff-record-handover-row">
+                            <label class="staff-field">New owner
+                                <select name="new_owner" class="staff-input" required>
+                                    <option value="">-</option>
+                                    {% for owner in owners %}
+                                    <option value="{{ owner.pk }}">{{ owner }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <label class="staff-field">Effective date
+                                <input type="text" name="effective_date" class="staff-input staff-date-input" autocomplete="off">
+                            </label>
+                            <button type="submit" class="staff-button">Record handover</button>
+                        </div>
                     </form>
                 </section>
             </div>

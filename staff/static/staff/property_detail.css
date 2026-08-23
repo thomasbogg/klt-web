@@ -46,6 +46,23 @@
     min-width: 0;
 }
 
+/* Owner is now a read-only field with a "Change owner" link to the Ownership tab (see
+   _update_property_info in staff/views.py - Property.owner only ever changes via
+   PropertyOwnership.record_handover() now) - reuses the same field-plus-button row shape as the
+   quick-add "+ New" buttons on property_create.html's .staff-field-with-action, but that class
+   lives in property_create.css which this page doesn't load, and its `select` rule wouldn't match
+   this page's disabled `input` anyway. */
+.staff-field-with-action {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.staff-field-with-action input {
+    flex: 1;
+    min-width: 0;
+}
+
 .staff-property-pane {
     display: none;
 }
@@ -55,7 +72,8 @@
 #panel-sef:checked ~ .staff-property-content #pane-sef,
 #panel-rates:checked ~ .staff-property-content #pane-rates,
 #panel-ical:checked ~ .staff-property-content #pane-ical,
-#panel-photos:checked ~ .staff-property-content #pane-photos {
+#panel-photos:checked ~ .staff-property-content #pane-photos,
+#panel-ownership:checked ~ .staff-property-content #pane-ownership {
     display: block;
 }
 
@@ -64,7 +82,8 @@
 #panel-sef:checked ~ .staff-property-sidebar label[for="panel-sef"],
 #panel-rates:checked ~ .staff-property-sidebar label[for="panel-rates"],
 #panel-ical:checked ~ .staff-property-sidebar label[for="panel-ical"],
-#panel-photos:checked ~ .staff-property-sidebar label[for="panel-photos"] {
+#panel-photos:checked ~ .staff-property-sidebar label[for="panel-photos"],
+#panel-ownership:checked ~ .staff-property-sidebar label[for="panel-ownership"] {
     background: var(--primary-color);
     color: #fff;
 }
@@ -110,6 +129,20 @@
 #pane-amenities .staff-form,
 #pane-sef .staff-form {
     max-width: none;
+}
+
+/* Record handover's three fields (New owner / Effective date / the submit button) sit in one row
+   rather than the page's usual stacked .staff-form - needs the 480px cap lifted, same reasoning
+   as Amenities/SEF above, plus the same align-self fix already used for Home's "Go" button
+   (.staff-button's base align-self: flex-start pins it to the row's top, matching its usual home
+   stacked above/below a field rather than beside one - flex-end lines its bottom edge up with the
+   input instead). */
+.staff-record-handover-form {
+    max-width: none;
+}
+
+.staff-record-handover-row > .staff-button {
+    align-self: flex-end;
 }
 
 /* Explicit column counts per breakpoint, not auto-fit - auto-fit with a max-width cap kept the

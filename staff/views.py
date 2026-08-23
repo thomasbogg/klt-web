@@ -5,7 +5,7 @@ from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from django.db.models import Count, Q
+from django.db.models import Count, ProtectedError, Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -21,8 +21,8 @@ from bookings.models import (
 from bookings.utils import extras_summary
 from guests.models import Guest
 from properties.models import (
-    Accountant, Amenity, Location, Manager, Owner, Price, Property, PropertyImage, PropertySpec,
-    SEFDetail, iCalLink,
+    Accountant, Amenity, Location, Manager, Owner, Price, Property, PropertyImage, PropertyOwnership,
+    PropertySpec, SEFDetail, iCalLink,
 )
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
 from staff.utils import (
@@ -291,6 +291,8 @@ class StaffPropertyCreateView(View):
             _flash_validation_error(request, error)
             return render(request, self.template_name, _property_form_context())
         property.save()
+        if property.owner_id:
+            PropertyOwnership.record_initial_ownership(property, property.owner)
         messages.success(request, "Property created.")
         return redirect('staff:property_detail', pk=property.pk)
 
@@ -673,7 +675,19 @@ class StaffSettingsView(View):
         messages.success(request, "Owner updated.")
 
     def _delete_owner(self, request):
-        Owner.objects.filter(pk=request.POST.get('owner_id')).delete()
+        owner = Owner.objects.filter(pk=request.POST.get('owner_id')).first()
+        if owner is None:
+            messages.error(request, "That owner no longer exists.")
+            return
+        try:
+            owner.delete()
+        except ProtectedError:
+            messages.error(
+                request,
+                f'"{owner}" has ownership history on record and cannot be deleted - '
+                'owners with any ownership history must be kept, even once they no longer own anything.'
+            )
+            return
         messages.success(request, "Owner deleted.")
 
     # The four non-head contact roles (each name/email/phone), used both to build a new Manager
@@ -804,10 +818,12 @@ class StaffPropertyDetailView(View):
     `form=` attribute, since a <form> can't legally wrap several <td>s in one row - stacked above
     a separate "Add price line" card in the same tab for creating new ones), an add/delete-only
     iCal import links list (matching the append-then-delete pattern used for Deductions/Owner
-    Payments elsewhere in this app), and a photo gallery. Every OneToOne side-model (PropertySpec/
-    Amenity/SEFDetail) is get_or_create'd on load - all three have defaults for every field, so a
-    freshly created Property with none of them yet still renders a fully fillable form instead of
-    an empty-state message."""
+    Payments elsewhere in this app), a photo gallery, and an Ownership tab (read-only handover
+    history plus a "Record handover" form - see PropertyOwnership.record_handover() in
+    properties/models.py). Every OneToOne side-model (PropertySpec/Amenity/SEFDetail) is
+    get_or_create'd on load - all three have defaults for every field, so a freshly created
+    Property with none of them yet still renders a fully fillable form instead of an empty-state
+    message."""
     template_name = 'staff/property_detail.html'
 
     def _get_property(self, pk):
@@ -833,8 +849,9 @@ class StaffPropertyDetailView(View):
         'delete_ical_link': 'ical',
         'add_image': 'photos',
         'delete_image': 'photos',
+        'record_handover': 'ownership',
     }
-    PANELS = ('main', 'amenities', 'sef', 'rates', 'ical', 'photos')
+    PANELS = ('main', 'amenities', 'sef', 'rates', 'ical', 'photos', 'ownership')
 
     def get(self, request, pk, *args, **kwargs):
         property = self._get_property(pk)
@@ -863,6 +880,7 @@ class StaffPropertyDetailView(View):
             'delete_ical_link': self._delete_ical_link,
             'add_image': self._add_image,
             'delete_image': self._delete_image,
+            'record_handover': self._record_handover,
         }.get(action)
         extra_query = handler(request, property) if handler is not None else None
         panel = self.ACTION_PANELS.get(action, 'main')
@@ -886,6 +904,7 @@ class StaffPropertyDetailView(View):
             'ical_sources': iCalLink.Source.choices,
             'images': property.images.all(),
             'prices': property.prices.order_by('start_date'),
+            'ownership_history': property.ownership_history.all(),
         }
         context.update(_property_form_context())
         return context
@@ -895,7 +914,9 @@ class StaffPropertyDetailView(View):
         property.title = post.get('title', property.title).strip() or property.title
         property.short_title = post.get('short_title', property.short_title).strip() or property.short_title
         property.door_number = post.get('door_number', '').strip()
-        property.owner_id = post.get('owner') or None
+        # No owner field here deliberately - Property.owner only ever changes via
+        # PropertyOwnership.record_handover() (see the Ownership tab / _record_handover below),
+        # so ownership history can never silently drift out of sync with it.
         property.manager_id = post.get('manager') or None
         property.location_id = post.get('location') or None
         property.accountant_id = post.get('accountant') or None
@@ -1054,6 +1075,21 @@ class StaffPropertyDetailView(View):
     def _delete_image(self, request, property):
         PropertyImage.objects.filter(pk=request.POST.get('image_id'), property=property).delete()
         messages.success(request, "Photo deleted.")
+
+    def _record_handover(self, request, property):
+        post = request.POST
+        new_owner_id = post.get('new_owner', '').strip()
+        new_owner = Owner.objects.filter(pk=new_owner_id).first() if new_owner_id.isdigit() else None
+        effective_date = _parsed_date(post.get('effective_date'))
+        if new_owner is None or effective_date is None:
+            messages.error(request, "Choose a new owner and an effective date.")
+            return
+        try:
+            PropertyOwnership.record_handover(property, new_owner, effective_date)
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        messages.success(request, f"Ownership transferred to {new_owner} effective {effective_date}.")
 
 
 @method_decorator(staff_member_required, name='dispatch')

@@ -1,12 +1,25 @@
+import importlib
 from datetime import date, timedelta
 
+from django.apps import apps
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import Booking
 from guests.models import Guest
-from properties.models import Location, Price, Property, PropertySpec
+from properties.models import Location, Owner, Price, Property, PropertyOwnership, PropertySpec
+
+
+def make_owner(name, email):
+    """Owner's 7 BooleanFields have no model default - every test that needs an Owner has to
+    supply all of them explicitly, so this is shared across test classes below."""
+    return Owner.objects.create(
+        name=name, email=email,
+        default_clean=False, default_meet_greet=False, takes_euros=True, takes_pounds=False,
+        cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+    )
 
 
 class ReserveOwnPendingBookingTests(TestCase):
@@ -155,3 +168,160 @@ class PropertyCalendarExportViewTests(TestCase):
         response = self.client.get(self.url)
         content = response.content.decode()
         self.assertEqual(content.count('BEGIN:VEVENT'), 1)
+
+
+class PropertyOwnershipTests(TestCase):
+    """Model-level: NULL-safe overlap validation and the record_initial_ownership()/
+    record_handover() helpers - see properties/models.py::PropertyOwnership."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Ownership Test Property', short_title='OWNERSHIPTEST')
+        self.owner_a = make_owner('Ownership Owner A', 'ownership-a@example.com')
+        self.owner_b = make_owner('Ownership Owner B', 'ownership-b@example.com')
+
+    def test_clean_rejects_start_date_after_end_date(self):
+        row = PropertyOwnership(
+            property=self.property, owner=self.owner_a,
+            start_date=date(2024, 6, 1), end_date=date(2024, 1, 1),
+        )
+        with self.assertRaises(ValidationError):
+            row.full_clean()
+
+    def test_overlapping_bounded_ranges_that_touch_is_an_overlap(self):
+        PropertyOwnership.objects.create(
+            property=self.property, owner=self.owner_a,
+            start_date=date(2024, 1, 1), end_date=date(2024, 6, 30),
+        )
+        conflicting = PropertyOwnership(
+            property=self.property, owner=self.owner_b,
+            start_date=date(2024, 6, 30), end_date=date(2024, 12, 31),
+        )
+        with self.assertRaises(ValidationError):
+            conflicting.full_clean()
+
+    def test_overlapping_bounded_ranges_adjacent_by_one_day_do_not_overlap(self):
+        PropertyOwnership.objects.create(
+            property=self.property, owner=self.owner_a,
+            start_date=date(2024, 1, 1), end_date=date(2024, 6, 30),
+        )
+        adjacent = PropertyOwnership(
+            property=self.property, owner=self.owner_b,
+            start_date=date(2024, 7, 1), end_date=None,
+        )
+        adjacent.full_clean()  # should not raise
+
+    def test_null_start_date_overlaps_any_earlier_candidate(self):
+        PropertyOwnership.objects.create(
+            property=self.property, owner=self.owner_a, start_date=None, end_date=date(2024, 6, 30),
+        )
+        candidate = PropertyOwnership(
+            property=self.property, owner=self.owner_b,
+            start_date=date(2020, 1, 1), end_date=date(2020, 6, 1),
+        )
+        with self.assertRaises(ValidationError):
+            candidate.full_clean()
+
+    def test_null_end_date_overlaps_any_later_candidate(self):
+        PropertyOwnership.objects.create(
+            property=self.property, owner=self.owner_a, start_date=date(2024, 1, 1), end_date=None,
+        )
+        candidate = PropertyOwnership(
+            property=self.property, owner=self.owner_b,
+            start_date=date(2030, 1, 1), end_date=date(2030, 6, 1),
+        )
+        with self.assertRaises(ValidationError):
+            candidate.full_clean()
+
+    def test_two_fully_open_rows_for_same_property_overlap(self):
+        PropertyOwnership.objects.create(
+            property=self.property, owner=self.owner_a, start_date=None, end_date=None,
+        )
+        candidate = PropertyOwnership(property=self.property, owner=self.owner_b, start_date=None, end_date=None)
+        with self.assertRaises(ValidationError):
+            candidate.full_clean()
+
+    def test_exclude_pk_excludes_self_when_editing_in_place(self):
+        row = PropertyOwnership.objects.create(
+            property=self.property, owner=self.owner_a, start_date=date(2024, 1, 1), end_date=None,
+        )
+        row.end_date = date(2024, 12, 31)
+        row.full_clean()  # should not raise - exclude_pk keeps this row from conflicting with itself
+
+    def test_clean_allows_non_overlapping_rows_for_different_properties(self):
+        other_property = Property.objects.create(title='Other Ownership Property', short_title='OTHEROWNERSHIP')
+        PropertyOwnership.objects.create(
+            property=self.property, owner=self.owner_a, start_date=None, end_date=None,
+        )
+        candidate = PropertyOwnership(property=other_property, owner=self.owner_a, start_date=None, end_date=None)
+        candidate.full_clean()  # should not raise - different property, no shared scope
+
+    def test_record_initial_ownership_creates_null_start_and_end_row(self):
+        row = PropertyOwnership.record_initial_ownership(self.property, self.owner_a)
+        self.assertIsNone(row.start_date)
+        self.assertIsNone(row.end_date)
+        self.assertEqual(row.owner, self.owner_a)
+
+    def test_record_handover_on_property_with_no_current_owner_skips_close_out(self):
+        new_row = PropertyOwnership.record_handover(self.property, self.owner_a, date(2024, 1, 1))
+        self.assertEqual(PropertyOwnership.objects.filter(property=self.property).count(), 1)
+        self.assertEqual(new_row.start_date, date(2024, 1, 1))
+        self.assertIsNone(new_row.end_date)
+
+    def test_record_handover_closes_prior_open_row_the_day_before_effective_date(self):
+        PropertyOwnership.record_initial_ownership(self.property, self.owner_a)
+        PropertyOwnership.record_handover(self.property, self.owner_b, date(2024, 7, 1))
+        prior = PropertyOwnership.objects.get(owner=self.owner_a)
+        self.assertEqual(prior.end_date, date(2024, 6, 30))
+
+    def test_record_handover_creates_new_open_ended_row_for_new_owner(self):
+        PropertyOwnership.record_initial_ownership(self.property, self.owner_a)
+        new_row = PropertyOwnership.record_handover(self.property, self.owner_b, date(2024, 7, 1))
+        self.assertEqual(new_row.owner, self.owner_b)
+        self.assertEqual(new_row.start_date, date(2024, 7, 1))
+        self.assertIsNone(new_row.end_date)
+
+    def test_record_handover_syncs_property_owner(self):
+        PropertyOwnership.record_initial_ownership(self.property, self.owner_a)
+        PropertyOwnership.record_handover(self.property, self.owner_b, date(2024, 7, 1))
+        self.property.refresh_from_db()
+        self.assertEqual(self.property.owner, self.owner_b)
+
+    def test_record_handover_rejects_effective_date_not_after_current_owners_start_date(self):
+        PropertyOwnership.record_handover(self.property, self.owner_a, date(2024, 1, 1))
+        with self.assertRaises(ValidationError):
+            PropertyOwnership.record_handover(self.property, self.owner_b, date(2024, 1, 1))
+
+    def test_record_handover_rejects_handover_to_the_same_owner(self):
+        PropertyOwnership.record_initial_ownership(self.property, self.owner_a)
+        with self.assertRaises(ValidationError):
+            PropertyOwnership.record_handover(self.property, self.owner_a, date(2024, 7, 1))
+
+
+class PropertyOwnershipBackfillMigrationTests(TestCase):
+    """No existing precedent in this codebase for testing a RunPython data migration either way -
+    importing the function directly and calling it against the real model classes (rather than
+    apps.get_model's frozen historical models) is a pragmatic substitute for a small app like
+    this, since the backfill only does plain field assignment that works identically either way."""
+
+    def setUp(self):
+        migration_module = importlib.import_module('properties.migrations.0020_propertyownership')
+        self.backfill = migration_module.backfill_property_ownership
+
+    def test_backfill_creates_one_row_per_owned_property(self):
+        owner = make_owner('Backfill Owner', 'backfill-owner@example.com')
+        owned = Property.objects.create(title='Backfill Owned', short_title='BACKFILLOWNED', owner=owner)
+        self.backfill(apps, None)
+        self.assertEqual(PropertyOwnership.objects.filter(property=owned, owner=owner).count(), 1)
+
+    def test_backfill_skips_properties_with_no_owner(self):
+        ownerless = Property.objects.create(title='Backfill Ownerless', short_title='BACKFILLOWNERLESS')
+        self.backfill(apps, None)
+        self.assertFalse(PropertyOwnership.objects.filter(property=ownerless).exists())
+
+    def test_backfill_rows_have_null_start_and_end_date(self):
+        owner = make_owner('Backfill Owner 2', 'backfill-owner-2@example.com')
+        owned = Property.objects.create(title='Backfill Owned 2', short_title='BACKFILLOWNED2', owner=owner)
+        self.backfill(apps, None)
+        row = PropertyOwnership.objects.get(property=owned)
+        self.assertIsNone(row.start_date)
+        self.assertIsNone(row.end_date)
