@@ -15,8 +15,8 @@ from django.views import View
 
 from availability.utils import get_property_calendar
 from bookings.models import (
-    CURRENCY_CHOICES, PAYMENT_STATUS_CHOICES, AirportTransferPriceBand, Booking, BookingSettings,
-    ExtrasSettings, PaymentSettings, RequestType, WelcomePackItem,
+    CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, AirportTransferPriceBand, Booking,
+    BookingSettings, ExtrasSettings, PaymentSettings, RequestType, WelcomePackItem,
 )
 from bookings.utils import extras_summary
 from guests.models import Guest
@@ -432,6 +432,7 @@ class StaffSettingsView(View):
             'booking_settings': BookingSettings.load(),
             'extras_settings': ExtrasSettings.load(),
             'payment_settings': PaymentSettings.load(),
+            'month_choices': MONTH_CHOICES,
             'welcome_pack_items': WelcomePackItem.objects.all(),
             'welcome_pack_categories': WelcomePackItem.Category.choices,
             'request_types': RequestType.objects.all(),
@@ -645,10 +646,16 @@ class StaffSettingsView(View):
         settings = PaymentSettings.load()
         post = request.POST
         for field in (
-            'default_owner_payout_percent', 'default_rental_commission_percent',
-            'default_cleaning_commission_percent',
+            'high_season_commission_percent', 'low_season_commission_percent',
+            'klt_commission_share_percent', 'vat_rate_percent',
+            'cleaning_surcharge_one_bedroom', 'cleaning_surcharge_multi_bedroom',
+            'cleaning_high_occupancy_surcharge', 'meet_greet_fee', 'extra_bed_fee',
         ):
             value = _parsed_decimal(post.get(field))
+            if value is not None:
+                setattr(settings, field, value)
+        for field in ('high_season_start_month', 'high_season_end_month'):
+            value = _parsed_int(post.get(field))
             if value is not None:
                 setattr(settings, field, value)
         try:

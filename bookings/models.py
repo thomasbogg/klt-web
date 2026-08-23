@@ -1,3 +1,4 @@
+import calendar
 from datetime import date, time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -21,6 +22,8 @@ CURRENCY_CHOICES = (
     ('EUR', 'EUR'),
     ('GBP', 'GBP'),
 )
+
+MONTH_CHOICES = tuple((i, calendar.month_name[i]) for i in range(1, 13))
 
 
 class BookingSettings(models.Model):
@@ -817,24 +820,71 @@ class ExtrasSettings(models.Model):
 
 class PaymentSettings(models.Model):
     """Site-wide default owner-payout/commission figures - same singleton pattern as
-    BookingSettings/ExtrasSettings. A starting point only: nothing in the payout system reads
-    these yet (PlatformPayout's gross/commission/payout amounts are still entered per-booking by
-    hand), since per-owner overrides and how these feed into an actual calculation haven't been
-    decided. Kept here purely as a place to record the defaults while that design settles."""
-    default_owner_payout_percent = models.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal('80.00'),
+    BookingSettings/ExtrasSettings. Owner payment is rental minus commission minus platform-fee
+    VAT (see the legacy management-software's determine_commission()/determine_owner_payment()),
+    not a flat "owner payout %". Still a starting point only: nothing in klt-web's payout system
+    reads these yet (PlatformPayout's amounts are still entered per-booking by hand) - deliberately
+    simplified from the legacy system's full complexity (see field help text for what got dropped)."""
+    high_season_commission_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('15.00'),
         validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
-        help_text="Default share of rental income paid to the owner, before any per-owner override."
+        help_text="Default management commission on rental income during high season. The legacy "
+                  "system also varied this by an owner-level 'wants accounting' flag and a VAT-"
+                  "regime cutoff date - deliberately simplified to season only for now."
     )
-    default_rental_commission_percent = models.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal('20.00'),
+    low_season_commission_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('10.00'),
         validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
-        help_text="Default management commission on rental income."
+        help_text="Default management commission on rental income outside high season."
     )
-    default_cleaning_commission_percent = models.DecimalField(
-        max_digits=5, decimal_places=2, default=Decimal('0'),
+    high_season_start_month = models.PositiveSmallIntegerField(
+        choices=MONTH_CHOICES, default=4,
+        help_text="First month of high season (inclusive)."
+    )
+    high_season_end_month = models.PositiveSmallIntegerField(
+        choices=MONTH_CHOICES, default=10,
+        help_text="Last month of high season (inclusive)."
+    )
+    klt_commission_share_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('100.00'),
         validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
-        help_text="Default management commission on cleaning fees, separate from the rental commission above."
+        help_text="Share of the commission above kept by KLT itself, with the remainder going to "
+                  "the other party in the historical split arrangement (the legacy system phases "
+                  "this to 100% for any booking arriving after 2026 - kept configurable in case "
+                  "that arrangement changes again)."
+    )
+    vat_rate_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('23.00'),
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
+        help_text="Portuguese VAT/IVA rate applied to invoiced commission and platform fees."
+    )
+    cleaning_surcharge_one_bedroom = models.DecimalField(
+        max_digits=8, decimal_places=2, default=Decimal('10.00'),
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text="Added on top of a property's own standard cleaning fee for a 1-bedroom property."
+    )
+    cleaning_surcharge_multi_bedroom = models.DecimalField(
+        max_digits=8, decimal_places=2, default=Decimal('15.00'),
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text="Added on top of a property's own standard cleaning fee for a property with more than 1 bedroom."
+    )
+    cleaning_high_occupancy_surcharge = models.DecimalField(
+        max_digits=8, decimal_places=2, default=Decimal('15.00'),
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text="Added on top of the cleaning fee when a stay's guest count exceeds 2 per "
+                  "bedroom (the legacy system's trigger rule - not yet automatically applied here)."
+    )
+    meet_greet_fee = models.DecimalField(
+        max_digits=8, decimal_places=2, default=Decimal('28.00'),
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text="Flat fee for a meet & greet (see Owner.default_meet_greet for whether one applies by default)."
+    )
+    extra_bed_fee = models.DecimalField(
+        max_digits=8, decimal_places=2, default=Decimal('25.00'),
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text="Flat fee for an extra bed. In the legacy system this only ever triggered for "
+                  "one specific property - stored here as a general default, not yet tied to any "
+                  "automatic per-property trigger."
     )
 
     class Meta:

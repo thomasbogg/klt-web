@@ -359,15 +359,49 @@
                         <form method="post" class="staff-form staff-settings-form">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="update_payment_settings">
+                            <div class="staff-field-row">
+                                <label class="staff-field">High season start month
+                                    <select name="high_season_start_month" class="staff-input">
+                                        {% for value, label in month_choices %}
+                                        <option value="{{ value }}" {% if payment_settings.high_season_start_month == value %}selected{% endif %}>{{ label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                                <label class="staff-field">High season end month
+                                    <select name="high_season_end_month" class="staff-input">
+                                        {% for value, label in month_choices %}
+                                        <option value="{{ value }}" {% if payment_settings.high_season_end_month == value %}selected{% endif %}>{{ label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                            </div>
                             <div class="staff-settings-field-grid">
-                                <label class="staff-field">Default owner payout %
-                                    <input type="text" name="default_owner_payout_percent" class="staff-input" value="{{ payment_settings.default_owner_payout_percent }}">
+                                <label class="staff-field">High season commission %
+                                    <input type="text" name="high_season_commission_percent" class="staff-input" value="{{ payment_settings.high_season_commission_percent }}">
                                 </label>
-                                <label class="staff-field">Default rental commission %
-                                    <input type="text" name="default_rental_commission_percent" class="staff-input" value="{{ payment_settings.default_rental_commission_percent }}">
+                                <label class="staff-field">Low season commission %
+                                    <input type="text" name="low_season_commission_percent" class="staff-input" value="{{ payment_settings.low_season_commission_percent }}">
                                 </label>
-                                <label class="staff-field">Default cleaning commission %
-                                    <input type="text" name="default_cleaning_commission_percent" class="staff-input" value="{{ payment_settings.default_cleaning_commission_percent }}">
+                                <label class="staff-field">KLT share of commission %
+                                    <input type="text" name="klt_commission_share_percent" class="staff-input" value="{{ payment_settings.klt_commission_share_percent }}">
+                                </label>
+                                <label class="staff-field">VAT / IVA rate %
+                                    <input type="text" name="vat_rate_percent" class="staff-input" value="{{ payment_settings.vat_rate_percent }}">
+                                </label>
+                                <label class="staff-field">Cleaning surcharge - 1 bedroom (&euro;)
+                                    <input type="text" name="cleaning_surcharge_one_bedroom" class="staff-input" value="{{ payment_settings.cleaning_surcharge_one_bedroom }}">
+                                </label>
+                                <label class="staff-field">Cleaning surcharge - multi-bedroom (&euro;)
+                                    <input type="text" name="cleaning_surcharge_multi_bedroom" class="staff-input" value="{{ payment_settings.cleaning_surcharge_multi_bedroom }}">
+                                </label>
+                                <label class="staff-field">Cleaning high-occupancy surcharge (&euro;)
+                                    <input type="text" name="cleaning_high_occupancy_surcharge" class="staff-input" value="{{ payment_settings.cleaning_high_occupancy_surcharge }}">
+                                </label>
+                                <label class="staff-field">Meet &amp; greet fee (&euro;)
+                                    <input type="text" name="meet_greet_fee" class="staff-input" value="{{ payment_settings.meet_greet_fee }}">
+                                </label>
+                                <label class="staff-field">Extra bed fee (&euro;)
+                                    <input type="text" name="extra_bed_fee" class="staff-input" value="{{ payment_settings.extra_bed_fee }}">
                                 </label>
                             </div>
                             <button type="submit" class="staff-button">Save payment settings</button>
