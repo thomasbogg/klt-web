@@ -23,6 +23,21 @@ CLOSED_STATUSES = (
 # asked about - a fresh booking attempt is the normal recovery path for those, not a revival).
 REVIVABLE_STATUSES = ('Cancelled by guest', 'Cancelled by staff')
 
+# Every enquiry_status string the rest of the app actually gives meaning to, grouped for the
+# booking detail page's Outcome/status dropdown (previously free text - a typo there wouldn't
+# error, it would just silently stop matching VALID_BOOKING_STATUSES/PROVISIONAL_BOOKING_STATUSES/
+# CLOSED_STATUSES and so stop blocking the calendar or bucketing correctly; confirmed at least one
+# real booking has already drifted this way - 'Booking cancelled' instead of one of the 'Cancelled
+# by ...' strings - so the dropdown/view still has to tolerate a value outside this list rather
+# than assume it can't happen). Grouped to match how staff already think about status via the
+# STAGE_TABS/STATUS_BUCKETS split above.
+ENQUIRY_STATUS_GROUPS = (
+    ('Valid', env_settings.VALID_BOOKING_STATUSES),
+    ('Provisional', env_settings.PROVISIONAL_BOOKING_STATUSES),
+    ('Closed', CLOSED_STATUSES),
+)
+ENQUIRY_STATUSES = tuple(status for _label, statuses in ENQUIRY_STATUS_GROUPS for status in statuses)
+
 
 # Home page reservation-list status filter options, in dropdown order - 'Valid' is the default
 # (see StaffHomeView), 'All' bypasses bucket filtering entirely rather than being a real

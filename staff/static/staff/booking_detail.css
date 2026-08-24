@@ -194,6 +194,12 @@ body {
     max-width: 100px;
 }
 
+.staff-input[readonly] {
+    background: #f4f4f4;
+    color: #777;
+    cursor: default;
+}
+
 .staff-checkbox-label {
     display: flex;
     align-items: center;

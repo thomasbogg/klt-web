@@ -8,7 +8,8 @@ from django.utils import timezone
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge,
-    Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, Payment, RequestType, WelcomePackItem,
+    Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, Payment, RequestType,
+    WelcomePackItem,
 )
 from bookings.utils import (
     add_business_days, create_booking, determine_payment_provider, expire_stale_holds, extras_summary,
@@ -70,7 +71,7 @@ class BookingOverlappingTests(TestCase):
         )
 
     def test_null_expiry_provisional_still_blocks(self):
-        self.make_booking('Provisional booking', hold_expires_at=None)
+        self.make_booking('Awaiting payment', hold_expires_at=None)
         self.assertTrue(
             Booking.objects.overlapping(self.property, self.start, self.end).exists()
         )
@@ -1828,6 +1829,207 @@ class BookingManageExtrasViewTests(TestCase):
         self.assertFalse(hasattr(self.booking, 'extras'))
 
 
+class BookingManageGuestRegistrationsViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property MGR', short_title='TESTMGR')
+        self.guest = Guest.objects.create(first_name='Elena', last_name='Costa', email='elena-mgr@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.lead = BookingGuest.objects.create(
+            booking=self.booking, first_name='Elena', last_name='Costa', age=30, is_lead=True,
+        )
+        self.second = BookingGuest.objects.create(
+            booking=self.booking, first_name='Marco', last_name='Costa', age=32,
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.url = reverse('bookings:manage_guest_registrations', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+
+    def _valid_post_data(self):
+        # Only the lead guest is ever asked has_nif - see BookingManageGuestRegistrationsView's
+        # docstring. 'no' here means "full form required for everyone", matching every other
+        # guest's fields also being included below.
+        data = {f'guest_{self.lead.pk}_has_nif': 'no'}
+        for guest, id_type, id_number in ((self.lead, 'passport', '552203480'), (self.second, 'id_card', 'X123456')):
+            prefix = f'guest_{guest.pk}_'
+            data.update({
+                f'{prefix}birth_date': '1996-05-14',
+                f'{prefix}place_of_birth': 'PT',
+                f'{prefix}nationality': 'PT',
+                f'{prefix}country_of_residence': 'GB',
+                f'{prefix}id_type': id_type,
+                f'{prefix}id_number': id_number,
+                f'{prefix}issued_by': 'PT',
+            })
+        return data
+
+    def test_get_redirects_to_details_when_not_paid(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_get_creates_one_registration_row_per_current_party_member(self):
+        self.assertFalse(GuestRegistration.objects.filter(booking_guest__booking=self.booking).exists())
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        rows = response.context['rows']
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(GuestRegistration.objects.filter(booking_guest__booking=self.booking).count(), 2)
+
+    def test_get_does_not_create_a_row_for_unnamed_headcount(self):
+        # adults=2 in setUp, but only 2 BookingGuest rows exist and both are named - this asserts
+        # against total_guests()/adults+children+babies ever being used as the section count.
+        third = BookingGuest.objects.create(booking=self.booking, first_name='Ana', last_name='Costa', age=8)
+        response = self.client.get(self.url)
+        self.assertEqual(len(response.context['rows']), 3)
+        third.delete()
+
+    def test_get_prefills_first_and_last_name_from_booking_guest(self):
+        response = self.client.get(self.url)
+        names = [(row['guest'].first_name, row['guest'].last_name) for row in response.context['rows']]
+        self.assertIn(('Elena', 'Costa'), names)
+        self.assertIn(('Marco', 'Costa'), names)
+
+    def test_get_with_no_party_shows_empty_state(self):
+        self.lead.delete()
+        self.second.delete()
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['rows'], [])
+        self.assertContains(response, 'add your party')
+
+    def test_post_valid_data_saves_every_guest(self):
+        response = self.client.post(self.url, self._valid_post_data())
+        self.assertRedirects(response, f"{self.url}?registrations_saved=1", fetch_redirect_response=False)
+
+        lead_registration = GuestRegistration.objects.get(booking_guest=self.lead)
+        self.assertEqual(lead_registration.birth_date, date(1996, 5, 14))
+        self.assertEqual(lead_registration.place_of_birth, 'PT')
+        self.assertEqual(lead_registration.nationality, 'PT')
+        self.assertEqual(lead_registration.country_of_residence, 'GB')
+        self.assertEqual(lead_registration.id_type, 'passport')
+        self.assertEqual(lead_registration.id_number, '552203480')
+        self.assertEqual(lead_registration.issued_by, 'PT')
+
+        second_registration = GuestRegistration.objects.get(booking_guest=self.second)
+        self.assertEqual(second_registration.id_type, 'id_card')
+        self.assertEqual(second_registration.id_number, 'X123456')
+
+    def test_post_missing_field_for_one_guest_saves_nothing_for_either_guest(self):
+        data = self._valid_post_data()
+        data[f'guest_{self.second.pk}_id_number'] = ''
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(GuestRegistration.objects.filter(booking_guest=self.lead, birth_date__isnull=False).exists())
+        self.assertFalse(GuestRegistration.objects.filter(booking_guest=self.second, birth_date__isnull=False).exists())
+
+    def test_post_shows_error_against_the_right_guest(self):
+        data = self._valid_post_data()
+        data[f'guest_{self.second.pk}_id_number'] = ''
+        response = self.client.post(self.url, data)
+        rows_by_guest = {row['guest'].pk: row for row in response.context['rows']}
+        self.assertEqual(rows_by_guest[self.second.pk]['errors'], {'id_number': "ID/Passport number is required."})
+        self.assertEqual(rows_by_guest[self.lead.pk]['errors'], {})
+
+    def test_post_rejects_future_birth_date(self):
+        data = self._valid_post_data()
+        data[f'guest_{self.lead.pk}_birth_date'] = (date.today() + timedelta(days=1)).isoformat()
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(GuestRegistration.objects.filter(booking_guest=self.lead, birth_date__isnull=False).exists())
+
+    def test_post_rejects_unparseable_birth_date(self):
+        data = self._valid_post_data()
+        data[f'guest_{self.lead.pk}_birth_date'] = 'not-a-date'
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(GuestRegistration.objects.filter(booking_guest=self.lead, birth_date__isnull=False).exists())
+
+    def test_post_redirects_to_details_when_not_paid(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.post(self.url, self._valid_post_data())
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_saving_twice_updates_the_same_row_rather_than_duplicating(self):
+        self.client.post(self.url, self._valid_post_data())
+        data = self._valid_post_data()
+        data[f'guest_{self.lead.pk}_id_number'] = 'UPDATED123'
+        self.client.post(self.url, data)
+        self.assertEqual(GuestRegistration.objects.filter(booking_guest=self.lead).count(), 1)
+        self.assertEqual(GuestRegistration.objects.get(booking_guest=self.lead).id_number, 'UPDATED123')
+
+    def test_post_has_nif_yes_only_requires_the_nif_number(self):
+        # A "yes" from the lead guest exempts the *whole party*, not just themself - see
+        # BookingManageGuestRegistrationsView's docstring and Thomas's explicit correction.
+        data = self._valid_post_data()
+        prefix = f'guest_{self.lead.pk}_'
+        data[f'{prefix}has_nif'] = 'yes'
+        data[f'{prefix}nif_number'] = '123456789'
+        # None of the full-form fields need to be present at all for the "yes" branch, for either
+        # guest.
+        for guest in (self.lead, self.second):
+            for field in ('birth_date', 'place_of_birth', 'nationality', 'country_of_residence', 'id_type', 'id_number', 'issued_by'):
+                data.pop(f'guest_{guest.pk}_{field}', None)
+
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, f"{self.url}?registrations_saved=1", fetch_redirect_response=False)
+        registration = GuestRegistration.objects.get(booking_guest=self.lead)
+        self.assertTrue(registration.has_nif)
+        self.assertEqual(registration.nif_number, '123456789')
+        self.assertIsNone(registration.birth_date)
+        self.assertFalse(registration.id_number)
+
+        second_registration = GuestRegistration.objects.get(booking_guest=self.second)
+        self.assertIsNone(second_registration.has_nif)
+        self.assertIsNone(second_registration.birth_date)
+        self.assertFalse(second_registration.id_number)
+
+    def test_post_has_nif_yes_ignores_incomplete_data_from_other_guests(self):
+        # Even if the other guest's fields are missing/blank, that's not an error once the lead
+        # guest has said "yes" - their section is exempt entirely, no validation runs against it.
+        # (test_post_shows_error_against_the_right_guest above covers the "no" branch still
+        # requiring every other guest's full form.)
+        data = self._valid_post_data()
+        prefix = f'guest_{self.lead.pk}_'
+        data[f'{prefix}has_nif'] = 'yes'
+        data[f'{prefix}nif_number'] = '123456789'
+        data[f'guest_{self.second.pk}_id_number'] = ''
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, f"{self.url}?registrations_saved=1", fetch_redirect_response=False)
+
+    def test_post_has_nif_yes_without_a_number_is_an_error(self):
+        data = self._valid_post_data()
+        prefix = f'guest_{self.lead.pk}_'
+        data[f'{prefix}has_nif'] = 'yes'
+        data[f'{prefix}nif_number'] = ''
+        response = self.client.post(self.url, data)
+        rows_by_guest = {row['guest'].pk: row for row in response.context['rows']}
+        self.assertEqual(rows_by_guest[self.lead.pk]['errors'], {'nif_number': "NIF is required."})
+        self.assertFalse(GuestRegistration.objects.filter(booking_guest=self.lead, nif_number='123456789').exists())
+
+    def test_post_unanswered_has_nif_is_an_error(self):
+        data = self._valid_post_data()
+        del data[f'guest_{self.lead.pk}_has_nif']
+        response = self.client.post(self.url, data)
+        rows_by_guest = {row['guest'].pk: row for row in response.context['rows']}
+        self.assertEqual(
+            rows_by_guest[self.lead.pk]['errors'],
+            {'has_nif': "Please tell us whether this guest has a Portuguese NIF."},
+        )
+
+    def test_get_preselects_the_previously_saved_has_nif_answer(self):
+        self.client.post(self.url, self._valid_post_data())
+        response = self.client.get(self.url)
+        rows_by_guest = {row['guest'].pk: row for row in response.context['rows']}
+        self.assertFalse(rows_by_guest[self.lead.pk]['registration'].has_nif)
+
+
 class GuestListAdjustmentTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Test Property GLA', short_title='TESTGLA')
@@ -1891,17 +2093,17 @@ class HasCompletedPreviousStayTests(TestCase):
         self.assertFalse(has_completed_previous_stay(self.guest))
 
     def test_genuinely_completed_prior_stay_returns_true(self):
-        self._make_booking(days_until_departure=-30, enquiry_status='Holiday completed')
+        self._make_booking(days_until_departure=-30, enquiry_status='Booking confirmed')
         self.assertTrue(has_completed_previous_stay(self.guest))
 
     def test_exclude_booking_id_excludes_itself(self):
-        booking = self._make_booking(days_until_departure=-30, enquiry_status='Holiday completed')
+        booking = self._make_booking(days_until_departure=-30, enquiry_status='Booking confirmed')
         self.assertFalse(has_completed_previous_stay(self.guest, exclude_booking_id=booking.pk))
 
     def test_blank_email_guest_never_matches(self):
         blank_guest_1 = Guest.objects.create(last_name='Blank1', email='')
         blank_guest_2 = Guest.objects.create(last_name='Blank2', email='')
-        self._make_booking(days_until_departure=-30, enquiry_status='Holiday completed', guest=blank_guest_1)
+        self._make_booking(days_until_departure=-30, enquiry_status='Booking confirmed', guest=blank_guest_1)
         self.assertFalse(has_completed_previous_stay(blank_guest_2))
 
 
@@ -2255,7 +2457,7 @@ class ConfirmationDetailsDisplayTests(TestCase):
         Booking.objects.create(
             property=self.property, guest=self.guest, arrival_date=self.start - timedelta(days=300),
             departure_date=self.start - timedelta(days=293), is_owner=False,
-            enquiry_status='Holiday completed', enquiry_source='Website',
+            enquiry_status='Booking confirmed', enquiry_source='Website',
             adults=2, children=0, babies=0, last_updated=timezone.now(),
         )
         response = self.client.get(self.url)

@@ -39,6 +39,7 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'django_countries',
     'index.apps.IndexConfig',
     'properties.apps.PropertiesConfig',
     'availability.apps.AvailabilityConfig',

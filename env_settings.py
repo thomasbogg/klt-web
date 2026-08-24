@@ -67,18 +67,21 @@ PROPERTIES: tuple[str, ...] = (
     'Parque da Corcovada'
 )
 
-# Valid booking status values
+# Valid booking status values. 'Guests have departed'/'Guests on-site'/'Holiday completed' were
+# inherited from PIMS' own status vocabulary but removed here 2026-08-25 - booking_stage() (staff/
+# utils.py) never actually distinguished between any of these and 'Booking confirmed', deriving
+# "started"/"ended" purely from arrival_date/departure_date vs today regardless of which one a
+# booking had, and nothing anywhere ever set them - confirmed via a real grep, not assumption.
+# Thomas: he never gave the PIMS-inherited variants individual meaning locally either.
 VALID_BOOKING_STATUSES: tuple[str, ...] = (
     'Booking confirmed',
-    'Guests have departed',
-    'Guests on-site',
-    'Holiday completed'
 )
 
-# Booking status values that hold dates without confirming them
+# Booking status values that hold dates without confirming them. Same 2026-08-25 trim as above -
+# 'Provisional booking'/'Dates agreed and held' were likewise never set by any code and never
+# checked individually, only 'Awaiting payment' actually drives anything (hold creation/expiry,
+# the payment-timer gate in bookings/views.py).
 PROVISIONAL_BOOKING_STATUSES: tuple[str, ...] = (
-    'Provisional booking',
-    'Dates agreed and held',
     'Awaiting payment',
 )
 

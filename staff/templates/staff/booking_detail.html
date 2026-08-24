@@ -89,12 +89,6 @@
                         <label class="staff-field">Phone
                             <input type="text" name="phone" form="booking-detail-form" class="staff-input" value="{{ guest.phone|default:'' }}">
                         </label>
-                        <label class="staff-field">Portuguese NIF
-                            <input type="text" name="nif_number" form="booking-detail-form" class="staff-input" value="{{ guest.nif_number|default:'' }}">
-                        </label>
-                        <label class="staff-field">Nationality
-                            <input type="text" name="nationality" form="booking-detail-form" class="staff-input" value="{{ guest.nationality|default:'' }}">
-                        </label>
                     </div>
                 </section>
             </div>
@@ -150,13 +144,24 @@
                     <h2 class="staff-panel-title">Enquiry data</h2>
                     <div class="staff-form">
                         <label class="staff-field">Source of enquiry
-                            <input type="text" name="enquiry_source" form="booking-detail-form" class="staff-input" value="{{ booking.enquiry_source }}">
+                            <input type="text" class="staff-input" value="{{ booking.enquiry_source }}" readonly>
                         </label>
                         <label class="staff-field">Date of enquiry
-                            <input type="text" name="enquiry_date" form="booking-detail-form" class="staff-input staff-date-input" value="{{ booking.enquiry_date|date:'Y-m-d' }}" autocomplete="off">
+                            <input type="text" class="staff-input" value="{{ booking.enquiry_date|date:'d M Y' }}" readonly>
                         </label>
                         <label class="staff-field">Outcome / status
-                            <input type="text" name="enquiry_status" form="booking-detail-form" class="staff-input" value="{{ booking.enquiry_status }}">
+                            <select name="enquiry_status" form="booking-detail-form" class="staff-input">
+                                {% for group_label, statuses in enquiry_status_groups %}
+                                <optgroup label="{{ group_label }}">
+                                    {% for status in statuses %}
+                                    <option value="{{ status }}" {% if booking.enquiry_status == status %}selected{% endif %}>{{ status }}</option>
+                                    {% endfor %}
+                                </optgroup>
+                                {% endfor %}
+                                {% if booking.enquiry_status not in enquiry_statuses %}
+                                <option value="{{ booking.enquiry_status }}" selected>{{ booking.enquiry_status }} (unrecognised)</option>
+                                {% endif %}
+                            </select>
                         </label>
                     </div>
                 </section>

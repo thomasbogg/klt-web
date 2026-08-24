@@ -511,6 +511,39 @@
     padding-right: 34px;
 }
 
+/* Same grid as .transfer-grid, minus its padding-right - that's reserved for the transfer row's
+   own remove button, which Guest Registrations has no equivalent of. */
+.guest-registration-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-top: 10px;
+}
+
+/* Same cascade-tie issue as .transfer-grid.details-section-hidden above - .guest-registration-grid's
+   own `display: grid` (declared later, same specificity) would otherwise win over
+   .details-section-hidden on the same element, e.g. the has-a-NIF/no-NIF field groups
+   guest_registrations.js toggles between. */
+.guest-registration-grid.details-section-hidden {
+    display: none;
+}
+
+.guest-registration-grid-names {
+    grid-template-columns: repeat(2, 1fr);
+    max-width: 500px;
+}
+
+.guest-registration-nif-prompt {
+    margin-top: 24px;
+}
+
+.guest-registration-nif-question {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    margin-top: 10px;
+}
+
 /* .transfer-grid's own `display: grid` would otherwise win the cascade over
    .details-section-hidden (same specificity, declared earlier) when both classes land on the
    same element, e.g. the arrival/departure method field-groups. */
@@ -568,6 +601,47 @@
     font-family: inherit;
 }
 
+/* The width: 100% above is meant for text/select/date inputs - a radio or checkbox stretched to
+   100% of its column renders as a huge invisible hit-target, shoving its label text away from the
+   visible circle (exactly what made the ID card/Passport radios look "out of line"). */
+.transfer-field input[type="radio"],
+.transfer-field input[type="checkbox"] {
+    width: auto;
+}
+
+/* First/last name on Guest Registrations - shown for context, but only ever editable via Guest
+   List itself, so styled visibly non-interactive rather than looking like a skippable field. */
+.reserve-input[readonly] {
+    background: #f4f4f4;
+    color: rgb(110, 110, 110);
+    cursor: default;
+}
+
+.guest-registration-id-type {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+/* Light grey rather than the browser default, so the radio control itself reads as secondary to
+   its label text next to it. */
+.guest-registration-id-type input[type="radio"],
+.guest-registration-nif-question input[type="radio"] {
+    accent-color: #bbb;
+}
+
+/* .transfer-field label's golden --secondary-color (meant for field headings like "TYPE OF
+   IDENTIFICATION" above these) also cascades onto the option text itself ("ID card"/"Passport",
+   "Yes"/"No") since they're nested <label> elements too - overridden to the same muted grey used
+   elsewhere on this page (.details-note, .reserve-input[readonly]) so option text reads as
+   distinct from - and secondary to - the actual field heading. */
+.guest-registration-id-type .details-checkbox-label,
+.guest-registration-nif-question .details-checkbox-label {
+    color: rgb(110, 110, 110);
+}
+
 .transfer-field textarea {
     resize: vertical;
 }
@@ -601,13 +675,15 @@
 }
 
 @media (max-width: 640px) {
-    .transfer-grid {
+    .transfer-grid,
+    .guest-registration-grid {
         grid-template-columns: repeat(2, 1fr);
     }
 }
 
 @media (max-width: 420px) {
-    .transfer-grid {
+    .transfer-grid,
+    .guest-registration-grid {
         grid-template-columns: 1fr;
     }
 }

@@ -1,0 +1,101 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guest Registrations {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="module" src="{% static 'bookings/guest_registrations.js' %}"></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Guest Registrations</h1>
+
+            <div class="confirmation-reference">
+                <span class="confirmation-reference-label">Booking Reference</span>
+                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+            </div>
+
+            {% if request.GET.registrations_saved %}
+            <p class="details-note details-note-left">Guest registration details have been saved.</p>
+            {% endif %}
+
+            <p class="details-note details-note-left"><strong>Registering every guest's identity details is a legal requirement under Portuguese border-control (SEF) rules, not optional</strong> - please complete every field below for each guest before your stay. If you have a Número de Identificação Fiscal (NIF), we don't require any other registration details.</p>
+            <p class="details-note details-note-left">Only guests currently on your Guest List have a section below. To register an additional guest, <a href="{% url 'bookings:manage_guests' reference=booking.reference %}">add them to your Guest List</a> first, then come back here.</p>
+
+            {% if not rows %}
+            <p class="details-note details-note-left">No guests are on your Guest List yet - <a href="{% url 'bookings:manage_guests' reference=booking.reference %}">add your party</a> to get started.</p>
+            {% else %}
+            <form method="post" class="details-form">
+                {% csrf_token %}
+                {% for row in rows %}
+                <section class="details-section guest-registration-section{% if not forloop.first %} details-section-hidden{% endif %}">
+                    <h2 class="details-section-title">Guest {{ forloop.counter }}</h2>
+                    <div class="guest-registration-grid guest-registration-grid-names">
+                        <div class="transfer-field">
+                            <label>First name</label>
+                            <input type="text" class="reserve-input" value="{{ row.guest.first_name }}" readonly>
+                        </div>
+                        <div class="transfer-field">
+                            <label>Last name</label>
+                            <input type="text" class="reserve-input" value="{{ row.guest.last_name }}" readonly>
+                        </div>
+                    </div>
+
+                    {% if forloop.first %}
+                    <p class="details-note details-note-left guest-registration-nif-prompt">Does this guest have a Portuguese NIF (tax ID number)?</p>
+                    <div class="guest-registration-nif-question">
+                        <label class="details-checkbox-label">
+                            <input type="radio" name="guest_{{ row.guest.pk }}_has_nif" value="yes" class="guest-registration-nif-radio" {% if row.registration.has_nif == True %}checked{% endif %} required>
+                            Yes
+                        </label>
+                        <label class="details-checkbox-label">
+                            <input type="radio" name="guest_{{ row.guest.pk }}_has_nif" value="no" class="guest-registration-nif-radio" {% if row.registration.has_nif == False %}checked{% endif %} required>
+                            No
+                        </label>
+                    </div>
+                    {% if row.errors.has_nif %}<p class="reserve-form-error">{{ row.errors.has_nif }}</p>{% endif %}
+
+                    <div class="guest-registration-grid details-section-hidden" data-nif-answer="yes">
+                        <div class="transfer-field">
+                            <label>NIF</label>
+                            <input type="text" name="guest_{{ row.guest.pk }}_nif_number" class="reserve-input" value="{{ row.registration.nif_number }}">
+                            {% if row.errors.nif_number %}<p class="reserve-form-error">{{ row.errors.nif_number }}</p>{% endif %}
+                        </div>
+                    </div>
+
+                    <div class="guest-registration-grid details-section-hidden" data-nif-answer="no">
+                        {% include 'bookings/_guest_registration_fields.html' %}
+                    </div>
+                    {% else %}
+                    <div class="guest-registration-grid">
+                        {% include 'bookings/_guest_registration_fields.html' %}
+                    </div>
+                    {% endif %}
+                </section>
+                {% endfor %}
+
+                <button type="submit" class="reserve-form-submit">Save Guest Registrations</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

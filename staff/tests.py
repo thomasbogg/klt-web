@@ -168,11 +168,10 @@ class StaffBookingDetailViewTests(TestCase):
             'departure_date': (self.end + timedelta(days=1)).isoformat(),
             'adults': '3', 'children': '1', 'babies': '0', 'is_owner': 'on',
             'first_name': 'Elena', 'last_name': 'Costa-Silva', 'email': 'new-email@example.com',
-            'phone': '999888777', 'nif_number': '123456789', 'nationality': 'Portuguese',
+            'phone': '999888777',
             'currency': 'GBP', 'basic_rental': '750.00', 'admin': '41.25', 'security': '200.00',
             'due_at_booking': '190.00', 'due_at_balance': '600.00',
-            'enquiry_source': 'Phone', 'enquiry_status': 'Guests on-site',
-            'enquiry_date': date.today().isoformat(),
+            'enquiry_status': 'Hold expired',
             'payment_status': 'paid', 'balance_payment_status': 'in_progress',
         })
         self.assertRedirects(response, self.url)
@@ -186,8 +185,7 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertEqual(self.booking.arrival_date, self.start + timedelta(days=1))
         self.assertEqual(self.booking.adults, 3)
         self.assertTrue(self.booking.is_owner)
-        self.assertEqual(self.booking.enquiry_status, 'Guests on-site')
-        self.assertEqual(self.booking.enquiry_source, 'Phone')
+        self.assertEqual(self.booking.enquiry_status, 'Hold expired')
         self.assertEqual(self.guest.last_name, 'Costa-Silva')
         self.assertEqual(self.guest.email, 'new-email@example.com')
         self.assertEqual(self.charge.basic_rental, Decimal('750.00'))
@@ -200,17 +198,60 @@ class StaffBookingDetailViewTests(TestCase):
         # other panel's data untouched - each field is still independently optional server-side,
         # even though every field now shares one form/button client-side.
         response = self.client.post(self.url, {
-            'action': 'update_booking', 'enquiry_source': 'Phone', 'enquiry_status': 'Guests on-site',
+            'action': 'update_booking', 'enquiry_status': 'Hold expired',
         })
         self.assertRedirects(response, self.url)
         self.booking.refresh_from_db()
         self.guest.refresh_from_db()
         self.charge.refresh_from_db()
-        self.assertEqual(self.booking.enquiry_source, 'Phone')
+        self.assertEqual(self.booking.enquiry_status, 'Hold expired')
         self.assertEqual(self.booking.arrival_date, self.start)  # untouched
         self.assertEqual(self.booking.adults, 2)  # untouched
         self.assertEqual(self.guest.last_name, 'Costa')  # untouched
         self.assertEqual(self.charge.basic_rental, Decimal('700.00'))  # untouched
+
+    def test_update_booking_ignores_enquiry_source_and_date_even_if_posted(self):
+        # Source/date of enquiry are read-only display fields now, not editable - a POST that
+        # somehow still includes them (a stray field, a tampered form) must have no effect.
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'enquiry_source': 'Phone',
+            'enquiry_date': (date.today() - timedelta(days=5)).isoformat(),
+        })
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_source, 'Website')  # untouched, from setUp
+        self.assertEqual(self.booking.enquiry_date, None)  # untouched, from setUp
+
+    def test_update_booking_rejects_an_unrecognised_enquiry_status(self):
+        # The dropdown only ever offers ENQUIRY_STATUSES - a submitted value outside that list
+        # (client tampering, since the <select> itself can't produce one) is silently ignored
+        # rather than let a fresh typo/garbage value back in as free text again.
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'enquiry_status': 'Made Up Status',
+        })
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_status, 'Booking confirmed')  # untouched, from setUp
+
+    def test_update_booking_keeps_an_already_unrecognised_status_if_resubmitted_unchanged(self):
+        # The dropdown renders the booking's own current value as a fallback option when it isn't
+        # one of the known statuses (a real booking already drifted to 'Booking cancelled') -
+        # resubmitting that same value back must not be treated as a rejected/tampered value.
+        self.booking.enquiry_status = 'Booking cancelled'
+        self.booking.save(update_fields=['enquiry_status'])
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'enquiry_status': 'Booking cancelled',
+        })
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_status, 'Booking cancelled')
+
+    def test_get_context_includes_enquiry_status_groups(self):
+        response = self.client.get(self.url)
+        groups = dict(response.context['enquiry_status_groups'])
+        self.assertIn('Booking confirmed', groups['Valid'])
+        self.assertIn('Awaiting payment', groups['Provisional'])
+        self.assertIn('Cancelled by staff', groups['Closed'])
 
     def test_update_booking_rejects_overlap(self):
         Booking.objects.create(
@@ -249,13 +290,13 @@ class StaffBookingDetailViewTests(TestCase):
 
     def test_update_booking_logs_task_history_for_status_change_and_charges_change(self):
         response = self.client.post(self.url, {
-            'action': 'update_booking', 'enquiry_status': 'Guests on-site', 'basic_rental': '750.00',
+            'action': 'update_booking', 'enquiry_status': 'Hold expired', 'basic_rental': '750.00',
         })
         self.assertRedirects(response, self.url)
         entries = list(TaskHistoryEntry.objects.filter(booking=self.booking).order_by('pk'))
         self.assertEqual(len(entries), 2)
         self.assertEqual(entries[0].description, 'Rental charges updated by staff')
-        self.assertIn("'Booking confirmed' to 'Guests on-site'", entries[1].description)
+        self.assertIn("'Booking confirmed' to 'Hold expired'", entries[1].description)
 
     def test_update_booking_no_task_entries_when_nothing_relevant_changed(self):
         self.client.post(self.url, {'action': 'update_booking', 'enquiry_status': 'Booking confirmed'})
@@ -429,7 +470,7 @@ class BookingStageTests(TestCase):
         self.assertEqual(booking_stage(booking), 'Holiday started')
 
     def test_holiday_ended(self):
-        booking = self._booking(date.today() - timedelta(days=10), date.today() - timedelta(days=3), 'Guests have departed')
+        booking = self._booking(date.today() - timedelta(days=10), date.today() - timedelta(days=3), 'Booking confirmed')
         self.assertEqual(booking_stage(booking), 'Holiday ended')
 
     def test_closed(self):
@@ -511,7 +552,7 @@ class StaffHomeViewTests(TestCase):
         self.ended_booking = Booking.objects.create(
             property=self.property_a, guest=self.guest,
             arrival_date=date.today() - timedelta(days=20), departure_date=date.today() - timedelta(days=13),
-            is_owner=False, enquiry_status='Guests have departed', enquiry_source='Website',
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
             adults=2, children=0, babies=0, last_updated=timezone.now(),
         )
         self.url = reverse('staff:home')
@@ -689,14 +730,12 @@ class StaffGuestDetailViewTests(TestCase):
     def test_update_guest_info_saves_fields(self):
         response = self.client.post(self.url, {
             'first_name': 'Carly', 'last_name': 'Adams-Smith', 'email': 'new@example.com',
-            'phone': '+351900000000', 'id_card': 'X123456', 'nif_number': '123456789',
-            'nationality': 'British', 'preferred_language': 'PT',
+            'phone': '+351900000000', 'preferred_language': 'PT',
         })
         self.assertRedirects(response, self.url)
         self.guest.refresh_from_db()
         self.assertEqual(self.guest.last_name, 'Adams-Smith')
         self.assertEqual(self.guest.email, 'new@example.com')
-        self.assertEqual(self.guest.id_card, 'X123456')
         self.assertEqual(self.guest.preferred_language, 'PT')
 
     def test_update_guest_info_never_blanks_required_last_name(self):

@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import EmailValidator, MinValueValidator, MaxValueValidator
 from django.db import models
 from django.utils import timezone
+from django_countries.fields import CountryField
 
 from bookings.utils import generate_reference_candidate
 from env_settings import VALID_BOOKING_STATUSES, PROVISIONAL_BOOKING_STATUSES
@@ -305,6 +306,54 @@ class BookingGuest(models.Model):
 
     def __str__(self):
         return f"{self.first_name} {self.last_name} ({self.booking})"
+
+
+class GuestRegistration(models.Model):
+    """SEF-mandated guest identity details (Portuguese border-registration requirement) - one per
+    BookingGuest, captured guest-facing via the Manage Booking hub's Guest Registrations section
+    (bookings/views.py::BookingManageGuestRegistrationsView, added 2026-08-24 per Thomas's
+    reference screenshot of the legacy klt-management-software equivalent form). Forwarding this
+    on to SEF isn't built yet - this model is only the capture step Thomas asked for first, one
+    guest at a time, get_or_create'd against whichever BookingGuest rows currently exist (adding
+    more requires adding them to the Guest List first - there's deliberately no way to register a
+    guest who hasn't been named)."""
+
+    class IDType(models.TextChoices):
+        ID_CARD = 'id_card', 'ID card'
+        PASSPORT = 'passport', 'Passport'
+
+    booking_guest = models.OneToOneField(BookingGuest, on_delete=models.CASCADE, related_name='registration')
+    # A guest with a Portuguese NIF only needs to give us that number - the fields below aren't
+    # asked for at all in that case (Thomas: "we don't ask them to fill out this form, only
+    # provide us with that number"). has_nif is nullable so "not yet answered" (a fresh guest) is
+    # distinguishable from a real "No".
+    has_nif = models.BooleanField(null=True, blank=True)
+    nif_number = models.CharField(max_length=20, blank=True)
+    birth_date = models.DateField(null=True, blank=True)
+    place_of_birth = CountryField(blank_label='-', blank=True)
+    nationality = CountryField(blank_label='-', blank=True)
+    country_of_residence = CountryField(blank_label='-', blank=True)
+    id_type = models.CharField(max_length=10, choices=IDType.choices, blank=True)
+    id_number = models.CharField(max_length=50, blank=True)
+    issued_by = CountryField(blank_label='-', blank=True)
+
+    class Meta:
+        db_table = 'guest_registrations'
+        verbose_name = 'Guest Registration'
+        verbose_name_plural = 'Guest Registrations'
+
+    def __str__(self):
+        return f"Registration for {self.booking_guest}"
+
+    def is_complete(self):
+        if self.has_nif is None:
+            return False
+        if self.has_nif:
+            return bool(self.nif_number)
+        return bool(
+            self.birth_date and self.place_of_birth and self.nationality
+            and self.country_of_residence and self.id_type and self.id_number and self.issued_by
+        )
 
 
 class BookingCondition(models.Model):

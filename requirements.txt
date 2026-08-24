@@ -1,4 +1,5 @@
 Django
+django-countries
 psycopg
 python-dotenv
 bs4

@@ -9,6 +9,24 @@ from properties.models import (
     Location, Manager, Owner, Accountant, Price, Property, Spec, SEFDetail
 )
 
+# klt-web trimmed VALID_BOOKING_STATUSES/PROVISIONAL_BOOKING_STATUSES (env_settings.py) to just
+# 'Booking confirmed'/'Awaiting payment' 2026-08-25 - these five PIMS-inherited labels were never
+# individually meaningful in either app (see [[project_klt_web_guest_registration_migration]] for
+# the full writeup). `bookings.enquiryStatus` in KLT.db is unconstrained free text (see
+# create.py), so a legacy row can still carry one of these even though klt-web itself no longer
+# recognises them - collapse to the surviving canonical status in the same bucket rather than copy
+# verbatim, or a migrated booking would silently stop blocking the calendar/bucket correctly
+# (exactly what already happened once for real with a drifted 'Booking cancelled' value - see the
+# same memory). Anything NOT in this map is passed through unchanged - it's still the migrator's
+# job to review the result afterward for any other legacy status this map doesn't yet cover.
+LEGACY_ENQUIRY_STATUS_MAP = {
+    'Guests have departed': 'Booking confirmed',
+    'Guests on-site': 'Booking confirmed',
+    'Holiday completed': 'Booking confirmed',
+    'Provisional booking': 'Awaiting payment',
+    'Dates agreed and held': 'Awaiting payment',
+}
+
 
 class Command(BaseCommand):
     help = 'Migrate data from existing KLT.db SQLite database to Django models'
@@ -286,6 +304,10 @@ class Command(BaseCommand):
             
         self.stdout.write(f'Migrating {len(rows)} guests...')
         
+        # idCard/nifNumber/nationality no longer land on Guest (removed 2026-08-24, see
+        # bookings.GuestRegistration instead - one row per BookingGuest, not per Guest, so
+        # migrating that data needs a bookings/guests pass, not this one; see the migration
+        # notes memory for the planned approach).
         if not dry_run:
             for row in rows:
                 Guest.objects.create(
@@ -294,9 +316,6 @@ class Command(BaseCommand):
                     last_name=row['lastName'],
                     email=row['email'],
                     phone=row['phone'],
-                    id_card=row['idCard'],
-                    nif_number=row['nifNumber'],
-                    nationality=row['nationality'],
                     preferred_language=row['preferredLanguage']
                 )
 
@@ -328,7 +347,7 @@ class Command(BaseCommand):
                     arrival_date=parse_date(arrival_date['date']) if arrival_date else None,
                     departure_date=parse_date(departure_date['date']) if departure_date else None,
                     is_owner=bool(row['isOwner']),
-                    enquiry_status=row['enquiryStatus'],
+                    enquiry_status=LEGACY_ENQUIRY_STATUS_MAP.get(row['enquiryStatus'], row['enquiryStatus']),
                     enquiry_date=parse_date(row['enquiryDate']) if row['enquiryDate'] else None,
                     enquiry_source=row['enquirySource'],
                     adults=row['adults'],

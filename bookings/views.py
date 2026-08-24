@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from django.db import transaction
@@ -9,14 +9,15 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views import View
+from django_countries import countries
 
 import env_settings
 from bookings.forms import BookingLookupForm
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, Departure, Extra,
-    ExtrasSettings, FAQ, GuestListAdjustment, RequestType, TravelMethod, WelcomePackDrinksChoice,
-    WelcomePackFoodChoice, WelcomePackItem,
+    ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, RequestType, TravelMethod,
+    WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
     booking_confirmation_context, cancel_booking_hold, extras_summary, guest_counts_by_age,
@@ -1473,6 +1474,148 @@ class BookingManageExtrasView(BookingFormMixin, View):
             self._save_transfers(booking, transfer_rows)
 
         return redirect(f"{reverse('bookings:manage_extras', args=[booking.reference])}?extras_saved=1")
+
+
+def _parsed_birth_date(raw):
+    try:
+        return date.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+class BookingManageGuestRegistrationsView(View):
+    """Guest Registrations section of the Manage Booking hub - the guest-facing capture step for
+    the mandatory Portuguese border-registration (SEF) details Thomas asked for, shown via a
+    screenshot of the legacy klt-management-software equivalent form. One section per currently-
+    named BookingGuest, not per adults/children/babies headcount - there's nothing to attach the
+    details to for a guest who hasn't been named yet, so registering more guests means adding them
+    via Guest List first (the blurb on this page says so). First/last name shown read-only,
+    prefilled from that same BookingGuest row. Forwarding this on to SEF isn't built yet - see
+    GuestRegistration's own docstring. Reachable as soon as the deposit is paid (same gate as
+    Guest List/Arrival & Departure/Extras), no edit cutoff - a guest can come back and fix a typo
+    any time before departure, same reasoning as Arrival & Departure's own no-cutoff choice.
+    Validates server-side (required-ness, a real parseable non-future birth date) rather than
+    trusting the required attribute alone, since this ends up as a legal record - on any error the
+    whole submission re-renders with every guest's just-typed values preserved (via the in-memory
+    GuestRegistration instances, not a separate raw-POST context var) and nothing is saved, rather
+    than partially saving whichever guests happened to be valid this time. Only the lead (first)
+    guest is asked whether they have a Portuguese NIF - client-side toggle in
+    guest_registrations.js, mirroring arrival_departure.js's own show/hide-and-disable pattern -
+    and that single answer governs the whole party (confirmed with Thomas, matches how this has
+    always been handled operationally): a "yes" means nobody registers at all, not even the lead
+    guest's own full form; a "no" reveals the lead guest's full form *and* every other guest's own
+    section, each with the same 7 fields, no individual NIF question of their own."""
+    template_name = 'bookings/manage_guest_registrations.html'
+
+    def _get_gated_booking(self, reference):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return booking, redirect('bookings:details', reference=reference)
+        return booking, None
+
+    def _rows(self, party):
+        # One dict per current party member, bundling the guest + its (lazily created)
+        # registration + a place for that guest's own errors - built here rather than as three
+        # separate context lists so the template never has to look a dict up by a loop variable
+        # (Django's dotted template lookup can't do errors_by_guest.guest.pk; a plain attribute
+        # read of row.errors inside the same {% for row in rows %} can).
+        registrations = [GuestRegistration.objects.get_or_create(booking_guest=guest)[0] for guest in party]
+        return [{'guest': guest, 'registration': registration, 'errors': {}}
+                for guest, registration in zip(party, registrations)]
+
+    def _context(self, booking, rows):
+        context = _manage_nav_context(booking, 'guest_registrations')
+        context.update({
+            'booking': booking, 'rows': rows,
+            'id_types': GuestRegistration.IDType.choices, 'countries': countries,
+        })
+        return context
+
+    def get(self, request, reference, *args, **kwargs):
+        booking, redirect_response = self._get_gated_booking(reference)
+        if redirect_response is not None:
+            return redirect_response
+
+        party = list(booking.party.all())
+        return render(request, self.template_name, self._context(booking, self._rows(party)))
+
+    def post(self, request, reference, *args, **kwargs):
+        booking, redirect_response = self._get_gated_booking(reference)
+        if redirect_response is not None:
+            return redirect_response
+
+        party = list(booking.party.all())
+        post = request.POST
+        rows = self._rows(party)
+        has_errors = False
+
+        # Only the lead (first) guest is asked whether they have a Portuguese NIF - per Thomas,
+        # that single answer governs the whole party: if they have one, nobody else registers
+        # either; if they don't, everyone (including the lead guest) fills in the full form.
+        lead_row = rows[0] if rows else None
+        lead_has_nif = None
+        if lead_row is not None:
+            guest, registration = lead_row['guest'], lead_row['registration']
+            prefix = f'guest_{guest.pk}_'
+            raw_has_nif = post.get(f'{prefix}has_nif', '').strip()
+            lead_has_nif = {'yes': True, 'no': False}.get(raw_has_nif)
+            registration.has_nif = lead_has_nif
+            registration.nif_number = post.get(f'{prefix}nif_number', '').strip()
+
+            if lead_has_nif is None:
+                lead_row['errors']['has_nif'] = "Please tell us whether this guest has a Portuguese NIF."
+            elif lead_has_nif and not registration.nif_number:
+                lead_row['errors']['nif_number'] = "NIF is required."
+            if lead_row['errors']:
+                has_errors = True
+
+        if lead_has_nif is False:
+            for row in rows:
+                guest, registration = row['guest'], row['registration']
+                prefix = f'guest_{guest.pk}_'
+                raw_birth_date = post.get(f'{prefix}birth_date', '').strip()
+                registration.birth_date = _parsed_birth_date(raw_birth_date)
+                registration.place_of_birth = post.get(f'{prefix}place_of_birth', '').strip()
+                registration.nationality = post.get(f'{prefix}nationality', '').strip()
+                registration.country_of_residence = post.get(f'{prefix}country_of_residence', '').strip()
+                registration.id_type = post.get(f'{prefix}id_type', '').strip()
+                registration.id_number = post.get(f'{prefix}id_number', '').strip()
+                registration.issued_by = post.get(f'{prefix}issued_by', '').strip()
+
+                errors = row['errors']
+                if not raw_birth_date:
+                    errors['birth_date'] = "Birth date is required."
+                elif registration.birth_date is None:
+                    errors['birth_date'] = "Enter a valid date."
+                elif registration.birth_date > date.today():
+                    errors['birth_date'] = "Birth date can't be in the future."
+                if not registration.place_of_birth:
+                    errors['place_of_birth'] = "Place of birth is required."
+                if not registration.nationality:
+                    errors['nationality'] = "Nationality is required."
+                if not registration.country_of_residence:
+                    errors['country_of_residence'] = "Country of residence is required."
+                if registration.id_type not in dict(GuestRegistration.IDType.choices):
+                    errors['id_type'] = "Select ID card or Passport."
+                if not registration.id_number:
+                    errors['id_number'] = "ID/Passport number is required."
+                if not registration.issued_by:
+                    errors['issued_by'] = "Issuing country is required."
+                if errors:
+                    has_errors = True
+
+        if has_errors:
+            return render(request, self.template_name, self._context(booking, rows))
+
+        with transaction.atomic():
+            for row in rows:
+                row['registration'].save()
+
+        return redirect(
+            f"{reverse('bookings:manage_guest_registrations', args=[booking.reference])}?registrations_saved=1"
+        )
 
 
 class BookingCancelView(View):

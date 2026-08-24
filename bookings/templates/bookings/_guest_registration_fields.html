@@ -1,0 +1,68 @@
+{% comment %}
+The 7-field SEF form for one guest - shared by the lead guest's own "no NIF" group in
+manage_guest_registrations.html and every other guest's section (which has no NIF question of its
+own, see BookingManageGuestRegistrationsView's docstring). Expects `row`, `countries`, `id_types`
+in context.
+{% endcomment %}
+<div class="transfer-field">
+    <label>Birth date</label>
+    <input type="date" name="guest_{{ row.guest.pk }}_birth_date" class="reserve-input" value="{{ row.registration.birth_date|date:'Y-m-d' }}" required>
+    {% if row.errors.birth_date %}<p class="reserve-form-error">{{ row.errors.birth_date }}</p>{% endif %}
+</div>
+<div class="transfer-field">
+    <label>Place of birth</label>
+    <select name="guest_{{ row.guest.pk }}_place_of_birth" class="reserve-input" required>
+        <option value="">-</option>
+        {% for code, name in countries %}
+        <option value="{{ code }}" {% if code == row.registration.place_of_birth %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+    </select>
+    {% if row.errors.place_of_birth %}<p class="reserve-form-error">{{ row.errors.place_of_birth }}</p>{% endif %}
+</div>
+<div class="transfer-field">
+    <label>Nationality</label>
+    <select name="guest_{{ row.guest.pk }}_nationality" class="reserve-input" required>
+        <option value="">-</option>
+        {% for code, name in countries %}
+        <option value="{{ code }}" {% if code == row.registration.nationality %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+    </select>
+    {% if row.errors.nationality %}<p class="reserve-form-error">{{ row.errors.nationality }}</p>{% endif %}
+</div>
+<div class="transfer-field">
+    <label>Country of residence</label>
+    <select name="guest_{{ row.guest.pk }}_country_of_residence" class="reserve-input" required>
+        <option value="">-</option>
+        {% for code, name in countries %}
+        <option value="{{ code }}" {% if code == row.registration.country_of_residence %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+    </select>
+    {% if row.errors.country_of_residence %}<p class="reserve-form-error">{{ row.errors.country_of_residence }}</p>{% endif %}
+</div>
+<div class="transfer-field">
+    <label>Type of identification</label>
+    <div class="guest-registration-id-type">
+        {% for value, id_label in id_types %}
+        <label class="details-checkbox-label">
+            <input type="radio" name="guest_{{ row.guest.pk }}_id_type" value="{{ value }}" {% if row.registration.id_type == value %}checked{% endif %} required>
+            {{ id_label }}
+        </label>
+        {% endfor %}
+    </div>
+    {% if row.errors.id_type %}<p class="reserve-form-error">{{ row.errors.id_type }}</p>{% endif %}
+</div>
+<div class="transfer-field">
+    <label>ID/Passport #</label>
+    <input type="text" name="guest_{{ row.guest.pk }}_id_number" class="reserve-input" value="{{ row.registration.id_number }}" required>
+    {% if row.errors.id_number %}<p class="reserve-form-error">{{ row.errors.id_number }}</p>{% endif %}
+</div>
+<div class="transfer-field">
+    <label>Issued by</label>
+    <select name="guest_{{ row.guest.pk }}_issued_by" class="reserve-input" required>
+        <option value="">-</option>
+        {% for code, name in countries %}
+        <option value="{{ code }}" {% if code == row.registration.issued_by %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+    </select>
+    {% if row.errors.issued_by %}<p class="reserve-form-error">{{ row.errors.issued_by }}</p>{% endif %}
+</div>

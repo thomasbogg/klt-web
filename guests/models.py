@@ -8,9 +8,6 @@ class Guest(models.Model):
     last_name = models.CharField(max_length=100)
     email = models.EmailField(blank=True, null=True)
     phone = models.CharField(max_length=50, blank=True, null=True)
-    id_card = models.CharField(max_length=50, blank=True, null=True)
-    nif_number = models.CharField(max_length=50, blank=True, null=True)
-    nationality = models.CharField(max_length=100, blank=True, null=True)
     preferred_language = models.CharField(max_length=10, default='EN')
 
     class Meta:

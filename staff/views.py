@@ -29,9 +29,9 @@ from properties.models import (
 )
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
 from staff.utils import (
-    AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, GUEST_LETTERS, LOCATION_SPEC_BOOLEAN_FIELDS,
-    OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAGE_TABS, STATUS_BUCKETS, booking_stage,
-    next_step_hint, reservation_rows,
+    AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, ENQUIRY_STATUS_GROUPS, ENQUIRY_STATUSES, GUEST_LETTERS,
+    LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAGE_TABS,
+    STATUS_BUCKETS, booking_stage, next_step_hint, reservation_rows,
 )
 
 
@@ -166,9 +166,6 @@ class StaffGuestDetailView(View):
         guest.last_name = post.get('last_name', guest.last_name).strip() or guest.last_name
         guest.email = post.get('email', guest.email or '').strip()
         guest.phone = post.get('phone', guest.phone or '').strip()
-        guest.id_card = post.get('id_card', guest.id_card or '').strip()
-        guest.nif_number = post.get('nif_number', guest.nif_number or '').strip()
-        guest.nationality = post.get('nationality', guest.nationality or '').strip()
         preferred_language = post.get('preferred_language', '').strip()
         if preferred_language:
             guest.preferred_language = preferred_language
@@ -1477,6 +1474,8 @@ class StaffBookingDetailView(View):
             'task_history': booking.task_history.all(),
             'currency_choices': CURRENCY_CHOICES,
             'payment_status_choices': PAYMENT_STATUS_CHOICES,
+            'enquiry_status_groups': ENQUIRY_STATUS_GROUPS,
+            'enquiry_statuses': ENQUIRY_STATUSES,
         }
 
     def _update_booking(self, request, booking):
@@ -1490,7 +1489,12 @@ class StaffBookingDetailView(View):
         every touched model is saved together in one transaction so a mid-way validation failure
         never leaves a partial save. Deductions/Owner payments/Task history keep their own
         dedicated "+ New ..." buttons - those add a new row rather than edit existing fields, so
-        there's nothing there a staffer could "forget" to save."""
+        there's nothing there a staffer could "forget" to save. Source/date of enquiry are
+        read-only (2026-08-25) - never read from POST at all any more. Outcome/status is now a
+        constrained dropdown (ENQUIRY_STATUS_GROUPS) rather than free text, so a value only gets
+        accepted here if it's one of those known statuses or unchanged from what the booking
+        already had - closing off the exact typo-drift risk that already produced one real
+        booking stuck on 'Booking cancelled' instead of a status the rest of the app recognises."""
         post = request.POST
 
         property_id = post.get('property')
@@ -1510,15 +1514,12 @@ class StaffBookingDetailView(View):
             if raw.isdigit():
                 setattr(booking, field, int(raw))
 
+        # Source/date of enquiry are read-only on this page now (Thomas: they shouldn't be
+        # editable at all here) - not read from POST any more, so a stray field with this name
+        # can't change them even if the form somehow still sent one.
         old_status = booking.enquiry_status
-        enquiry_source = post.get('enquiry_source', '').strip()
-        if enquiry_source:
-            booking.enquiry_source = enquiry_source
-        enquiry_date = _parsed_date(post.get('enquiry_date'))
-        if enquiry_date:
-            booking.enquiry_date = enquiry_date
         new_status = post.get('enquiry_status', '').strip()
-        if new_status:
+        if new_status and (new_status in ENQUIRY_STATUSES or new_status == old_status):
             booking.enquiry_status = new_status
 
         try:
@@ -1552,8 +1553,6 @@ class StaffBookingDetailView(View):
         guest.last_name = post.get('last_name', guest.last_name).strip() or guest.last_name
         guest.email = post.get('email', guest.email or '').strip()
         guest.phone = post.get('phone', guest.phone or '').strip()
-        guest.nif_number = post.get('nif_number', guest.nif_number or '').strip()
-        guest.nationality = post.get('nationality', guest.nationality or '').strip()
         preferred_language = post.get('preferred_language', '').strip()
         if preferred_language:
             guest.preferred_language = preferred_language
