@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import Count, ProtectedError, Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
@@ -28,8 +29,9 @@ from properties.models import (
 )
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
 from staff.utils import (
-    AMENITY_BOOLEAN_FIELDS, GUEST_LETTERS, LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS,
-    STAGE_TABS, STATUS_BUCKETS, booking_stage, next_step_hint, reservation_rows,
+    AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, GUEST_LETTERS, LOCATION_SPEC_BOOLEAN_FIELDS,
+    OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAGE_TABS, STATUS_BUCKETS, booking_stage,
+    next_step_hint, reservation_rows,
 )
 
 
@@ -1441,14 +1443,12 @@ class StaffBookingDetailView(View):
     def post(self, request, reference, *args, **kwargs):
         booking = self._get_booking(reference)
         handler = {
-            'update_booking_info': self._update_booking_info,
-            'update_guest_info': self._update_guest_info,
-            'update_charges': self._update_charges,
-            'update_enquiry': self._update_enquiry,
-            'update_payments': self._update_payments,
+            'update_booking': self._update_booking,
             'add_deduction': self._add_deduction,
             'add_owner_payment': self._add_owner_payment,
             'add_task_note': self._add_task_note,
+            'cancel_booking': self._cancel_booking,
+            'uncancel_booking': self._uncancel_booking,
         }.get(request.POST.get('action'))
         if handler is not None:
             handler(request, booking)
@@ -1468,6 +1468,8 @@ class StaffBookingDetailView(View):
             'properties': Property.objects.all(),
             'stage_tabs': STAGE_TABS,
             'current_stage': booking_stage(booking),
+            'can_cancel': booking.enquiry_status not in CLOSED_STATUSES,
+            'can_uncancel': booking.enquiry_status in REVIVABLE_STATUSES,
             'extras': extras_summary(booking),
             'next_step': next_step_hint(booking, charge, balance_payment),
             'deductions': booking.deductions.all(),
@@ -1477,8 +1479,20 @@ class StaffBookingDetailView(View):
             'payment_status_choices': PAYMENT_STATUS_CHOICES,
         }
 
-    def _update_booking_info(self, request, booking):
+    def _update_booking(self, request, booking):
+        """One combined save for every editable field across Booking info, Guest info, Rental
+        charges, Enquiry data and Payments from guest - previously five separate panel forms each
+        with their own Update button, which risked a staffer editing several panels, clicking
+        Update on only one, and silently losing the rest (Thomas's exact complaint). The panels
+        still look the same - each one's inputs now carry form="booking-detail-form" and post into
+        the single form the Booking info panel renders (see booking_detail.html), landing here as
+        one combined POST body. All parsing/validation happens before anything is written, then
+        every touched model is saved together in one transaction so a mid-way validation failure
+        never leaves a partial save. Deductions/Owner payments/Task history keep their own
+        dedicated "+ New ..." buttons - those add a new row rather than edit existing fields, so
+        there's nothing there a staffer could "forget" to save."""
         post = request.POST
+
         property_id = post.get('property')
         if property_id:
             booking.property_id = property_id
@@ -1496,17 +1510,44 @@ class StaffBookingDetailView(View):
             if raw.isdigit():
                 setattr(booking, field, int(raw))
 
+        old_status = booking.enquiry_status
+        enquiry_source = post.get('enquiry_source', '').strip()
+        if enquiry_source:
+            booking.enquiry_source = enquiry_source
+        enquiry_date = _parsed_date(post.get('enquiry_date'))
+        if enquiry_date:
+            booking.enquiry_date = enquiry_date
+        new_status = post.get('enquiry_status', '').strip()
+        if new_status:
+            booking.enquiry_status = new_status
+
         try:
             booking.full_clean()
         except ValidationError as error:
             _flash_validation_error(request, error)
             return
-        booking.save()
-        messages.success(request, "Booking info updated.")
 
-    def _update_guest_info(self, request, booking):
+        charge = getattr(booking, 'charges', None)
+        charge_changed = False
+        if charge is not None:
+            for field in ('basic_rental', 'admin', 'security', 'due_at_booking', 'due_at_balance'):
+                raw = post.get(field, '').strip()
+                if not raw:
+                    continue
+                value = _parsed_decimal(raw)
+                if value is None:
+                    messages.error(request, f"'{raw}' isn't a valid amount for {field.replace('_', ' ')}.")
+                    return
+                if value != getattr(charge, field):
+                    charge_changed = True
+                setattr(charge, field, value)
+            currency = post.get('currency')
+            if currency in dict(CURRENCY_CHOICES):
+                if currency != charge.currency:
+                    charge_changed = True
+                charge.currency = currency
+
         guest = booking.guest
-        post = request.POST
         guest.first_name = post.get('first_name', guest.first_name or '').strip()
         guest.last_name = post.get('last_name', guest.last_name).strip() or guest.last_name
         guest.email = post.get('email', guest.email or '').strip()
@@ -1516,74 +1557,31 @@ class StaffBookingDetailView(View):
         preferred_language = post.get('preferred_language', '').strip()
         if preferred_language:
             guest.preferred_language = preferred_language
-        guest.save()
-        messages.success(request, "Guest info updated.")
 
-    def _update_charges(self, request, booking):
-        charge = getattr(booking, 'charges', None)
-        if charge is None:
-            messages.error(request, "This booking has no Charge record yet.")
-            return
-
-        post = request.POST
-        for field in ('basic_rental', 'admin', 'security', 'due_at_booking', 'due_at_balance'):
-            raw = post.get(field, '').strip()
-            if not raw:
-                continue
-            value = _parsed_decimal(raw)
-            if value is None:
-                messages.error(request, f"'{raw}' isn't a valid amount for {field.replace('_', ' ')}.")
-                return
-            setattr(charge, field, value)
-
-        currency = post.get('currency')
-        if currency in dict(CURRENCY_CHOICES):
-            charge.currency = currency
-
-        charge.save()
-        TaskHistoryEntry.objects.create(booking=booking, description="Rental charges updated by staff")
-        messages.success(request, "Rental charges updated.")
-
-    def _update_enquiry(self, request, booking):
-        post = request.POST
-        old_status = booking.enquiry_status
-
-        enquiry_source = post.get('enquiry_source', '').strip()
-        if enquiry_source:
-            booking.enquiry_source = enquiry_source
-
-        enquiry_date = _parsed_date(post.get('enquiry_date'))
-        if enquiry_date:
-            booking.enquiry_date = enquiry_date
-
-        new_status = post.get('enquiry_status', '').strip()
-        if new_status:
-            booking.enquiry_status = new_status
-
-        booking.save()
-        if new_status and new_status != old_status:
-            TaskHistoryEntry.objects.create(
-                booking=booking, description=f"Status changed from '{old_status}' to '{new_status}' by staff",
-            )
-        messages.success(request, "Enquiry data updated.")
-
-    def _update_payments(self, request, booking):
-        post = request.POST
         payment = getattr(booking, 'payment', None)
-        if payment is not None:
-            status = post.get('payment_status', '').strip()
-            if status:
-                payment.status = status
-                payment.save(update_fields=['status'])
-
+        payment_status = post.get('payment_status', '').strip() if payment is not None else ''
         balance_payment = getattr(booking, 'balance_payment', None)
-        if balance_payment is not None:
-            status = post.get('balance_payment_status', '').strip()
-            if status:
-                balance_payment.status = status
-                balance_payment.save(update_fields=['status'])
+        balance_status = post.get('balance_payment_status', '').strip() if balance_payment is not None else ''
 
-        messages.success(request, "Payments updated.")
+        with transaction.atomic():
+            booking.save()
+            guest.save()
+            if charge is not None:
+                charge.save()
+                if charge_changed:
+                    TaskHistoryEntry.objects.create(booking=booking, description="Rental charges updated by staff")
+            if payment is not None and payment_status:
+                payment.status = payment_status
+                payment.save(update_fields=['status'])
+            if balance_payment is not None and balance_status:
+                balance_payment.status = balance_status
+                balance_payment.save(update_fields=['status'])
+            if new_status and new_status != old_status:
+                TaskHistoryEntry.objects.create(
+                    booking=booking, description=f"Status changed from '{old_status}' to '{new_status}' by staff",
+                )
+
+        messages.success(request, "Booking updated.")
 
     def _add_deduction(self, request, booking):
         post = request.POST
@@ -1618,3 +1616,42 @@ class StaffBookingDetailView(View):
             return
         TaskHistoryEntry.objects.create(booking=booking, description=description)
         messages.success(request, "Note added.")
+
+    def _cancel_booking(self, request, booking):
+        # Kept distinct from bookings/utils.py::cancel_booking_hold()'s 'Cancelled by guest' (the
+        # guest-facing self-service cancellation) so the record still shows who actually cancelled
+        # it. For a platform-sourced booking this doesn't tell Airbnb/Booking.com/Vrbo anything -
+        # the real cancellation still has to happen on the platform itself, or the next iCal sync
+        # (see bookings/utils.py::sync_ical_link()) will just recreate the row once it sees the
+        # dates still occupying the feed.
+        if booking.enquiry_status in CLOSED_STATUSES:
+            messages.info(request, "This booking is already closed.")
+            return
+        old_status = booking.enquiry_status
+        booking.enquiry_status = 'Cancelled by staff'
+        booking.save(update_fields=['enquiry_status'])
+        TaskHistoryEntry.objects.create(
+            booking=booking, description=f"Status changed from '{old_status}' to 'Cancelled by staff' by staff",
+        )
+        messages.success(request, "Booking cancelled.")
+
+    def _uncancel_booking(self, request, booking):
+        # Only revives a guest/staff cancellation - see REVIVABLE_STATUSES' docstring in
+        # staff/utils.py for why 'Cancelled by platform' and the payment-failure statuses are
+        # deliberately excluded. Still has to re-check for a new overlap: something else may have
+        # been booked into these dates since this one was cancelled.
+        if booking.enquiry_status not in REVIVABLE_STATUSES:
+            messages.error(request, "This booking can't be revived from here.")
+            return
+        if Booking.objects.overlapping(
+            booking.property, booking.arrival_date, booking.departure_date
+        ).exclude(pk=booking.pk).exists():
+            messages.error(request, "Can't revive - these dates are now booked by something else.")
+            return
+        old_status = booking.enquiry_status
+        booking.enquiry_status = 'Booking confirmed'
+        booking.save(update_fields=['enquiry_status'])
+        TaskHistoryEntry.objects.create(
+            booking=booking, description=f"Status changed from '{old_status}' to 'Booking confirmed' by staff",
+        )
+        messages.success(request, "Booking revived.")

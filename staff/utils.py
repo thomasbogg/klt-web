@@ -2,19 +2,26 @@ from django.utils import timezone
 
 import env_settings
 
-# PIMS' own six-stage tab bar - kept as the full list even though 'Open Enquiry' is never
-# reachable from klt-web's data (see booking_stage() below), for visual fidelity in the tab row.
+# PIMS' own tab bar, minus 'Open Enquiry' - every klt-web Booking already has committed dates
+# from the moment it's created, so that stage is never reachable from this data (confirmed with
+# Thomas 2026-08-24, dropped rather than kept for visual fidelity).
 STAGE_TABS = (
-    'Open Enquiry', 'Provisional Booking', 'Confirmed Booking',
-    'Holiday started', 'Holiday ended', 'Closed',
+    'Provisional Booking', 'Confirmed Booking', 'Holiday started', 'Holiday ended', 'Closed',
 )
 
 # Mirrors the "deliberately excluded from both status tuples" comment in env_settings.py -
 # every status that frees the calendar, i.e. a dead/cancelled booking.
 CLOSED_STATUSES = (
-    'Cancelled by guest', 'Cancelled by platform', 'Payment failed', 'Hold expired',
-    'Payment received - needs review',
+    'Cancelled by guest', 'Cancelled by platform', 'Cancelled by staff', 'Payment failed',
+    'Hold expired', 'Payment received - needs review',
 )
+
+# The subset of CLOSED_STATUSES a staffer can revive from the booking detail page's "Uncancel
+# booking" button - deliberately excludes 'Cancelled by platform' (the platform is the source of
+# truth there; reviving it here without the platform agreeing just means the next iCal sync
+# re-cancels it) and the payment-failure statuses (those aren't "cancelled" in the sense Thomas
+# asked about - a fresh booking attempt is the normal recovery path for those, not a revival).
+REVIVABLE_STATUSES = ('Cancelled by guest', 'Cancelled by staff')
 
 
 # Home page reservation-list status filter options, in dropdown order - 'Valid' is the default
@@ -108,9 +115,9 @@ def status_bucket(stage):
 
 def booking_stage(booking):
     """Maps a Booking to one of STAGE_TABS - presentational only (no click-to-transition
-    workflow yet, see the staff booking detail page plan). 'Open Enquiry' has no klt-web
-    equivalent - every Booking row already has committed dates from the moment it's created -
-    so it's never returned here; it stays in STAGE_TABS purely so the tab bar renders complete."""
+    workflow yet, see the staff booking detail page plan). Never returns 'Open Enquiry' - every
+    Booking row already has committed dates from the moment it's created - which is also why that
+    stage isn't in STAGE_TABS at all any more (see its own comment)."""
     if booking.enquiry_status in CLOSED_STATUSES:
         return 'Closed'
     if booking.enquiry_status in env_settings.PROVISIONAL_BOOKING_STATUSES:

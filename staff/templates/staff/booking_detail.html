@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
     <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
     <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
+    <script src="{% static 'staff/booking_detail.js' %}" defer></script>
 </head>
 <body>
     <div class="staff-page">
@@ -38,9 +39,9 @@
             <div class="staff-panel-column">
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Booking info</h2>
-                    <form method="post" class="staff-form">
+                    <form method="post" class="staff-form" id="booking-detail-form">
                         {% csrf_token %}
-                        <input type="hidden" name="action" value="update_booking_info">
+                        <input type="hidden" name="action" value="update_booking">
                         <label class="staff-field">Property
                             <select name="property" class="staff-input">
                                 {% for property in properties %}
@@ -70,35 +71,31 @@
                         <label class="staff-checkbox-label">
                             <input type="checkbox" name="is_owner" {% if booking.is_owner %}checked{% endif %}> Owner booking
                         </label>
-                        <button type="submit" class="staff-button">Update</button>
                     </form>
                 </section>
 
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Guest info</h2>
-                    <form method="post" class="staff-form">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="update_guest_info">
+                    <div class="staff-form">
                         <label class="staff-field">First name
-                            <input type="text" name="first_name" class="staff-input" value="{{ guest.first_name|default:'' }}">
+                            <input type="text" name="first_name" form="booking-detail-form" class="staff-input" value="{{ guest.first_name|default:'' }}">
                         </label>
                         <label class="staff-field">Last name
-                            <input type="text" name="last_name" class="staff-input" value="{{ guest.last_name }}" required>
+                            <input type="text" name="last_name" form="booking-detail-form" class="staff-input" value="{{ guest.last_name }}" required>
                         </label>
                         <label class="staff-field">Email
-                            <input type="email" name="email" class="staff-input" value="{{ guest.email|default:'' }}">
+                            <input type="email" name="email" form="booking-detail-form" class="staff-input" value="{{ guest.email|default:'' }}">
                         </label>
                         <label class="staff-field">Phone
-                            <input type="text" name="phone" class="staff-input" value="{{ guest.phone|default:'' }}">
+                            <input type="text" name="phone" form="booking-detail-form" class="staff-input" value="{{ guest.phone|default:'' }}">
                         </label>
                         <label class="staff-field">Portuguese NIF
-                            <input type="text" name="nif_number" class="staff-input" value="{{ guest.nif_number|default:'' }}">
+                            <input type="text" name="nif_number" form="booking-detail-form" class="staff-input" value="{{ guest.nif_number|default:'' }}">
                         </label>
                         <label class="staff-field">Nationality
-                            <input type="text" name="nationality" class="staff-input" value="{{ guest.nationality|default:'' }}">
+                            <input type="text" name="nationality" form="booking-detail-form" class="staff-input" value="{{ guest.nationality|default:'' }}">
                         </label>
-                        <button type="submit" class="staff-button">Update</button>
-                    </form>
+                    </div>
                 </section>
             </div>
 
@@ -106,33 +103,30 @@
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Rental charges</h2>
                     {% if charge %}
-                    <form method="post" class="staff-form">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="update_charges">
+                    <div class="staff-form">
                         <label class="staff-field">Currency
-                            <select name="currency" class="staff-input">
+                            <select name="currency" form="booking-detail-form" class="staff-input">
                                 {% for value, label in currency_choices %}
                                 <option value="{{ value }}" {% if charge.currency == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
                             </select>
                         </label>
                         <label class="staff-field">Basic Rental
-                            <input type="text" name="basic_rental" class="staff-input" value="{{ charge.basic_rental|default:'' }}">
+                            <input type="text" name="basic_rental" form="booking-detail-form" class="staff-input" value="{{ charge.basic_rental|default:'' }}">
                         </label>
                         <label class="staff-field">Admin Fee
-                            <input type="text" name="admin" class="staff-input" value="{{ charge.admin|default:'' }}">
+                            <input type="text" name="admin" form="booking-detail-form" class="staff-input" value="{{ charge.admin|default:'' }}">
                         </label>
                         <label class="staff-field">Security Charge
-                            <input type="text" name="security" class="staff-input" value="{{ charge.security|default:'' }}">
+                            <input type="text" name="security" form="booking-detail-form" class="staff-input" value="{{ charge.security|default:'' }}">
                         </label>
                         <label class="staff-field">Due at Booking
-                            <input type="text" name="due_at_booking" class="staff-input" value="{{ charge.due_at_booking|default:'' }}">
+                            <input type="text" name="due_at_booking" form="booking-detail-form" class="staff-input" value="{{ charge.due_at_booking|default:'' }}">
                         </label>
                         <label class="staff-field">Due at Balance
-                            <input type="text" name="due_at_balance" class="staff-input" value="{{ charge.due_at_balance|default:'' }}">
+                            <input type="text" name="due_at_balance" form="booking-detail-form" class="staff-input" value="{{ charge.due_at_balance|default:'' }}">
                         </label>
-                        <button type="submit" class="staff-button">Update</button>
-                    </form>
+                    </div>
                     {% else %}
                     <p class="staff-empty">No Charge record for this booking.</p>
                     {% endif %}
@@ -154,21 +148,38 @@
 
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Enquiry data</h2>
-                    <form method="post" class="staff-form">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="update_enquiry">
+                    <div class="staff-form">
                         <label class="staff-field">Source of enquiry
-                            <input type="text" name="enquiry_source" class="staff-input" value="{{ booking.enquiry_source }}">
+                            <input type="text" name="enquiry_source" form="booking-detail-form" class="staff-input" value="{{ booking.enquiry_source }}">
                         </label>
                         <label class="staff-field">Date of enquiry
-                            <input type="text" name="enquiry_date" class="staff-input staff-date-input" value="{{ booking.enquiry_date|date:'Y-m-d' }}" autocomplete="off">
+                            <input type="text" name="enquiry_date" form="booking-detail-form" class="staff-input staff-date-input" value="{{ booking.enquiry_date|date:'Y-m-d' }}" autocomplete="off">
                         </label>
                         <label class="staff-field">Outcome / status
-                            <input type="text" name="enquiry_status" class="staff-input" value="{{ booking.enquiry_status }}">
+                            <input type="text" name="enquiry_status" form="booking-detail-form" class="staff-input" value="{{ booking.enquiry_status }}">
                         </label>
-                        <button type="submit" class="staff-button">Update</button>
-                    </form>
+                    </div>
                 </section>
+
+                <div class="staff-booking-actions-row">
+                    <button type="submit" form="booking-detail-form" class="staff-button">Update booking</button>
+
+                    {% if can_cancel %}
+                    <form method="post" data-confirm-message="Cancel this booking? This just marks it cancelled here - for a platform booking (Airbnb/Booking.com/Vrbo), cancel it on the platform itself too, or the next sync will recreate it.">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="cancel_booking">
+                        <button type="submit" class="staff-button staff-button-danger">Cancel booking</button>
+                    </form>
+                    {% endif %}
+
+                    {% if can_uncancel %}
+                    <form method="post" data-confirm-message="Revive this booking? Its status will be reset to 'Booking confirmed' - only do this to undo a cancellation made in error.">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="uncancel_booking">
+                        <button type="submit" class="staff-button staff-button-success">Uncancel booking</button>
+                    </form>
+                    {% endif %}
+                </div>
             </div>
 
             <div class="staff-panel-column">
@@ -179,12 +190,10 @@
 
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Payments from guest</h2>
-                    <form method="post" class="staff-form">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="update_payments">
+                    <div class="staff-form">
                         {% if payment %}
                         <label class="staff-field">Deposit status
-                            <select name="payment_status" class="staff-input">
+                            <select name="payment_status" form="booking-detail-form" class="staff-input">
                                 {% for value, label in payment_status_choices %}
                                 <option value="{{ value }}" {% if payment.status == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
@@ -193,7 +202,7 @@
                         {% endif %}
                         {% if balance_payment %}
                         <label class="staff-field">Balance status
-                            <select name="balance_payment_status" class="staff-input">
+                            <select name="balance_payment_status" form="booking-detail-form" class="staff-input">
                                 {% for value, label in payment_status_choices %}
                                 <option value="{{ value }}" {% if balance_payment.status == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
@@ -206,12 +215,10 @@
                             Due at balance: &euro;{{ charge.due_at_balance|default:'0.00'|floatformat:2 }}
                         </p>
                         {% endif %}
-                        {% if payment or balance_payment %}
-                        <button type="submit" class="staff-button">Update</button>
-                        {% else %}
+                        {% if not payment and not balance_payment %}
                         <p class="staff-empty">No payment records for this booking.</p>
                         {% endif %}
-                    </form>
+                    </div>
                 </section>
 
                 <section class="staff-panel">

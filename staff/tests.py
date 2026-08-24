@@ -159,22 +159,60 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertEqual(list(response.context['task_history']), [])
         self.assertIn('items', response.context['extras'])
 
-    def test_update_booking_info_saves_fields(self):
+    def test_update_booking_saves_fields_across_every_panel_at_once(self):
+        # Regression guard for the whole point of the merge: one POST, one action, and every
+        # panel's fields land together - see StaffBookingDetailView._update_booking's docstring.
         response = self.client.post(self.url, {
-            'action': 'update_booking_info', 'property': self.other_property.pk,
+            'action': 'update_booking', 'property': self.other_property.pk,
             'arrival_date': (self.start + timedelta(days=1)).isoformat(),
             'departure_date': (self.end + timedelta(days=1)).isoformat(),
             'adults': '3', 'children': '1', 'babies': '0', 'is_owner': 'on',
+            'first_name': 'Elena', 'last_name': 'Costa-Silva', 'email': 'new-email@example.com',
+            'phone': '999888777', 'nif_number': '123456789', 'nationality': 'Portuguese',
+            'currency': 'GBP', 'basic_rental': '750.00', 'admin': '41.25', 'security': '200.00',
+            'due_at_booking': '190.00', 'due_at_balance': '600.00',
+            'enquiry_source': 'Phone', 'enquiry_status': 'Guests on-site',
+            'enquiry_date': date.today().isoformat(),
+            'payment_status': 'paid', 'balance_payment_status': 'in_progress',
         })
         self.assertRedirects(response, self.url)
         self.booking.refresh_from_db()
+        self.guest.refresh_from_db()
+        self.charge.refresh_from_db()
+        self.payment.refresh_from_db()
+        self.balance_payment.refresh_from_db()
+
         self.assertEqual(self.booking.property, self.other_property)
         self.assertEqual(self.booking.arrival_date, self.start + timedelta(days=1))
         self.assertEqual(self.booking.adults, 3)
-        self.assertEqual(self.booking.children, 1)
         self.assertTrue(self.booking.is_owner)
+        self.assertEqual(self.booking.enquiry_status, 'Guests on-site')
+        self.assertEqual(self.booking.enquiry_source, 'Phone')
+        self.assertEqual(self.guest.last_name, 'Costa-Silva')
+        self.assertEqual(self.guest.email, 'new-email@example.com')
+        self.assertEqual(self.charge.basic_rental, Decimal('750.00'))
+        self.assertEqual(self.charge.currency, 'GBP')
+        self.assertEqual(self.payment.status, 'paid')
+        self.assertEqual(self.balance_payment.status, 'in_progress')
 
-    def test_update_booking_info_rejects_overlap(self):
+    def test_update_booking_only_touches_fields_actually_submitted(self):
+        # A minimal POST (as if only the Enquiry data panel's inputs existed) must leave every
+        # other panel's data untouched - each field is still independently optional server-side,
+        # even though every field now shares one form/button client-side.
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'enquiry_source': 'Phone', 'enquiry_status': 'Guests on-site',
+        })
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.guest.refresh_from_db()
+        self.charge.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_source, 'Phone')
+        self.assertEqual(self.booking.arrival_date, self.start)  # untouched
+        self.assertEqual(self.booking.adults, 2)  # untouched
+        self.assertEqual(self.guest.last_name, 'Costa')  # untouched
+        self.assertEqual(self.charge.basic_rental, Decimal('700.00'))  # untouched
+
+    def test_update_booking_rejects_overlap(self):
         Booking.objects.create(
             property=self.property, guest=self.guest,
             arrival_date=self.start + timedelta(days=30), departure_date=self.end + timedelta(days=30),
@@ -182,7 +220,7 @@ class StaffBookingDetailViewTests(TestCase):
             adults=2, children=0, babies=0, last_updated=timezone.now(),
         )
         response = self.client.post(self.url, {
-            'action': 'update_booking_info',
+            'action': 'update_booking',
             'arrival_date': (self.start + timedelta(days=30)).isoformat(),
             'departure_date': (self.end + timedelta(days=30)).isoformat(),
             'adults': '2', 'children': '0', 'babies': '0',
@@ -191,67 +229,37 @@ class StaffBookingDetailViewTests(TestCase):
         self.booking.refresh_from_db()
         self.assertEqual(self.booking.arrival_date, self.start)  # untouched
 
-    def test_update_guest_info_saves_fields(self):
-        response = self.client.post(self.url, {
-            'action': 'update_guest_info', 'first_name': 'Elena', 'last_name': 'Costa-Silva',
-            'email': 'new-email@example.com', 'phone': '999888777', 'nif_number': '123456789',
-            'nationality': 'Portuguese',
-        })
-        self.assertRedirects(response, self.url)
-        self.guest.refresh_from_db()
-        self.assertEqual(self.guest.last_name, 'Costa-Silva')
-        self.assertEqual(self.guest.email, 'new-email@example.com')
-        self.assertEqual(self.guest.nif_number, '123456789')
-
-    def test_update_guest_info_never_blanks_required_last_name(self):
-        self.client.post(self.url, {'action': 'update_guest_info', 'last_name': ''})
+    def test_update_booking_never_blanks_required_last_name(self):
+        self.client.post(self.url, {'action': 'update_booking', 'last_name': ''})
         self.guest.refresh_from_db()
         self.assertEqual(self.guest.last_name, 'Costa')
 
-    def test_update_charges_saves_fields_and_logs_task_history(self):
+    def test_update_booking_rejects_invalid_amount_and_saves_nothing_else(self):
+        # The invalid-amount error is caught after full_clean() but before the atomic save block,
+        # so a bad charge amount must block the whole combined save, not just the charge fields.
         response = self.client.post(self.url, {
-            'action': 'update_charges', 'currency': 'GBP', 'basic_rental': '750.00',
-            'admin': '41.25', 'security': '200.00', 'due_at_booking': '190.00', 'due_at_balance': '600.00',
+            'action': 'update_booking', 'basic_rental': 'not-a-number', 'currency': 'EUR',
+            'first_name': 'Should Not Save',
         })
         self.assertRedirects(response, self.url)
         self.charge.refresh_from_db()
-        self.assertEqual(self.charge.basic_rental, Decimal('750.00'))
-        self.assertEqual(self.charge.currency, 'GBP')
-        self.assertEqual(TaskHistoryEntry.objects.filter(booking=self.booking).count(), 1)
-
-    def test_update_charges_rejects_invalid_amount(self):
-        self.client.post(self.url, {
-            'action': 'update_charges', 'basic_rental': 'not-a-number', 'currency': 'EUR',
-        })
-        self.charge.refresh_from_db()
+        self.guest.refresh_from_db()
         self.assertEqual(self.charge.basic_rental, Decimal('700.00'))  # untouched
+        self.assertEqual(self.guest.first_name, 'Elena')  # untouched
 
-    def test_update_enquiry_logs_status_change(self):
+    def test_update_booking_logs_task_history_for_status_change_and_charges_change(self):
         response = self.client.post(self.url, {
-            'action': 'update_enquiry', 'enquiry_source': 'Phone', 'enquiry_status': 'Guests on-site',
-            'enquiry_date': date.today().isoformat(),
+            'action': 'update_booking', 'enquiry_status': 'Guests on-site', 'basic_rental': '750.00',
         })
         self.assertRedirects(response, self.url)
-        self.booking.refresh_from_db()
-        self.assertEqual(self.booking.enquiry_status, 'Guests on-site')
-        self.assertEqual(self.booking.enquiry_source, 'Phone')
-        entry = TaskHistoryEntry.objects.get(booking=self.booking)
-        self.assertIn('Booking confirmed', entry.description)
-        self.assertIn('Guests on-site', entry.description)
+        entries = list(TaskHistoryEntry.objects.filter(booking=self.booking).order_by('pk'))
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0].description, 'Rental charges updated by staff')
+        self.assertIn("'Booking confirmed' to 'Guests on-site'", entries[1].description)
 
-    def test_update_enquiry_no_task_entry_when_status_unchanged(self):
-        self.client.post(self.url, {'action': 'update_enquiry', 'enquiry_status': 'Booking confirmed'})
+    def test_update_booking_no_task_entries_when_nothing_relevant_changed(self):
+        self.client.post(self.url, {'action': 'update_booking', 'enquiry_status': 'Booking confirmed'})
         self.assertEqual(TaskHistoryEntry.objects.filter(booking=self.booking).count(), 0)
-
-    def test_update_payments_saves_statuses(self):
-        response = self.client.post(self.url, {
-            'action': 'update_payments', 'payment_status': 'paid', 'balance_payment_status': 'in_progress',
-        })
-        self.assertRedirects(response, self.url)
-        self.payment.refresh_from_db()
-        self.balance_payment.refresh_from_db()
-        self.assertEqual(self.payment.status, 'paid')
-        self.assertEqual(self.balance_payment.status, 'in_progress')
 
     def test_add_deduction(self):
         response = self.client.post(self.url, {
@@ -286,6 +294,90 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertRedirects(response, self.url)
         self.booking.refresh_from_db()
         self.assertEqual(self.booking.arrival_date, self.start)
+
+    def test_cancel_booking_sets_status_and_logs_task_history(self):
+        response = self.client.post(self.url, {'action': 'cancel_booking'})
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_status, 'Cancelled by staff')
+        entry = TaskHistoryEntry.objects.get(booking=self.booking)
+        self.assertIn("'Cancelled by staff'", entry.description)
+
+    def test_cancel_booking_frees_the_calendar(self):
+        self.client.post(self.url, {'action': 'cancel_booking'})
+        self.assertFalse(
+            Booking.objects.overlapping(self.property, self.start, self.end).filter(pk=self.booking.pk).exists()
+        )
+
+    def test_cancel_booking_on_an_already_closed_booking_is_a_noop(self):
+        self.booking.enquiry_status = 'Cancelled by guest'
+        self.booking.save(update_fields=['enquiry_status'])
+        self.client.post(self.url, {'action': 'cancel_booking'})
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_status, 'Cancelled by guest')  # untouched, not overwritten
+        self.assertFalse(TaskHistoryEntry.objects.filter(booking=self.booking).exists())
+
+    def test_context_can_cancel_flag(self):
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['can_cancel'])
+
+        self.booking.enquiry_status = 'Cancelled by platform'
+        self.booking.save(update_fields=['enquiry_status'])
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['can_cancel'])
+
+    def test_uncancel_booking_revives_a_staff_cancellation(self):
+        self.booking.enquiry_status = 'Cancelled by staff'
+        self.booking.save(update_fields=['enquiry_status'])
+        response = self.client.post(self.url, {'action': 'uncancel_booking'})
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_status, 'Booking confirmed')
+        entry = TaskHistoryEntry.objects.get(booking=self.booking)
+        self.assertIn("'Cancelled by staff' to 'Booking confirmed'", entry.description)
+
+    def test_uncancel_booking_revives_a_guest_cancellation(self):
+        self.booking.enquiry_status = 'Cancelled by guest'
+        self.booking.save(update_fields=['enquiry_status'])
+        self.client.post(self.url, {'action': 'uncancel_booking'})
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_status, 'Booking confirmed')
+
+    def test_uncancel_booking_refuses_a_platform_cancellation(self):
+        self.booking.enquiry_status = 'Cancelled by platform'
+        self.booking.save(update_fields=['enquiry_status'])
+        self.client.post(self.url, {'action': 'uncancel_booking'})
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_status, 'Cancelled by platform')  # untouched
+
+    def test_uncancel_booking_refuses_a_still_confirmed_booking(self):
+        # Nothing to revive - enquiry_status is already 'Booking confirmed' from setUp.
+        self.client.post(self.url, {'action': 'uncancel_booking'})
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_status, 'Booking confirmed')
+        self.assertFalse(TaskHistoryEntry.objects.filter(booking=self.booking).exists())
+
+    def test_uncancel_booking_blocked_by_a_new_overlapping_booking(self):
+        self.booking.enquiry_status = 'Cancelled by staff'
+        self.booking.save(update_fields=['enquiry_status'])
+        other_guest = Guest.objects.create(last_name='Took The Dates')
+        Booking.objects.create(
+            property=self.property, guest=other_guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.client.post(self.url, {'action': 'uncancel_booking'})
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.enquiry_status, 'Cancelled by staff')  # untouched
+
+    def test_context_can_uncancel_flag(self):
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['can_uncancel'])
+
+        self.booking.enquiry_status = 'Cancelled by staff'
+        self.booking.save(update_fields=['enquiry_status'])
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['can_uncancel'])
 
 
 class StaffBookingLookupViewTests(TestCase):

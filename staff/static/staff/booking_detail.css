@@ -231,6 +231,41 @@ body {
     font-size: 0.78rem;
 }
 
+.staff-button-danger {
+    background: var(--status-booked-color, #c0392b);
+}
+
+.staff-button-danger:hover {
+    opacity: 0.85;
+}
+
+.staff-button-success {
+    background: var(--status-available-color, #2f8f5b);
+}
+
+.staff-button-success:hover {
+    opacity: 0.85;
+}
+
+/* Grid rather than flex here specifically so every button - the "Update booking" button itself,
+   and the Cancel/Uncancel ones a level deeper inside their own <form> - shares one column track
+   sized to the widest of them (grid items justify-stretch to their track by default), then
+   justify-content centres that track under the middle column. Self-adjusting: whichever label is
+   longest sets the width for all of them, no hardcoded pixel value to keep in sync by hand. */
+.staff-booking-actions-row {
+    display: grid;
+    grid-template-columns: max-content;
+    justify-content: center;
+    gap: 10px;
+}
+
+.staff-booking-actions-row .staff-button {
+    width: 100%;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
 .staff-list {
     list-style: none;
     margin: 0 0 12px;

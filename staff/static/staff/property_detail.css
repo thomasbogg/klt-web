@@ -219,14 +219,6 @@
     }
 }
 
-.staff-button-danger {
-    background: var(--status-booked-color, #c0392b);
-}
-
-.staff-button-danger:hover {
-    opacity: 0.85;
-}
-
 .staff-inline-delete, .staff-inline-sync {
     display: inline;
 }
