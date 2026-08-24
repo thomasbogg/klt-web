@@ -350,3 +350,68 @@ class AmenityTests(TestCase):
             property=self.property, hand_towels_per_guest=0, bath_towels_per_guest=0, beach_towels_per_guest=0,
         )
         self.assertIsNone(amenities.towel_summary())
+
+    def test_towel_line_items_scales_by_guest_count(self):
+        amenities = Amenity.objects.create(property=self.property)
+        self.assertEqual(
+            amenities.towel_line_items(2),
+            [(2, 'Hand towels'), (2, 'Bath towels'), (2, 'Beach towels')],
+        )
+
+    def test_towel_line_items_singular_noun_for_a_total_of_one(self):
+        amenities = Amenity.objects.create(property=self.property)
+        self.assertEqual(
+            amenities.towel_line_items(1),
+            [(1, 'Hand towel'), (1, 'Bath towel'), (1, 'Beach towel')],
+        )
+
+    def test_towel_line_items_omits_zero_count_type(self):
+        amenities = Amenity.objects.create(property=self.property, beach_towels_per_guest=0)
+        self.assertEqual(amenities.towel_line_items(3), [(3, 'Hand towels'), (3, 'Bath towels')])
+
+    def test_towel_line_items_empty_when_nothing_provided(self):
+        amenities = Amenity.objects.create(
+            property=self.property, hand_towels_per_guest=0, bath_towels_per_guest=0, beach_towels_per_guest=0,
+        )
+        self.assertEqual(amenities.towel_line_items(4), [])
+
+    def test_full_feature_list_includes_only_true_fields_in_declared_order(self):
+        amenities = Amenity.objects.create(property=self.property, wifi=True, pool=True, coffee_machine=True)
+        # wifi and pool are both True by model default too, but only the fields explicitly set
+        # True here (plus their defaults) should show, and 'WiFi' - first in GUEST_FEATURE_LIST -
+        # must come before 'Pool' regardless of the order they were set in this call.
+        features = amenities.full_feature_list()
+        self.assertIn('WiFi', features)
+        self.assertIn('Filter coffee machine', features)
+        self.assertLess(features.index('WiFi'), features.index('Filter coffee machine'))
+
+    def test_full_feature_list_excludes_false_fields(self):
+        amenities = Amenity.objects.create(property=self.property, pool=False, barbecue=False)
+        features = amenities.full_feature_list()
+        self.assertNotIn('Pool', features)
+        self.assertNotIn('Barbecue', features)
+
+    def test_full_feature_list_drops_generic_air_conditioning_when_room_specific_is_set(self):
+        amenities = Amenity.objects.create(
+            property=self.property, air_conditioning=True, air_conditioning_in_bedrooms=True,
+            air_conditioning_in_living_room=False,
+        )
+        features = amenities.full_feature_list()
+        self.assertNotIn('Air conditioning', features)
+        self.assertIn('Air conditioning in bedrooms', features)
+
+    def test_full_feature_list_drops_generic_heating_when_either_room_specific_is_set(self):
+        amenities = Amenity.objects.create(
+            property=self.property, heating=True, heating_in_bedrooms=False, heating_in_living_room=True,
+        )
+        features = amenities.full_feature_list()
+        self.assertNotIn('Heating', features)
+        self.assertIn('Heating in living room', features)
+
+    def test_full_feature_list_keeps_generic_air_conditioning_when_no_room_specific_is_set(self):
+        amenities = Amenity.objects.create(
+            property=self.property, air_conditioning=True,
+            air_conditioning_in_bedrooms=False, air_conditioning_in_living_room=False,
+        )
+        features = amenities.full_feature_list()
+        self.assertIn('Air conditioning', features)

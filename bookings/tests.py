@@ -8,15 +8,24 @@ from django.utils import timezone
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge,
-    Departure, Extra, ExtrasSettings, GuestListAdjustment, Payment, RequestType, WelcomePackItem,
+    Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, Payment, RequestType, WelcomePackItem,
 )
 from bookings.utils import (
     add_business_days, create_booking, determine_payment_provider, expire_stale_holds, extras_summary,
     guest_counts_by_age, has_completed_previous_stay, payment_clearing_expiry, recalculate_balance_for_party,
     recalculate_costs_for_party, sync_ical_link,
 )
+from bookings.templatetags.bookings_extras import linkify
 from guests.models import Guest
-from properties.models import Price, Property, PropertySpec, iCalLink
+from properties.models import Amenity, Location, LocationRules, Price, Property, PropertySpec, iCalLink
+
+
+def _normalized_text(response):
+    """Collapses whitespace in a rendered response body - a phrase split across lines by a
+    template's own indentation (e.g. an {% if %}/{% else %} branch) still reads as one sentence
+    in a browser, but assertContains' literal substring match doesn't tolerate the embedded
+    newline, so tests that assert on multi-line prose should check against this instead."""
+    return ' '.join(response.content.decode().split())
 
 
 class DeterminePaymentProviderTests(TestCase):
@@ -117,6 +126,28 @@ class ExpireStaleHoldsTests(TestCase):
         expire_stale_holds()
         booking.refresh_from_db()
         self.assertEqual(booking.enquiry_status, 'Booking confirmed')
+
+
+class BookingTotalGuestsTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property TG', short_title='TESTTG')
+        self.guest = Guest.objects.create(first_name='Mia', last_name='Ferreira', email='mia-tg@example.com')
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=date.today() + timedelta(days=100), departure_date=date.today() + timedelta(days=107),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=1, babies=1, last_updated=timezone.now(),
+        )
+
+    def test_falls_back_to_adults_children_babies_before_party_list_exists(self):
+        self.assertEqual(self.booking.total_guests(), 4)
+
+    def test_uses_party_count_once_the_guest_list_is_filled_in(self):
+        BookingGuest.objects.create(booking=self.booking, first_name='Mia', last_name='Ferreira', age=34)
+        BookingGuest.objects.create(booking=self.booking, first_name='Leo', last_name='Ferreira', age=29)
+        # Only 2 named so far, even though adults+children+babies says 4 - the real party list
+        # takes over as the source of truth the moment it exists at all.
+        self.assertEqual(self.booking.total_guests(), 2)
 
 
 class ChargeDueAtBookingInChargeCurrencyTests(TestCase):
@@ -1563,6 +1594,18 @@ class BookingManageGuestAddViewTests(TestCase):
         self.assertEqual(GuestListAdjustment.objects.count(), 0)
         self.assertEqual(self.booking.party.count(), 2)
 
+    def test_unconfirmed_post_skips_the_interstitial_when_theres_nothing_to_confirm(self):
+        """Real bug report: the interstitial used to show unconditionally, even asking a guest to
+        'confirm' a charge that was actually 0.00 - starting from 1 named adult (Marco removed) and
+        adding a 2nd stays within the free-adult ceiling (see setUp's own FREE_ADULTS=2 comment),
+        so there's nothing to confirm and this should save immediately without a `confirmed` field
+        at all, the same way a POST with confirmed=1 already does."""
+        self.marco.delete()
+        response = self.client.post(self.url, self._post_data(['Sofia'], ['Costa'], [25]))
+        self.assertRedirects(response, f"{self.guests_url}?guest_added=1", fetch_redirect_response=False)
+        self.assertEqual(GuestListAdjustment.objects.count(), 1)
+        self.assertEqual(GuestListAdjustment.objects.get().additional_charge, Decimal('0'))
+
     def test_confirmed_post_adds_guest_without_touching_charge(self):
         response = self.client.post(self.url, self._post_data(['Sofia'], ['Costa'], [25], confirmed=True))
         self.assertRedirects(response, f"{self.guests_url}?guest_added=1", fetch_redirect_response=False)
@@ -1617,6 +1660,92 @@ class BookingManageGuestAddViewTests(TestCase):
         self.assertRedirects(response, f"{self.guests_url}?guest_added=1", fetch_redirect_response=False)
         adjustment = GuestListAdjustment.objects.get()
         self.assertEqual(adjustment.additional_charge, Decimal('0'))
+
+
+class BookingManageGuestRemoveViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property GRM', short_title='TESTGRM')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Elena', last_name='Costa', email='elena-grm@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.lead = BookingGuest.objects.create(booking=self.booking, first_name='Elena', last_name='Costa', age=30, is_lead=True)
+        self.marco = BookingGuest.objects.create(booking=self.booking, first_name='Marco', last_name='Costa', age=32, is_lead=False)
+        Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        BalancePayment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.url = reverse('bookings:manage_hub_guest_remove', kwargs={'reference': self.booking.reference})
+        self.guests_url = reverse('bookings:manage_guests', kwargs={'reference': self.booking.reference})
+
+    def test_removes_a_non_lead_guest(self):
+        response = self.client.post(self.url, {'guest_id': self.marco.pk})
+        self.assertRedirects(response, f"{self.guests_url}?guest_removed=1", fetch_redirect_response=False)
+        self.assertFalse(BookingGuest.objects.filter(pk=self.marco.pk).exists())
+        self.assertEqual(self.booking.party.count(), 1)
+
+    def test_resyncs_adults_children_babies_from_the_remaining_party(self):
+        """Real bug report: removing a guest left Booking.adults/children/babies stale, so
+        staff's own booking-detail page kept showing the pre-removal headcount."""
+        self.client.post(self.url, {'guest_id': self.marco.pk})
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.adults, 1)  # only lead-guest Elena (age 30) left
+        self.assertEqual(self.booking.children, 0)
+        self.assertEqual(self.booking.babies, 0)
+
+    def test_resyncs_babies_count_when_an_infant_is_removed(self):
+        infant = BookingGuest.objects.create(booking=self.booking, first_name='Baby', last_name='Costa', age=1, is_lead=False)
+        self.booking.babies = 1
+        self.booking.save(update_fields=['babies'])
+        self.client.post(self.url, {'guest_id': infant.pk})
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.babies, 0)
+        self.assertEqual(self.booking.adults, 2)  # Elena + Marco, both untouched
+
+    def test_creates_an_audit_adjustment_with_no_charge(self):
+        self.client.post(self.url, {'guest_id': self.marco.pk})
+        adjustment = GuestListAdjustment.objects.get()
+        self.assertEqual(adjustment.previous_party_size, 2)
+        self.assertEqual(adjustment.new_party_size, 1)
+        self.assertEqual(adjustment.additional_charge, Decimal('0'))
+
+    def test_never_touches_charge(self):
+        self.client.post(self.url, {'guest_id': self.marco.pk})
+        charge = self.booking.charges
+        self.assertEqual(charge.due_at_booking, Decimal('184.63'))
+        self.assertEqual(charge.due_at_balance, Decimal('553.87'))
+
+    def test_cannot_remove_the_lead_guest(self):
+        response = self.client.post(self.url, {'guest_id': self.lead.pk})
+        self.assertRedirects(response, self.guests_url, fetch_redirect_response=False)
+        self.assertTrue(BookingGuest.objects.filter(pk=self.lead.pk).exists())
+        self.assertEqual(GuestListAdjustment.objects.count(), 0)
+
+    def test_unknown_guest_id_is_a_noop(self):
+        response = self.client.post(self.url, {'guest_id': 999999})
+        self.assertRedirects(response, self.guests_url, fetch_redirect_response=False)
+        self.assertEqual(GuestListAdjustment.objects.count(), 0)
+
+    def test_not_fully_paid_redirects_and_does_nothing(self):
+        self.booking.balance_payment.status = 'pending'
+        self.booking.balance_payment.save(update_fields=['status'])
+        response = self.client.post(self.url, {'guest_id': self.marco.pk})
+        self.assertRedirects(response, self.guests_url, fetch_redirect_response=False)
+        self.assertTrue(BookingGuest.objects.filter(pk=self.marco.pk).exists())
+
+    def test_lead_guest_has_no_remove_control_on_the_page(self):
+        response = self.client.get(self.guests_url)
+        self.assertNotContains(response, f'value="{self.lead.pk}"')
+        self.assertContains(response, f'value="{self.marco.pk}"')
 
 
 class BookingManageExtrasViewTests(TestCase):
@@ -1860,6 +1989,29 @@ class BookingManageGuestsViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertEqual(response.context['stage'], 'fully_paid')
         self.assertEqual(len(response.context['party']), 3)
+        # Party already matches adults+children+babies (2+1+0=3) here, so the add-form only needs
+        # its usual single floor row, not a bigger gap-filled seed.
+        self.assertEqual(len(response.context['guest_add_rows']), 1)
+
+    def test_fully_paid_get_seeds_blank_rows_for_the_gap_when_no_guests_named_yet(self):
+        """The real bug report: adults+children+babies says 3 but no BookingGuest rows exist at
+        all (a booking that went straight from deposit to fully-paid without the guest ever
+        filling in Guest List) - the add-form must offer 3 blank rows up front, not the usual
+        single-row default, so the guest doesn't have to click '+ Add another guest' twice."""
+        self.booking.party.all().delete()
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertEqual(len(response.context['party']), 0)
+        self.assertEqual(len(response.context['guest_add_rows']), 3)
+
+    def test_fully_paid_get_seeds_only_the_remaining_gap_when_some_guests_already_named(self):
+        self.booking.party.filter(first_name='Ines').delete()
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertEqual(len(response.context['party']), 2)
+        self.assertEqual(len(response.context['guest_add_rows']), 1)
 
     def test_fully_paid_post_redirects_without_writing(self):
         self.balance_payment.status = 'paid'
@@ -2085,6 +2237,15 @@ class ConfirmationDetailsDisplayTests(TestCase):
         self.assertContains(response, '&pound;')
         self.assertNotContains(response, 'currency-toggle')
 
+    def test_collapsed_booking_says_all_payments_received(self):
+        """due_at_balance=0 (set in setUp) means the full total was already required at booking
+        time - paid_amount == subtotal from the start, so the message should never claim only a
+        deposit was taken."""
+        response = self.client.get(self.url)
+        text = _normalized_text(response)
+        self.assertIn('all payments have been received', text)
+        self.assertNotIn('your deposit has been received', text)
+
     def test_non_returning_guest_sees_the_real_security_amount(self):
         response = self.client.get(self.url)
         self.assertContains(response, '&euro;200.00')
@@ -2099,6 +2260,96 @@ class ConfirmationDetailsDisplayTests(TestCase):
         )
         response = self.client.get(self.url)
         self.assertContains(response, 'Not required for a returning guest')
+
+
+class ConfirmationDetailsBalanceDueRowTests(TestCase):
+    """Regression coverage for a real bug: the 'Due by <date> €X' row used to key off
+    charge.balance_due_date alone, which is set once at booking creation and never cleared - so
+    it kept showing a two-stage booking's original balance as still owed even after staff marked
+    the BalancePayment paid by hand (see staff/views.py::StaffBookingDetailView's Balance status
+    dropdown). The row must track the same 'balance_due' context flag the Pay Balance button
+    itself already used (see bookings/utils.py::booking_confirmation_context), so the two can
+    never disagree again."""
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property CDBD', short_title='TESTCDBD')
+        self.guest = Guest.objects.create(first_name='Ines', last_name='Rocha', email='ines-cdbd@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.balance_payment = BalancePayment.objects.create(
+            booking=self.booking, provider='revolut', status='pending',
+        )
+        self.url = reverse('bookings:confirmation', kwargs={'reference': self.booking.reference})
+        self.hub_url = reverse('bookings:manage_hub', kwargs={'reference': self.booking.reference})
+
+    def test_due_by_row_shows_while_balance_is_still_outstanding(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Due by')
+        self.assertContains(response, '553.87')
+
+    def test_due_by_row_hides_once_balance_is_marked_paid(self):
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Due by')
+
+    def test_due_by_row_also_hides_on_the_manage_hub(self):
+        """Same partial is shared by the confirmation page and the Manage Hub's Booking tab (see
+        manage_hub.html's include) - the fix has to hold on both, not just the one this bug report
+        happened to be noticed on."""
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.hub_url)
+        self.assertNotContains(response, 'Due by')
+
+    def test_paid_row_shows_deposit_only_while_balance_still_outstanding(self):
+        # 738.50 (the full total) is expected exactly once here - the Total row always shows it
+        # regardless of payment status - so this checks the Paid row isn't ALSO showing it.
+        response = self.client.get(self.url)
+        self.assertContains(response, '184.63', count=1)
+        self.assertContains(response, '738.50', count=1)
+
+    def test_paid_row_shows_full_total_once_balance_is_marked_paid(self):
+        # Now 738.50 should appear twice - once for Total, once for Paid.
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertContains(response, '738.50', count=2)
+
+    def test_message_says_deposit_received_while_balance_outstanding(self):
+        response = self.client.get(self.url)
+        text = _normalized_text(response)
+        self.assertIn('your deposit has been received', text)
+        self.assertNotIn('all payments have been received', text)
+
+    def test_message_says_all_payments_received_once_balance_paid(self):
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        text = _normalized_text(response)
+        self.assertIn('all payments have been received', text)
+        self.assertNotIn('your deposit has been received', text)
+
+    def test_paid_row_excludes_balance_for_a_cancelled_never_paid_booking(self):
+        """balance_due (which gates the Due-by row/Pay Balance button) forces False once
+        cancelled, regardless of payment status - Paid must not piggyback on that flag, or a
+        cancelled-but-never-paid booking would wrongly show the balance as paid too."""
+        self.booking.enquiry_status = 'Cancelled by guest'
+        self.booking.save(update_fields=['enquiry_status'])
+        response = self.client.get(self.url)
+        self.assertContains(response, '184.63', count=1)
+        self.assertContains(response, '738.50', count=1)  # Total only, not doubled into Paid
 
 
 class BookingCancelViewTests(TestCase):
@@ -2197,6 +2448,207 @@ class BookingCancelViewTests(TestCase):
         self.assertNotContains(
             response, reverse('bookings:balance_details', kwargs={'reference': self.booking.reference}),
         )
+
+
+class BookingManageAmenitiesViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property AM', short_title='TESTAM')
+        self.guest = Guest.objects.create(first_name='Sara', last_name='Nunes', email='sara-am@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.url = reverse('bookings:manage_amenities', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+
+    def test_not_paid_redirects_to_details(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_shows_provided_amenities(self):
+        Amenity.objects.create(property=self.property, wifi=True, coffee_machine=True, pool=False)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'WiFi')
+        self.assertContains(response, 'Filter coffee machine')
+        self.assertNotContains(response, '<li>Pool</li>')
+
+    def test_no_amenity_row_renders_without_error_or_side_effect(self):
+        """A public bearer-link GET must never create data as a side effect - unlike the staff
+        detail page's own get_or_create(), a property with no Amenity row yet just shows an
+        empty section here."""
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.context['amenities'])
+        self.assertFalse(Amenity.objects.filter(property=self.property).exists())
+
+    def test_shows_towel_line_items_scaled_by_guest_count(self):
+        # setUp's booking has adults=2, no party list yet, so total_guests falls back to 2.
+        Amenity.objects.create(property=self.property, beach_towels_per_guest=0)
+        response = self.client.get(self.url)
+        self.assertContains(response, '<li>2 Hand towels</li>', html=True)
+        self.assertContains(response, '<li>2 Bath towels</li>', html=True)
+
+    def test_active_section_is_amenities(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['active_section'], 'amenities')
+
+
+class LinkifyFilterTests(TestCase):
+    def test_wraps_a_bare_url_in_a_new_tab_link(self):
+        result = linkify('See it here: https://maps.app.goo.gl/abc123')
+        self.assertIn('<a href="https://maps.app.goo.gl/abc123" target="_blank" rel="noopener noreferrer">', result)
+        self.assertIn('See it here:', result)
+
+    def test_links_more_than_one_url(self):
+        result = linkify('First https://a.example.com then https://b.example.com')
+        self.assertEqual(result.count('<a href='), 2)
+
+    def test_leaves_plain_text_with_no_url_untouched(self):
+        self.assertEqual(linkify('Just outside the main gate'), 'Just outside the main gate')
+
+    def test_escapes_surrounding_text(self):
+        result = linkify('Tom & Jerry <script>')
+        self.assertIn('Tom &amp; Jerry &lt;script&gt;', result)
+
+    def test_empty_value_returned_as_is(self):
+        self.assertEqual(linkify(''), '')
+        self.assertIsNone(linkify(None))
+
+
+class BookingManageLocationViewTests(TestCase):
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Test Location Manage', street='1 Manage Street', zip_code='8000-000', city='Faro',
+            coordinates='37.0,-7.9', map_link='https://maps.example.com/manage',
+            directions='Follow the coast road past the marina.',
+            nearest_supermarket='Intermarché, 500m away',
+        )
+        self.property = Property.objects.create(
+            title='Test Property LOC', short_title='TESTLOC', location=self.location,
+        )
+        self.guest = Guest.objects.create(first_name='Tiago', last_name='Alves', email='tiago-loc@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.url = reverse('bookings:manage_location', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+
+    def test_not_paid_redirects_to_details(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_shows_address_and_directions(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, '1 Manage Street')
+        self.assertContains(response, 'Follow the coast road past the marina.')
+        self.assertContains(response, 'Intermarché, 500m away')
+
+    def test_shows_house_rules_when_present(self):
+        LocationRules.objects.create(
+            location=self.location, quiet_hours_start=time(22, 0), quiet_hours_end=time(8, 0),
+            pool_hours_start=time(9, 0), pool_hours_end=time(20, 0), pool_rules='No diving.',
+        )
+        response = self.client.get(self.url)
+        self.assertContains(response, '22:00')
+        self.assertContains(response, 'No diving.')
+
+    def test_no_location_renders_fallback_message(self):
+        self.property.location = None
+        self.property.save(update_fields=['location'])
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "aren't available yet")
+
+    def test_active_section_is_location(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['active_section'], 'location')
+
+    def test_a_raw_url_in_good_to_know_text_becomes_a_clickable_new_tab_link(self):
+        self.location.nearest_corner_shop = 'See it here: https://maps.app.goo.gl/xyz789'
+        self.location.save(update_fields=['nearest_corner_shop'])
+        response = self.client.get(self.url)
+        self.assertContains(
+            response,
+            '<a href="https://maps.app.goo.gl/xyz789" target="_blank" rel="noopener noreferrer">',
+        )
+
+
+class BookingManageFAQViewTests(TestCase):
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Test Location FAQ', street='1 FAQ Street', zip_code='8000-000', city='Faro',
+            coordinates='37.0,-7.9', map_link='https://maps.example.com/faq',
+        )
+        self.other_location = Location.objects.create(
+            title='Other Location FAQ', street='2 FAQ Street', zip_code='8000-001', city='Faro',
+            coordinates='37.1,-7.8', map_link='https://maps.example.com/faq-other',
+        )
+        self.property = Property.objects.create(
+            title='Test Property FAQ', short_title='TESTFAQ', location=self.location,
+        )
+        self.guest = Guest.objects.create(first_name='Rita', last_name='Sousa', email='rita-faq@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.url = reverse('bookings:manage_faq', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+
+    def test_not_paid_redirects_to_details(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_shows_a_universal_faq(self):
+        FAQ.objects.create(question='Can I have a late check-out?', answer='Yes, ask us.', order=0)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Can I have a late check-out?')
+
+    def test_shows_a_faq_scoped_to_this_booking_own_location(self):
+        FAQ.objects.create(question='Is there parking?', answer='Yes, private parking.', location=self.location)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Is there parking?')
+
+    def test_hides_a_faq_scoped_to_a_different_location(self):
+        FAQ.objects.create(question='Is there parking?', answer='Street parking only.', location=self.other_location)
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Is there parking?')
+
+    def test_property_with_no_location_only_sees_universal_faqs(self):
+        self.property.location = None
+        self.property.save(update_fields=['location'])
+        FAQ.objects.create(question='Universal question', answer='Answer.', order=0)
+        FAQ.objects.create(question='Location-specific question', answer='Answer.', location=self.location)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Universal question')
+        self.assertNotContains(response, 'Location-specific question')
+
+    def test_no_faqs_renders_fallback_message(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'No frequently asked questions yet')
+
+    def test_active_section_is_faq(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['active_section'], 'faq')
 
 
 def _ics_feed(events):

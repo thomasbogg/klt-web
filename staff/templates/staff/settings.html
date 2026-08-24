@@ -143,6 +143,71 @@
                             <input type="hidden" name="action" value="add_booking_condition">
                         </form>
                     </div>
+
+                    <div class="staff-panel">
+                        <h2 class="staff-panel-title">FAQ</h2>
+                        <p class="staff-settings-hint">Shown to guests, in order, on the Manage Booking hub's FAQ page.</p>
+                        <table class="staff-price-table staff-extras-aligned-table staff-faq-table">
+                            <thead>
+                                <tr><th>Order</th><th>Question</th><th>Answer</th><th>Location</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                {% for faq in faqs %}
+                                <tr>
+                                    <td><input type="number" name="order" form="faq-form-{{ faq.pk }}" min="0" value="{{ faq.order }}" class="staff-input staff-input-small"></td>
+                                    <td><input type="text" name="question" form="faq-form-{{ faq.pk }}" value="{{ faq.question }}" class="staff-input"></td>
+                                    <td><textarea name="answer" form="faq-form-{{ faq.pk }}" class="staff-input" rows="2">{{ faq.answer }}</textarea></td>
+                                    <td>
+                                        <select name="location" form="faq-form-{{ faq.pk }}" class="staff-input">
+                                            <option value="">All</option>
+                                            {% for location in faq_locations %}
+                                            <option value="{{ location.pk }}" {% if faq.location_id == location.pk %}selected{% endif %}>{{ location }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </td>
+                                    <td class="staff-price-row-actions">
+                                        <button type="submit" form="faq-form-{{ faq.pk }}" class="staff-button staff-button-small">Save</button>
+                                        <form method="post" class="staff-inline-delete">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="delete_faq">
+                                            <input type="hidden" name="faq_id" value="{{ faq.pk }}">
+                                            <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="5" class="staff-empty">No FAQs yet.</td></tr>
+                                {% endfor %}
+                                <tr class="staff-price-row-new">
+                                    <td><input type="number" name="order" form="faq-form-new" min="0" value="0" class="staff-input staff-input-small"></td>
+                                    <td><input type="text" name="question" form="faq-form-new" class="staff-input"></td>
+                                    <td><textarea name="answer" form="faq-form-new" class="staff-input" rows="2"></textarea></td>
+                                    <td>
+                                        <select name="location" form="faq-form-new" class="staff-input">
+                                            <option value="">All</option>
+                                            {% for location in faq_locations %}
+                                            <option value="{{ location.pk }}">{{ location }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </td>
+                                    <td class="staff-price-row-actions">
+                                        <button type="submit" form="faq-form-new" class="staff-button staff-button-small">Add</button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        {% for faq in faqs %}
+                        <form method="post" id="faq-form-{{ faq.pk }}">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_faq">
+                            <input type="hidden" name="faq_id" value="{{ faq.pk }}">
+                        </form>
+                        {% endfor %}
+                        <form method="post" id="faq-form-new">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="add_faq">
+                        </form>
+                    </div>
                 </section>
 
                 <section class="staff-settings-pane" id="settings-pane-extras">

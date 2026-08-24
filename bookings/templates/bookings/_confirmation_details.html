@@ -42,10 +42,10 @@
     </div>
     <div class="confirmation-breakdown-row">
         <span>Paid</span>
-        {% if charge.currency == 'GBP' %}<span>&pound;{{ costs_gbp.due_at_booking|floatformat:2 }}</span>
-        {% else %}<span>&euro;{{ charge.due_at_booking|floatformat:2 }}</span>{% endif %}
+        {% if charge.currency == 'GBP' %}<span>&pound;{{ paid_amount_gbp|floatformat:2 }}</span>
+        {% else %}<span>&euro;{{ paid_amount|floatformat:2 }}</span>{% endif %}
     </div>
-    {% if charge.balance_due_date %}
+    {% if balance_due %}
     <div class="confirmation-breakdown-row">
         <span>Due by {{ charge.balance_due_date|date:"d M Y" }}</span>
         {% if charge.currency == 'GBP' %}<span>&pound;{{ costs_gbp.due_at_balance|floatformat:2 }}</span>
@@ -64,8 +64,13 @@
 
 {% if not cancelled %}
 <p class="confirmation-message">
+    {% if paid_amount >= subtotal %}
+    Thank you, {{ booking.guest.first_name|default:booking.guest.last_name }} — all payments have been
+    received and your reservation is confirmed.
+    {% else %}
     Thank you, {{ booking.guest.first_name|default:booking.guest.last_name }} — your deposit has been
     received and your reservation is confirmed.
+    {% endif %}
     Keep your reference safe — you can look up this booking any time using it and your email.
 </p>
 {% endif %}

@@ -192,6 +192,33 @@
     margin-left: 6px;
 }
 
+.staff-faq-table th:first-child,
+.staff-faq-table td:first-child {
+    width: 80px;
+}
+
+.staff-faq-table th:nth-child(2),
+.staff-faq-table td:nth-child(2) {
+    width: 220px;
+}
+
+.staff-faq-table th:nth-child(4),
+.staff-faq-table td:nth-child(4) {
+    width: 140px;
+}
+
+/* Same latent flex-td-height bug as .staff-booking-conditions-table above (this table's own
+   Answer column is a 2-row textarea too) - identical fix. */
+.staff-faq-table .staff-price-row-actions {
+    display: table-cell;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.staff-faq-table .staff-price-row-actions .staff-button {
+    margin-left: 6px;
+}
+
 /* Owners' 7 boolean columns push the table past its panel width (4 text columns + 7 checkbox
    columns + actions) - a horizontal-scroll wrapper keeps the panel itself from stretching/
    overflowing the page, matching the general Artifact-page rule of scrolling wide content in its

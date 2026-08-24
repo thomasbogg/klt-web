@@ -339,6 +339,13 @@ def booking_confirmation_context(booking):
     charge = booking.charges
     balance_payment = getattr(booking, 'balance_payment', None)
     cancelled = booking.enquiry_status == 'Cancelled by guest'  # mirrors views.py::is_cancelled()
+    # Deliberately keyed off the BalancePayment's own paid status, not 'balance_due' below - a
+    # cancelled booking whose balance was genuinely paid before the cancellation should still show
+    # that money as paid; 'balance_due' folds in "and not cancelled" for a different purpose (hiding
+    # the Pay Balance button on a stay there's nothing left to buy toward), which would otherwise
+    # double-count due_at_balance into 'Paid' for a cancelled-but-never-paid booking.
+    balance_paid = balance_payment is not None and balance_payment.status == 'paid'
+    paid_amount = charge.due_at_booking + (charge.due_at_balance if balance_paid else 0)
     return {
         'booking': booking,
         'charge': charge,
@@ -346,6 +353,8 @@ def booking_confirmation_context(booking):
         'nights': (booking.departure_date - booking.arrival_date).days,
         'costs_gbp': charge.costs_in_gbp(),
         'cancelled': cancelled,
+        'paid_amount': paid_amount,
+        'paid_amount_gbp': charge.to_gbp(paid_amount),
         # Self-serve entry point into the balance flow, for a guest who wants to pay early or lost
         # a manually-sent link (no automated reminder email yet - see BalancePayment's docstring).
         # Excludes a cancelled booking - there's nothing to pay toward a cancelled stay, even if

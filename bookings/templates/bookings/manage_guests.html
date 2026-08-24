@@ -39,35 +39,50 @@
 
             {% if stage == 'fully_paid' %}
 
-            <div class="guest-rows">
-                <div class="guest-row guest-row-header">
-                    <span></span>
-                    <span>First name</span>
-                    <span>Last name</span>
-                    <span>Age</span>
-                    <span></span>
-                </div>
-                {% for guest in party %}
-                <div class="guest-row">
-                    <span class="guest-row-index">{{ forloop.counter }}</span>
-                    <span>{{ guest.first_name }}</span>
-                    <span>{{ guest.last_name }}</span>
-                    <span>{{ guest.age }}</span>
-                    <span></span>
-                </div>
-                {% endfor %}
-            </div>
-
-            <h3 class="details-subsection-title">Add a guest</h3>
-            <p class="details-note">This property allows up to {{ max_guests }} guests. Adding a guest may add a cash charge, payable at check-in - we'll show you the amount before anything is confirmed.</p>
-
-            {% if guest_add_error %}
-            <div class="reserve-form-errors">
-                <p>{{ guest_add_error }}</p>
-            </div>
+            {% if request.GET.guest_removed %}
+            <p class="details-note">Guest removed.</p>
             {% endif %}
 
-            <form method="post" action="{% url 'bookings:manage_hub_guest_add' reference=booking.reference %}" class="details-form">
+            <section class="details-section">
+                <div class="guest-rows">
+                    <div class="guest-row guest-row-header">
+                        <span></span>
+                        <span>First name</span>
+                        <span>Last name</span>
+                        <span>Age</span>
+                        <span></span>
+                    </div>
+                    {% for guest in party %}
+                    <div class="guest-row">
+                        <span class="guest-row-index">{{ forloop.counter }}</span>
+                        <span>{{ guest.first_name }}</span>
+                        <span>{{ guest.last_name }}</span>
+                        <span>{{ guest.age }}</span>
+                        <span>
+                            {% if not guest.is_lead %}
+                            <form method="post" action="{% url 'bookings:manage_hub_guest_remove' reference=booking.reference %}" class="guest-row-remove-form">
+                                {% csrf_token %}
+                                <input type="hidden" name="guest_id" value="{{ guest.pk }}">
+                                <button type="submit" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
+                            </form>
+                            {% endif %}
+                        </span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <section class="details-section">
+                <h2 class="details-section-title">Add a guest</h2>
+                <p class="details-note details-note-left">This property allows up to {{ max_guests }} guests. Adding a guest may add a cash charge, payable at check-in - we'll show you the amount before anything is confirmed.</p>
+
+                {% if guest_add_error %}
+                <div class="reserve-form-errors">
+                    <p>{{ guest_add_error }}</p>
+                </div>
+                {% endif %}
+
+                <form method="post" action="{% url 'bookings:manage_hub_guest_add' reference=booking.reference %}" class="details-form">
                 {% csrf_token %}
 
                 <div class="guest-rows" id="guest-rows">
@@ -131,7 +146,7 @@
                 </template>
 
                 <button type="button" class="guest-row-add" id="guest-row-add">+ Add another guest</button>
-                <button type="submit" class="reserve-form-submit">Add Guest(s)</button>
+                <button type="submit" class="reserve-form-submit">Update Guests</button>
 
                 {% if pending_guest_addition %}
                 <div class="price-change-overlay" id="price-change-overlay">
@@ -149,7 +164,8 @@
                     </div>
                 </div>
                 {% endif %}
-            </form>
+                </form>
+            </section>
 
             {% else %}
 

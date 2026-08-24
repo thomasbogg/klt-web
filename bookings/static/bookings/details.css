@@ -35,6 +35,25 @@
     margin-bottom: 16px;
 }
 
+/* Location & Arrival's own address line - bumped up from a plain .details-note (which every other
+   short note on this page still uses) since this is the one thing on the page a guest is most
+   likely scanning for. */
+.location-address {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--primary-color-dark, var(--primary-color));
+    margin: 0 0 10px;
+}
+
+/* More breathing room below the map before "Open in Google Maps" - .location-map-link's own base
+   styles (in properties/static/locations/location.css, shared with the public Location page)
+   don't carry this margin since that page's own layout already puts space between them via its
+   flex column gap; this page stacks the two directly instead. */
+.location-map-link-spaced {
+    display: inline-block;
+    margin-top: 14px;
+}
+
 .extras-total-note {
     display: inline-block;
     margin: 0 0 24px;
@@ -52,22 +71,19 @@
     font-size: 1.1rem;
 }
 
-.details-subsection-title {
-    text-align: left;
-    font-family: var(--secondary-font);
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: rgb(110, 110, 110);
-    margin: 20px 0 10px;
-}
-
 .details-note {
     font-size: 0.88rem;
     line-height: 1.6;
     color: rgb(110, 110, 110);
     margin: 0 0 10px;
+}
+
+/* .details-note inherits centred text from .manage-hub-content - fine for a short standalone
+   note, but reads oddly sitting directly above the left-aligned guest-row grid (see Guest List's
+   "Add a guest" section) - opt in per instance rather than flipping the shared class everywhere
+   it's used (several existing pages, e.g. Extras, already rely on the centred default). */
+.details-note-left {
+    text-align: left;
 }
 
 .guest-rows {
@@ -94,9 +110,21 @@
 }
 
 .guest-row-index {
-    padding-top: 10px;
     font-size: 0.9rem;
     color: rgb(150, 150, 150);
+}
+
+/* #guest-rows is the id shared by every *editable* guest-list row container (the pre_balance
+   full-list form in _guest_list_form.html, and the fully_paid stage's own "Add a guest" mini-form
+   in manage_guests.html) - there the index sits beside <input class="reserve-input"> siblings,
+   which carry their own 10px top padding (see .reserve-input), so the index needs matching
+   padding to align with the text inside those boxes rather than the boxes' own top edge. The
+   *read-only* party list in manage_guests.html has no such id (plain <span> siblings, no
+   padding of their own) and was wrongly picking up this same 10px before, pushing its numbers
+   out of line with the guest names beside them - confirmed via getBoundingClientRect, not just
+   eyeballing a screenshot. */
+#guest-rows .guest-row-index {
+    padding-top: 10px;
 }
 
 .guest-row-field {
@@ -108,6 +136,25 @@
 .guest-row-field .reserve-input {
     width: 100%;
     box-sizing: border-box;
+}
+
+/* The read-only party list's Remove button is a real submit (deletes an already-saved guest, see
+   BookingManageGuestRemoveView), unlike the editable rows' own .guest-row-remove which is just a
+   client-side "un-clone this not-yet-submitted row" button - it needs a <form> wrapper to POST,
+   which would otherwise add unwanted block-level spacing inside the grid's 32px index column. */
+.guest-row-remove-form {
+    margin: 0;
+}
+
+/* The read-only list's rows are a single line of plain text (~19px tall) - .guest-row-remove's
+   own 32x40px sizing was tuned to match the *editable* rows' input boxes (see .reserve-input),
+   which makes it look oversized and loosely-placed here. A smaller, top-aligned button reads as
+   part of the same text row instead. */
+.guest-row-remove-form .guest-row-remove {
+    width: 22px;
+    height: 22px;
+    font-size: 0.85rem;
+    padding: 0;
 }
 
 .guest-row-remove,
@@ -134,6 +181,7 @@
 
 .guest-row-add {
     margin-top: 16px;
+    margin-bottom: 20px;
     padding: 8px 16px;
     font-size: 0.9rem;
     border-color: var(--primary-color);
@@ -252,12 +300,26 @@
     cursor: pointer;
 }
 
-.welcome-pack-items {
+/* Shared plain-bullet-list look - .welcome-pack-items predates this and keeps its own name (lots
+   of call sites already reference it), .details-list is the generic name for any other
+   .details-page content that just needs a simple list (e.g. the Manage Booking hub's Amenities
+   and Location & Arrival pages). */
+.welcome-pack-items,
+.details-list {
     margin: 0;
     padding-left: 20px;
     font-size: 0.88rem;
     line-height: 1.8;
     color: rgb(110, 110, 110);
+}
+
+/* .welcome-pack-items already inherits text-align: left from its one call site's wrapping
+   .details-form (see _extras_form.html) - .details-list has no such wrapper (Amenities/Location &
+   Arrival are plain read-only pages, not forms), so without this its own text stays centred like
+   the rest of .manage-hub-content, wrapping each <li> as an odd centred block instead of reading
+   as a normal left-aligned bullet list. */
+.details-list {
+    text-align: left;
 }
 
 .welcome-pack-items li.welcome-pack-item-hidden {
@@ -469,6 +531,14 @@
 .arrival-departure-form .welcome-pack-choice-group,
 .arrival-departure-form .welcome-pack-field {
     margin-top: 24px;
+}
+
+/* Extra breathing room between the intro blurb and "How are you travelling?" specifically - the
+   default .details-note bottom margin (10px) reads as too tight against the very next field, only
+   really noticeable here since every other .transfer-field grouping already gets its own
+   margin-top from a preceding sibling. */
+.arrival-departure-form .details-note + .transfer-field {
+    margin-top: 14px;
 }
 
 .transfer-field {

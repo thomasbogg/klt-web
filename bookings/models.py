@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from bookings.utils import generate_reference_candidate
 from env_settings import VALID_BOOKING_STATUSES, PROVISIONAL_BOOKING_STATUSES
-from properties.models import Property
+from properties.models import Location, Property
 from guests.models import Guest
 
 TWO_PLACES = Decimal('0.01')
@@ -241,6 +241,24 @@ class Booking(models.Model):
     def __str__(self):
         return f"{self.property.short_title} - {self.guest.last_name} ({self.id})"
 
+    def total_guests(self):
+        """Current party size - the actual named guest list (self.party) once one exists, falling
+        back to the original adults+children+babies counts from booking time for a booking whose
+        guest list hasn't been filled in yet at all (adults/children/babies do get kept in sync
+        with the real party by both BookingManageGuestAddView and BookingManageGuestRemoveView
+        once any change happens, but that sync doesn't exist for a booking nobody has touched via
+        either flow, which is exactly the gap this fallback covers).
+
+        Deliberately a plain method, not @property: this model has a field literally named
+        `property` (the FK to properties.Property), which rebinds the name `property` inside this
+        class body - any `@property` decorator anywhere in this class resolves to that FK field
+        instead of the builtin and crashes at import time ("'ForeignKey' object is not callable"),
+        confirmed the hard way. Django templates still call a zero-arg method automatically, so
+        `{{ booking.total_guests }}` works the same either way - only Python call sites need the
+        explicit ()."""
+        party_count = self.party.count()
+        return party_count if party_count else self.adults + self.children + self.babies
+
     def clean(self):
         super().clean()
         if self.property_id and self.arrival_date and self.departure_date:
@@ -302,6 +320,33 @@ class BookingCondition(models.Model):
 
     def __str__(self):
         return self.text[:80]
+
+
+class FAQ(models.Model):
+    """A single question/answer pair shown on the Manage Booking hub's FAQ page - same
+    order-editable, staff-authored plain-text pattern as BookingCondition above, just split into
+    two fields instead of one. location=None ("All") is the default and covers most questions
+    (payment, cancellation, check-in/out) equally everywhere; set it to answer something that
+    genuinely varies by location (e.g. "Is there parking?", which is usually a building/
+    condominium-level fact shared by every apartment at that location, not an individual
+    property's own) differently for that one location without duplicating every universal FAQ
+    alongside it."""
+    question = models.CharField(max_length=300)
+    answer = models.TextField()
+    location = models.ForeignKey(
+        Location, on_delete=models.CASCADE, null=True, blank=True, related_name='faqs',
+        help_text="Leave blank to show this on every location's FAQ page.",
+    )
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = 'faqs'
+        verbose_name = 'FAQ'
+        verbose_name_plural = 'FAQs'
+        ordering = ('order',)
+
+    def __str__(self):
+        return self.question
 
 
 class TravelMethod(models.TextChoices):

@@ -469,6 +469,20 @@
     padding: 12px;
 }
 
+.manage-hub-nav-group-label {
+    font-family: var(--secondary-font);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgb(160, 160, 160);
+    padding: 10px 14px 2px;
+}
+
+.manage-hub-nav-group-label:first-child {
+    padding-top: 2px;
+}
+
 .manage-hub-nav-link {
     display: block;
     padding: 10px 14px;
@@ -544,6 +558,14 @@
         overflow-x: auto;
         gap: 8px;
         padding: 8px;
+    }
+
+    /* The group heading doesn't fit the horizontal-scroll row layout below 768px (there's no
+       sensible place to break the row for it) - items stay grouped in source order, just without
+       the visible label at this width; the CTA/danger colour-coding already still tells Pay
+       Balance/Cancel apart from everything else. */
+    .manage-hub-nav-group-label {
+        display: none;
     }
 
     .manage-hub-nav-link {

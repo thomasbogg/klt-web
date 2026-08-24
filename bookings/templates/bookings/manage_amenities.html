@@ -1,0 +1,69 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amenities {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Amenities</h1>
+            <p class="details-note">Everything you can expect to find at {{ booking.property }} on arrival.</p>
+
+            {% if amenities %}
+            <div class="details-section">
+                <h2 class="details-section-title">In the apartment</h2>
+                <ul class="details-list">
+                    {% for label in amenities.full_feature_list %}
+                    <li>{{ label }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+
+            {% if towel_items %}
+            <div class="details-section">
+                <h2 class="details-section-title">Towels</h2>
+                <ul class="details-list">
+                    {% for count, label in towel_items %}
+                    <li>{{ count }} {{ label }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            {% endif %}
+
+            <div class="details-section">
+                <h2 class="details-section-title">Also included with every stay</h2>
+                <ul class="details-list">
+                    <li>Washing up liquid</li>
+                    <li>2 dishwasher tablets</li>
+                    <li>2 laundry tablets</li>
+                    <li>A cleaning cloth</li>
+                    <li>A scourer</li>
+                    <li>A tea towel</li>
+                    <li>1 toilet roll</li>
+                    <li>All beds dressed in linen appropriate to the season</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

@@ -546,6 +546,84 @@ class Amenity(models.Model):
             return "Bath and beach towels"
         return "Hand and bath towels"
 
+    def towel_line_items(self, guest_count):
+        """(total_count, label) pairs for the Manage Booking hub's Amenities page - one bullet per
+        provided towel type, scaled by the booking's actual current guest count rather than shown
+        as a flat per-guest rate (e.g. 2 guests x 1 hand towel each -> (2, 'Hand towels')). Skips
+        any type set to 0 (not provided) entirely; guest_count is the caller's responsibility - see
+        bookings.models.Booking.total_guests for the guest-list-aware count this is meant to be
+        called with."""
+        items = []
+        for field, kind in self.TOWEL_TYPES:
+            per_guest = getattr(self, field)
+            if per_guest <= 0:
+                continue
+            total = per_guest * guest_count
+            noun = 'towel' if total == 1 else 'towels'
+            items.append((total, f"{kind.capitalize()} {noun}"))
+        return items
+
+    # Every boolean field, guest-labelled and NOT deduplicated by shared label like
+    # FEATURE_PRIORITY (whose job is a small highlight-icon grid) - this drives the Manage Booking
+    # hub's Amenities page, where a guest wants the full, precise list (e.g. air conditioning
+    # broken out by room, matching the specificity of staff's own guest-reply email) rather than a
+    # handful of highlights.
+    GUEST_FEATURE_LIST = (
+        ('wifi', 'WiFi'),
+        ('air_conditioning', 'Air conditioning'),
+        ('air_conditioning_in_bedrooms', 'Air conditioning in bedrooms'),
+        ('air_conditioning_in_living_room', 'Air conditioning in living room'),
+        ('heating', 'Heating'),
+        ('heating_in_bedrooms', 'Heating in bedrooms'),
+        ('heating_in_living_room', 'Heating in living room'),
+        ('tv', 'TV'),
+        ('iptv', 'IPTV'),
+        ('safe', 'Safe for valuables'),
+        ('bathtub_and_shower', 'Bathtub & shower'),
+        ('walk_in_shower', 'Walk-in shower'),
+        ('hairdryer', 'Hairdryer'),
+        ('sofa_bed', 'Sofa bed'),
+        ('kitchen', 'Kitchen'),
+        ('oven', 'Oven'),
+        ('hob', 'Hob'),
+        ('microwave', 'Microwave'),
+        ('toaster', 'Toaster'),
+        ('kettle', 'Kettle'),
+        ('coffee_machine', 'Filter coffee machine'),
+        ('fridge', 'Fridge'),
+        ('freezer', 'Freezer'),
+        ('dishwasher', 'Dishwasher'),
+        ('barbecue', 'Barbecue'),
+        ('washing_machine', 'Washing machine'),
+        ('dryer', 'Dryer'),
+        ('iron', 'Iron'),
+        ('ironing_board', 'Ironing board'),
+        ('clothes_horse', 'Clothes horse'),
+        ('vacuum_cleaner', 'Vacuum cleaner'),
+        ('mop_and_bucket', 'Mop & bucket'),
+        ('pool', 'Pool'),
+        ('hot_tub', 'Hot tub'),
+        ('garden', 'Garden'),
+    )
+
+    def full_feature_list(self):
+        """Every provided amenity's guest-friendly label, in GUEST_FEATURE_LIST order - see that
+        constant's own docstring for why this doesn't reuse top_features()'s deduplicated,
+        icon-gated logic. The one exception: the generic 'Air conditioning'/'Heating' entries are
+        dropped whenever either room-specific flag for that amenity is set, since listing both the
+        blanket claim and the specific rooms reads as redundant (Thomas asked for this once the
+        room-specific fields started being used) - the room-specific entries alone are more
+        informative anyway."""
+        skip_generic = set()
+        if self.air_conditioning_in_bedrooms or self.air_conditioning_in_living_room:
+            skip_generic.add('air_conditioning')
+        if self.heating_in_bedrooms or self.heating_in_living_room:
+            skip_generic.add('heating')
+        return [
+            label for field, label in self.GUEST_FEATURE_LIST
+            if field not in skip_generic and getattr(self, field)
+        ]
+
     def bed_label(self):
         if self.double_beds > 0:
             size = self.bed_sizes.replace(' ', '')

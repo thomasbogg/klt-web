@@ -1,0 +1,42 @@
+{% load static %}
+{% load bookings_extras %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FAQ {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>FAQ</h1>
+
+            {% for faq in faqs %}
+            <section class="details-section">
+                <h2 class="details-section-title">{{ faq.question }}</h2>
+                <p class="details-note details-note-left">{{ faq.answer|linkify }}</p>
+            </section>
+            {% empty %}
+            <p class="details-note">No frequently asked questions yet - get in touch if there's anything you'd like to know.</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

@@ -9,7 +9,7 @@ from env_settings import VALID_BOOKING_STATUSES
 from .models import (
     AirportTransfer, Arrival, BalancePayment, Booking, BookingCondition,
     BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Departure,
-    Extra, ExtrasSettings, GuestListAdjustment, Payment, PaymentSettings, PlatformPayout, RequestType,
+    Extra, ExtrasSettings, FAQ, GuestListAdjustment, Payment, PaymentSettings, PlatformPayout, RequestType,
     WelcomePackItem,
 )
 from .utils import expire_stale_holds
@@ -171,6 +171,14 @@ class BalancePaymentAdmin(admin.ModelAdmin):
 class BookingConditionAdmin(admin.ModelAdmin):
     list_display = ('order', 'text')
     list_display_links = ('text',)
+    list_editable = ('order',)
+    ordering = ('order',)
+
+
+@admin.register(FAQ)
+class FAQAdmin(admin.ModelAdmin):
+    list_display = ('order', 'question')
+    list_display_links = ('question',)
     list_editable = ('order',)
     ordering = ('order',)
 

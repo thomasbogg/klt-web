@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -14,12 +15,12 @@ from bookings.forms import BookingLookupForm
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, Departure, Extra,
-    ExtrasSettings, GuestListAdjustment, RequestType, TravelMethod, WelcomePackDrinksChoice,
+    ExtrasSettings, FAQ, GuestListAdjustment, RequestType, TravelMethod, WelcomePackDrinksChoice,
     WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
-    booking_confirmation_context, cancel_booking_hold, extras_summary, recalculate_balance_for_party,
-    recalculate_costs_for_party, reservation_retry_url,
+    booking_confirmation_context, cancel_booking_hold, extras_summary, guest_counts_by_age,
+    recalculate_balance_for_party, recalculate_costs_for_party, reservation_retry_url,
 )
 from libraries.banking.revolut import Revolut
 
@@ -45,8 +46,9 @@ def is_fully_paid(booking):
     """Deposit paid, and (no balance stage at all, or the balance is paid too) - the single switch
     the Manage Booking hub uses to decide whether a guest-list edit still goes through the existing
     pre-balance-paid flows (BookingDetailsView/BookingBalanceDetailsView, which can still reprice
-    Charge) or the increases-only, cash-at-check-in GuestListAdjustment flow instead (Charge is
-    frozen for good by this point). is_balance_paid() alone is NOT sufficient here - it returns
+    Charge) or the add/remove, cash-at-check-in GuestListAdjustment flow instead (Charge is
+    frozen for good by this point - removals never refund anything already paid, only additions
+    can add a cash charge). is_balance_paid() alone is NOT sufficient here - it returns
     True for a still-unpaid collapsed booking too (no BalancePayment row exists at all), so it must
     always be combined with is_paid() first."""
     return is_paid(booking) and is_balance_paid(booking)
@@ -389,6 +391,22 @@ class BookingFormMixin:
         for _ in range(max(0, blank_count)):
             rows.append({'first_name': '', 'last_name': '', 'age': '', 'errors': {}})
         return rows
+
+    def _seed_guest_add_rows(self, booking, existing_party):
+        """Blank rows for the fully_paid stage's 'Add a guest' mini-form, same shape as
+        _seed_or_prefill_rows() above - pre-seeded to the gap between the party already named and
+        the original adults+children+babies count from booking time (whichever side last set it -
+        the guest's own reservation, or staff editing it afterwards), so a guest/staff member sees
+        exactly enough blank rows to name everyone rather than clicking '+ Add another guest'
+        repeatedly. Deliberately the raw adults+children+babies fields, not Booking.total_guests()
+        - that method prefers the real party count once any exists, which would collapse this gap
+        to 0 the moment even one guest is named; this needs the ORIGINAL expected count regardless
+        of how many are already named, exactly like _seed_or_prefill_rows() does for the
+        pre_balance stage's own seeding. Always at least 1 row, even with no gap, so the form never
+        renders with zero rows to fill in."""
+        expected_total = booking.adults + booking.children + booking.babies
+        blank_count = max(1, expected_total - len(existing_party))
+        return [{'first_name': '', 'last_name': '', 'age': '', 'errors': {}} for _ in range(blank_count)]
 
     def _parse_rows(self, post_data):
         """Three parallel arrays (first_name[]/last_name[]/age[]), not a Django formset - see the
@@ -995,9 +1013,10 @@ class BookingManageGuestsView(BookingFormMixin, View):
     redirects back to this same section rather than auto-advancing to payment - Pay Balance is now
     its own deliberate sidebar action.
 
-    fully_paid: read-only party list + an add-guest mini-form, POSTing to the separate
-    BookingManageGuestAddView (increases-only, GuestListAdjustment-tracked) - this view's own POST
-    only exists for the pre_balance case."""
+    fully_paid: a Remove control on each non-lead party row (POSTing to the separate
+    BookingManageGuestRemoveView) plus an add-guest mini-form (POSTing to
+    BookingManageGuestAddView) - both GuestListAdjustment-tracked, both their own separate views -
+    this view's own POST only exists for the pre_balance case."""
     template_name = 'bookings/manage_guests.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -1009,10 +1028,12 @@ class BookingManageGuestsView(BookingFormMixin, View):
 
         context = _manage_nav_context(booking, 'guests')
         if context['stage'] == 'fully_paid':
+            party = list(booking.party.all())
             context.update({
                 'booking': booking,
-                'party': booking.party.all(),
+                'party': party,
                 'max_guests': booking.property.specs.max_guests,
+                'guest_add_rows': self._seed_guest_add_rows(booking, party),
             })
             return render(request, self.template_name, context)
 
@@ -1322,7 +1343,12 @@ class BookingManageGuestAddView(BookingFormMixin, View):
         charge = booking.charges
         additional_charge = max(new_costs['subtotal'] - (charge.basic_rental + charge.admin), Decimal('0'))
 
-        if request.POST.get('confirmed') != '1':
+        # Only worth an extra confirm click when it's actually asking the guest to accept a
+        # charge - added guests still within the property's base occupancy (no per-extra-guest
+        # rate kicks in) cost nothing, so there's nothing to confirm (same "skip the interstitial
+        # when there's no price change to review" spirit as Extras never having one at all - see
+        # BookingManageExtrasView's own docstring).
+        if additional_charge > 0 and request.POST.get('confirmed') != '1':
             context['pending_guest_addition'] = {'rows': new_rows, 'additional_charge': additional_charge}
             return render(request, self.template_name, context)
 
@@ -1336,6 +1362,52 @@ class BookingManageGuestAddView(BookingFormMixin, View):
             self._append_guest_rows(booking, new_rows, adjustment, new_guests)
 
         return redirect(f"{reverse('bookings:manage_guests', args=[booking.reference])}?guest_added=1")
+
+
+class BookingManageGuestRemoveView(View):
+    """Guest-list *removals* once a booking is already fully paid - the mirror of
+    BookingManageGuestAddView. Never touches Charge or issues any refund - removing a guest is a
+    pure headcount correction (wrong entry, a guest who can no longer make it), not a request for
+    money back, matching this codebase's existing no-refund-after-payment stance (see
+    BookingCancelView's own docstring). The lead guest (Booking.guest's own row, is_lead=True) can
+    never be removed this way - it's the one party row every other part of the app assumes exists
+    - so the template never renders a Remove control next to it, and this re-checks that
+    server-side too rather than trusting the template alone. Still creates a GuestListAdjustment
+    row (additional_charge=0) purely as an audit entry, same "why did the headcount change" trail
+    the add flow already leaves - see that model's own docstring. Also re-syncs
+    Booking.adults/children/babies from the remaining party's real ages, same as
+    _append_guest_rows() already does on the add side - staff's own booking-detail page reads
+    those fields directly, so leaving them stale here (confirmed the hard way: a removed infant
+    left Booking.babies sitting at its original count) would silently drift staff's view of the
+    booking out of sync with the guest list itself."""
+
+    def post(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_fully_paid(booking):
+            return redirect('bookings:manage_guests', reference=reference)
+
+        guest = booking.party.filter(pk=request.POST.get('guest_id')).first()
+        if guest is None or guest.is_lead:
+            return redirect('bookings:manage_guests', reference=reference)
+
+        with transaction.atomic():
+            party_count = booking.party.count()
+            GuestListAdjustment.objects.create(
+                booking=booking, previous_party_size=party_count, new_party_size=party_count - 1,
+                additional_charge=Decimal('0'),
+            )
+            remaining_ages = list(booking.party.exclude(pk=guest.pk).values_list('age', flat=True))
+            guest.delete()
+            counts = guest_counts_by_age(remaining_ages, BookingSettings.load())
+            booking.adults = counts['adults']
+            booking.children = counts['children']
+            booking.babies = counts['infants']
+            booking.last_updated = timezone.now()
+            booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
+
+        return redirect(f"{reverse('bookings:manage_guests', args=[booking.reference])}?guest_removed=1")
 
 
 class BookingManageExtrasView(BookingFormMixin, View):
@@ -1452,3 +1524,74 @@ class BookingCancelView(View):
         booking.enquiry_status = 'Cancelled by guest'
         booking.save(update_fields=['enquiry_status'])
         return redirect(f"{reverse('bookings:manage_hub', args=[booking.reference])}?cancelled=1")
+
+
+class BookingManageAmenitiesView(View):
+    """Holiday Info section of the Manage Booking hub - a read-only, guest-facing answer to
+    exactly the question staff used to field by hand-typed email (the "what will I find in the
+    apartment" reply this whole feature started from), sourced from the same Amenity row the
+    property page's own feature grid uses. Read-only: no get_or_create() side effect on a bare GET
+    of a public bearer link - a property with no Amenity row yet just shows an empty list rather
+    than silently creating one, unlike the staff detail page's own lazy-create (that page is
+    staff-authenticated and editing-oriented; this one is neither)."""
+    template_name = 'bookings/manage_amenities.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        amenities = getattr(booking.property, 'amenities', None)
+        context = _manage_nav_context(booking, 'amenities')
+        context.update({
+            'booking': booking,
+            'amenities': amenities,
+            'towel_items': amenities.towel_line_items(booking.total_guests()) if amenities else [],
+        })
+        return render(request, self.template_name, context)
+
+
+class BookingManageLocationView(View):
+    """Holiday Info section of the Manage Booking hub - address, directions, nearby amenities and
+    house rules (quiet/pool hours) for the guest's own booked property, previously only visible on
+    the separate public Location page (which a guest may never have seen, since search results
+    land straight on the property page). Read-only, same no-side-effect GET as
+    BookingManageAmenitiesView."""
+    template_name = 'bookings/manage_location.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        context = _manage_nav_context(booking, 'location')
+        context.update({'booking': booking, 'location': booking.property.location})
+        return render(request, self.template_name, context)
+
+
+class BookingManageFAQView(View):
+    """Holiday Info section of the Manage Booking hub - guest-facing FAQ, sourced from the FAQ
+    model staff maintain in Settings > Bookings (same order-editable, plain-text pattern as
+    BookingCondition, just split into a question and an answer). location=None on a FAQ row means
+    "show on every location's page"; otherwise it only shows for a booking whose property sits at
+    that exact location (e.g. a parking answer that's only true for one building) - a property
+    with no location set at all only ever sees the location=None rows. Read-only, same
+    no-side-effect GET as BookingManageAmenitiesView/BookingManageLocationView."""
+    template_name = 'bookings/manage_faq.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        faqs = FAQ.objects.filter(Q(location__isnull=True) | Q(location=booking.property.location_id))
+
+        context = _manage_nav_context(booking, 'faq')
+        context.update({'booking': booking, 'faqs': faqs})
+        return render(request, self.template_name, context)

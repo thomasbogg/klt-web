@@ -16,7 +16,7 @@ from django.views import View
 from availability.utils import get_property_calendar
 from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Booking, BookingCondition,
-    BookingSettings, ExtrasSettings, PaymentSettings, RequestType, WelcomePackItem,
+    BookingSettings, ExtrasSettings, FAQ, PaymentSettings, RequestType, WelcomePackItem,
 )
 from bookings.utils import extras_summary
 from guests.models import Guest
@@ -442,6 +442,9 @@ class StaffSettingsView(View):
         'add_booking_condition': 'bookings',
         'update_booking_condition': 'bookings',
         'delete_booking_condition': 'bookings',
+        'add_faq': 'bookings',
+        'update_faq': 'bookings',
+        'delete_faq': 'bookings',
         'update_extras_settings': 'extras',
         'add_welcome_pack_item': 'extras',
         'update_welcome_pack_item': 'extras',
@@ -475,6 +478,9 @@ class StaffSettingsView(View):
             'add_booking_condition': self._add_booking_condition,
             'update_booking_condition': self._update_booking_condition,
             'delete_booking_condition': self._delete_booking_condition,
+            'add_faq': self._add_faq,
+            'update_faq': self._update_faq,
+            'delete_faq': self._delete_faq,
             'update_extras_settings': self._update_extras_settings,
             'add_welcome_pack_item': self._add_welcome_pack_item,
             'update_welcome_pack_item': self._update_welcome_pack_item,
@@ -505,6 +511,8 @@ class StaffSettingsView(View):
             'active_panel': active_panel,
             'booking_settings': BookingSettings.load(),
             'booking_conditions': BookingCondition.objects.all(),
+            'faqs': FAQ.objects.select_related('location').all(),
+            'faq_locations': Location.objects.order_by('title'),
             'extras_settings': ExtrasSettings.load(),
             'payment_settings': PaymentSettings.load(),
             'month_choices': MONTH_CHOICES,
@@ -579,6 +587,44 @@ class StaffSettingsView(View):
     def _delete_booking_condition(self, request):
         BookingCondition.objects.filter(pk=request.POST.get('condition_id')).delete()
         messages.success(request, "Booking condition deleted.")
+
+    def _add_faq(self, request):
+        post = request.POST
+        question = post.get('question', '').strip()
+        answer = post.get('answer', '').strip()
+        if not question or not answer:
+            messages.error(request, "A FAQ needs both a question and an answer.")
+            return
+        location_id = post.get('location', '').strip()
+        faq = FAQ(
+            question=question, answer=answer, location_id=location_id or None,
+            order=_parsed_int(post.get('order')) or 0,
+        )
+        faq.save()
+        messages.success(request, "FAQ added.")
+
+    def _update_faq(self, request):
+        faq = FAQ.objects.filter(pk=request.POST.get('faq_id')).first()
+        if faq is None:
+            messages.error(request, "That FAQ no longer exists.")
+            return
+        post = request.POST
+        question = post.get('question', '').strip()
+        answer = post.get('answer', '').strip()
+        if not question or not answer:
+            messages.error(request, "A FAQ needs both a question and an answer.")
+            return
+        location_id = post.get('location', '').strip()
+        faq.question = question
+        faq.answer = answer
+        faq.location_id = location_id or None
+        faq.order = _parsed_int(post.get('order')) or 0
+        faq.save()
+        messages.success(request, "FAQ updated.")
+
+    def _delete_faq(self, request):
+        FAQ.objects.filter(pk=request.POST.get('faq_id')).delete()
+        messages.success(request, "FAQ deleted.")
 
     # --- Extras ---
 

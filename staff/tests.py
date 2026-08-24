@@ -7,7 +7,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from bookings.models import BalancePayment, Booking, BookingCondition, Charge, Payment
+from bookings.models import BalancePayment, Booking, BookingCondition, Charge, FAQ, Payment
 from guests.models import Guest
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, Manager, Owner, Price,
@@ -1157,3 +1157,52 @@ class StaffSettingsViewTests(TestCase):
         response = self.client.get(self.url)
         texts = [c.text for c in response.context['booking_conditions']]
         self.assertEqual(texts, ['First', 'Second'])
+
+    def test_add_faq(self):
+        self.client.post(self.url, {
+            'action': 'add_faq', 'question': 'Can I have a late check-out?',
+            'answer': 'Yes, ask us.', 'order': '2',
+        })
+        faq = FAQ.objects.get(question='Can I have a late check-out?')
+        self.assertEqual(faq.answer, 'Yes, ask us.')
+        self.assertEqual(faq.order, 2)
+        self.assertIsNone(faq.location)
+
+    def test_add_faq_requires_question_and_answer(self):
+        self.client.post(self.url, {'action': 'add_faq', 'question': '', 'answer': ''})
+        self.assertEqual(FAQ.objects.count(), 0)
+
+    def test_add_faq_with_a_location(self):
+        location = make_location(title='Parking Location')
+        self.client.post(self.url, {
+            'action': 'add_faq', 'question': 'Is there parking?', 'answer': 'Yes, private parking.',
+            'location': location.pk,
+        })
+        faq = FAQ.objects.get(question='Is there parking?')
+        self.assertEqual(faq.location, location)
+
+    def test_update_faq_saves_fields_and_can_clear_location(self):
+        location = make_location(title='FAQ Update Location')
+        faq = FAQ.objects.create(question='Original', answer='Original answer', order=1, location=location)
+        response = self.client.post(self.url, {
+            'action': 'update_faq', 'faq_id': faq.pk, 'question': 'Updated',
+            'answer': 'Updated answer', 'order': '5', 'location': '',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=bookings')
+        faq.refresh_from_db()
+        self.assertEqual(faq.question, 'Updated')
+        self.assertEqual(faq.answer, 'Updated answer')
+        self.assertEqual(faq.order, 5)
+        self.assertIsNone(faq.location)
+
+    def test_delete_faq(self):
+        faq = FAQ.objects.create(question='Delete me', answer='Answer', order=1)
+        self.client.post(self.url, {'action': 'delete_faq', 'faq_id': faq.pk})
+        self.assertFalse(FAQ.objects.filter(pk=faq.pk).exists())
+
+    def test_faqs_context_ordered(self):
+        FAQ.objects.create(question='Second', answer='A', order=2)
+        FAQ.objects.create(question='First', answer='A', order=1)
+        response = self.client.get(self.url)
+        questions = [f.question for f in response.context['faqs']]
+        self.assertEqual(questions, ['First', 'Second'])

@@ -1,0 +1,90 @@
+{% load static %}
+{% load bookings_extras %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Location &amp; Arrival {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'locations/location.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Location &amp; Arrival</h1>
+
+            {% if location %}
+            <p class="location-address">
+                {{ location.street }}{% if location.block != "N/A" %}, {{ location.block }}{% endif %},
+                {{ location.zip_code }} {{ location.city }}
+            </p>
+
+            {% if location.osm_embed_url %}
+            <div class="details-section">
+                <div class="location-map">
+                    <iframe
+                        src="{{ location.osm_embed_url }}"
+                        width="100%" height="100%" style="border:0;"
+                        loading="lazy" referrerpolicy="no-referrer-when-downgrade">
+                    </iframe>
+                </div>
+                {% if location.map_link %}
+                <a href="{{ location.map_link }}" target="_blank" rel="noopener noreferrer" class="location-map-link location-map-link-spaced">Open in Google Maps &rarr;</a>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if location.directions %}
+            <div class="details-section">
+                <h2 class="details-section-title">Directions</h2>
+                <p class="details-note details-note-left">{{ location.directions|linkify }}</p>
+            </div>
+            {% endif %}
+
+            {% if location.nearest_bins or location.nearest_corner_shop or location.nearest_supermarket %}
+            <div class="details-section">
+                <h2 class="details-section-title">Good to know</h2>
+                <ul class="details-list">
+                    {% if location.nearest_bins %}<li><strong>Bins:</strong> {{ location.nearest_bins|linkify }}</li>{% endif %}
+                    {% if location.nearest_corner_shop %}<li><strong>Nearest corner shop:</strong> {{ location.nearest_corner_shop|linkify }}</li>{% endif %}
+                    {% if location.nearest_supermarket %}<li><strong>Nearest supermarket:</strong> {{ location.nearest_supermarket|linkify }}</li>{% endif %}
+                </ul>
+            </div>
+            {% endif %}
+
+            {% with rules=location.rules %}
+            {% if rules %}
+            <div class="details-section">
+                <h2 class="details-section-title">House rules</h2>
+                <ul class="details-list">
+                    <li><strong>Pool hours:</strong> {{ rules.pool_hours_start|time:"H:i" }} – {{ rules.pool_hours_end|time:"H:i" }}</li>
+                    <li><strong>Quiet hours:</strong> {{ rules.quiet_hours_start|time:"H:i" }} – {{ rules.quiet_hours_end|time:"H:i" }}</li>
+                    {% if rules.pool_rules %}<li>{{ rules.pool_rules|linkify }}</li>{% endif %}
+                    {% if rules.condominium_rules %}<li>{{ rules.condominium_rules|linkify }}</li>{% endif %}
+                </ul>
+            </div>
+            {% endif %}
+            {% endwith %}
+            {% else %}
+            <p class="details-note">Location details for this property aren't available yet - please contact us if you need directions.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>
