@@ -168,6 +168,30 @@
     width: 70px;
 }
 
+.staff-booking-conditions-table th:first-child,
+.staff-booking-conditions-table td:first-child {
+    width: 80px;
+}
+
+/* .staff-price-row-actions normally sets display:flex directly on the <td> itself (see
+   property_detail.css) - harmless on the other catalog tables since every row there is exactly
+   one input tall, so the flex td's content height already matches the row height. Booking
+   Conditions rows can be taller (a 2-row <textarea> vs a single-line <input>), and a flex-
+   display td does NOT stretch to the row's full height in Chrome - it sizes to its buttons'
+   content height instead, so its border-bottom sat ~20px above the row's real edge (confirmed via
+   getBoundingClientRect - buttons cell 42px tall vs the row's actual 62px). Overriding back to a
+   plain table-cell here, with text-align standing in for the flex row's alignment, sidesteps that
+   without touching the shared class the other three tables still rely on. */
+.staff-booking-conditions-table .staff-price-row-actions {
+    display: table-cell;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.staff-booking-conditions-table .staff-price-row-actions .staff-button {
+    margin-left: 6px;
+}
+
 /* Owners' 7 boolean columns push the table past its panel width (4 text columns + 7 checkbox
    columns + actions) - a horizontal-scroll wrapper keeps the panel itself from stretching/
    overflowing the page, matching the general Artifact-page rule of scrolling wide content in its

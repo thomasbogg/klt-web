@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
@@ -15,19 +15,19 @@ from django.views import View
 
 from availability.utils import get_property_calendar
 from bookings.models import (
-    CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Booking,
+    CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Booking, BookingCondition,
     BookingSettings, ExtrasSettings, PaymentSettings, RequestType, WelcomePackItem,
 )
 from bookings.utils import extras_summary
 from guests.models import Guest
 from properties.models import (
-    Accountant, Amenity, Location, Manager, Owner, Price, Property, PropertyImage, PropertyOwnership,
-    PropertySpec, SEFDetail, iCalLink,
+    Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, Manager, Owner, Price,
+    Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail, iCalLink,
 )
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
 from staff.utils import (
-    AMENITY_BOOLEAN_FIELDS, GUEST_LETTERS, OWNER_BOOLEAN_FIELDS, STAGE_TABS, STATUS_BUCKETS,
-    booking_stage, next_step_hint, reservation_rows,
+    AMENITY_BOOLEAN_FIELDS, GUEST_LETTERS, LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS,
+    STAGE_TABS, STATUS_BUCKETS, booking_stage, next_step_hint, reservation_rows,
 )
 
 
@@ -247,6 +247,20 @@ class StaffPropertyListView(View):
         return render(request, self.template_name, context)
 
 
+@method_decorator(staff_member_required, name='dispatch')
+class StaffLocationListView(View):
+    """Location's own list page, same shape as StaffPropertyListView minus the filter (there's no
+    obvious thing to filter Locations by) - each row also shows how many properties currently
+    point at it, so staff can tell at a glance which locations are actually in use."""
+    template_name = 'staff/location_list.html'
+
+    def get(self, request, *args, **kwargs):
+        context = {
+            'locations': Location.objects.annotate(property_count=Count('property')).order_by('title'),
+        }
+        return render(request, self.template_name, context)
+
+
 def _property_form_context():
     return {
         'owners': Owner.objects.order_by('name'),
@@ -295,6 +309,37 @@ class StaffPropertyCreateView(View):
             PropertyOwnership.record_initial_ownership(property, property.owner)
         messages.success(request, "Property created.")
         return redirect('staff:property_detail', pk=property.pk)
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class StaffLocationCreateView(View):
+    """Same minimal-fields philosophy as StaffPropertyCreateView - exactly the fields the existing
+    quick-add panel already asks for (see StaffQuickAddView._build_location), since a location
+    used to only ever be creatable from there. Specification, rules and photos only make sense
+    once the row exists, so those stay detail-page-only."""
+    template_name = 'staff/location_create.html'
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name, {})
+
+    def post(self, request, *args, **kwargs):
+        post = request.POST
+        location = Location(
+            title=post.get('title', '').strip(),
+            street=post.get('street', '').strip(),
+            zip_code=post.get('zip_code', '').strip(),
+            city=post.get('city', '').strip(),
+            coordinates=post.get('coordinates', '').strip(),
+            map_link=post.get('map_link', '').strip(),
+        )
+        try:
+            location.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return render(request, self.template_name, {})
+        location.save()
+        messages.success(request, "Location created.")
+        return redirect('staff:location_detail', pk=location.pk)
 
 
 @method_decorator(staff_member_required, name='dispatch')
@@ -394,6 +439,9 @@ class StaffSettingsView(View):
     PANELS = ('bookings', 'extras', 'staff', 'people', 'payments')
     ACTION_PANELS = {
         'update_booking_settings': 'bookings',
+        'add_booking_condition': 'bookings',
+        'update_booking_condition': 'bookings',
+        'delete_booking_condition': 'bookings',
         'update_extras_settings': 'extras',
         'add_welcome_pack_item': 'extras',
         'update_welcome_pack_item': 'extras',
@@ -424,6 +472,9 @@ class StaffSettingsView(View):
         action = request.POST.get('action')
         handler = {
             'update_booking_settings': self._update_booking_settings,
+            'add_booking_condition': self._add_booking_condition,
+            'update_booking_condition': self._update_booking_condition,
+            'delete_booking_condition': self._delete_booking_condition,
             'update_extras_settings': self._update_extras_settings,
             'add_welcome_pack_item': self._add_welcome_pack_item,
             'update_welcome_pack_item': self._update_welcome_pack_item,
@@ -453,6 +504,7 @@ class StaffSettingsView(View):
         return {
             'active_panel': active_panel,
             'booking_settings': BookingSettings.load(),
+            'booking_conditions': BookingCondition.objects.all(),
             'extras_settings': ExtrasSettings.load(),
             'payment_settings': PaymentSettings.load(),
             'month_choices': MONTH_CHOICES,
@@ -498,6 +550,35 @@ class StaffSettingsView(View):
             return
         settings.save()
         messages.success(request, "Booking settings updated.")
+
+    def _add_booking_condition(self, request):
+        post = request.POST
+        text = post.get('text', '').strip()
+        if not text:
+            messages.error(request, "A booking condition needs some text.")
+            return
+        condition = BookingCondition(text=text, order=_parsed_int(post.get('order')) or 0)
+        condition.save()
+        messages.success(request, "Booking condition added.")
+
+    def _update_booking_condition(self, request):
+        condition = BookingCondition.objects.filter(pk=request.POST.get('condition_id')).first()
+        if condition is None:
+            messages.error(request, "That booking condition no longer exists.")
+            return
+        post = request.POST
+        text = post.get('text', '').strip()
+        if not text:
+            messages.error(request, "A booking condition needs some text.")
+            return
+        condition.text = text
+        condition.order = _parsed_int(post.get('order')) or 0
+        condition.save()
+        messages.success(request, "Booking condition updated.")
+
+    def _delete_booking_condition(self, request):
+        BookingCondition.objects.filter(pk=request.POST.get('condition_id')).delete()
+        messages.success(request, "Booking condition deleted.")
 
     # --- Extras ---
 
@@ -1090,6 +1171,142 @@ class StaffPropertyDetailView(View):
             _flash_validation_error(request, error)
             return
         messages.success(request, f"Ownership transferred to {new_owner} effective {effective_date}.")
+
+
+# Fallback values only used the first time a Location's Rules row is created (LocationRules'
+# four TimeFields have no model-level default, unlike PropertySpec/Amenity/SEFDetail's fields -
+# see StaffLocationDetailView._context) - sensible starting hours for a holiday rental, not a
+# real policy statement; staff are expected to override them for each location's actual rules.
+LOCATION_RULES_DEFAULTS = {
+    'quiet_hours_start': time(22, 0), 'quiet_hours_end': time(8, 0),
+    'pool_hours_start': time(9, 0), 'pool_hours_end': time(20, 0),
+}
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class StaffLocationDetailView(View):
+    """Location's equivalent of StaffPropertyDetailView - same CSS-only radio-tab sidebar
+    technique, three panels instead of seven since Location has no rate card, SEF details, iCal
+    links or ownership concept of its own: Main info (Location fields + LocationSpec's boolean
+    flags side by side, same two-card layout as Property's own Main info tab), Rules
+    (LocationRules - quiet/pool hours plus free-text pool/condominium rules), and Photos
+    (LocationImage gallery, identical add/delete pattern to PropertyImage's)."""
+    template_name = 'staff/location_detail.html'
+
+    def _get_location(self, pk):
+        location = Location.objects.filter(pk=pk).first()
+        if location is None:
+            raise Http404("No location found.")
+        return location
+
+    ACTION_PANELS = {
+        'update_location_info': 'main',
+        'update_specification': 'main',
+        'update_rules': 'rules',
+        'add_image': 'photos',
+        'delete_image': 'photos',
+    }
+    PANELS = ('main', 'rules', 'photos')
+
+    def get(self, request, pk, *args, **kwargs):
+        location = self._get_location(pk)
+        panel = request.GET.get('panel', '')
+        active_panel = panel if panel in self.PANELS else 'main'
+        return render(request, self.template_name, self._context(location, active_panel))
+
+    def post(self, request, pk, *args, **kwargs):
+        location = self._get_location(pk)
+        action = request.POST.get('action')
+        handler = {
+            'update_location_info': self._update_location_info,
+            'update_specification': self._update_specification,
+            'update_rules': self._update_rules,
+            'add_image': self._add_image,
+            'delete_image': self._delete_image,
+        }.get(action)
+        if handler is not None:
+            handler(request, location)
+        panel = self.ACTION_PANELS.get(action, 'main')
+        return redirect(f"{reverse('staff:location_detail', kwargs={'pk': location.pk})}?panel={panel}")
+
+    def _context(self, location, active_panel):
+        specs, _ = LocationSpec.objects.get_or_create(location=location)
+        rules, _ = LocationRules.objects.get_or_create(location=location, defaults=LOCATION_RULES_DEFAULTS)
+        return {
+            'location': location,
+            'active_panel': active_panel,
+            'specs': specs,
+            'spec_fields': LOCATION_SPEC_BOOLEAN_FIELDS,
+            'rules': rules,
+            'images': location.images.all(),
+        }
+
+    def _update_location_info(self, request, location):
+        post = request.POST
+        location.title = post.get('title', location.title).strip() or location.title
+        location.block = post.get('block', '').strip() or 'N/A'
+        location.street = post.get('street', location.street).strip() or location.street
+        location.zip_code = post.get('zip_code', location.zip_code).strip() or location.zip_code
+        location.city = post.get('city', location.city).strip() or location.city
+        location.coordinates = post.get('coordinates', location.coordinates).strip() or location.coordinates
+        location.map_link = post.get('map_link', location.map_link).strip() or location.map_link
+        location.directions = post.get('directions', '').strip()
+        location.description = post.get('description', '').strip()
+        location.nearest_bins = post.get('nearest_bins', '').strip()
+        location.nearest_corner_shop = post.get('nearest_corner_shop', '').strip()
+        location.nearest_supermarket = post.get('nearest_supermarket', '').strip()
+        try:
+            location.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        location.save()
+        messages.success(request, "Location info updated.")
+
+    def _update_specification(self, request, location):
+        specs, _ = LocationSpec.objects.get_or_create(location=location)
+        post = request.POST
+        for field, _label in LOCATION_SPEC_BOOLEAN_FIELDS:
+            setattr(specs, field, post.get(field) == 'on')
+        specs.save()
+        messages.success(request, "Location specification updated.")
+
+    def _update_rules(self, request, location):
+        rules, _ = LocationRules.objects.get_or_create(location=location, defaults=LOCATION_RULES_DEFAULTS)
+        post = request.POST
+        for field in ('quiet_hours_start', 'quiet_hours_end', 'pool_hours_start', 'pool_hours_end'):
+            value = _parsed_time(post.get(field))
+            if value is not None:
+                setattr(rules, field, value)
+        rules.pool_rules = post.get('pool_rules', '').strip()
+        rules.condominium_rules = post.get('condominium_rules', '').strip()
+        try:
+            rules.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        rules.save()
+        messages.success(request, "Location rules updated.")
+
+    def _add_image(self, request, location):
+        image_file = request.FILES.get('image')
+        if not image_file:
+            messages.error(request, "Choose a file to upload.")
+            return
+        image = LocationImage(
+            location=location, image=image_file, caption=request.POST.get('caption', '').strip(),
+        )
+        try:
+            image.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        image.save()
+        messages.success(request, "Photo added.")
+
+    def _delete_image(self, request, location):
+        LocationImage.objects.filter(pk=request.POST.get('image_id'), location=location).delete()
+        messages.success(request, "Photo deleted.")
 
 
 @method_decorator(staff_member_required, name='dispatch')

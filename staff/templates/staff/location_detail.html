@@ -1,0 +1,173 @@
+{% load static %}
+{% load staff_extras %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ location }} | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/location_detail.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">{{ location }}</h1>
+            <a href="{% url 'staff:location_list' %}" class="staff-header-link">&larr; All locations</a>
+        </header>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% comment %}
+        Same CSS-only tab technique as property_detail.html, three panels instead of seven - see
+        location_detail.css for the sibling-selector rules this pairs with.
+        {% endcomment %}
+        <div class="staff-location-layout">
+            <input type="radio" name="location-panel" id="location-panel-main" class="staff-location-tab-radio" {% if active_panel == 'main' %}checked{% endif %}>
+            <input type="radio" name="location-panel" id="location-panel-rules" class="staff-location-tab-radio" {% if active_panel == 'rules' %}checked{% endif %}>
+            <input type="radio" name="location-panel" id="location-panel-photos" class="staff-location-tab-radio" {% if active_panel == 'photos' %}checked{% endif %}>
+
+            <nav class="staff-location-sidebar">
+                <label for="location-panel-main" class="staff-location-tab-label">Main info</label>
+                <label for="location-panel-rules" class="staff-location-tab-label">Rules</label>
+                <label for="location-panel-photos" class="staff-location-tab-label">Photos</label>
+            </nav>
+
+            <div class="staff-location-content">
+                <section class="staff-location-pane" id="location-pane-main">
+                    <div class="staff-property-main-columns">
+                        <div class="staff-panel">
+                            <h2 class="staff-panel-title">Location info</h2>
+                            <form method="post" class="staff-form">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="update_location_info">
+                                <label class="staff-field">Title
+                                    <input type="text" name="title" class="staff-input" value="{{ location.title }}" required>
+                                </label>
+                                <label class="staff-field">Block
+                                    <input type="text" name="block" class="staff-input" value="{{ location.block }}">
+                                </label>
+                                <label class="staff-field">Street
+                                    <input type="text" name="street" class="staff-input" value="{{ location.street }}" required>
+                                </label>
+                                <label class="staff-field">Zip code
+                                    <input type="text" name="zip_code" class="staff-input" value="{{ location.zip_code }}" required>
+                                </label>
+                                <label class="staff-field">City
+                                    <input type="text" name="city" class="staff-input" value="{{ location.city }}" required>
+                                </label>
+                                <label class="staff-field">Coordinates
+                                    <input type="text" name="coordinates" class="staff-input" value="{{ location.coordinates }}" placeholder="lat, lon" required>
+                                </label>
+                                <label class="staff-field">Map link
+                                    <input type="text" name="map_link" class="staff-input" value="{{ location.map_link }}" required>
+                                </label>
+                                <label class="staff-field">Directions
+                                    <textarea name="directions" class="staff-input" rows="3">{{ location.directions|default:'' }}</textarea>
+                                </label>
+                                <label class="staff-field">Description
+                                    <textarea name="description" class="staff-input" rows="3">{{ location.description|default:'' }}</textarea>
+                                </label>
+                                <label class="staff-field">Nearest bins
+                                    <textarea name="nearest_bins" class="staff-input" rows="2">{{ location.nearest_bins|default:'' }}</textarea>
+                                </label>
+                                <label class="staff-field">Nearest corner shop
+                                    <textarea name="nearest_corner_shop" class="staff-input" rows="2">{{ location.nearest_corner_shop|default:'' }}</textarea>
+                                </label>
+                                <label class="staff-field">Nearest supermarket
+                                    <textarea name="nearest_supermarket" class="staff-input" rows="2">{{ location.nearest_supermarket|default:'' }}</textarea>
+                                </label>
+                                <button type="submit" class="staff-button">Update</button>
+                            </form>
+                        </div>
+
+                        <div class="staff-panel">
+                            <h2 class="staff-panel-title">Location specification</h2>
+                            <form method="post" class="staff-form">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="update_specification">
+                                <div class="staff-amenity-grid">
+                                    {% for field, label in spec_fields %}
+                                    <label class="staff-checkbox-label">
+                                        <input type="checkbox" name="{{ field }}" {% if specs|get_attr:field %}checked{% endif %}> {{ label }}
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                                <button type="submit" class="staff-button">Update</button>
+                            </form>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="staff-panel staff-location-pane" id="location-pane-rules">
+                    <h2 class="staff-panel-title">Rules</h2>
+                    <form method="post" class="staff-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update_rules">
+                        <div class="staff-field-row">
+                            <label class="staff-field">Quiet hours start
+                                <input type="time" name="quiet_hours_start" class="staff-input" value="{{ rules.quiet_hours_start|time:'H:i' }}">
+                            </label>
+                            <label class="staff-field">Quiet hours end
+                                <input type="time" name="quiet_hours_end" class="staff-input" value="{{ rules.quiet_hours_end|time:'H:i' }}">
+                            </label>
+                        </div>
+                        <div class="staff-field-row">
+                            <label class="staff-field">Pool hours start
+                                <input type="time" name="pool_hours_start" class="staff-input" value="{{ rules.pool_hours_start|time:'H:i' }}">
+                            </label>
+                            <label class="staff-field">Pool hours end
+                                <input type="time" name="pool_hours_end" class="staff-input" value="{{ rules.pool_hours_end|time:'H:i' }}">
+                            </label>
+                        </div>
+                        <label class="staff-field">Pool rules
+                            <textarea name="pool_rules" class="staff-input" rows="4">{{ rules.pool_rules|default:'' }}</textarea>
+                        </label>
+                        <label class="staff-field">Condominium rules
+                            <textarea name="condominium_rules" class="staff-input" rows="4">{{ rules.condominium_rules|default:'' }}</textarea>
+                        </label>
+                        <button type="submit" class="staff-button">Update</button>
+                    </form>
+                </section>
+
+                <section class="staff-panel staff-location-pane" id="location-pane-photos">
+                    <h2 class="staff-panel-title">Photos</h2>
+                    <div class="staff-photo-grid">
+                        {% for image in images %}
+                        <div class="staff-photo-card">
+                            <img src="{{ image.image.url }}" alt="{{ image.caption|default:location.title }}">
+                            {% if image.caption %}<p class="staff-photo-caption">{{ image.caption }}</p>{% endif %}
+                            <form method="post" class="staff-inline-delete">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="delete_image">
+                                <input type="hidden" name="image_id" value="{{ image.pk }}">
+                                <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                            </form>
+                        </div>
+                        {% empty %}
+                        <p class="staff-empty">No photos uploaded yet.</p>
+                        {% endfor %}
+                    </div>
+                    <form method="post" enctype="multipart/form-data" class="staff-inline-form staff-photo-add-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="add_image">
+                        <input type="file" name="image" accept="image/*" class="staff-input">
+                        <input type="text" name="caption" placeholder="Caption (optional)" class="staff-input">
+                        <button type="submit" class="staff-button staff-button-small">+ Add photo</button>
+                    </form>
+                </section>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

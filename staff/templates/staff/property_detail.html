@@ -73,12 +73,17 @@
                                     <input type="text" name="door_number" class="staff-input" value="{{ property.door_number|default:'' }}">
                                 </label>
                                 <label class="staff-field">Location
-                                    <select name="location" class="staff-input">
-                                        <option value="">-</option>
-                                        {% for location in locations %}
-                                        <option value="{{ location.pk }}" {% if property.location_id == location.pk %}selected{% endif %}>{{ location }}</option>
-                                        {% endfor %}
-                                    </select>
+                                    <div class="staff-field-with-action">
+                                        <select name="location" class="staff-input">
+                                            <option value="">-</option>
+                                            {% for location in locations %}
+                                            <option value="{{ location.pk }}" {% if property.location_id == location.pk %}selected{% endif %}>{{ location }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        {% if property.location %}
+                                        <a href="{% url 'staff:location_detail' pk=property.location_id %}" class="staff-button staff-button-small">Edit location</a>
+                                        {% endif %}
+                                    </div>
                                 </label>
                                 <label class="staff-field">Owner
                                     <div class="staff-field-with-action">

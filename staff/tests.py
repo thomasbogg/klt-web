@@ -7,11 +7,11 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from bookings.models import BalancePayment, Booking, Charge, Payment
+from bookings.models import BalancePayment, Booking, BookingCondition, Charge, Payment
 from guests.models import Guest
 from properties.models import (
-    Accountant, Amenity, Location, Manager, Owner, Price, Property, PropertyImage, PropertyOwnership,
-    PropertySpec, SEFDetail, iCalLink,
+    Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, Manager, Owner, Price,
+    Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail, iCalLink,
 )
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
 from staff.utils import booking_stage, next_step_hint, status_bucket
@@ -979,6 +979,124 @@ class StaffPropertyDetailViewTests(TestCase):
         self.assertRedirects(response, f'{self.url}?panel=ownership')
 
 
+class StaffLocationListViewTests(TestCase):
+    def setUp(self):
+        User.objects.create_user(username='location_list_staffer', password='pw', is_staff=True)
+        self.client.login(username='location_list_staffer', password='pw')
+        self.location = make_location(title='Location List Test')
+        self.url = reverse('staff:location_list')
+
+    def test_lists_locations_with_property_count(self):
+        Property.objects.create(title='Counted Property', short_title='COUNTED', location=self.location)
+        response = self.client.get(self.url)
+        row = next(l for l in response.context['locations'] if l.pk == self.location.pk)
+        self.assertEqual(row.property_count, 1)
+
+    def test_add_new_location_link_present(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, reverse('staff:location_create'))
+
+
+class StaffLocationCreateViewTests(TestCase):
+    def setUp(self):
+        User.objects.create_user(username='location_create_staffer', password='pw', is_staff=True)
+        self.client.login(username='location_create_staffer', password='pw')
+        self.url = reverse('staff:location_create')
+
+    def test_get_renders_form(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+
+    def test_post_creates_location_and_redirects_to_detail(self):
+        response = self.client.post(self.url, {
+            'title': 'Brand New Location', 'street': '5 New Street', 'zip_code': '8000-111',
+            'city': 'Faro', 'coordinates': '37.1,-7.8', 'map_link': 'https://maps.example.com/new',
+        })
+        location = Location.objects.get(title='Brand New Location')
+        self.assertRedirects(response, reverse('staff:location_detail', kwargs={'pk': location.pk}))
+        self.assertEqual(location.city, 'Faro')
+
+    def test_post_missing_required_field_shows_error_and_does_not_create(self):
+        response = self.client.post(self.url, {'title': 'Incomplete Location'})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Location.objects.filter(title='Incomplete Location').exists())
+
+
+class StaffLocationDetailViewTests(TestCase):
+    def setUp(self):
+        User.objects.create_user(username='location_detail_staffer', password='pw', is_staff=True)
+        self.client.login(username='location_detail_staffer', password='pw')
+        self.location = make_location(title='Detail Location')
+        self.url = reverse('staff:location_detail', kwargs={'pk': self.location.pk})
+
+    def test_unknown_location_404s(self):
+        response = self.client.get(reverse('staff:location_detail', kwargs={'pk': 999999}))
+        self.assertEqual(response.status_code, 404)
+
+    def test_get_lazily_creates_spec_and_rules_records(self):
+        self.assertFalse(LocationSpec.objects.filter(location=self.location).exists())
+        self.assertFalse(LocationRules.objects.filter(location=self.location).exists())
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(LocationSpec.objects.filter(location=self.location).exists())
+        rules = LocationRules.objects.get(location=self.location)
+        self.assertIsNotNone(rules.quiet_hours_start)
+
+    def test_update_location_info_saves_fields(self):
+        response = self.client.post(self.url, {
+            'action': 'update_location_info', 'title': 'Detail Location', 'street': '9 Updated Street',
+            'zip_code': '8000-222', 'city': 'Faro', 'coordinates': '37.2,-7.7',
+            'map_link': 'https://maps.example.com/updated', 'description': 'A lovely spot.',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=main')
+        self.location.refresh_from_db()
+        self.assertEqual(self.location.street, '9 Updated Street')
+        self.assertEqual(self.location.description, 'A lovely spot.')
+
+    def test_update_location_info_rejects_blank_required_field(self):
+        self.client.post(self.url, {
+            'action': 'update_location_info', 'title': '', 'street': self.location.street,
+            'zip_code': self.location.zip_code, 'city': self.location.city,
+            'coordinates': self.location.coordinates, 'map_link': 'not-a-valid-url',
+        })
+        self.location.refresh_from_db()
+        self.assertEqual(self.location.title, 'Detail Location')
+
+    def test_update_specification_saves_fields(self):
+        self.client.post(self.url, {'action': 'update_specification', 'sea_views': 'on', 'pool': 'on'})
+        specs = LocationSpec.objects.get(location=self.location)
+        self.assertTrue(specs.sea_views)
+        self.assertTrue(specs.pool)
+        self.assertFalse(specs.gym)
+
+    def test_update_rules_saves_fields(self):
+        self.client.post(self.url, {
+            'action': 'update_rules', 'quiet_hours_start': '23:00', 'quiet_hours_end': '07:00',
+            'pool_hours_start': '08:00', 'pool_hours_end': '21:00', 'pool_rules': 'No diving.',
+        })
+        rules = LocationRules.objects.get(location=self.location)
+        self.assertEqual(rules.quiet_hours_start.strftime('%H:%M'), '23:00')
+        self.assertEqual(rules.pool_rules, 'No diving.')
+
+    def test_add_image_and_delete_image(self):
+        upload = SimpleUploadedFile('test.jpg', b'fake-image-bytes', content_type='image/jpeg')
+        self.client.post(self.url, {'action': 'add_image', 'image': upload, 'caption': 'View'})
+        image = LocationImage.objects.get(location=self.location)
+        self.assertEqual(image.caption, 'View')
+
+        self.client.post(self.url, {'action': 'delete_image', 'image_id': image.pk})
+        self.assertFalse(LocationImage.objects.filter(pk=image.pk).exists())
+        image.image.delete(save=False)
+
+    def test_default_panel_is_main(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['active_panel'], 'main')
+
+    def test_save_redirects_back_to_the_panel_it_came_from(self):
+        response = self.client.post(self.url, {'action': 'update_rules', 'pool_rules': 'x'})
+        self.assertRedirects(response, f'{self.url}?panel=rules')
+
+
 class StaffSettingsViewTests(TestCase):
     def setUp(self):
         User.objects.create_user(username='settings_staffer', password='pw', is_staff=True)
@@ -998,3 +1116,37 @@ class StaffSettingsViewTests(TestCase):
         self.assertTrue(Owner.objects.filter(pk=owner.pk).exists())
         messages = [str(m) for m in response.context['messages']]
         self.assertTrue(any('ownership history' in m for m in messages))
+
+    def test_add_booking_condition(self):
+        self.client.post(self.url, {
+            'action': 'add_booking_condition', 'text': 'No smoking indoors.', 'order': '2',
+        })
+        condition = BookingCondition.objects.get(text='No smoking indoors.')
+        self.assertEqual(condition.order, 2)
+
+    def test_add_booking_condition_requires_text(self):
+        self.client.post(self.url, {'action': 'add_booking_condition', 'text': '', 'order': '1'})
+        self.assertFalse(BookingCondition.objects.filter(order=1).exists())
+
+    def test_update_booking_condition_saves_fields(self):
+        condition = BookingCondition.objects.create(text='Original text', order=1)
+        response = self.client.post(self.url, {
+            'action': 'update_booking_condition', 'condition_id': condition.pk,
+            'text': 'Updated text', 'order': '5',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=bookings')
+        condition.refresh_from_db()
+        self.assertEqual(condition.text, 'Updated text')
+        self.assertEqual(condition.order, 5)
+
+    def test_delete_booking_condition(self):
+        condition = BookingCondition.objects.create(text='Delete me', order=1)
+        self.client.post(self.url, {'action': 'delete_booking_condition', 'condition_id': condition.pk})
+        self.assertFalse(BookingCondition.objects.filter(pk=condition.pk).exists())
+
+    def test_booking_conditions_context_ordered(self):
+        BookingCondition.objects.create(text='Second', order=2)
+        BookingCondition.objects.create(text='First', order=1)
+        response = self.client.get(self.url)
+        texts = [c.text for c in response.context['booking_conditions']]
+        self.assertEqual(texts, ['First', 'Second'])

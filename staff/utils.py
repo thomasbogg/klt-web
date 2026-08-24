@@ -77,6 +77,19 @@ OWNER_BOOLEAN_FIELDS = (
     ('is_paid_regularly', 'Paid on a regular schedule'),
 )
 
+# properties.models.LocationSpec's boolean fields, same (field, label) pattern as
+# AMENITY_BOOLEAN_FIELDS - drives the Location detail page's checkbox grid.
+LOCATION_SPEC_BOOLEAN_FIELDS = (
+    ('sea_views', 'Sea views'),
+    ('pool', 'Pool'),
+    ('lift', 'Lift'),
+    ('beachfront', 'Beachfront'),
+    ('wifi', 'WiFi'),
+    ('private_parking', 'Private parking'),
+    ('street_parking', 'Street parking'),
+    ('gym', 'Gym'),
+)
+
 
 def status_bucket(stage):
     """Valid = still a real, active/upcoming/ongoing booking (Provisional/Confirmed/Holiday

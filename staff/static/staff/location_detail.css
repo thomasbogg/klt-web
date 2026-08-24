@@ -1,0 +1,88 @@
+/* CSS-only tab switcher, same technique as property_detail.css (own prefix so both files can be
+   loaded independently without any class/id collisions - see settings.css for the same
+   per-page-prefix convention). Three panels instead of seven: Location has no rate card, SEF
+   details, iCal links or ownership concept of its own. */
+.staff-location-layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 24px;
+    align-items: start;
+}
+
+.staff-location-tab-radio {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.staff-location-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: var(--primary-box-shadow);
+    padding: 8px;
+    position: sticky;
+    top: 20px;
+}
+
+.staff-location-tab-label {
+    display: block;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-family: var(--secondary-font);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--secondary-color);
+    cursor: pointer;
+}
+
+.staff-location-tab-label:hover {
+    background: #f5f5f5;
+}
+
+.staff-location-content {
+    min-width: 0;
+}
+
+.staff-location-pane {
+    display: none;
+}
+
+#location-panel-main:checked ~ .staff-location-content #location-pane-main,
+#location-panel-rules:checked ~ .staff-location-content #location-pane-rules,
+#location-panel-photos:checked ~ .staff-location-content #location-pane-photos {
+    display: block;
+}
+
+#location-panel-main:checked ~ .staff-location-sidebar label[for="location-panel-main"],
+#location-panel-rules:checked ~ .staff-location-sidebar label[for="location-panel-rules"],
+#location-panel-photos:checked ~ .staff-location-sidebar label[for="location-panel-photos"] {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+@media (max-width: 800px) {
+    .staff-location-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .staff-location-sidebar {
+        position: static;
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+}
+
+/* Same reasoning as property_detail.css's own .staff-property-content .staff-form rule: keeps a
+   lone stacked form from stretching edge-to-edge of a wide pane. Location specification uses the
+   full-width checkbox grid instead (see .staff-amenity-grid, reused as-is from
+   property_detail.css), so it's exempted the same way Amenities/SEF are on the Property page. */
+.staff-location-content .staff-form {
+    max-width: 480px;
+}
+
+#location-pane-main .staff-panel:last-child .staff-form {
+    max-width: none;
+}

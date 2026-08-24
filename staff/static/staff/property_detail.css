@@ -58,7 +58,8 @@
     align-items: center;
 }
 
-.staff-field-with-action input {
+.staff-field-with-action input,
+.staff-field-with-action select {
     flex: 1;
     min-width: 0;
 }

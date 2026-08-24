@@ -1,0 +1,55 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New location | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/property_create.css' %}">
+</head>
+<body>
+    <div class="staff-page staff-lookup-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">New location</h1>
+            <a href="{% url 'staff:location_list' %}" class="staff-header-link">&larr; All locations</a>
+        </header>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <section class="staff-panel">
+            <form method="post" class="staff-form">
+                {% csrf_token %}
+                <label class="staff-field">Title
+                    <input type="text" name="title" class="staff-input" required autofocus>
+                </label>
+                <label class="staff-field">Street
+                    <input type="text" name="street" class="staff-input" required>
+                </label>
+                <label class="staff-field">Zip code
+                    <input type="text" name="zip_code" class="staff-input" required>
+                </label>
+                <label class="staff-field">City
+                    <input type="text" name="city" class="staff-input" required>
+                </label>
+                <label class="staff-field">Coordinates
+                    <input type="text" name="coordinates" class="staff-input" placeholder="lat, lon" required>
+                </label>
+                <label class="staff-field">Map link
+                    <input type="text" name="map_link" class="staff-input" required>
+                </label>
+                <button type="submit" class="staff-button">Create location</button>
+            </form>
+        </section>
+    </div>
+</body>
+</html>
