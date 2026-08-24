@@ -481,6 +481,13 @@ class Amenity(models.Model):
     heating_in_living_room = models.BooleanField(default=True)
     sofa_bed = models.BooleanField(default=True)
     safe = models.BooleanField(default=True)
+    vacuum_cleaner = models.BooleanField(default=True)
+    mop_and_bucket = models.BooleanField(default=True)
+    clothes_horse = models.BooleanField(default=True)
+    coffee_machine = models.BooleanField(default=True)
+    hand_towels_per_guest = models.IntegerField(default=1)
+    bath_towels_per_guest = models.IntegerField(default=1)
+    beach_towels_per_guest = models.IntegerField(default=1)
 
     FEATURE_PRIORITY = [
         ('wifi', 'WiFi', 'properties/icons/wifi.svg'),
@@ -514,7 +521,30 @@ class Amenity(models.Model):
         ('garden', 'Garden', 'properties/icons/garden.svg'),
         ('sofa_bed', 'Sofa Bed', 'properties/icons/sofa_bed.svg'),
         ('safe', 'Safe', 'properties/icons/safe.svg'),
+        ('vacuum_cleaner', 'Vacuum Cleaner', 'properties/icons/vacuum_cleaner.svg'),
+        ('mop_and_bucket', 'Mop & Bucket', 'properties/icons/mop_and_bucket.svg'),
+        ('clothes_horse', 'Clothes Horse', 'properties/icons/clothes_horse.svg'),
+        ('coffee_machine', 'Coffee Machine', 'properties/icons/coffee_machine.svg'),
     ]
+
+    TOWEL_TYPES = (
+        ('hand_towels_per_guest', 'hand'), ('bath_towels_per_guest', 'bath'), ('beach_towels_per_guest', 'beach'),
+    )
+
+    def towel_summary(self):
+        """Short guest-facing towel highlight for the property page's feature tile - deliberately
+        not the exact per-type counts (Thomas asked for this to fit two lines like its neighbours,
+        same as the other multi-word tile labels, rather than the three-line spelled-out version
+        this used to be). Hand towels are treated as a given and not worth calling out; beach
+        towels are what actually varies property to property, so lead with "Bath and beach
+        towels" whenever they're offered, falling back to "Hand and bath towels" to still show
+        something when they're not. Returns None (hides the tile) only when no towel type is
+        provided at all."""
+        if not any(getattr(self, field) > 0 for field, _ in self.TOWEL_TYPES):
+            return None
+        if self.beach_towels_per_guest > 0:
+            return "Bath and beach towels"
+        return "Hand and bath towels"
 
     def bed_label(self):
         if self.double_beds > 0:

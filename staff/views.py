@@ -1041,7 +1041,10 @@ class StaffPropertyDetailView(View):
         post = request.POST
         for field, _label in AMENITY_BOOLEAN_FIELDS:
             setattr(amenities, field, post.get(field) == 'on')
-        for field in ('double_beds', 'single_beds'):
+        for field in (
+            'double_beds', 'single_beds',
+            'hand_towels_per_guest', 'bath_towels_per_guest', 'beach_towels_per_guest',
+        ):
             value = _parsed_int(post.get(field))
             if value is not None:
                 setattr(amenities, field, value)

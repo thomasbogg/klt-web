@@ -780,7 +780,8 @@ class StaffPropertyDetailViewTests(TestCase):
     def test_update_amenities_saves_fields(self):
         self.client.post(self.url, {
             'action': 'update_amenities', 'wifi': 'on', 'pool': 'on', 'double_beds': '2',
-            'bed_sizes': '180 x 200',
+            'bed_sizes': '180 x 200', 'vacuum_cleaner': 'on', 'coffee_machine': 'on',
+            'hand_towels_per_guest': '2', 'beach_towels_per_guest': '0',
         })
         amenities = Amenity.objects.get(property=self.property)
         self.assertTrue(amenities.wifi)
@@ -788,6 +789,12 @@ class StaffPropertyDetailViewTests(TestCase):
         self.assertFalse(amenities.hot_tub)
         self.assertEqual(amenities.double_beds, 2)
         self.assertEqual(amenities.bed_sizes, '180 x 200')
+        self.assertTrue(amenities.vacuum_cleaner)
+        self.assertTrue(amenities.coffee_machine)
+        self.assertFalse(amenities.mop_and_bucket)  # not posted, so this update turns it off
+        self.assertEqual(amenities.hand_towels_per_guest, 2)
+        self.assertEqual(amenities.bath_towels_per_guest, 1)  # not posted - default carried over
+        self.assertEqual(amenities.beach_towels_per_guest, 0)
 
     def test_update_sef_saves_fields(self):
         self.client.post(self.url, {

@@ -61,6 +61,10 @@ AMENITY_BOOLEAN_FIELDS = (
     ('heating_in_living_room', 'Heating in living room'),
     ('sofa_bed', 'Sofa bed'),
     ('safe', 'Safe'),
+    ('vacuum_cleaner', 'Vacuum cleaner'),
+    ('mop_and_bucket', 'Mop & bucket'),
+    ('clothes_horse', 'Clothes horse'),
+    ('coffee_machine', 'Coffee machine'),
 )
 
 # properties.models.Owner's boolean fields have no model-level default (a genuine choice always

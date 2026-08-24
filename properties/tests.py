@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from bookings.models import Booking
 from guests.models import Guest
-from properties.models import Location, Owner, Price, Property, PropertyOwnership, PropertySpec
+from properties.models import Amenity, Location, Owner, Price, Property, PropertyOwnership, PropertySpec
 
 
 def make_owner(name, email):
@@ -325,3 +325,28 @@ class PropertyOwnershipBackfillMigrationTests(TestCase):
         row = PropertyOwnership.objects.get(property=owned)
         self.assertIsNone(row.start_date)
         self.assertIsNone(row.end_date)
+
+
+class AmenityTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Towel Property', short_title='TOWELPROP')
+
+    def test_towel_summary_leads_with_beach_towels_when_provided(self):
+        amenities = Amenity.objects.create(property=self.property)
+        self.assertEqual(amenities.towel_summary(), 'Bath and beach towels')
+
+    def test_towel_summary_falls_back_to_hand_and_bath_without_beach_towels(self):
+        amenities = Amenity.objects.create(property=self.property, beach_towels_per_guest=0)
+        self.assertEqual(amenities.towel_summary(), 'Hand and bath towels')
+
+    def test_towel_summary_ignores_count_values_only_presence_matters(self):
+        amenities = Amenity.objects.create(
+            property=self.property, hand_towels_per_guest=5, bath_towels_per_guest=3, beach_towels_per_guest=2,
+        )
+        self.assertEqual(amenities.towel_summary(), 'Bath and beach towels')
+
+    def test_towel_summary_none_when_nothing_provided(self):
+        amenities = Amenity.objects.create(
+            property=self.property, hand_towels_per_guest=0, bath_towels_per_guest=0, beach_towels_per_guest=0,
+        )
+        self.assertIsNone(amenities.towel_summary())

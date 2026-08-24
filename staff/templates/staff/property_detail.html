@@ -210,6 +210,17 @@
                                 <input type="text" name="bed_sizes" class="staff-input" value="{{ amenities.bed_sizes }}">
                             </label>
                         </div>
+                        <div class="staff-amenity-beds-row">
+                            <label class="staff-field">Hand towels per guest
+                                <input type="number" name="hand_towels_per_guest" min="0" class="staff-input" value="{{ amenities.hand_towels_per_guest }}">
+                            </label>
+                            <label class="staff-field">Bath towels per guest
+                                <input type="number" name="bath_towels_per_guest" min="0" class="staff-input" value="{{ amenities.bath_towels_per_guest }}">
+                            </label>
+                            <label class="staff-field">Beach towels per guest
+                                <input type="number" name="beach_towels_per_guest" min="0" class="staff-input" value="{{ amenities.beach_towels_per_guest }}">
+                            </label>
+                        </div>
                         <div class="staff-amenity-grid">
                             {% for field, label in amenity_fields %}
                             <label class="staff-checkbox-label">

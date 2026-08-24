@@ -63,8 +63,8 @@
         {% if property.specs.description %}
         <p class="property-blurb">{{ property.specs.description }}</p>
         {% endif %}
-        {% with features=property.amenities.top_features %}
-        {% if features %}
+        {% with features=property.amenities.top_features towels=property.amenities.towel_summary %}
+        {% if features or towels %}
         <div class="property-features">
             {% for feature in features %}
             <div class="property-feature">
@@ -72,6 +72,12 @@
                 <span class="property-feature-label">{{ feature.label }}</span>
             </div>
             {% endfor %}
+            {% if towels %}
+            <div class="property-feature">
+                <img src="{% static 'properties/icons/towels.svg' %}" alt="{{ towels }}" class="property-feature-icon">
+                <span class="property-feature-label">{{ towels }}</span>
+            </div>
+            {% endif %}
         </div>
         {% endif %}
         {% endwith %}
