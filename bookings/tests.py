@@ -2695,6 +2695,30 @@ class SyncIcalLinkTests(TestCase):
         self.assertEqual(booking.enquiry_source, 'Airbnb')
         self.assertEqual(booking.enquiry_status, 'Booking confirmed')
         self.assertEqual(booking.guest.last_name, 'Airbnb Guest')
+        self.assertEqual(len(summary['events']), 1)
+        self.assertEqual(summary['events'][0]['result'], 'created')
+        self.assertEqual(summary['events'][0]['booking'], booking)
+
+    def test_unchanged_event_reports_that_result(self):
+        existing = self._other_booking(self.start, self.end, enquiry_source='Airbnb')
+        existing.ical_uid = 'uid-1'
+        existing.save(update_fields=['ical_uid'])
+
+        summary = sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)]))
+        self.assertEqual(summary['events'], [
+            {'uid': 'uid-1', 'start': self.start, 'end': self.end, 'result': 'unchanged', 'booking': existing},
+        ])
+
+    def test_manual_override_reports_that_result_instead_of_silently_doing_nothing(self):
+        existing = self._other_booking(self.start, self.end, enquiry_source='Airbnb')
+        existing.ical_uid = 'uid-1'
+        existing.manual_override = True
+        existing.save(update_fields=['ical_uid', 'manual_override'])
+
+        new_start, new_end = self.start + timedelta(days=1), self.end + timedelta(days=1)
+        summary = sync_ical_link(self.link, _ics_feed([('uid-1', new_start, new_end)]))
+        self.assertEqual(len(summary['events']), 1)
+        self.assertEqual(summary['events'][0]['result'], 'manual_override')
 
     def test_updates_existing_matched_bookings_dates(self):
         existing = self._other_booking(self.start, self.end, enquiry_source='Airbnb')
@@ -2726,6 +2750,8 @@ class SyncIcalLinkTests(TestCase):
         summary = sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)]))
         self.assertEqual(summary['created'], 0)
         self.assertEqual(len(summary['conflicts']), 1)
+        self.assertEqual(summary['events'][0]['result'], 'conflict')
+        self.assertIsNone(summary['events'][0]['booking'])
         self.assertFalse(Booking.objects.filter(ical_uid='uid-1').exists())
 
     def test_skips_date_update_that_would_create_overlap(self):
@@ -2748,6 +2774,7 @@ class SyncIcalLinkTests(TestCase):
 
         summary = sync_ical_link(self.link, _ics_feed([]))  # empty feed - uid-1 has disappeared
         self.assertEqual(summary['cancelled'], 1)
+        self.assertEqual(summary['cancelled_bookings'], [existing])
         existing.refresh_from_db()
         self.assertEqual(existing.enquiry_status, 'Cancelled by platform')
 
@@ -2788,7 +2815,10 @@ class SyncIcalLinkTests(TestCase):
         self.link.ical_source = None
         self.link.save(update_fields=['ical_source'])
         summary = sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)]))
-        self.assertEqual(summary, {'created': 0, 'updated': 0, 'resurrected': 0, 'cancelled': 0, 'conflicts': []})
+        self.assertEqual(summary, {
+            'created': 0, 'updated': 0, 'resurrected': 0, 'cancelled': 0, 'conflicts': [],
+            'events': [], 'cancelled_bookings': [],
+        })
         self.assertFalse(Booking.objects.filter(ical_uid='uid-1').exists())
 
     def test_updates_last_synced(self):

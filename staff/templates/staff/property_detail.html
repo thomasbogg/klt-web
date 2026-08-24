@@ -346,16 +346,29 @@
                             <h2 class="staff-panel-title">iCal Imports</h2>
                             <ul class="staff-list">
                                 {% for link in ical_links %}
-                                <li>
-                                    {{ link.get_ical_source_display|default:"Unknown source" }}
-                                    <a href="{{ link.ical_url }}">{{ link.ical_url }}</a>
-                                    {% if link.last_synced %}<span class="staff-list-date">last synced {{ link.last_synced|date:'d M Y H:i' }}</span>{% endif %}
-                                    <form method="post" class="staff-inline-delete">
-                                        {% csrf_token %}
-                                        <input type="hidden" name="action" value="delete_ical_link">
-                                        <input type="hidden" name="link_id" value="{{ link.pk }}">
-                                        <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
-                                    </form>
+                                <li class="staff-ical-link-row">
+                                    <div class="staff-ical-link-info">
+                                        <span class="staff-ical-link-source">{{ link.get_ical_source_display|default:"Unknown source" }}</span>
+                                        <form method="post" class="staff-ical-link-url-form">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="update_ical_link">
+                                            <input type="hidden" name="link_id" value="{{ link.pk }}">
+                                            <input type="url" name="ical_url" class="staff-input staff-ical-link-url-input" value="{{ link.ical_url }}">
+                                            <button type="submit" class="staff-button staff-button-small">Save</button>
+                                        </form>
+                                    </div>
+                                    <div class="staff-list-actions">
+                                        <form method="post" action="{% url 'staff:ical_sync' property.pk link.pk %}" target="ical-sync-{{ link.pk }}" class="staff-inline-sync" data-ical-sync-popup>
+                                            {% csrf_token %}
+                                            <button type="submit" class="staff-button staff-button-small">Sync now&hellip;</button>
+                                        </form>
+                                        <form method="post" class="staff-inline-delete">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="delete_ical_link">
+                                            <input type="hidden" name="link_id" value="{{ link.pk }}">
+                                            <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                                        </form>
+                                    </div>
                                 </li>
                                 {% empty %}
                                 <li class="staff-empty">No iCal import links yet.</li>

@@ -1,6 +1,8 @@
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import Mock, patch
 
+import requests
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
@@ -884,6 +886,33 @@ class StaffPropertyDetailViewTests(TestCase):
         self.client.post(self.url, {'action': 'add_ical_link', 'ical_source': 'airbnb', 'ical_url': ''})
         self.assertFalse(iCalLink.objects.filter(property=self.property).exists())
 
+    def test_update_ical_link_saves_new_url(self):
+        link = iCalLink.objects.create(
+            property=self.property, ical_source='booking.com', ical_url='https://old.example.com/feed.ics',
+        )
+        response = self.client.post(self.url, {
+            'action': 'update_ical_link', 'link_id': link.pk, 'ical_url': 'https://new.example.com/feed.ics',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=ical')
+        link.refresh_from_db()
+        self.assertEqual(link.ical_url, 'https://new.example.com/feed.ics')
+        self.assertEqual(link.ical_source, 'booking.com')  # untouched by this action
+
+    def test_update_ical_link_requires_url(self):
+        link = iCalLink.objects.create(property=self.property, ical_url='https://old.example.com/feed.ics')
+        self.client.post(self.url, {'action': 'update_ical_link', 'link_id': link.pk, 'ical_url': ''})
+        link.refresh_from_db()
+        self.assertEqual(link.ical_url, 'https://old.example.com/feed.ics')
+
+    def test_update_ical_link_for_a_different_property_is_a_noop(self):
+        other_property = Property.objects.create(title='Other', short_title='OTHERUPDPROP')
+        link = iCalLink.objects.create(property=other_property, ical_url='https://old.example.com/feed.ics')
+        self.client.post(self.url, {
+            'action': 'update_ical_link', 'link_id': link.pk, 'ical_url': 'https://new.example.com/feed.ics',
+        })
+        link.refresh_from_db()
+        self.assertEqual(link.ical_url, 'https://old.example.com/feed.ics')
+
     def test_delete_ical_link(self):
         link = iCalLink.objects.create(property=self.property, ical_url='https://example.com/feed.ics')
         self.client.post(self.url, {'action': 'delete_ical_link', 'link_id': link.pk})
@@ -984,6 +1013,112 @@ class StaffPropertyDetailViewTests(TestCase):
             'action': 'record_handover', 'new_owner': new_owner.pk, 'effective_date': '2027-03-01',
         })
         self.assertRedirects(response, f'{self.url}?panel=ownership')
+
+
+def _ics_feed(events):
+    """Same minimal single-event .ics builder as bookings/tests.py's own helper - duplicated
+    rather than imported since this file has no existing cross-app test-helper import, and the
+    feed shape is trivial enough not to warrant one just for this."""
+    lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Test//EN']
+    for uid, start, end in events:
+        lines += [
+            'BEGIN:VEVENT', f'UID:{uid}',
+            f'DTSTART;VALUE=DATE:{start.strftime("%Y%m%d")}',
+            f'DTEND;VALUE=DATE:{end.strftime("%Y%m%d")}',
+            'SUMMARY:Reserved', 'END:VEVENT',
+        ]
+    lines.append('END:VCALENDAR')
+    return '\r\n'.join(lines)
+
+
+class StaffIcalSyncViewTests(TestCase):
+    """Covers the view wiring around sync_ical_link() (fetch, error handling, template choice) -
+    see bookings/tests.py::SyncIcalLinkTests for the actual sync-logic coverage."""
+    def setUp(self):
+        User.objects.create_user(username='ical_sync_staffer', password='pw', is_staff=True)
+        self.client.login(username='ical_sync_staffer', password='pw')
+        self.property = Property.objects.create(title='Sync View Property', short_title='SYNCVIEWPROP')
+        self.link = iCalLink.objects.create(
+            property=self.property, ical_source='airbnb', ical_url='https://example.com/feed.ics',
+        )
+        self.url = reverse('staff:ical_sync', kwargs={'pk': self.property.pk, 'link_id': self.link.pk})
+        self.start = date.today() + timedelta(days=100)
+        self.end = self.start + timedelta(days=7)
+
+    def test_unknown_property_404s(self):
+        url = reverse('staff:ical_sync', kwargs={'pk': 999999, 'link_id': self.link.pk})
+        self.assertEqual(self.client.post(url).status_code, 404)
+
+    def test_link_belonging_to_a_different_property_404s(self):
+        other_property = Property.objects.create(title='Other', short_title='OTHERSYNCPROP')
+        url = reverse('staff:ical_sync', kwargs={'pk': other_property.pk, 'link_id': self.link.pk})
+        self.assertEqual(self.client.post(url).status_code, 404)
+
+    def test_link_with_no_url_shows_an_error_without_fetching(self):
+        self.link.ical_url = ''
+        self.link.save(update_fields=['ical_url'])
+        with patch('staff.views.requests.get') as mocked_get:
+            response = self.client.post(self.url)
+        mocked_get.assert_not_called()
+        self.assertIn('URL', response.context['fetch_error'])
+
+    def test_link_with_unrecognised_source_shows_an_error_without_fetching(self):
+        self.link.ical_source = None
+        self.link.save(update_fields=['ical_source'])
+        with patch('staff.views.requests.get') as mocked_get:
+            response = self.client.post(self.url)
+        mocked_get.assert_not_called()
+        self.assertIn('recognised source', response.context['fetch_error'])
+
+    def test_fetch_failure_shows_an_error(self):
+        with patch('staff.views.requests.get', side_effect=requests.ConnectionError('boom')):
+            response = self.client.post(self.url)
+        self.assertIn('Could not connect', response.context['fetch_error'])
+
+    def test_empty_feed_reports_healthy_with_no_events(self):
+        mocked_response = Mock(text=_ics_feed([]))
+        mocked_response.raise_for_status = Mock()
+        with patch('staff.views.requests.get', return_value=mocked_response):
+            response = self.client.post(self.url)
+        self.assertNotIn('fetch_error', response.context)
+        self.assertEqual(response.context['summary']['events'], [])
+
+    def test_feed_with_a_new_event_creates_a_booking_and_reports_it(self):
+        mocked_response = Mock(text=_ics_feed([('uid-1', self.start, self.end)]))
+        mocked_response.raise_for_status = Mock()
+        with patch('staff.views.requests.get', return_value=mocked_response):
+            response = self.client.post(self.url)
+        summary = response.context['summary']
+        self.assertEqual(summary['created'], 1)
+        self.assertEqual(summary['events'][0]['result'], 'created')
+        booking = Booking.objects.get(ical_uid='uid-1')
+        self.assertEqual(summary['events'][0]['booking'], booking)
+        self.assertContains(response, booking.reference)
+
+    def test_feed_event_overlapping_an_existing_booking_is_flagged_as_a_conflict(self):
+        guest = Guest.objects.create(last_name='Existing Guest')
+        Booking.objects.create(
+            property=self.property, guest=guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        mocked_response = Mock(text=_ics_feed([('uid-1', self.start, self.end)]))
+        mocked_response.raise_for_status = Mock()
+        with patch('staff.views.requests.get', return_value=mocked_response):
+            response = self.client.post(self.url)
+        summary = response.context['summary']
+        self.assertEqual(len(summary['conflicts']), 1)
+        self.assertEqual(summary['events'][0]['result'], 'conflict')
+        self.assertContains(response, 'Overlaps an existing booking')
+
+    def test_updates_link_last_synced_on_success(self):
+        self.assertIsNone(self.link.last_synced)
+        mocked_response = Mock(text=_ics_feed([]))
+        mocked_response.raise_for_status = Mock()
+        with patch('staff.views.requests.get', return_value=mocked_response):
+            self.client.post(self.url)
+        self.link.refresh_from_db()
+        self.assertIsNotNone(self.link.last_synced)
 
 
 class StaffLocationListViewTests(TestCase):

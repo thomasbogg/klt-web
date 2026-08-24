@@ -1,6 +1,7 @@
 from datetime import datetime, time
 from decimal import Decimal, InvalidOperation
 
+import requests
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.models import User
@@ -18,8 +19,9 @@ from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Booking, BookingCondition,
     BookingSettings, ExtrasSettings, FAQ, PaymentSettings, RequestType, WelcomePackItem,
 )
-from bookings.utils import extras_summary
+from bookings.utils import PLATFORM_NAMES_BY_ICAL_SOURCE, extras_summary, sync_ical_link
 from guests.models import Guest
+from libraries.utils import logerror
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, Manager, Owner, Price,
     Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail, iCalLink,
@@ -973,6 +975,7 @@ class StaffPropertyDetailView(View):
         'add_price': 'rates',
         'delete_price': 'rates',
         'add_ical_link': 'ical',
+        'update_ical_link': 'ical',
         'delete_ical_link': 'ical',
         'add_image': 'photos',
         'delete_image': 'photos',
@@ -1004,6 +1007,7 @@ class StaffPropertyDetailView(View):
             'add_price': self._add_price,
             'delete_price': self._delete_price,
             'add_ical_link': self._add_ical_link,
+            'update_ical_link': self._update_ical_link,
             'delete_ical_link': self._delete_ical_link,
             'add_image': self._add_image,
             'delete_image': self._delete_image,
@@ -1182,6 +1186,18 @@ class StaffPropertyDetailView(View):
         )
         messages.success(request, "iCal link added.")
 
+    def _update_ical_link(self, request, property):
+        link = iCalLink.objects.filter(pk=request.POST.get('link_id'), property=property).first()
+        if link is None:
+            return
+        url = request.POST.get('ical_url', '').strip()
+        if not url:
+            messages.error(request, "An iCal link needs a URL.")
+            return
+        link.ical_url = url
+        link.save(update_fields=['ical_url'])
+        messages.success(request, "iCal link updated.")
+
     def _delete_ical_link(self, request, property):
         iCalLink.objects.filter(pk=request.POST.get('link_id'), property=property).delete()
         messages.success(request, "iCal link deleted.")
@@ -1220,6 +1236,51 @@ class StaffPropertyDetailView(View):
             _flash_validation_error(request, error)
             return
         messages.success(request, f"Ownership transferred to {new_owner} effective {effective_date}.")
+
+
+@method_decorator(staff_member_required, name='dispatch')
+class StaffIcalSyncView(View):
+    """Staff "Sync now" popup for one iCalLink - fetches the feed live and runs it through the
+    same sync_ical_link() logic bookings/management/commands/sync_ical_feeds.py uses on its own
+    schedule, then renders a small standalone results page listing every booking found in the feed
+    and what happened to it - mirroring PIMS' own manual iCal-sync popup, which the "Sync now"
+    button in property_detail.html's iCal panel opens into a real popup window (see
+    property_detail.js). A feed with zero events is reported as healthy/connected rather than an
+    empty table, and any overlap conflict is called out explicitly - both per Thomas's ask. POST
+    only (this has real write side-effects - creating/updating/cancelling Bookings - so it isn't a
+    plain link the way the read-only iCal export is)."""
+    template_name = 'staff/ical_sync_result.html'
+
+    def post(self, request, pk, link_id, *args, **kwargs):
+        property = Property.objects.filter(pk=pk).first()
+        if property is None:
+            raise Http404("No property found.")
+        link = iCalLink.objects.filter(pk=link_id, property=property).first()
+        if link is None:
+            raise Http404("No iCal link found.")
+
+        context = {'property': property, 'link': link, 'synced_at': timezone.now()}
+
+        if not link.ical_url:
+            context['fetch_error'] = "This link has no URL configured."
+        elif link.ical_source not in PLATFORM_NAMES_BY_ICAL_SOURCE:
+            context['fetch_error'] = "This link has no recognised source (Airbnb/Booking.com/Vrbo) set."
+        else:
+            label = f"{property} ({link.get_ical_source_display()})"
+            try:
+                response = requests.get(link.ical_url, timeout=30)
+                response.raise_for_status()
+            except requests.RequestException as error:
+                logerror(f"Could not fetch iCal feed for {label}: {error}")
+                context['fetch_error'] = f"Could not connect to this feed: {error}"
+            else:
+                try:
+                    context['summary'] = sync_ical_link(link, response.text)
+                except Exception as error:
+                    logerror(f"Could not parse/sync iCal feed for {label}: {error}")
+                    context['fetch_error'] = f"Could not read this feed: {error}"
+
+        return render(request, self.template_name, context)
 
 
 # Fallback values only used the first time a Location's Rules row is created (LocationRules'

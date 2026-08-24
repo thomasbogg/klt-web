@@ -207,6 +207,16 @@
         flex: 1;
         margin-bottom: 0;
     }
+
+    /* .staff-button's own base rule sets align-self: flex-start (its usual home is stacked above/
+       below a field, not beside one) - that wins over the row's align-items: flex-end above unless
+       overridden per-child, same fix already needed for the Ownership tab's Record handover row
+       (.staff-record-handover-row > .staff-button). Without this the button stays pinned to the
+       top of the row instead of lining its bottom edge up with the inputs. */
+    .staff-sef-row-with-button > .staff-button {
+        align-self: flex-end;
+        flex: 0 0 auto;
+    }
 }
 
 .staff-button-danger {
@@ -217,8 +227,51 @@
     opacity: 0.85;
 }
 
-.staff-inline-delete {
+.staff-inline-delete, .staff-inline-sync {
     display: inline;
+}
+
+.staff-ical-link-row {
+    flex-wrap: wrap;
+}
+
+.staff-ical-link-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+}
+
+.staff-ical-link-source {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #333;
+    white-space: nowrap;
+}
+
+.staff-ical-link-url-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 220px;
+}
+
+.staff-ical-link-url-input {
+    /* Emphasises the URL as the technical value it is - and makes clear it's editable, not just
+       a plain link - since Booking.com/Airbnb/Vrbo occasionally change their own export paths. */
+    flex: 1;
+    min-width: 0;
+    font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: 0.85rem;
+}
+
+.staff-list-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
 }
 
 .staff-price-table {

@@ -1,0 +1,86 @@
+.staff-sync-page {
+    max-width: 720px;
+}
+
+/* Scoped to this popup only - the app's shared .staff-page-title (Lora serif, the brand heading
+   font used on every other staff page) reads too "editorial" for a raw sync/import log, so this
+   swaps in a system-monospace stack instead: no new font asset, and it reads as a technical
+   readout rather than a page title. */
+.staff-sync-page .staff-page-title {
+    font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: 1.15rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.staff-sync-subtitle {
+    margin: 6px 0 20px;
+    color: #777;
+    font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: 0.8rem;
+}
+
+.staff-sync-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin-bottom: 20px;
+}
+
+.staff-sync-table th {
+    text-align: left;
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #999;
+    padding: 0 8px 8px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.staff-sync-table td {
+    padding: 8px;
+    border-bottom: 1px solid #f2f2f2;
+    color: #444;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.staff-sync-table a {
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.staff-sync-table a:hover {
+    text-decoration: underline;
+}
+
+.staff-sync-row-conflict {
+    background: var(--status-booked-bg);
+}
+
+.staff-sync-row-conflict td {
+    border-bottom-color: var(--status-booked-color);
+}
+
+.staff-sync-close {
+    margin-top: 8px;
+}
+
+.staff-sync-timestamp {
+    /* Pinned to the popup's own corner (not the end of the document flow) so it reads as a
+       persistent status line, not just another paragraph - stays visible even if the results
+       table is long enough to scroll. */
+    position: fixed;
+    bottom: 16px;
+    right: 20px;
+    margin: 0;
+    padding: 4px 8px;
+    background: var(--background-color);
+    color: #999;
+    font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: 0.75rem;
+}

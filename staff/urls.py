@@ -15,6 +15,10 @@ urlpatterns = [
     path('quick-add/<str:model>/', views.StaffQuickAddView.as_view(), name='quick_add'),
     path('settings/', views.StaffSettingsView.as_view(), name='settings'),
     path('properties/<int:pk>/', views.StaffPropertyDetailView.as_view(), name='property_detail'),
+    path(
+        'properties/<int:pk>/ical/<int:link_id>/sync/',
+        views.StaffIcalSyncView.as_view(), name='ical_sync',
+    ),
     path('locations/<int:pk>/', views.StaffLocationDetailView.as_view(), name='location_detail'),
     path('bookings/<str:reference>/', views.StaffBookingDetailView.as_view(), name='booking_detail'),
 ]

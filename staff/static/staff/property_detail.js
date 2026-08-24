@@ -18,3 +18,9 @@ document.addEventListener('click', function (event) {
         showCopied();
     }
 });
+
+document.addEventListener('submit', function (event) {
+    var form = event.target.closest('[data-ical-sync-popup]');
+    if (!form) return;
+    window.open('', form.target, 'width=700,height=600,scrollbars=yes,resizable=yes');
+});

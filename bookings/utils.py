@@ -382,13 +382,22 @@ def sync_ical_link(link, ics_text):
     is resurrected back to 'Booking confirmed' - the platform un-cancelled it.
 
     Returns a dict of counts (created/updated/resurrected/cancelled) plus a 'conflicts' list
-    ({'uid', 'start', 'end'} per skipped overlap) for the caller to report."""
+    ({'uid', 'start', 'end'} per skipped overlap) for the caller to report. Also returns an
+    'events' list - one entry per feed event ({'uid', 'start', 'end', 'result', 'booking'},
+    'result' one of created/updated/resurrected/unchanged/manual_override/conflict) - and a
+    'cancelled_bookings' list of the Booking objects cancelled because they'd disappeared from the
+    feed (these aren't feed events, so they don't get an 'events' entry of their own) - both added
+    for the staff "Sync now" popup (staff/views.py::StaffIcalSyncView) to report a per-booking
+    breakdown, matching PIMS' own manual-sync popup rather than just an aggregate count."""
     from icalendar import Calendar
 
     from bookings.models import Booking
     from guests.models import Guest
 
-    summary = {'created': 0, 'updated': 0, 'resurrected': 0, 'cancelled': 0, 'conflicts': []}
+    summary = {
+        'created': 0, 'updated': 0, 'resurrected': 0, 'cancelled': 0, 'conflicts': [],
+        'events': [], 'cancelled_bookings': [],
+    }
 
     platform_name = PLATFORM_NAMES_BY_ICAL_SOURCE.get(link.ical_source)
     if platform_name is None:
@@ -411,26 +420,40 @@ def sync_ical_link(link, ics_text):
         ).first()
 
         if existing is not None:
-            if not existing.manual_override and (existing.arrival_date, existing.departure_date) != (start, end):
+            result = 'unchanged'
+            dates_changed = (existing.arrival_date, existing.departure_date) != (start, end)
+            if existing.manual_override:
+                if dates_changed:
+                    result = 'manual_override'
+            elif dates_changed:
                 if Booking.objects.overlapping(link.property, start, end).exclude(pk=existing.pk).exists():
                     summary['conflicts'].append({'uid': uid, 'start': start, 'end': end})
+                    result = 'conflict'
                 else:
                     existing.arrival_date = start
                     existing.departure_date = end
                     existing.save(update_fields=['arrival_date', 'departure_date'])
                     summary['updated'] += 1
+                    result = 'updated'
             if existing.enquiry_status == 'Cancelled by platform':
                 existing.enquiry_status = 'Booking confirmed'
                 existing.save(update_fields=['enquiry_status'])
                 summary['resurrected'] += 1
+                result = 'resurrected'
+            summary['events'].append(
+                {'uid': uid, 'start': start, 'end': end, 'result': result, 'booking': existing}
+            )
             continue
 
         if Booking.objects.overlapping(link.property, start, end).exists():
             summary['conflicts'].append({'uid': uid, 'start': start, 'end': end})
+            summary['events'].append(
+                {'uid': uid, 'start': start, 'end': end, 'result': 'conflict', 'booking': None}
+            )
             continue
 
         guest = Guest.objects.create(last_name=f"{platform_name} Guest")
-        Booking.objects.create(
+        booking = Booking.objects.create(
             property=link.property, guest=guest,
             arrival_date=start, departure_date=end,
             is_owner=False, enquiry_status='Booking confirmed',
@@ -439,6 +462,9 @@ def sync_ical_link(link, ics_text):
             last_updated=timezone.now(), ical_uid=uid,
         )
         summary['created'] += 1
+        summary['events'].append(
+            {'uid': uid, 'start': start, 'end': end, 'result': 'created', 'booking': booking}
+        )
 
     today = date.today()
     previously_imported = Booking.objects.filter(
@@ -450,6 +476,7 @@ def sync_ical_link(link, ics_text):
             booking.enquiry_status = 'Cancelled by platform'
             booking.save(update_fields=['enquiry_status'])
             summary['cancelled'] += 1
+            summary['cancelled_bookings'].append(booking)
 
     link.last_synced = timezone.now()
     link.save(update_fields=['last_synced'])
