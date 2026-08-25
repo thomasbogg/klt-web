@@ -114,12 +114,6 @@
                         <label class="staff-field">Security Charge
                             <input type="text" name="security" form="booking-detail-form" class="staff-input" value="{{ charge.security|default:'' }}">
                         </label>
-                        <label class="staff-field">Due at Booking
-                            <input type="text" name="due_at_booking" form="booking-detail-form" class="staff-input" value="{{ charge.due_at_booking|default:'' }}">
-                        </label>
-                        <label class="staff-field">Due at Balance
-                            <input type="text" name="due_at_balance" form="booking-detail-form" class="staff-input" value="{{ charge.due_at_balance|default:'' }}">
-                        </label>
                     </div>
                     {% else %}
                     <p class="staff-empty">No Charge record for this booking.</p>
@@ -197,28 +191,36 @@
                     <h2 class="staff-panel-title">Payments from guest</h2>
                     <div class="staff-form">
                         {% if payment %}
-                        <label class="staff-field">Deposit status
-                            <select name="payment_status" form="booking-detail-form" class="staff-input">
-                                {% for value, label in payment_status_choices %}
-                                <option value="{{ value }}" {% if payment.status == value %}selected{% endif %}>{{ label }}</option>
-                                {% endfor %}
-                            </select>
-                        </label>
+                        <div class="staff-field-row">
+                            <label class="staff-field">Deposit status
+                                <select name="payment_status" form="booking-detail-form" class="staff-input">
+                                    {% for value, label in payment_status_choices %}
+                                    <option value="{{ value }}" {% if payment.status == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            {% if charge %}
+                            <label class="staff-field">Due at booking
+                                <input type="text" name="due_at_booking" form="booking-detail-form" class="staff-input" value="{{ charge.due_at_booking|default:'' }}">
+                            </label>
+                            {% endif %}
+                        </div>
                         {% endif %}
                         {% if balance_payment %}
-                        <label class="staff-field">Balance status
-                            <select name="balance_payment_status" form="booking-detail-form" class="staff-input">
-                                {% for value, label in payment_status_choices %}
-                                <option value="{{ value }}" {% if balance_payment.status == value %}selected{% endif %}>{{ label }}</option>
-                                {% endfor %}
-                            </select>
-                        </label>
-                        {% endif %}
-                        {% if charge %}
-                        <p class="staff-payments-summary">
-                            Due at booking: &euro;{{ charge.due_at_booking|default:'0.00'|floatformat:2 }}<br>
-                            Due at balance: &euro;{{ charge.due_at_balance|default:'0.00'|floatformat:2 }}
-                        </p>
+                        <div class="staff-field-row">
+                            <label class="staff-field">Balance status
+                                <select name="balance_payment_status" form="booking-detail-form" class="staff-input">
+                                    {% for value, label in payment_status_choices %}
+                                    <option value="{{ value }}" {% if balance_payment.status == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            {% if charge %}
+                            <label class="staff-field">Due at balance
+                                <input type="text" name="due_at_balance" form="booking-detail-form" class="staff-input" value="{{ charge.due_at_balance|default:'' }}">
+                            </label>
+                            {% endif %}
+                        </div>
                         {% endif %}
                         {% if not payment and not balance_payment %}
                         <p class="staff-empty">No payment records for this booking.</p>

@@ -391,13 +391,6 @@ body {
     min-width: 0;
 }
 
-.staff-payments-summary {
-    font-size: 0.85rem;
-    color: #555;
-    line-height: 1.6;
-    margin: 4px 0;
-}
-
 .staff-next-step {
     font-size: 0.95rem;
     color: #444;
