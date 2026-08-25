@@ -1446,6 +1446,7 @@ class StaffBookingDetailView(View):
             'update_booking': self._update_booking,
             'add_deduction': self._add_deduction,
             'add_owner_payment': self._add_owner_payment,
+            'delete_owner_payment': self._delete_owner_payment,
             'add_task_note': self._add_task_note,
             'cancel_booking': self._cancel_booking,
             'uncancel_booking': self._uncancel_booking,
@@ -1473,7 +1474,6 @@ class StaffBookingDetailView(View):
             'extras': extras_summary(booking),
             'next_step': next_step_hint(booking, charge, balance_payment),
             'deductions': booking.deductions.all(),
-            'owner_payments': booking.owner_payments.all(),
             'owner_payout': compute_owner_payout(booking),
             'task_history': booking.task_history.all(),
             'currency_choices': CURRENCY_CHOICES,
@@ -1602,15 +1602,18 @@ class StaffBookingDetailView(View):
     def _add_owner_payment(self, request, booking):
         post = request.POST
         amount = _parsed_decimal(post.get('amount'))
-        currency = post.get('currency')
-        if amount is None or currency not in dict(CURRENCY_CHOICES):
-            messages.error(request, "An owner payment needs a valid amount and currency.")
+        if amount is None:
+            messages.error(request, "An ad-hoc payment needs a valid amount.")
             return
         OwnerPayment.objects.create(
-            booking=booking, amount=amount, currency=currency, note=post.get('note', '').strip(),
+            booking=booking, amount=amount, note=post.get('note', '').strip(),
             date=_parsed_date(post.get('date')) or timezone.now().date(),
         )
-        messages.success(request, "Owner payment recorded.")
+        messages.success(request, "Ad-hoc payment recorded.")
+
+    def _delete_owner_payment(self, request, booking):
+        booking.owner_payments.filter(pk=request.POST.get('payment_id')).delete()
+        messages.success(request, "Ad-hoc payment removed.")
 
     def _add_task_note(self, request, booking):
         description = request.POST.get('description', '').strip()

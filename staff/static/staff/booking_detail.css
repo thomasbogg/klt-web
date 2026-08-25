@@ -297,12 +297,72 @@ body {
     white-space: nowrap;
 }
 
+.staff-list-item-removable {
+    justify-content: flex-start;
+}
+
+.staff-list-row-main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.staff-list-delete-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: #bbb;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.staff-list-delete-button:hover {
+    background: #fbeaea;
+    color: var(--status-booked-color, #c0392b);
+}
+
+.staff-list-informational {
+    font-style: italic;
+    color: #999;
+}
+
 .staff-list-total {
     font-weight: 700;
     font-size: 0.85rem;
     color: #333;
     text-align: right;
     margin: 0;
+}
+
+.staff-list-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0 0 12px;
+}
+
+.staff-list-total-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: #333;
+    margin: 0;
+}
+
+.staff-list-total-row-secondary {
+    color: #888;
 }
 
 .staff-empty {
@@ -317,6 +377,18 @@ body {
     flex-wrap: wrap;
     gap: 8px;
     align-items: center;
+}
+
+.staff-inline-form-divided {
+    border-top: 1px solid #ddd;
+    padding-top: 12px;
+    margin-top: 6px;
+}
+
+.staff-input-flex {
+    width: auto;
+    flex: 1 1 120px;
+    min-width: 0;
 }
 
 .staff-payments-summary {

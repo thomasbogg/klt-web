@@ -2,8 +2,6 @@ from datetime import date
 
 from django.db import models
 
-from bookings.models import CURRENCY_CHOICES
-
 
 class Deduction(models.Model):
     """A charge deducted from a booking (e.g. against the security deposit), recorded from the
@@ -25,13 +23,14 @@ class Deduction(models.Model):
 
 
 class OwnerPayment(models.Model):
-    """Ad-hoc payment recorded to the property owner for this booking - deliberately
-    booking-scoped and manually entered, not a full owner-ledger/statement system (that's a
-    separate, larger feature - see staff booking detail page plan)."""
+    """Ad-hoc payment recorded against a booking's owner payout - deliberately booking-scoped and
+    manually entered, not a full owner-ledger/statement system (that's a separate, larger feature -
+    see staff booking detail page plan). Feeds directly into
+    bookings/payouts.py::compute_owner_payout(), which subtracts these from the computed owner
+    balance - always EUR, matching that calculation."""
     booking = models.ForeignKey('bookings.Booking', on_delete=models.CASCADE, related_name='owner_payments')
     date = models.DateField(default=date.today)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
-    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
     note = models.CharField(max_length=200, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

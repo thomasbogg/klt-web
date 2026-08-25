@@ -233,7 +233,7 @@
                         <li>Rental base <span class="staff-list-amount">&euro;{{ owner_payout.rental_base|floatformat:2 }}</span></li>
                         <li>Internal commission ({{ owner_payout.commission_percent }}%) <span class="staff-list-amount">-&euro;{{ owner_payout.commission|floatformat:2 }}</span></li>
                         {% if owner_payout.commission_vat %}
-                        <li>VAT on commission <span class="staff-list-amount">-&euro;{{ owner_payout.commission_vat|floatformat:2 }}</span></li>
+                        <li class="staff-list-informational">VAT on commission (agency-absorbed, not deducted) <span class="staff-list-amount">&euro;{{ owner_payout.commission_vat|floatformat:2 }}</span></li>
                         {% endif %}
                         {% if owner_payout.platform_fee_vat %}
                         <li>VAT on platform fee (&euro;{{ owner_payout.platform_fee|floatformat:2 }} fee) <span class="staff-list-amount">-&euro;{{ owner_payout.platform_fee_vat|floatformat:2 }}</span></li>
@@ -241,34 +241,35 @@
                         {% if owner_payout.management_fee %}
                         <li>Management fee <span class="staff-list-amount">-&euro;{{ owner_payout.management_fee|floatformat:2 }}</span></li>
                         {% endif %}
+                        {% for ad_hoc in owner_payout.ad_hoc_payments %}
+                        <li class="staff-list-item-removable">
+                            <span class="staff-list-row-main">
+                                <span>Ad-hoc payment{% if ad_hoc.note %} ({{ ad_hoc.note }}){% endif %}</span>
+                                <span class="staff-list-amount">{% if ad_hoc.is_credit %}+{% else %}-{% endif %}&euro;{{ ad_hoc.amount|floatformat:2 }}</span>
+                            </span>
+                            <form method="post" data-confirm-message="Remove this ad-hoc payment? This changes the computed owner balance.">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="delete_owner_payment">
+                                <input type="hidden" name="payment_id" value="{{ ad_hoc.id }}">
+                                <button type="submit" class="staff-list-delete-button" aria-label="Remove this ad-hoc payment">&times;</button>
+                            </form>
+                        </li>
+                        {% endfor %}
                     </ul>
-                    <p class="staff-list-total">Owner balance: &euro;{{ owner_payout.owner_balance|floatformat:2 }} - due {{ owner_payout.due_date }}{% if owner_payout.is_regular %} (regular schedule){% else %} (month-end batch){% endif %}</p>
+                    <div class="staff-list-summary">
+                        <p class="staff-list-total-row"><span>Owner balance</span><span>&euro;{{ owner_payout.owner_balance|floatformat:2 }}</span></p>
+                        <p class="staff-list-total-row staff-list-total-row-secondary"><span>Due date</span><span>{{ owner_payout.due_date }}{% if not owner_payout.is_regular %} (month-end batch){% endif %}</span></p>
+                    </div>
+                    <form method="post" class="staff-inline-form staff-inline-form-divided">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="add_owner_payment">
+                        <input type="text" name="amount" placeholder="Amount (&euro;)" class="staff-input staff-input-small">
+                        <input type="text" name="note" placeholder="Note (optional)" class="staff-input staff-input-flex">
+                        <button type="submit" class="staff-button staff-button-small">+ Ad-hoc payment</button>
+                    </form>
                     {% else %}
                     <p class="staff-empty">{{ owner_payout.reason }}</p>
                     {% endif %}
-                </section>
-
-                <section class="staff-panel">
-                    <h2 class="staff-panel-title">Payments to owner</h2>
-                    <ul class="staff-list">
-                        {% for owner_payment in owner_payments %}
-                        <li>{{ owner_payment.date }} - {{ owner_payment.amount }} {{ owner_payment.currency }}{% if owner_payment.note %} ({{ owner_payment.note }}){% endif %}</li>
-                        {% empty %}
-                        <li class="staff-empty">No payments recorded.</li>
-                        {% endfor %}
-                    </ul>
-                    <form method="post" class="staff-inline-form">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="add_owner_payment">
-                        <input type="text" name="amount" placeholder="Amount" class="staff-input staff-input-small">
-                        <select name="currency" class="staff-input staff-input-small">
-                            {% for value, label in currency_choices %}
-                            <option value="{{ value }}">{{ label }}</option>
-                            {% endfor %}
-                        </select>
-                        <input type="text" name="note" placeholder="Note (optional)" class="staff-input">
-                        <button type="submit" class="staff-button staff-button-small">+ ad-hoc Payment</button>
-                    </form>
                 </section>
 
                 <section class="staff-panel">

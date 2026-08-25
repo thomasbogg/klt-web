@@ -69,6 +69,7 @@ def _unavailable(reason):
         'platform_fee': None,
         'platform_fee_vat': None,
         'management_fee': None,
+        'ad_hoc_payments': [],
         'owner_balance': None,
         'due_date': None,
         'is_regular': None,
@@ -76,11 +77,11 @@ def _unavailable(reason):
 
 
 def compute_owner_payout(booking, payment_settings=None):
-    """What the property owner should receive for this booking, and when - see the "Owner
+    """What the property owner should still receive for this booking, and when - see the "Owner
     payouts: timing + amount calculation" plan for how each figure was reverse-engineered against
-    a real legacy Bookings Report export. A read-only, computed reference figure only -
-    staff.models.OwnerPayment/Deduction remain the manually-entered record of what was actually
-    paid."""
+    a real legacy Bookings Report export. Any staff.models.OwnerPayment already recorded against
+    this booking (a rare manual adjustment, e.g. an ad-hoc top-up outside the normal formula) is
+    included as a genuine deduction, not just displayed alongside the total."""
     if booking.is_owner:
         return _unavailable("Owner stay - no payout due.")
 
@@ -121,7 +122,22 @@ def compute_owner_payout(booking, payment_settings=None):
 
     management_fee = _round(_management_fee(payment_settings, booking))
 
-    owner_balance = rental_base - commission - commission_vat - platform_fee_vat - management_fee
+    ad_hoc_payments = list(booking.owner_payments.all())
+    ad_hoc_total = sum((p.amount for p in ad_hoc_payments), ZERO)
+    # A negative OwnerPayment is a credit back to the owner (e.g. correcting an earlier
+    # over-deduction), not a further payment - display it with its own sign rather than always
+    # showing a "-" prefix, which would otherwise double up into "-€-49.50".
+    ad_hoc_payment_rows = [
+        {'id': p.pk, 'note': p.note, 'date': p.date, 'amount': abs(p.amount), 'is_credit': p.amount < 0}
+        for p in ad_hoc_payments
+    ]
+
+    # Commission VAT is the agency's own VAT liability on its commission income - it's absorbed
+    # internally and never passed on as a deduction from the owner's payout. Only the platform's
+    # own fee VAT (a reverse-charge cost genuinely incurred against the owner's money) is deducted.
+    # Ad-hoc payments (staff.models.OwnerPayment) are money already sent to the owner outside this
+    # calculation, so they reduce what's still outstanding.
+    owner_balance = rental_base - commission - platform_fee_vat - management_fee - ad_hoc_total
 
     return {
         'available': True,
@@ -133,6 +149,7 @@ def compute_owner_payout(booking, payment_settings=None):
         'platform_fee': platform_fee,
         'platform_fee_vat': platform_fee_vat,
         'management_fee': management_fee,
+        'ad_hoc_payments': ad_hoc_payment_rows,
         'owner_balance': owner_balance,
         'due_date': _due_date(payment_settings, owner, booking.arrival_date),
         'is_regular': owner.is_paid_regularly,

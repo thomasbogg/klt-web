@@ -12,6 +12,7 @@ from bookings.models import (
     PaymentSettings, PlatformPayout, RequestType, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
+from staff.models import OwnerPayment
 from bookings.utils import (
     add_business_days, create_booking, determine_payment_provider, expire_stale_holds, extras_summary,
     guest_counts_by_age, has_completed_previous_stay, payment_clearing_expiry, recalculate_balance_for_party,
@@ -332,10 +333,10 @@ class ComputeOwnerPayoutTests(TestCase):
         self.assertEqual(result['commission'], Decimal('66.98'))
         self.assertEqual(result['platform_fee'], Decimal('13.81'))
         self.assertEqual(result['platform_fee_vat'], Decimal('3.18'))
-        # Commission VAT is a new behaviour not reflected in the legacy report (high season always
-        # charges it now) - report row 5441 predates this, so owner_balance differs from the report.
+        # Commission VAT is computed for reference but is the agency's own internal cost - it does
+        # not reduce the owner's balance, which is why this matches the report exactly.
         self.assertEqual(result['commission_vat'], Decimal('15.41'))
-        self.assertEqual(result['owner_balance'], Decimal('360.97'))
+        self.assertEqual(result['owner_balance'], Decimal('376.38'))
 
     # --- Rental base source ---
 
@@ -458,6 +459,34 @@ class ComputeOwnerPayoutTests(TestCase):
         Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
         result = compute_owner_payout(booking, self.settings)
         self.assertEqual(result['management_fee'], Decimal('0'))
+
+    # --- Ad-hoc payments ---
+
+    def test_ad_hoc_payments_reduce_owner_balance(self):
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        OwnerPayment.objects.create(booking=booking, amount=Decimal('50.00'), note='Top-up')
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(len(result['ad_hoc_payments']), 1)
+        self.assertEqual(result['ad_hoc_payments'][0]['amount'], Decimal('50.00'))
+        self.assertFalse(result['ad_hoc_payments'][0]['is_credit'])
+        self.assertEqual(result['owner_balance'], Decimal('205.60'))  # 255.60 - 50.00
+
+    def test_negative_ad_hoc_payment_is_a_credit_that_increases_owner_balance(self):
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        OwnerPayment.objects.create(booking=booking, amount=Decimal('-49.50'), note='Correction')
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['ad_hoc_payments'][0]['amount'], Decimal('49.50'))
+        self.assertTrue(result['ad_hoc_payments'][0]['is_credit'])
+        self.assertEqual(result['owner_balance'], Decimal('305.10'))  # 255.60 + 49.50
+
+    def test_no_ad_hoc_payments_leaves_owner_balance_unchanged(self):
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['ad_hoc_payments'], [])
+        self.assertEqual(result['owner_balance'], Decimal('255.60'))
 
     # --- Due date ---
 

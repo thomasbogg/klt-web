@@ -155,7 +155,6 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['current_stage'], 'Confirmed Booking')
         self.assertEqual(list(response.context['deductions']), [])
-        self.assertEqual(list(response.context['owner_payments']), [])
         self.assertEqual(list(response.context['task_history']), [])
         self.assertIn('items', response.context['extras'])
 
@@ -335,12 +334,34 @@ class StaffBookingDetailViewTests(TestCase):
 
     def test_add_owner_payment(self):
         response = self.client.post(self.url, {
-            'action': 'add_owner_payment', 'amount': '400.00', 'currency': 'EUR', 'note': 'August payout',
+            'action': 'add_owner_payment', 'amount': '400.00', 'note': 'August payout',
         })
         self.assertRedirects(response, self.url)
         payment = OwnerPayment.objects.get(booking=self.booking)
         self.assertEqual(payment.amount, Decimal('400.00'))
         self.assertEqual(payment.note, 'August payout')
+
+    def test_add_owner_payment_requires_a_valid_amount(self):
+        response = self.client.post(self.url, {'action': 'add_owner_payment', 'amount': ''})
+        self.assertRedirects(response, self.url)
+        self.assertFalse(OwnerPayment.objects.filter(booking=self.booking).exists())
+
+    def test_delete_owner_payment(self):
+        payment = OwnerPayment.objects.create(booking=self.booking, amount=Decimal('50.00'), note='to remove')
+        response = self.client.post(self.url, {'action': 'delete_owner_payment', 'payment_id': payment.pk})
+        self.assertRedirects(response, self.url)
+        self.assertFalse(OwnerPayment.objects.filter(pk=payment.pk).exists())
+
+    def test_delete_owner_payment_is_scoped_to_this_booking(self):
+        other_booking = Booking.objects.create(
+            property=self.other_property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        other_payment = OwnerPayment.objects.create(booking=other_booking, amount=Decimal('10.00'))
+        response = self.client.post(self.url, {'action': 'delete_owner_payment', 'payment_id': other_payment.pk})
+        self.assertRedirects(response, self.url)
+        self.assertTrue(OwnerPayment.objects.filter(pk=other_payment.pk).exists())
 
     def test_add_task_note(self):
         response = self.client.post(self.url, {'action': 'add_task_note', 'description': 'Called guest re: extras'})
