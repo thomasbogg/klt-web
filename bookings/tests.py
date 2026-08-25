@@ -1,6 +1,7 @@
 from datetime import date, time, timedelta
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -167,6 +168,22 @@ class ChargeDueAtBookingInChargeCurrencyTests(TestCase):
         self.assertEqual(currency, 'GBP')
 
 
+class ChargeTotalRentalTests(TestCase):
+    def test_combines_basic_rental_discount_and_extra_guest(self):
+        charge = Charge(basic_rental=Decimal('700.00'), discount_total=Decimal('70.00'), extra_guest_total=Decimal('105.00'))
+        self.assertEqual(charge.total_rental, Decimal('735.00'))
+
+    def test_none_basic_rental_gives_none_total(self):
+        charge = Charge(basic_rental=None)
+        self.assertIsNone(charge.total_rental)
+
+    def test_historical_charge_with_no_discount_or_extra_guest_fields_passes_through_unchanged(self):
+        # A Charge saved before discount_total/extra_guest_total existed - both NULL, and
+        # basic_rental already holds what was, at the time, the final rental total.
+        charge = Charge(basic_rental=Decimal('284.00'), discount_total=None, extra_guest_total=None)
+        self.assertEqual(charge.total_rental, Decimal('284.00'))
+
+
 class PaymentClearingExpiryTests(TestCase):
     def next_weekday(self, target_weekday):
         """The next datetime (from now) landing on the given date.weekday() value."""
@@ -268,6 +285,39 @@ class ComputeCostsTests(TestCase):
         costs_gbp = settings.costs_in_gbp(costs)
         self.assertEqual(costs_gbp['due_at_booking'], settings.to_gbp(costs['due_at_booking']))
         self.assertEqual(costs_gbp['due_at_balance'], Decimal('0.00'))
+
+
+class BookingCleanMaxGuestsTests(TestCase):
+    """Booking.clean()'s guest-count cap - added 2026-08-25 after staff editing adults/children/
+    babies on the booking detail page turned out to have no cap at all, unlike every guest-facing
+    party-size flow (bookings/views.py), which all enforce Property.specs.max_guests already."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Max Guests Property', short_title='MAXGST')
+        self.guest = Guest.objects.create(first_name='Ana', last_name='Reis', email='max-guests@example.com')
+
+    def _make_booking(self, adults, children, babies):
+        return Booking(
+            property=self.property, guest=self.guest,
+            arrival_date=date(2026, 6, 1), departure_date=date(2026, 6, 8),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=adults, children=children, babies=babies, last_updated=timezone.now(),
+        )
+
+    def test_rejects_party_over_max_guests(self):
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        booking = self._make_booking(2, 3, 1)  # 6 total
+        with self.assertRaises(ValidationError):
+            booking.full_clean()
+
+    def test_allows_party_at_max_guests(self):
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        booking = self._make_booking(2, 2, 0)  # 4 total
+        booking.full_clean()  # does not raise
+
+    def test_allows_party_over_max_guests_when_property_has_no_specs(self):
+        booking = self._make_booking(2, 3, 1)  # 6 total, no PropertySpec row at all
+        booking.full_clean()  # does not raise - nothing to enforce against
 
 
 class ComputeOwnerPayoutTests(TestCase):
@@ -567,7 +617,11 @@ class RecalculateCostsForPartyTests(TestCase):
         new_guests, new_costs, changed = recalculate_costs_for_party(self.booking, [30, 32, 15])
         self.assertTrue(changed)
         self.assertEqual(new_guests, {'adults': 3, 'children': 0, 'infants': 0})
-        self.assertEqual(new_costs['basic_rental'], Decimal('770.00'))
+        # 7 nights @ 100 = 700 clean basic; 1 extra adult @ 10/night = 70 extra-guest; no discount.
+        self.assertEqual(new_costs['basic_rental'], Decimal('700.00'))
+        self.assertEqual(new_costs['discount_total'], Decimal('0'))
+        self.assertEqual(new_costs['extra_guest_total'], Decimal('70.00'))
+        self.assertEqual(new_costs['rental_total'], Decimal('770.00'))
 
     def test_unpriceable_stay_returns_all_none(self):
         self.booking.property.prices.all().delete()
@@ -613,7 +667,7 @@ class RecalculateBalanceForPartyTests(TestCase):
         # actually paid, not 25% of the new (larger) subtotal.
         new_guests, new_costs, changed = recalculate_balance_for_party(self.booking, [30, 32, 15])
         self.assertTrue(changed)
-        self.assertEqual(new_costs['basic_rental'], Decimal('770.00'))
+        self.assertEqual(new_costs['rental_total'], Decimal('770.00'))
         self.assertEqual(new_costs['due_at_booking'], Decimal('193.86'))  # untouched
         # subtotal = 770 + 5.5% admin (42.35) = 812.35; balance = 812.35 - 193.86 (frozen deposit)
         self.assertEqual(new_costs['admin_fee'], Decimal('42.35'))
@@ -622,7 +676,7 @@ class RecalculateBalanceForPartyTests(TestCase):
     def test_removing_the_child_reduces_the_balance(self):
         new_guests, new_costs, changed = recalculate_balance_for_party(self.booking, [30, 32])
         self.assertTrue(changed)
-        self.assertEqual(new_costs['basic_rental'], Decimal('700.00'))
+        self.assertEqual(new_costs['rental_total'], Decimal('700.00'))
         self.assertLess(new_costs['due_at_balance'], Decimal('581.57'))
 
     def test_balance_floors_at_zero_never_negative(self):
@@ -671,6 +725,20 @@ class CreateBookingTests(TestCase):
         )
         self.assertFalse(hasattr(booking, 'balance_payment'))
         self.assertEqual(booking.charges.due_at_balance, Decimal('0'))
+
+    def test_charge_splits_basic_rental_discount_and_extra_guest(self):
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 3, 'children': 1, 'infants': 0},
+        )
+        charge = booking.charges
+        # 5 nights @ 100 = 500 clean basic; 1 extra adult @ 10/night + 1 child @ 5/night = 75 extra-guest.
+        self.assertEqual(charge.basic_rental, Decimal('500.00'))
+        self.assertEqual(charge.discount_total, Decimal('0'))
+        self.assertEqual(charge.extra_guest_total, Decimal('75.00'))
+        self.assertEqual(charge.total_rental, Decimal('575.00'))
 
 
 class BookingDetailsViewTests(TestCase):
@@ -737,7 +805,10 @@ class BookingDetailsViewTests(TestCase):
         self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
         self.assertEqual(self.booking.party.count(), 3)
         self.charge.refresh_from_db()
-        self.assertEqual(self.charge.basic_rental, Decimal('735.00'))
+        # basic_rental is freshly recomputed even when the total is unchanged - the fixture's flat
+        # 735.00 predates the basic/discount/extra-guest split, so it always overwrites with the
+        # split values (700 basic + 35 extra-guest here); total_rental is what stays unchanged.
+        self.assertEqual(self.charge.total_rental, Decimal('735.00'))
 
     def test_post_price_changing_party_without_confirmed_shows_warning_and_does_not_persist(self):
         self._set_session()
@@ -757,7 +828,7 @@ class BookingDetailsViewTests(TestCase):
         ))
         self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
         self.charge.refresh_from_db()
-        self.assertEqual(self.charge.basic_rental, Decimal('770.00'))
+        self.assertEqual(self.charge.total_rental, Decimal('770.00'))
         self.booking.refresh_from_db()
         self.assertEqual(self.booking.adults, 3)
         self.assertEqual(self.booking.children, 0)

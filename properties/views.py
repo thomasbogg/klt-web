@@ -136,13 +136,14 @@ class ReserveView(generic.DetailView):
 
         if context['is_available']:
             booking_settings = BookingSettings.load()
-            rental_total = get_stay_total_price(
+            pricing = get_stay_total_price(
                 self.object, start_date, end_date, guests,
                 monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
             )
-            if rental_total is None:
+            if pricing is None:
                 context['is_available'] = False  # can't book a stay we can't price
             else:
+                rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
                 context['costs'] = booking_settings.compute_costs(rental_total, arrival_date=start_date)
                 context['costs_gbp'] = booking_settings.costs_in_gbp(context['costs'])
                 if 'form' not in context:

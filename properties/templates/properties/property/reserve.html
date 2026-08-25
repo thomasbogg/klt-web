@@ -73,7 +73,7 @@
         <div class="reserve-breakdown">
             <div class="reserve-breakdown-row">
                 <span>Basic rental ({{ nights }} night{{ nights|pluralize }})</span>
-                <span class="price-value" data-eur="{{ costs.basic_rental|floatformat:2 }}" data-gbp="{{ costs_gbp.basic_rental|floatformat:2 }}">&euro;{{ costs.basic_rental|floatformat:2 }}</span>
+                <span class="price-value" data-eur="{{ costs.rental_total|floatformat:2 }}" data-gbp="{{ costs_gbp.rental_total|floatformat:2 }}">&euro;{{ costs.rental_total|floatformat:2 }}</span>
             </div>
             <div class="reserve-breakdown-row">
                 <span>Admin fee</span>

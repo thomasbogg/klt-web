@@ -594,13 +594,16 @@ class BookingDetailsView(BookingFormMixin, View):
 
             charge = booking.charges
             charge.basic_rental = new_costs['basic_rental']
+            charge.discount_total = new_costs['discount_total']
+            charge.extra_guest_total = new_costs['extra_guest_total']
             charge.admin = new_costs['admin_fee']
             charge.security = new_costs['security_deposit']
             charge.due_at_booking = new_costs['due_at_booking']
             charge.due_at_balance = new_costs['due_at_balance']
             charge.balance_due_date = new_costs['balance_due_date']
             charge.save(update_fields=[
-                'basic_rental', 'admin', 'security', 'due_at_booking', 'due_at_balance', 'balance_due_date',
+                'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'security',
+                'due_at_booking', 'due_at_balance', 'balance_due_date',
             ])
 
             # A price change after a Revolut checkout URL already exists (guest went details ->
@@ -746,10 +749,14 @@ class BookingBalanceDetailsView(BookingFormMixin, View):
 
             charge = booking.charges
             charge.basic_rental = new_costs['basic_rental']
+            charge.discount_total = new_costs['discount_total']
+            charge.extra_guest_total = new_costs['extra_guest_total']
             charge.admin = new_costs['admin_fee']
             charge.security = new_costs['security_deposit']
             charge.due_at_balance = new_costs['due_at_balance']
-            charge.save(update_fields=['basic_rental', 'admin', 'security', 'due_at_balance'])
+            charge.save(update_fields=[
+                'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'security', 'due_at_balance',
+            ])
 
             # A price change after a Revolut checkout URL already exists (guest went balance ->
             # pay -> back -> balance, changed something) would otherwise leave the guest paying a
@@ -1091,10 +1098,14 @@ class BookingManageGuestsView(BookingFormMixin, View):
 
             charge = booking.charges
             charge.basic_rental = new_costs['basic_rental']
+            charge.discount_total = new_costs['discount_total']
+            charge.extra_guest_total = new_costs['extra_guest_total']
             charge.admin = new_costs['admin_fee']
             charge.security = new_costs['security_deposit']
             charge.due_at_balance = new_costs['due_at_balance']
-            charge.save(update_fields=['basic_rental', 'admin', 'security', 'due_at_balance'])
+            charge.save(update_fields=[
+                'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'security', 'due_at_balance',
+            ])
 
             # Same reason BookingBalanceDetailsView clears this - a stale checkout URL would
             # otherwise leave the guest paying an amount that no longer matches Charge.
@@ -1342,7 +1353,7 @@ class BookingManageGuestAddView(BookingFormMixin, View):
             return render(request, self.template_name, context)
 
         charge = booking.charges
-        additional_charge = max(new_costs['subtotal'] - (charge.basic_rental + charge.admin), Decimal('0'))
+        additional_charge = max(new_costs['subtotal'] - (charge.total_rental + charge.admin), Decimal('0'))
 
         # Only worth an extra confirm click when it's actually asking the guest to accept a
         # charge - added guests still within the property's base occupancy (no per-extra-guest

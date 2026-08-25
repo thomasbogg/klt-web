@@ -1535,7 +1535,10 @@ class StaffBookingDetailView(View):
         charge = getattr(booking, 'charges', None)
         charge_changed = False
         if charge is not None:
-            for field in ('basic_rental', 'admin', 'security', 'due_at_booking', 'due_at_balance'):
+            for field in (
+                'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'security',
+                'due_at_booking', 'due_at_balance',
+            ):
                 raw = post.get(field, '').strip()
                 if not raw:
                     continue

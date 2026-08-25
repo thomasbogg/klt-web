@@ -36,14 +36,14 @@ class SearchView(View):
             available_properties = list(self.get_available_properties(start_date, end_date, guests))
             booking_settings = BookingSettings.load()
             for property in available_properties:
-                rental_total = get_stay_total_price(
+                pricing = get_stay_total_price(
                     property, start_date, end_date, guests,
                     monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
                 )
-                property.stay_total_price = (
-                    booking_settings.compute_costs(rental_total, arrival_date=start_date)['subtotal']
-                    if rental_total is not None else None
-                )
+                property.stay_total_price = None
+                if pricing is not None:
+                    rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
+                    property.stay_total_price = booking_settings.compute_costs(rental_total, arrival_date=start_date)['subtotal']
                 property.stay_total_price_gbp = (
                     booking_settings.to_gbp(property.stay_total_price)
                     if property.stay_total_price is not None else None

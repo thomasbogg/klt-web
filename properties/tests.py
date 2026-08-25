@@ -1,5 +1,6 @@
 import importlib
 from datetime import date, timedelta
+from decimal import Decimal
 
 from django.apps import apps
 from django.core.exceptions import ValidationError
@@ -10,6 +11,7 @@ from django.utils import timezone
 from bookings.models import Booking
 from guests.models import Guest
 from properties.models import Amenity, Location, Owner, Price, Property, PropertyOwnership, PropertySpec
+from properties.utils import get_stay_total_price
 
 
 def make_owner(name, email):
@@ -325,6 +327,79 @@ class PropertyOwnershipBackfillMigrationTests(TestCase):
         row = PropertyOwnership.objects.get(property=owned)
         self.assertIsNone(row.start_date)
         self.assertIsNone(row.end_date)
+
+
+class GetStayTotalPriceTests(TestCase):
+    """get_stay_total_price() returns {'basic_total', 'discount_total', 'extra_guest_total'} - see
+    bookings.models.Charge.basic_rental/discount_total/extra_guest_total, which store these three
+    components separately rather than one combined final total (2026-08-25)."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Pricing Property', short_title='PRICEPROP')
+        # Far enough out that last-minute-discount tests can control days_to_arrival precisely
+        # without also (accidentally) landing inside another test's window.
+        self.far_future = date.today() + timedelta(days=300)
+
+    def _make_price(self, nights, start=None, **overrides):
+        start = start or self.far_future
+        end = start + timedelta(days=nights)
+        Price.objects.create(
+            property=self.property, start_date=start, end_date=end,
+            rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+            **overrides,
+        )
+        return start, end
+
+    def test_no_discount_no_extra_guests(self):
+        start, end = self._make_price(3)
+        pricing = get_stay_total_price(self.property, start, end, {'adults': 2})
+        self.assertEqual(pricing['basic_total'], Decimal('300.00'))
+        self.assertEqual(pricing['discount_total'], Decimal('0'))
+        self.assertEqual(pricing['extra_guest_total'], Decimal('0'))
+
+    def test_weekly_discount(self):
+        start, end = self._make_price(7, weekly_discount_percent=Decimal('10.00'))
+        pricing = get_stay_total_price(self.property, start, end, {'adults': 2})
+        self.assertEqual(pricing['basic_total'], Decimal('700.00'))
+        self.assertEqual(pricing['discount_total'], Decimal('70.00'))  # 7 * 100 * 10%
+
+    def test_monthly_discount_overrides_weekly(self):
+        start, end = self._make_price(
+            28, weekly_discount_percent=Decimal('10.00'), monthly_discount_percent=Decimal('20.00'),
+        )
+        pricing = get_stay_total_price(self.property, start, end, {'adults': 2})
+        self.assertEqual(pricing['basic_total'], Decimal('2800.00'))
+        self.assertEqual(pricing['discount_total'], Decimal('560.00'))  # 28 * 100 * 20%, not 10%
+
+    def test_last_minute_discount_stacks_on_top_of_weekly(self):
+        start, end = self._make_price(
+            7, start=date.today(),
+            weekly_discount_percent=Decimal('10.00'), last_minute_discount_percent=Decimal('5.00'),
+            last_minute_discount_days=7,
+        )
+        pricing = get_stay_total_price(self.property, start, end, {'adults': 2})
+        self.assertEqual(pricing['discount_total'], Decimal('105.00'))  # 7 * 100 * (10% + 5%)
+
+    def test_extra_guests_only(self):
+        start, end = self._make_price(3)
+        pricing = get_stay_total_price(self.property, start, end, {'adults': 3, 'children': 1})
+        self.assertEqual(pricing['basic_total'], Decimal('300.00'))
+        self.assertEqual(pricing['discount_total'], Decimal('0'))
+        # 3 nights * (1 extra adult @ 10 + 1 child @ 5)
+        self.assertEqual(pricing['extra_guest_total'], Decimal('45.00'))
+
+    def test_combined_discount_and_extra_guests(self):
+        start, end = self._make_price(7, weekly_discount_percent=Decimal('10.00'))
+        pricing = get_stay_total_price(self.property, start, end, {'adults': 3, 'children': 1})
+        self.assertEqual(pricing['basic_total'], Decimal('700.00'))
+        self.assertEqual(pricing['discount_total'], Decimal('70.00'))
+        self.assertEqual(pricing['extra_guest_total'], Decimal('105.00'))  # 7 * (10 + 5)
+
+    def test_unpriceable_stay_returns_none(self):
+        start = self.far_future
+        end = start + timedelta(days=3)
+        pricing = get_stay_total_price(self.property, start, end, {'adults': 2})
+        self.assertIsNone(pricing)
 
 
 class AmenityTests(TestCase):

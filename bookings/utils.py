@@ -93,12 +93,13 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
             )
 
         booking_settings = BookingSettings.load()
-        rental_total = get_stay_total_price(
+        pricing = get_stay_total_price(
             property, start_date, end_date, guests,
             monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
         )
-        if rental_total is None:
+        if pricing is None:
             raise ValidationError("Pricing is not available for the selected dates.")
+        rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
         costs = booking_settings.compute_costs(rental_total, arrival_date=start_date)
 
         provider = determine_payment_provider(start_date)
@@ -127,7 +128,9 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
 
         Charge.objects.create(
             booking=booking,
-            basic_rental=costs['basic_rental'],
+            basic_rental=pricing['basic_total'],
+            discount_total=pricing['discount_total'],
+            extra_guest_total=pricing['extra_guest_total'],
             admin=costs['admin_fee'],
             security=costs['security_deposit'],
             due_at_booking=costs['due_at_booking'],
@@ -163,8 +166,9 @@ def guest_counts_by_age(ages, booking_settings):
 def recalculate_costs_for_party(booking, ages):
     """Recompute costs from real party ages, reusing get_stay_total_price()/compute_costs() exactly
     as create_booking() does at initial booking time. Returns (new_guests, new_costs, changed) -
-    changed compares basic_rental (not due_at_booking, which is a rounded percentage and can
-    coincidentally match across different rentals) against the booking's current Charge. Returns
+    changed compares the final rental total, i.e. new_costs['rental_total'] against the booking's
+    current Charge.total_rental (not due_at_booking, which is a rounded percentage and can
+    coincidentally match across different rentals). Returns
     (None, None, None) if the stay can no longer be priced at all (e.g. a Price row was
     edited/removed since the reservation was made) - the same situation create_booking() raises
     ValidationError for; the caller must handle it explicitly instead. Writes nothing to the DB -
@@ -174,14 +178,18 @@ def recalculate_costs_for_party(booking, ages):
 
     booking_settings = BookingSettings.load()
     new_guests = guest_counts_by_age(ages, booking_settings)
-    rental_total = get_stay_total_price(
+    pricing = get_stay_total_price(
         booking.property, booking.arrival_date, booking.departure_date, new_guests,
         monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
     )
-    if rental_total is None:
+    if pricing is None:
         return None, None, None
+    rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
     new_costs = booking_settings.compute_costs(rental_total, arrival_date=booking.arrival_date)
-    changed = booking.charges.basic_rental is None or new_costs['basic_rental'] != booking.charges.basic_rental
+    new_costs['basic_rental'] = pricing['basic_total']
+    new_costs['discount_total'] = pricing['discount_total']
+    new_costs['extra_guest_total'] = pricing['extra_guest_total']
+    changed = booking.charges.total_rental is None or new_costs['rental_total'] != booking.charges.total_rental
     return new_guests, new_costs, changed
 
 
@@ -191,7 +199,7 @@ def recalculate_balance_for_party(booking, ages):
     move due_at_balance, never retroactively redefine what the deposit "should have been".
 
     Reuses get_stay_total_price()/BookingSettings.compute_costs() the same way for
-    basic_rental/admin_fee/subtotal (one formula, not duplicated), but then discards
+    rental_total/admin_fee/subtotal (one formula, not duplicated), but then discards
     compute_costs()'s own due_at_booking/due_at_balance/balance_due_date split (irrelevant here,
     and its internal collapse-within-the-window branch doesn't apply once a deposit already
     exists) in favour of due_at_balance = max(new_subtotal - due_at_booking, 0). Floored at zero
@@ -207,19 +215,23 @@ def recalculate_balance_for_party(booking, ages):
 
     booking_settings = BookingSettings.load()
     new_guests = guest_counts_by_age(ages, booking_settings)
-    rental_total = get_stay_total_price(
+    pricing = get_stay_total_price(
         booking.property, booking.arrival_date, booking.departure_date, new_guests,
         monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
     )
-    if rental_total is None:
+    if pricing is None:
         return None, None, None
 
     charge = booking.charges
+    rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
     new_costs = booking_settings.compute_costs(rental_total, arrival_date=booking.arrival_date)
+    new_costs['basic_rental'] = pricing['basic_total']
+    new_costs['discount_total'] = pricing['discount_total']
+    new_costs['extra_guest_total'] = pricing['extra_guest_total']
     new_costs['due_at_booking'] = charge.due_at_booking
     new_costs['due_at_balance'] = max(new_costs['subtotal'] - charge.due_at_booking, Decimal('0'))
     new_costs['balance_due_date'] = charge.balance_due_date
-    changed = new_costs['basic_rental'] != charge.basic_rental
+    changed = new_costs['rental_total'] != charge.total_rental
     return new_guests, new_costs, changed
 
 
@@ -349,7 +361,7 @@ def booking_confirmation_context(booking):
     return {
         'booking': booking,
         'charge': charge,
-        'subtotal': charge.basic_rental + charge.admin,
+        'subtotal': charge.total_rental + charge.admin,
         'nights': (booking.departure_date - booking.arrival_date).days,
         'costs_gbp': charge.costs_in_gbp(),
         'cancelled': cancelled,

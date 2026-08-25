@@ -28,7 +28,7 @@
     <div class="confirmation-breakdown-row">
         <span>Basic rental ({{ nights }} night{{ nights|pluralize }})</span>
         {% if charge.currency == 'GBP' %}<span>&pound;{{ costs_gbp.basic_rental|floatformat:2 }}</span>
-        {% else %}<span>&euro;{{ charge.basic_rental|floatformat:2 }}</span>{% endif %}
+        {% else %}<span>&euro;{{ charge.total_rental|floatformat:2 }}</span>{% endif %}
     </div>
     <div class="confirmation-breakdown-row">
         <span>Admin fee</span>

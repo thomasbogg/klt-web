@@ -8,8 +8,13 @@ DEFAULT_MONTHLY_DISCOUNT_MIN_NIGHTS = 28
 
 
 def get_stay_total_price(property, start_date, end_date, guests=None, monthly_discount_min_nights=None):
-    """Nightly rates for the stay, less weekly/monthly/last-minute discounts, plus extra-guest
-    charges (undiscounted), or None if any night is unpriced.
+    """Nightly rates for the stay, split into components rather than combined into one figure -
+    {'basic_total', 'discount_total', 'extra_guest_total'} (all Decimal), or None if any night is
+    unpriced. discount_total is a euro amount rather than a percentage: a stay can span more than
+    one Price row (different seasonal periods with potentially different discount percentages on
+    different nights), so there's no single well-defined "discount %" for the whole stay in
+    general - only a well-defined aggregate euro total. The final rental total a caller should
+    actually charge/store is basic_total - discount_total + extra_guest_total.
 
     monthly_discount_min_nights is a site-wide setting (BookingSettings), not per-property,
     so it's passed in by the caller rather than read off each Price row.
@@ -53,7 +58,11 @@ def get_stay_total_price(property, start_date, end_date, guests=None, monthly_di
             discount_total += price.rate * price.last_minute_discount_percent / Decimal('100')
         extra_guest_total += extra_adults * price.extra_adult_rate + extra_children * price.extra_child_rate
 
-    return (basic_total - discount_total + extra_guest_total).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+    return {
+        'basic_total': basic_total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP),
+        'discount_total': discount_total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP),
+        'extra_guest_total': extra_guest_total.quantize(TWO_PLACES, rounding=ROUND_HALF_UP),
+    }
 
 
 def pretty_title(title):

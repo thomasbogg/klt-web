@@ -108,8 +108,17 @@
                         <label class="staff-field">Basic Rental
                             <input type="text" name="basic_rental" form="booking-detail-form" class="staff-input" value="{{ charge.basic_rental|default:'' }}">
                         </label>
+                        <label class="staff-field">Discount Applied
+                            <input type="text" name="discount_total" form="booking-detail-form" class="staff-input" value="{{ charge.discount_total|default:'' }}">
+                        </label>
+                        <label class="staff-field">Extra Guest Charge
+                            <input type="text" name="extra_guest_total" form="booking-detail-form" class="staff-input" value="{{ charge.extra_guest_total|default:'' }}">
+                        </label>
                         <label class="staff-field">Admin Fee
                             <input type="text" name="admin" form="booking-detail-form" class="staff-input" value="{{ charge.admin|default:'' }}">
+                        </label>
+                        <label class="staff-field">Total Rental
+                            <input type="text" class="staff-input" value="{{ charge.total_rental|floatformat:2 }}" readonly>
                         </label>
                         <label class="staff-field">Security Charge
                             <input type="text" name="security" form="booking-detail-form" class="staff-input" value="{{ charge.security|default:'' }}">

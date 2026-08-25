@@ -210,6 +210,21 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertEqual(self.payment.status, 'paid')
         self.assertEqual(self.balance_payment.status, 'in_progress')
 
+    def test_update_booking_saves_discount_and_extra_guest_and_total_rental_reflects_them(self):
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'basic_rental': '700.00',
+            'discount_total': '70.00', 'extra_guest_total': '35.00', 'admin': '38.50',
+        })
+        self.assertRedirects(response, self.url)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.discount_total, Decimal('70.00'))
+        self.assertEqual(self.charge.extra_guest_total, Decimal('35.00'))
+        self.assertEqual(self.charge.total_rental, Decimal('665.00'))  # 700 - 70 + 35
+
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Total Rental')
+        self.assertContains(response, '665.00')
+
     def test_update_booking_only_touches_fields_actually_submitted(self):
         # A minimal POST (as if only the Enquiry data panel's inputs existed) must leave every
         # other panel's data untouched - each field is still independently optional server-side,
@@ -286,6 +301,25 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertRedirects(response, self.url)
         self.booking.refresh_from_db()
         self.assertEqual(self.booking.arrival_date, self.start)  # untouched
+
+    def test_update_booking_rejects_party_over_max_guests(self):
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'adults': '2', 'children': '3', 'babies': '1',
+        })
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.adults, 2)  # untouched (was 2 already, but children/babies too)
+        self.assertEqual(self.booking.children, 0)
+
+    def test_update_booking_allows_party_over_max_guests_when_property_has_no_specs(self):
+        # No PropertySpec row for self.property - can't enforce a cap that isn't known.
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'adults': '2', 'children': '3', 'babies': '1',
+        })
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.children, 3)
 
     def test_update_booking_never_blanks_required_last_name(self):
         self.client.post(self.url, {'action': 'update_booking', 'last_name': ''})

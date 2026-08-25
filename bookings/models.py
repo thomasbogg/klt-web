@@ -101,7 +101,7 @@ class BookingSettings(models.Model):
     # Cost dict keys from compute_costs() that represent a money amount and are shown converted to
     # GBP when a guest toggles the currency display. security_deposit is deliberately excluded: it's
     # cash collected locally in Portugal at check-in and stays in EUR regardless of quote currency.
-    GBP_DISPLAY_COST_KEYS = ('basic_rental', 'admin_fee', 'subtotal', 'due_at_booking', 'due_at_balance')
+    GBP_DISPLAY_COST_KEYS = ('rental_total', 'admin_fee', 'subtotal', 'due_at_booking', 'due_at_balance')
 
     class Meta:
         db_table = 'booking_settings'
@@ -123,8 +123,10 @@ class BookingSettings(models.Model):
         settings, _ = cls.objects.get_or_create(pk=1)
         return settings
 
-    def compute_costs(self, basic_rental, arrival_date=None, today=None):
-        """Cost breakdown for a stay's basic rental total: admin fee, booking/balance split, balance due date.
+    def compute_costs(self, rental_total, arrival_date=None, today=None):
+        """Cost breakdown for a stay's final rental total (already net of any discount, plus any
+        extra-guest surcharge - see properties/utils.py::get_stay_total_price() and
+        Charge.total_rental): admin fee, booking/balance split, balance due date.
 
         The security deposit is reported separately since it's collected in cash at check-in,
         not part of the online rental/admin payment split.
@@ -136,10 +138,10 @@ class BookingSettings(models.Model):
         (rather than left as a stale past date) so it doubles as the "this booking never gets a
         balance stage" signal for the guest-facing Extras-at-balance flow.
         """
-        basic_rental = Decimal(basic_rental)
+        rental_total = Decimal(rental_total)
         today = today or date.today()
-        admin_fee = (basic_rental * self.admin_fee_percent / Decimal('100')).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
-        subtotal = basic_rental + admin_fee
+        admin_fee = (rental_total * self.admin_fee_percent / Decimal('100')).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        subtotal = rental_total + admin_fee
         due_at_booking = (subtotal * self.deposit_percent_at_booking / Decimal('100')).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
         due_at_balance = subtotal - due_at_booking
         balance_due_date = arrival_date - timedelta(days=self.balance_due_days_before_arrival) if arrival_date else None
@@ -150,7 +152,7 @@ class BookingSettings(models.Model):
             balance_due_date = None
 
         return {
-            'basic_rental': basic_rental,
+            'rental_total': rental_total,
             'admin_fee': admin_fee,
             'subtotal': subtotal,
             'due_at_booking': due_at_booking,
@@ -269,6 +271,19 @@ class Booking(models.Model):
             if overlap:
                 message = f"These dates overlap an existing booking ({overlap.arrival_date} to {overlap.departure_date})."
                 raise ValidationError({'arrival_date': message, 'departure_date': message})
+        # The guest-facing party-size flow (bookings/views.py) already enforces this before it ever
+        # constructs/saves a Booking, so this only actually bites on the staff edit path (which
+        # otherwise had no cap at all - see staff/views.py::_update_booking) - kept here rather than
+        # duplicated per-view so any future edit path gets the same protection for free. Guarded on
+        # specs existing at all - PropertySpec is a separate row, not auto-created for every
+        # Property (confirmed against staff/views.py's own get_or_create calls), so plenty of real
+        # and test properties have none.
+        specs = self.property and getattr(self.property, 'specs', None)
+        if specs is not None and None not in (self.adults, self.children, self.babies):
+            total_guests = self.adults + self.children + self.babies
+            if total_guests > specs.max_guests:
+                message = f"This property allows a maximum of {specs.max_guests} guests (currently {total_guests})."
+                raise ValidationError({'adults': message})
 
     def save(self, *args, **kwargs):
         if not self.pk and not self.reference:
@@ -484,8 +499,16 @@ class Charge(models.Model):
     credit_card = models.BooleanField(blank=True, null=True)
     currency = models.CharField(max_length=3, blank=True, null=True, choices=CURRENCY_CHOICES)
     
-    # Charge amounts
+    # Charge amounts. basic_rental is the clean, pre-discount/pre-extra-guest nightly-rate total
+    # (see properties/utils.py::get_stay_total_price()) - discount_total/extra_guest_total are the
+    # amounts that get combined with it into what's actually charged, see total_rental() below.
+    # NULL discount_total/extra_guest_total (any Charge created before these fields existed) means
+    # "unknown", not "zero" - but total_rental() treats it as zero anyway, which is exactly correct
+    # for that historical data: basic_rental on those older rows already holds the final,
+    # already-adjusted total, so basic_rental - 0 + 0 reproduces it exactly.
     basic_rental = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    discount_total = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    extra_guest_total = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     admin = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     security = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     security_method = models.CharField(max_length=100, blank=True, null=True)
@@ -511,6 +534,16 @@ class Charge(models.Model):
     # since changed - so GBP display for an existing booking always uses this frozen rate, never
     # BookingSettings.load().gbp_conversion_rate directly.
     gbp_conversion_rate = models.DecimalField(max_digits=6, decimal_places=4, blank=True, null=True)
+
+    @property
+    def total_rental(self):
+        """basic_rental adjusted by discount/extra-guest - the actual rental amount charged, as
+        opposed to basic_rental alone (the clean pre-adjustment figure). Every consumer that needs
+        "the final rental total" (owner payout commission base, guest-facing confirmation total,
+        the extra-guest add-on charge calc) should read this, not basic_rental directly."""
+        if self.basic_rental is None:
+            return None
+        return self.basic_rental - (self.discount_total or Decimal('0')) + (self.extra_guest_total or Decimal('0'))
 
     def to_gbp(self, amount):
         if self.gbp_conversion_rate is None or amount is None:
@@ -539,9 +572,9 @@ class Charge(models.Model):
         if self.gbp_conversion_rate is None:
             return None
         return {
-            'basic_rental': self.to_gbp(self.basic_rental),
+            'basic_rental': self.to_gbp(self.total_rental),
             'admin_fee': self.to_gbp(self.admin),
-            'subtotal': self.to_gbp(self.basic_rental + self.admin),
+            'subtotal': self.to_gbp(self.total_rental + self.admin),
             'due_at_booking': self.to_gbp(self.due_at_booking),
             'due_at_balance': self.to_gbp(self.due_at_balance),
         }

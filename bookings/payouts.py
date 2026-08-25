@@ -100,7 +100,7 @@ def compute_owner_payout(booking, payment_settings=None):
         charge = getattr(booking, 'charges', None)
         if charge is None or charge.basic_rental is None:
             return _unavailable("No Charge record for this booking.")
-        rental_base = charge.basic_rental
+        rental_base = charge.total_rental
         platform_fee = ZERO
 
     if payment_settings is None:
