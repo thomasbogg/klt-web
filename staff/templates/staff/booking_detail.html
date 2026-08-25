@@ -31,7 +31,7 @@
 
         <nav class="staff-stage-tabs">
             {% for stage in stage_tabs %}
-            <span class="staff-stage-tab{% if stage == current_stage %} staff-stage-tab-active{% endif %}">{{ stage }}</span>
+            <span class="staff-stage-tab{% if stage == current_stage %} staff-stage-tab-active{% if stage == 'Closed' %} staff-stage-tab-active-closed{% endif %}{% endif %}">{{ stage }}</span>
             {% endfor %}
         </nav>
 

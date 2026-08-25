@@ -126,6 +126,12 @@ body {
     border-color: var(--status-provisional-color);
 }
 
+.staff-stage-tab-active-closed {
+    background: var(--status-booked-bg);
+    color: var(--status-booked-color);
+    border-color: var(--status-booked-color);
+}
+
 .staff-panel-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
