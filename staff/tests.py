@@ -9,7 +9,9 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from bookings.models import BalancePayment, Booking, BookingCondition, Charge, FAQ, Payment, PaymentSettings
+from bookings.models import (
+    BalancePayment, Booking, BookingCondition, BookingSettings, Charge, FAQ, Payment, PaymentSettings,
+)
 from guests.models import Guest
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, Manager, Owner, Price,
@@ -175,6 +177,46 @@ class StaffBookingDetailViewTests(TestCase):
         owner_payout = response.context['owner_payout']
         self.assertTrue(owner_payout['available'])
         self.assertContains(response, "Owner balance")
+
+    def test_split_mismatch_false_when_subtotal_matches_due_total(self):
+        # Fixture: basic_rental(700) + admin(38.50) = 738.50 = due_at_booking(184.63) + due_at_balance(553.87).
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['subtotal'], Decimal('738.50'))
+        self.assertEqual(response.context['due_total'], Decimal('738.50'))
+        self.assertFalse(response.context['split_mismatch'])
+        self.assertNotContains(response, "recalculate below")
+
+    def test_split_mismatch_true_after_basic_rental_edited_without_recalculating(self):
+        self.client.post(self.url, {'action': 'update_booking', 'basic_rental': '750.00'})
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['subtotal'], Decimal('788.50'))  # 750 + 38.50
+        self.assertEqual(response.context['due_total'], Decimal('738.50'))  # untouched
+        self.assertTrue(response.context['split_mismatch'])
+        self.assertContains(response, "recalculate below")
+
+    def test_recalculate_payment_split_with_paid_deposit_only_moves_due_at_balance(self):
+        self.client.post(self.url, {'action': 'update_booking', 'basic_rental': '750.00'})
+        response = self.client.post(self.url, {'action': 'recalculate_payment_split'})
+        self.assertRedirects(response, self.url)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.due_at_booking, Decimal('184.63'))  # frozen - deposit already paid
+        self.assertEqual(self.charge.due_at_balance, Decimal('603.87'))  # 788.50 - 184.63
+
+    def test_recalculate_payment_split_with_unpaid_deposit_recomputes_both(self):
+        self.payment.status = 'pending'
+        self.payment.save(update_fields=['status'])
+        self.client.post(self.url, {'action': 'update_booking', 'basic_rental': '750.00'})
+        response = self.client.post(self.url, {'action': 'recalculate_payment_split'})
+        self.assertRedirects(response, self.url)
+        self.charge.refresh_from_db()
+        expected = BookingSettings.load().compute_costs(Decimal('788.50'), arrival_date=self.start)
+        self.assertEqual(self.charge.due_at_booking, expected['due_at_booking'])
+        self.assertEqual(self.charge.due_at_balance, expected['due_at_balance'])
+
+    def test_recalculate_payment_split_without_a_charge_is_a_noop(self):
+        self.charge.delete()
+        response = self.client.post(self.url, {'action': 'recalculate_payment_split'})
+        self.assertRedirects(response, self.url)
 
     def test_update_booking_saves_fields_across_every_panel_at_once(self):
         # Regression guard for the whole point of the merge: one POST, one action, and every

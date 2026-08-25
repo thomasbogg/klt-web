@@ -120,6 +120,9 @@
                         <label class="staff-field">Total Rental
                             <input type="text" class="staff-input" value="{{ charge.total_rental|floatformat:2 }}" readonly>
                         </label>
+                        <label class="staff-field">Subtotal
+                            <input type="text" class="staff-input" value="{{ subtotal|floatformat:2 }}" readonly>
+                        </label>
                         <label class="staff-field">Security Charge
                             <input type="text" name="security" form="booking-detail-form" class="staff-input" value="{{ charge.security|default:'' }}">
                         </label>
@@ -233,6 +236,17 @@
                         {% endif %}
                         {% if not payment and not balance_payment %}
                         <p class="staff-empty">No payment records for this booking.</p>
+                        {% endif %}
+                        {% if charge %}
+                        <p class="staff-payments-subtotal">Subtotal: &euro;{{ subtotal|floatformat:2 }}</p>
+                        {% if split_mismatch %}
+                        <p class="staff-payments-mismatch">Due at booking + Due at balance (&euro;{{ due_total|floatformat:2 }}) doesn't match Subtotal - recalculate below.</p>
+                        {% endif %}
+                        <form method="post" class="staff-inline-form staff-inline-form-divided" data-confirm-message="Recalculate Due at booking/balance from the current Rental Charges?{% if payment.status == 'paid' %} The deposit is already paid, so only Due at balance will change.{% endif %}">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="recalculate_payment_split">
+                            <button type="submit" class="staff-button staff-button-small">Recalculate split</button>
+                        </form>
                         {% endif %}
                     </div>
                 </section>

@@ -372,6 +372,18 @@ body {
     margin: 0 0 12px;
 }
 
+.staff-payments-subtotal {
+    font-size: 0.85rem;
+    color: #555;
+    margin: 4px 0 0;
+}
+
+.staff-payments-mismatch {
+    font-size: 0.8rem;
+    color: var(--status-booked-color, #c0392b);
+    margin: 4px 0 0;
+}
+
 .staff-inline-form {
     display: flex;
     flex-wrap: wrap;

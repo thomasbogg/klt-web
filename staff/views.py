@@ -1447,6 +1447,7 @@ class StaffBookingDetailView(View):
             'add_deduction': self._add_deduction,
             'add_owner_payment': self._add_owner_payment,
             'delete_owner_payment': self._delete_owner_payment,
+            'recalculate_payment_split': self._recalculate_payment_split,
             'add_task_note': self._add_task_note,
             'cancel_booking': self._cancel_booking,
             'uncancel_booking': self._uncancel_booking,
@@ -1458,12 +1459,21 @@ class StaffBookingDetailView(View):
     def _context(self, booking):
         charge = getattr(booking, 'charges', None)
         balance_payment = getattr(booking, 'balance_payment', None)
+        subtotal = due_total = None
+        split_mismatch = False
+        if charge is not None and charge.total_rental is not None and charge.admin is not None:
+            subtotal = charge.total_rental + charge.admin
+            due_total = (charge.due_at_booking or Decimal('0')) + (charge.due_at_balance or Decimal('0'))
+            split_mismatch = abs(subtotal - due_total) > Decimal('0.01')
         return {
             'booking': booking,
             'guest': booking.guest,
             'charge': charge,
             'payment': getattr(booking, 'payment', None),
             'balance_payment': balance_payment,
+            'subtotal': subtotal,
+            'due_total': due_total,
+            'split_mismatch': split_mismatch,
             'arrival': getattr(booking, 'arrival', None),
             'departure': getattr(booking, 'departure', None),
             'properties': Property.objects.all(),
@@ -1617,6 +1627,32 @@ class StaffBookingDetailView(View):
     def _delete_owner_payment(self, request, booking):
         booking.owner_payments.filter(pk=request.POST.get('payment_id')).delete()
         messages.success(request, "Ad-hoc payment removed.")
+
+    def _recalculate_payment_split(self, request, booking):
+        """Reconciles Due at booking/balance with the current Rental Charges - the two are separate
+        stored fields that don't auto-update when staff edit Basic Rental/Discount/Extra Guest/Admin
+        (see the "Reconcile Rental Charges with the Payments from Guest split" plan). Once the
+        deposit is actually paid, due_at_booking is a locked historical fact - same rule
+        bookings/utils.py::recalculate_balance_for_party() already applies on the guest-facing side
+        - so only due_at_balance moves; otherwise both are freshly derived via the one canonical
+        split formula, BookingSettings.compute_costs(). Never creates/deletes a BalancePayment row -
+        same limitation recalculate_balance_for_party() already has."""
+        charge = getattr(booking, 'charges', None)
+        if charge is None or charge.total_rental is None or charge.admin is None:
+            messages.error(request, "No Charge record to recalculate.")
+            return
+        subtotal = charge.total_rental + charge.admin
+        payment = getattr(booking, 'payment', None)
+        if payment is not None and payment.status == 'paid':
+            charge.due_at_balance = max(subtotal - (charge.due_at_booking or Decimal('0')), Decimal('0'))
+            charge.save(update_fields=['due_at_balance'])
+        else:
+            costs = BookingSettings.load().compute_costs(subtotal, arrival_date=booking.arrival_date)
+            charge.due_at_booking = costs['due_at_booking']
+            charge.due_at_balance = costs['due_at_balance']
+            charge.balance_due_date = costs['balance_due_date']
+            charge.save(update_fields=['due_at_booking', 'due_at_balance', 'balance_due_date'])
+        messages.success(request, "Payment split recalculated.")
 
     def _add_task_note(self, request, booking):
         description = request.POST.get('description', '').strip()
