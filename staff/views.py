@@ -18,11 +18,15 @@ from django.views import View
 import env_settings
 from availability.utils import get_property_calendar
 from bookings.models import (
-    CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Booking, BookingCondition,
-    BookingSettings, ExtrasSettings, FAQ, PaymentSettings, RequestType, WelcomePackItem,
+    CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Arrival, Booking, BookingCondition,
+    BookingSettings, Departure, ExtrasSettings, FAQ, PaymentSettings, RequestType, TravelMethod,
+    WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
-from bookings.utils import PLATFORM_NAMES_BY_ICAL_SOURCE, extras_summary, sync_ical_link
+from bookings.utils import (
+    FLIGHT_NUMBER_HINT, PLATFORM_NAMES_BY_ICAL_SOURCE, extras_summary, parsed_arrival_departure_time,
+    parsed_travel_method, sync_ical_link, valid_flight_number,
+)
 from guests.models import Guest
 from libraries.utils import logerror
 from properties.models import (
@@ -1478,6 +1482,8 @@ class StaffBookingDetailView(View):
             'split_mismatch': split_mismatch,
             'arrival': getattr(booking, 'arrival', None),
             'departure': getattr(booking, 'departure', None),
+            'arrival_travel_methods': TravelMethod.choices,
+            'departure_travel_methods': TravelMethod.departure_choices(),
             'properties': Property.objects.all(),
             'stage_tabs': STAGE_TABS,
             'current_stage': booking_stage(booking),
@@ -1495,22 +1501,27 @@ class StaffBookingDetailView(View):
         }
 
     def _update_booking(self, request, booking):
-        """One combined save for every editable field across Booking info, Guest info, Rental
-        charges, Enquiry data and Payments from guest - previously five separate panel forms each
-        with their own Update button, which risked a staffer editing several panels, clicking
-        Update on only one, and silently losing the rest (Thomas's exact complaint). The panels
-        still look the same - each one's inputs now carry form="booking-detail-form" and post into
-        the single form the Booking info panel renders (see booking_detail.html), landing here as
-        one combined POST body. All parsing/validation happens before anything is written, then
-        every touched model is saved together in one transaction so a mid-way validation failure
-        never leaves a partial save. Deductions/Owner payments/Task history keep their own
-        dedicated "+ New ..." buttons - those add a new row rather than edit existing fields, so
-        there's nothing there a staffer could "forget" to save. Source/date of enquiry are
-        read-only (2026-08-25) - never read from POST at all any more. Outcome/status is now a
-        constrained dropdown (ENQUIRY_STATUS_GROUPS) rather than free text, so a value only gets
-        accepted here if it's one of those known statuses or unchanged from what the booking
-        already had - closing off the exact typo-drift risk that already produced one real
-        booking stuck on 'Booking cancelled' instead of a status the rest of the app recognises."""
+        """One combined save for every editable field across Booking info, Guest info, Arrival,
+        Departure, Rental charges, Enquiry data and Payments from guest - previously five separate
+        panel forms each with their own Update button, which risked a staffer editing several
+        panels, clicking Update on only one, and silently losing the rest (Thomas's exact
+        complaint). The panels still look the same - each one's inputs now carry
+        form="booking-detail-form" and post into the single form the Booking info panel renders
+        (see booking_detail.html), landing here as one combined POST body. All parsing/validation
+        happens before anything is written, then every touched model is saved together in one
+        transaction so a mid-way validation failure never leaves a partial save. Deductions/Owner
+        payments/Update history keep their own dedicated "+ New ..." buttons - those add a new row
+        rather than edit existing fields, so there's nothing there a staffer could "forget" to
+        save. Source/date of enquiry are read-only (2026-08-25) - never read from POST at all any
+        more. Outcome/status is now a constrained dropdown (ENQUIRY_STATUS_GROUPS) rather than free
+        text, so a value only gets accepted here if it's one of those known statuses or unchanged
+        from what the booking already had - closing off the exact typo-drift risk that already
+        produced one real booking stuck on 'Booking cancelled' instead of a status the rest of the
+        app recognises. Arrival.self_check_in/meet_greet and Departure.clean - staff/ops-only flags
+        the guest-facing flow never touches past row creation - are edited here from Booking info's
+        checkboxes, not from the Arrival/Departure panels themselves (2026-08-25, per Thomas: even
+        an owner booking can need a Meet & Greet or a scheduled clean, so those panels stay useful
+        regardless of is_owner - only the checkboxes' one edit location consolidates)."""
         post = request.POST
 
         property_id = post.get('property')
@@ -1542,6 +1553,17 @@ class StaffBookingDetailView(View):
             booking.full_clean()
         except ValidationError as error:
             _flash_validation_error(request, error)
+            return
+
+        arrival_method = parsed_travel_method(post.get('arrival_method'))
+        departure_method = parsed_travel_method(post.get('departure_method'))
+        arrival_flight_number = post.get('arrival_flight_number', '').strip()
+        departure_flight_number = post.get('departure_flight_number', '').strip()
+        if not valid_flight_number(arrival_method, arrival_flight_number):
+            messages.error(request, f"Arrival: {FLIGHT_NUMBER_HINT}")
+            return
+        if not valid_flight_number(departure_method, departure_flight_number):
+            messages.error(request, f"Departure: {FLIGHT_NUMBER_HINT}")
             return
 
         charge = getattr(booking, 'charges', None)
@@ -1590,10 +1612,59 @@ class StaffBookingDetailView(View):
         with transaction.atomic():
             booking.save()
             guest.save()
+
+            arrival, _ = Arrival.objects.get_or_create(
+                booking=booking, defaults={'self_check_in': False, 'meet_greet': False},
+            )
+            # flight_number/details are nullable (a fresh row has None), but a save always writes a
+            # string (possibly '') - normalise here so an unset field doesn't look "changed" just
+            # because it went from None to ''.
+            arrival_before = (
+                arrival.method, arrival.flight_number or '', arrival.travelling_from, arrival.hiring_car,
+                arrival.time, arrival.details or '', arrival.self_check_in, arrival.meet_greet,
+            )
+            arrival.method = arrival_method
+            arrival.flight_number = arrival_flight_number
+            arrival.travelling_from = post.get('arrival_travelling_from', '').strip()
+            arrival.hiring_car = post.get('arrival_hiring_car') == 'on'
+            arrival.time = parsed_arrival_departure_time(post.get('arrival_time'))
+            arrival.details = post.get('arrival_details', '').strip()[:140]
+            arrival.self_check_in = post.get('self_check_in') == 'on'
+            arrival.meet_greet = post.get('meet_greet') == 'on'
+            arrival.save()
+            arrival_changed = arrival_before != (
+                arrival.method, arrival.flight_number, arrival.travelling_from, arrival.hiring_car,
+                arrival.time, arrival.details, arrival.self_check_in, arrival.meet_greet,
+            )
+
+            departure, _ = Departure.objects.get_or_create(booking=booking, defaults={'clean': False})
+            departure_before = (
+                departure.method, departure.flight_number or '', departure.travelling_from, departure.time,
+                departure.details or '', departure.clean,
+            )
+            departure.method = departure_method
+            departure.flight_number = departure_flight_number
+            departure.travelling_from = post.get('departure_travelling_from', '').strip()
+            departure.time = parsed_arrival_departure_time(post.get('departure_time'))
+            departure.details = post.get('departure_details', '').strip()[:140]
+            departure.clean = post.get('clean') == 'on'
+            departure.save()
+            departure_changed = departure_before != (
+                departure.method, departure.flight_number, departure.travelling_from, departure.time,
+                departure.details, departure.clean,
+            )
+
+            if arrival_changed or departure_changed:
+                TaskHistoryEntry.objects.create(
+                    booking=booking, description="Arrival/Departure updated", created_by=request.user,
+                )
+
             if charge is not None:
                 charge.save()
                 if charge_changed:
-                    TaskHistoryEntry.objects.create(booking=booking, description="Rental charges updated by staff")
+                    TaskHistoryEntry.objects.create(
+                        booking=booking, description="Rental charges updated", created_by=request.user,
+                    )
             if payment is not None and payment_status:
                 payment.status = payment_status
                 payment.save(update_fields=['status'])
@@ -1602,7 +1673,8 @@ class StaffBookingDetailView(View):
                 balance_payment.save(update_fields=['status'])
             if new_status and new_status != old_status:
                 TaskHistoryEntry.objects.create(
-                    booking=booking, description=f"Status changed from '{old_status}' to '{new_status}' by staff",
+                    booking=booking, description="Status changed",
+                    detail=f"From '{old_status}' to '{new_status}'", created_by=request.user,
                 )
 
         messages.success(request, "Booking updated.")
@@ -1663,11 +1735,13 @@ class StaffBookingDetailView(View):
         messages.success(request, "Payment split recalculated.")
 
     def _add_task_note(self, request, booking):
-        description = request.POST.get('description', '').strip()
-        if not description:
+        note = request.POST.get('description', '').strip()
+        if not note:
             messages.error(request, "Enter a note before adding it.")
             return
-        TaskHistoryEntry.objects.create(booking=booking, description=description)
+        TaskHistoryEntry.objects.create(
+            booking=booking, description="Note added", detail=note, created_by=request.user,
+        )
         messages.success(request, "Note added.")
 
     def _cancel_booking(self, request, booking):
@@ -1684,7 +1758,8 @@ class StaffBookingDetailView(View):
         booking.enquiry_status = 'Cancelled by staff'
         booking.save(update_fields=['enquiry_status'])
         TaskHistoryEntry.objects.create(
-            booking=booking, description=f"Status changed from '{old_status}' to 'Cancelled by staff' by staff",
+            booking=booking, description="Status changed",
+            detail=f"From '{old_status}' to 'Cancelled by staff'", created_by=request.user,
         )
         messages.success(request, "Booking cancelled.")
 
@@ -1705,6 +1780,7 @@ class StaffBookingDetailView(View):
         booking.enquiry_status = 'Booking confirmed'
         booking.save(update_fields=['enquiry_status'])
         TaskHistoryEntry.objects.create(
-            booking=booking, description=f"Status changed from '{old_status}' to 'Booking confirmed' by staff",
+            booking=booking, description="Status changed",
+            detail=f"From '{old_status}' to 'Booking confirmed'", created_by=request.user,
         )
         messages.success(request, "Booking revived.")

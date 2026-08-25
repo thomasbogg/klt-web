@@ -1,5 +1,6 @@
 from datetime import date
 
+from django.conf import settings
 from django.db import models
 
 
@@ -50,9 +51,19 @@ class TaskHistoryEntry(models.Model):
     change made there) - deliberately not an automatic audit log of every field change across the
     whole app, and deliberately doesn't retrofit logging into existing call sites elsewhere
     (create_booking(), cancel_booking_hold(), extras saves, or klt-hooks' payment-webhook writes,
-    which happen in a separate deployed service entirely)."""
+    which happen in a separate deployed service entirely).
+
+    description is a short stub shown directly in the list (e.g. "Status changed"); detail is the
+    fuller "what actually happened" text (e.g. "From 'Booking confirmed' to 'Cancelled by staff'")
+    - both are shown together, along with created_at (to the minute) and created_by, in an on-hover
+    tooltip rather than inline, to keep the list itself scannable (2026-08-25). created_by is
+    nullable/SET_NULL since a staff account can be deleted later without losing the history row."""
     booking = models.ForeignKey('bookings.Booking', on_delete=models.CASCADE, related_name='task_history')
     description = models.CharField(max_length=200)
+    detail = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

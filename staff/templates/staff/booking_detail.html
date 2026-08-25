@@ -11,6 +11,7 @@
     <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
     <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
     <script src="{% static 'staff/booking_detail.js' %}" defer></script>
+    <script src="{% static 'staff/arrival_departure.js' %}" defer></script>
 </head>
 <body>
     <div class="staff-page">
@@ -68,9 +69,22 @@
                                 <input type="number" name="babies" min="0" class="staff-input" value="{{ booking.babies }}">
                             </label>
                         </div>
-                        <label class="staff-checkbox-label">
-                            <input type="checkbox" name="is_owner" {% if booking.is_owner %}checked{% endif %}> Owner booking
-                        </label>
+                        <div class="staff-field-row">
+                            <label class="staff-checkbox-label">
+                                <input type="checkbox" name="is_owner" id="staff-is-owner" {% if booking.is_owner %}checked{% endif %}> Owner booking
+                            </label>
+                            <label class="staff-checkbox-label">
+                                <input type="checkbox" name="self_check_in" {% if arrival.self_check_in %}checked{% endif %}> Self check-in
+                            </label>
+                        </div>
+                        <div class="staff-field-row details-section-hidden" data-owner-row>
+                            <label class="staff-checkbox-label">
+                                <input type="checkbox" name="meet_greet" {% if arrival.meet_greet %}checked{% endif %}> Meet &amp; greet
+                            </label>
+                            <label class="staff-checkbox-label">
+                                <input type="checkbox" name="clean" {% if departure.clean %}checked{% endif %}> Clean on departure
+                            </label>
+                        </div>
                     </form>
                 </section>
 
@@ -88,6 +102,83 @@
                         </label>
                         <label class="staff-field">Phone
                             <input type="text" name="phone" form="booking-detail-form" class="staff-input" value="{{ guest.phone|default:'' }}">
+                        </label>
+                    </div>
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Arrival</h2>
+                    <div class="staff-form">
+                        <label class="staff-field">Method
+                            <select name="arrival_method" id="staff-arrival-method" form="booking-detail-form" class="staff-input">
+                                {% for value, label in arrival_travel_methods %}
+                                <option value="{{ value }}" {% if arrival.method|default:'flight_faro' == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <div class="staff-field-row details-section-hidden" data-methods="flight_faro flight_lisbon">
+                            <label class="staff-field">Flight number
+                                <input type="text" name="arrival_flight_number" form="booking-detail-form" class="staff-input" value="{{ arrival.flight_number|default:'' }}" placeholder="e.g. TP1234">
+                            </label>
+                            <label class="staff-field">Landing time
+                                <input type="time" name="arrival_time" form="booking-detail-form" class="staff-input" value="{{ arrival.time|time:'H:i'|default:'' }}">
+                            </label>
+                        </div>
+                        <div class="staff-field-row details-section-hidden" data-methods="bus train">
+                            <label class="staff-field">Expected time
+                                <input type="time" name="arrival_time" form="booking-detail-form" class="staff-input" value="{{ arrival.time|time:'H:i'|default:'' }}">
+                            </label>
+                        </div>
+                        <div class="staff-field-row details-section-hidden" data-methods="driving">
+                            <label class="staff-field">Travelling from
+                                <input type="text" name="arrival_travelling_from" form="booking-detail-form" class="staff-input" value="{{ arrival.travelling_from|default:'' }}">
+                            </label>
+                            <label class="staff-field">Estimated arrival time
+                                <input type="time" name="arrival_time" form="booking-detail-form" class="staff-input" value="{{ arrival.time|time:'H:i'|default:'' }}">
+                            </label>
+                        </div>
+                        <label class="staff-checkbox-label details-section-hidden" data-methods="flight_faro flight_lisbon">
+                            <input type="checkbox" name="arrival_hiring_car" form="booking-detail-form" {% if arrival.hiring_car %}checked{% endif %}> Hiring a car
+                        </label>
+                        <label class="staff-field">Details
+                            <textarea name="arrival_details" form="booking-detail-form" class="staff-input" rows="2" maxlength="140">{{ arrival.details|default:'' }}</textarea>
+                        </label>
+                    </div>
+                </section>
+
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Departure</h2>
+                    <div class="staff-form">
+                        <label class="staff-field">Method
+                            <select name="departure_method" id="staff-departure-method" form="booking-detail-form" class="staff-input">
+                                {% for value, label in departure_travel_methods %}
+                                <option value="{{ value }}" {% if departure.method|default:'flight_faro' == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <div class="staff-field-row details-section-hidden" data-methods="flight_faro flight_lisbon">
+                            <label class="staff-field">Flight number
+                                <input type="text" name="departure_flight_number" form="booking-detail-form" class="staff-input" value="{{ departure.flight_number|default:'' }}" placeholder="e.g. TP1234">
+                            </label>
+                            <label class="staff-field">Take-off time
+                                <input type="time" name="departure_time" form="booking-detail-form" class="staff-input" value="{{ departure.time|time:'H:i'|default:'' }}">
+                            </label>
+                        </div>
+                        <div class="staff-field-row details-section-hidden" data-methods="bus train">
+                            <label class="staff-field">Expected time
+                                <input type="time" name="departure_time" form="booking-detail-form" class="staff-input" value="{{ departure.time|time:'H:i'|default:'' }}">
+                            </label>
+                        </div>
+                        <div class="staff-field-row details-section-hidden" data-methods="driving">
+                            <label class="staff-field">Travelling to
+                                <input type="text" name="departure_travelling_from" form="booking-detail-form" class="staff-input" value="{{ departure.travelling_from|default:'' }}">
+                            </label>
+                            <label class="staff-field">Estimated departure time
+                                <input type="time" name="departure_time" form="booking-detail-form" class="staff-input" value="{{ departure.time|time:'H:i'|default:'' }}">
+                            </label>
+                        </div>
+                        <label class="staff-field">Details
+                            <textarea name="departure_details" form="booking-detail-form" class="staff-input" rows="2" maxlength="140">{{ departure.details|default:'' }}</textarea>
                         </label>
                     </div>
                 </section>
@@ -321,18 +412,32 @@
                 </section>
 
                 <section class="staff-panel">
-                    <h2 class="staff-panel-title">Task history</h2>
+                    <h2 class="staff-panel-title">Update history</h2>
                     <ul class="staff-list staff-task-history">
                         {% for entry in task_history %}
-                        <li>{{ entry.description }} <span class="staff-list-date">{{ entry.created_at|date:'d M Y' }}</span></li>
+                        <li class="staff-task-history-row{% if forloop.counter0 >= 5 %} staff-task-history-row-extra details-section-hidden{% endif %}">
+                            <span class="staff-task-history-stub">
+                                {{ entry.description }}
+                                <span class="staff-info-icon" tabindex="0">&#9432;
+                                    <span class="staff-tooltip">
+                                        {% if entry.detail %}{{ entry.detail }}<br>{% endif %}
+                                        {% if entry.created_by %}{{ entry.created_by.get_full_name|default:entry.created_by.username }} &middot; {% endif %}{{ entry.created_at|date:'H:i' }}
+                                    </span>
+                                </span>
+                            </span>
+                            <span class="staff-list-date">{{ entry.created_at|date:'d M Y' }}</span>
+                        </li>
                         {% empty %}
                         <li class="staff-empty">No history yet.</li>
                         {% endfor %}
                     </ul>
+                    {% if task_history|length > 5 %}
+                    <button type="button" class="staff-show-more-link" id="staff-show-more-history">Show more updates</button>
+                    {% endif %}
                     <form method="post" class="staff-inline-form">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="add_task_note">
-                        <input type="text" name="description" placeholder="Add a note" class="staff-input">
+                        <input type="text" name="description" placeholder="Add a note" class="staff-input staff-input-flex">
                         <button type="submit" class="staff-button staff-button-small">+ Add note</button>
                     </form>
                 </section>

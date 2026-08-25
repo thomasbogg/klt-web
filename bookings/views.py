@@ -1,4 +1,3 @@
-import re
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -20,8 +19,10 @@ from bookings.models import (
     WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
-    booking_confirmation_context, cancel_booking_hold, extras_summary, guest_counts_by_age,
+    FLIGHT_NUMBER_HINT, booking_confirmation_context, cancel_booking_hold, extras_summary,
+    guest_counts_by_age, parsed_arrival_departure_time, parsed_travel_method,
     recalculate_balance_for_party, recalculate_costs_for_party, reservation_retry_url,
+    valid_flight_number,
 )
 from libraries.banking.revolut import Revolut
 
@@ -1118,32 +1119,6 @@ class BookingManageGuestsView(BookingFormMixin, View):
         return redirect(f"{reverse('bookings:manage_guests', args=[booking.reference])}?guests_saved=1")
 
 
-FLIGHT_NUMBER_RE = re.compile(r'^(?=.*[A-Za-z])[A-Za-z0-9]{1,3}[ -]?\d{3,5}$')
-FLIGHT_NUMBER_HINT = "That doesn't look like a flight number (e.g. TP1234) - please double-check it."
-
-
-def _valid_flight_number(method, flight_number):
-    """1-3 letters/digits (at least one letter, so real IATA codes like easyJet's "U2" - which
-    mixes a digit into the airline code - still pass) then 3-5 digits, e.g. TP1234 or U21234. Only
-    enforced for the two flight TravelMethods, and only when non-blank - guests kept pasting a
-    (meaningless here) booking reference instead of an actual flight number, which this exists to
-    catch, but the field itself stays optional. Shared by BookingManageArrivalDepartureView and
-    BookingBalanceDetailsView so the rule can't drift between the two entry points."""
-    if method not in (TravelMethod.FLIGHT_FARO, TravelMethod.FLIGHT_LISBON) or not flight_number:
-        return True
-    return bool(FLIGHT_NUMBER_RE.match(flight_number))
-
-
-def _parsed_arrival_departure_time(raw):
-    raw = (raw or '').strip()
-    if not raw:
-        return None
-    try:
-        return datetime.strptime(raw, '%H:%M').time()
-    except ValueError:
-        return None
-
-
 def _arrival_data_from_model(arrival):
     return {
         'method': arrival.method if arrival else TravelMethod.FLIGHT_FARO,
@@ -1167,7 +1142,7 @@ def _departure_data_from_model(departure):
 
 def _arrival_data_from_post(post_data):
     return {
-        'method': _parsed_travel_method(post_data.get('arrival_method')),
+        'method': parsed_travel_method(post_data.get('arrival_method')),
         'flight_number': post_data.get('arrival_flight_number', '').strip(),
         'travelling_from': post_data.get('arrival_travelling_from', '').strip(),
         'hiring_car': post_data.get('arrival_hiring_car') == 'yes',
@@ -1178,16 +1153,12 @@ def _arrival_data_from_post(post_data):
 
 def _departure_data_from_post(post_data):
     return {
-        'method': _parsed_travel_method(post_data.get('departure_method')),
+        'method': parsed_travel_method(post_data.get('departure_method')),
         'flight_number': post_data.get('departure_flight_number', '').strip(),
         'travelling_from': post_data.get('departure_travelling_from', '').strip(),
         'time': post_data.get('departure_time', '').strip(),
         'details': post_data.get('departure_details', '').strip()[:140],
     }
-
-
-def _parsed_travel_method(raw):
-    return raw if raw in TravelMethod.values else TravelMethod.FLIGHT_FARO
 
 
 def _arrival_departure_field_context(arrival_data, departure_data):
@@ -1213,22 +1184,22 @@ def _arrival_departure_field_context(arrival_data, departure_data):
 
 def _arrival_departure_flight_number_errors(arrival_data, departure_data):
     errors = {}
-    if not _valid_flight_number(arrival_data['method'], arrival_data['flight_number']):
+    if not valid_flight_number(arrival_data['method'], arrival_data['flight_number']):
         errors['arrival_flight_number'] = FLIGHT_NUMBER_HINT
-    if not _valid_flight_number(departure_data['method'], departure_data['flight_number']):
+    if not valid_flight_number(departure_data['method'], departure_data['flight_number']):
         errors['departure_flight_number'] = FLIGHT_NUMBER_HINT
     return errors
 
 
 def _save_arrival(booking, data):
     arrival, _ = Arrival.objects.get_or_create(booking=booking, defaults={
-        'self_check_in': True, 'meet_greet': False,
+        'self_check_in': False, 'meet_greet': False,
     })
     arrival.method = data['method']
     arrival.flight_number = data['flight_number']
     arrival.travelling_from = data['travelling_from']
     arrival.hiring_car = data['hiring_car']
-    arrival.time = _parsed_arrival_departure_time(data['time'])
+    arrival.time = parsed_arrival_departure_time(data['time'])
     arrival.details = data['details']
     arrival.save(update_fields=[
         'method', 'flight_number', 'travelling_from', 'hiring_car', 'time', 'details',
@@ -1236,13 +1207,11 @@ def _save_arrival(booking, data):
 
 
 def _save_departure(booking, data):
-    departure, _ = Departure.objects.get_or_create(
-        booking=booking, defaults={'clean': False, 'manual_date': False},
-    )
+    departure, _ = Departure.objects.get_or_create(booking=booking, defaults={'clean': False})
     departure.method = data['method']
     departure.flight_number = data['flight_number']
     departure.travelling_from = data['travelling_from']
-    departure.time = _parsed_arrival_departure_time(data['time'])
+    departure.time = parsed_arrival_departure_time(data['time'])
     departure.details = data['details']
     departure.save(update_fields=['method', 'flight_number', 'travelling_from', 'time', 'details'])
 
@@ -1258,12 +1227,13 @@ class BookingManageArrivalDepartureView(View):
     label wording differs (TravelMethod.departure_choices()) since "Flight to Faro" reads
     backwards for a departing guest. details is capped at 140 chars server-side (also enforced via
     maxlength in the template) - a short note, not a support channel. flight_number IS validated
-    (see _valid_flight_number()) - the one hard validation on this page; on failure the page
+    (see valid_flight_number()) - the one hard validation on this page; on failure the page
     re-renders with the guest's other entries preserved, same pattern as
-    BookingManageGuestAddView's row errors. self_check_in/meet_greet on Arrival and clean/
-    manual_date on Departure are all staff/ops-only - only ever supplied as creation defaults (via
-    get_or_create), never touched on a later guest save, so a staff edit made in admin afterward is
-    never clobbered. The module-level _arrival_data_from_model()/_save_arrival()/etc. helpers above
+    BookingManageGuestAddView's row errors. self_check_in/meet_greet on Arrival and clean on
+    Departure are all staff/ops-only - only ever supplied as creation defaults (via
+    get_or_create), never touched on a later guest save, so a staff edit made on the staff booking
+    detail page afterward is never clobbered. The module-level _arrival_data_from_model()/
+    _save_arrival()/etc. helpers above
     are shared with BookingBalanceDetailsView, which embeds the same _arrival_departure_form.html
     partial as a second entry point to these same rows (see that view's docstring)."""
     template_name = 'bookings/manage_arrival_departure.html'

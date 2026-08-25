@@ -2564,10 +2564,9 @@ class DepartureTests(TestCase):
         departure = Departure.objects.create(booking=self.booking)
         self.assertIn('2026-09-08', str(departure))
 
-    def test_clean_and_manual_date_default_to_false(self):
+    def test_clean_defaults_to_false(self):
         departure = Departure.objects.create(booking=self.booking)
         self.assertFalse(departure.clean)
-        self.assertFalse(departure.manual_date)
 
 
 class BookingManageArrivalDepartureViewTests(TestCase):
@@ -2617,7 +2616,13 @@ class BookingManageArrivalDepartureViewTests(TestCase):
         self.assertEqual(self.booking.departure.method, 'flight_faro')
         self.assertEqual(self.booking.departure.flight_number, 'TP456')
         self.assertFalse(self.booking.departure.clean)
-        self.assertFalse(self.booking.departure.manual_date)
+
+    def test_self_check_in_defaults_to_false_on_first_save(self):
+        # Real bug: this used to default to True, which is wrong - self-check-in is a real
+        # ops decision, not something to assume by default.
+        self.client.post(self.url, {'arrival_method': 'flight_faro'})
+        self.booking.refresh_from_db()
+        self.assertFalse(self.booking.arrival.self_check_in)
 
     def test_post_driving_method_saves_travelling_from(self):
         self.client.post(self.url, {
@@ -2651,11 +2656,10 @@ class BookingManageArrivalDepartureViewTests(TestCase):
         self.assertFalse(self.booking.arrival.meet_greet)
 
     def test_second_post_never_resets_staff_set_ops_fields(self):
-        Departure.objects.create(booking=self.booking, clean=True, manual_date=True)
+        Departure.objects.create(booking=self.booking, clean=True)
         self.client.post(self.url, {'departure_flight_number': 'TP789'})
         self.booking.refresh_from_db()
         self.assertTrue(self.booking.departure.clean)
-        self.assertTrue(self.booking.departure.manual_date)
         self.assertEqual(self.booking.departure.flight_number, 'TP789')
 
     def test_get_prefills_from_existing_rows(self):

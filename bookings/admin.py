@@ -84,8 +84,8 @@ class ArrivalInline(admin.StackedInline):
 
 
 class DepartureInline(admin.StackedInline):
-    """clean/manual_date are staff/ops-only - the guest-facing form never sets them beyond their
-    default, so this is where staff actually review/set them."""
+    """clean is staff/ops-only - the guest-facing form never sets it beyond its default. Also
+    editable from the staff booking detail page's Booking Info panel."""
     model = Departure
     max_num = 1
 

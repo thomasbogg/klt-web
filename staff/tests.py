@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from decimal import Decimal
 from unittest.mock import Mock, patch
 
@@ -10,7 +10,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import (
-    BalancePayment, Booking, BookingCondition, BookingSettings, Charge, FAQ, Payment, PaymentSettings,
+    Arrival, BalancePayment, Booking, BookingCondition, BookingSettings, Charge, Departure, FAQ,
+    Payment, PaymentSettings,
 )
 from guests.models import Guest
 from properties.models import (
@@ -423,8 +424,10 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertRedirects(response, self.url)
         entries = list(TaskHistoryEntry.objects.filter(booking=self.booking).order_by('pk'))
         self.assertEqual(len(entries), 2)
-        self.assertEqual(entries[0].description, 'Rental charges updated by staff')
-        self.assertIn("'Booking confirmed' to 'Hold expired'", entries[1].description)
+        self.assertEqual(entries[0].description, 'Rental charges updated')
+        self.assertEqual(entries[0].created_by, self.staff_user)
+        self.assertEqual(entries[1].description, 'Status changed')
+        self.assertIn("'Booking confirmed' to 'Hold expired'", entries[1].detail)
 
     def test_update_booking_no_task_entries_when_nothing_relevant_changed(self):
         self.client.post(self.url, {'action': 'update_booking', 'enquiry_status': 'Booking confirmed'})
@@ -478,7 +481,9 @@ class StaffBookingDetailViewTests(TestCase):
         response = self.client.post(self.url, {'action': 'add_task_note', 'description': 'Called guest re: extras'})
         self.assertRedirects(response, self.url)
         entry = TaskHistoryEntry.objects.get(booking=self.booking)
-        self.assertEqual(entry.description, 'Called guest re: extras')
+        self.assertEqual(entry.description, 'Note added')
+        self.assertEqual(entry.detail, 'Called guest re: extras')
+        self.assertEqual(entry.created_by, self.staff_user)
 
     def test_unknown_action_is_a_noop(self):
         response = self.client.post(self.url, {'action': 'not_a_real_action'})
@@ -492,7 +497,9 @@ class StaffBookingDetailViewTests(TestCase):
         self.booking.refresh_from_db()
         self.assertEqual(self.booking.enquiry_status, 'Cancelled by staff')
         entry = TaskHistoryEntry.objects.get(booking=self.booking)
-        self.assertIn("'Cancelled by staff'", entry.description)
+        self.assertEqual(entry.description, 'Status changed')
+        self.assertIn("'Cancelled by staff'", entry.detail)
+        self.assertEqual(entry.created_by, self.staff_user)
 
     def test_cancel_booking_frees_the_calendar(self):
         self.client.post(self.url, {'action': 'cancel_booking'})
@@ -525,7 +532,8 @@ class StaffBookingDetailViewTests(TestCase):
         self.booking.refresh_from_db()
         self.assertEqual(self.booking.enquiry_status, 'Booking confirmed')
         entry = TaskHistoryEntry.objects.get(booking=self.booking)
-        self.assertIn("'Cancelled by staff' to 'Booking confirmed'", entry.description)
+        self.assertEqual(entry.description, 'Status changed')
+        self.assertIn("'Cancelled by staff' to 'Booking confirmed'", entry.detail)
 
     def test_uncancel_booking_revives_a_guest_cancellation(self):
         self.booking.enquiry_status = 'Cancelled by guest'
@@ -569,6 +577,135 @@ class StaffBookingDetailViewTests(TestCase):
         self.booking.save(update_fields=['enquiry_status'])
         response = self.client.get(self.url)
         self.assertTrue(response.context['can_uncancel'])
+
+
+class StaffBookingDetailArrivalDepartureTests(TestCase):
+    """The Arrival/Departure panels + Booking Info's self_check_in/meet_greet/clean checkboxes -
+    added 2026-08-25 (see StaffBookingDetailView._update_booking()'s docstring)."""
+
+    def setUp(self):
+        self.staff_user = User.objects.create_user(username='staffer2', password='pw', is_staff=True)
+        self.client.login(username='staffer2', password='pw')
+        self.property = Property.objects.create(title='Staff AD Property', short_title='STAFFAD')
+        self.guest = Guest.objects.create(first_name='Rui', last_name='Nunes', email='staff-ad@example.com')
+        self.start = date.today() + timedelta(days=100)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.url = reverse('staff:booking_detail', kwargs={'reference': self.booking.reference})
+
+    def test_get_context_includes_travel_method_choices(self):
+        response = self.client.get(self.url)
+        self.assertIn(('flight_faro', 'Flight to Faro'), response.context['arrival_travel_methods'])
+        self.assertIn(('flight_faro', 'Flight from Faro'), response.context['departure_travel_methods'])
+
+    def test_update_booking_creates_arrival_and_departure_from_scratch(self):
+        self.assertFalse(hasattr(self.booking, 'arrival'))
+        self.assertFalse(hasattr(self.booking, 'departure'))
+        response = self.client.post(self.url, {
+            'action': 'update_booking',
+            'arrival_method': 'flight_lisbon', 'arrival_flight_number': 'TP1234',
+            'arrival_time': '14:00', 'arrival_details': 'Renting a car', 'arrival_hiring_car': 'on',
+            'departure_method': 'driving', 'departure_travelling_from': 'Lisbon',
+            'departure_time': '09:00',
+            'self_check_in': 'on', 'meet_greet': 'on', 'clean': 'on',
+        })
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.arrival.method, 'flight_lisbon')
+        self.assertEqual(self.booking.arrival.flight_number, 'TP1234')
+        self.assertEqual(self.booking.arrival.time, time(14, 0))
+        self.assertTrue(self.booking.arrival.hiring_car)
+        self.assertTrue(self.booking.arrival.self_check_in)
+        self.assertTrue(self.booking.arrival.meet_greet)
+        self.assertEqual(self.booking.departure.method, 'driving')
+        self.assertEqual(self.booking.departure.travelling_from, 'Lisbon')
+        self.assertTrue(self.booking.departure.clean)
+
+    def test_arrival_departure_change_logs_an_update_history_entry(self):
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'arrival_method': 'flight_faro', 'arrival_flight_number': 'TP1234',
+        })
+        self.assertRedirects(response, self.url)
+        entry = TaskHistoryEntry.objects.get(booking=self.booking)
+        self.assertEqual(entry.description, "Arrival/Departure updated")
+        self.assertEqual(entry.created_by, self.staff_user)
+
+    def test_update_history_row_shows_stub_with_hover_tooltip(self):
+        TaskHistoryEntry.objects.create(
+            booking=self.booking, description="Status changed",
+            detail="From 'Booking confirmed' to 'Cancelled by staff'", created_by=self.staff_user,
+        )
+        response = self.client.get(self.url)
+        self.assertContains(response, "staff-info-icon")
+        self.assertContains(response, "staff-tooltip")
+        self.assertContains(response, "Booking confirmed")
+        self.assertContains(response, "Cancelled by staff")
+        self.assertContains(response, "staffer2")
+        self.assertContains(response, "staff-list-date")  # the row itself still shows the date
+
+    def test_unchanged_resubmit_does_not_log_a_duplicate_entry(self):
+        Arrival.objects.create(
+            booking=self.booking, method='flight_faro', flight_number='TP1234',
+            self_check_in=False, meet_greet=False,
+        )
+        Departure.objects.create(booking=self.booking, method='flight_faro')
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'arrival_method': 'flight_faro', 'arrival_flight_number': 'TP1234',
+            'departure_method': 'flight_faro',
+        })
+        self.assertRedirects(response, self.url)
+        self.assertEqual(TaskHistoryEntry.objects.filter(booking=self.booking).count(), 0)
+
+    def test_self_check_in_defaults_to_false_on_first_save(self):
+        # Real bug: this used to default to True on a fresh Arrival row - self-check-in is a real
+        # ops decision, not something to assume by default.
+        response = self.client.post(self.url, {'action': 'update_booking'})
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertFalse(self.booking.arrival.self_check_in)
+
+    def test_update_booking_unchecked_boxes_are_false_not_untouched(self):
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=True)
+        Departure.objects.create(booking=self.booking, clean=True)
+        response = self.client.post(self.url, {'action': 'update_booking'})
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertFalse(self.booking.arrival.self_check_in)
+        self.assertFalse(self.booking.arrival.meet_greet)
+        self.assertFalse(self.booking.departure.clean)
+
+    def test_update_booking_rejects_invalid_arrival_flight_number_and_saves_nothing(self):
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'arrival_method': 'flight_faro',
+            'arrival_flight_number': 'not-a-flight-number', 'first_name': 'Changed',
+        })
+        self.assertRedirects(response, self.url)
+        self.assertFalse(hasattr(self.booking, 'arrival'))
+        self.guest.refresh_from_db()
+        self.assertNotEqual(self.guest.first_name, 'Changed')
+
+    def test_update_booking_never_resets_manual_date_free_departure(self):
+        # Sanity check the manual_date removal - Departure saves cleanly without it.
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'departure_method': 'bus', 'departure_time': '10:30',
+        })
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.departure.method, 'bus')
+        self.assertEqual(self.booking.departure.time, time(10, 30))
+
+    def test_meet_greet_and_clean_row_present_in_markup_regardless_of_owner_status(self):
+        # Visibility is a client-side JS toggle (see arrival_departure.js) - the row is always
+        # server-rendered so it works with JS disabled and so the checked state survives a
+        # validation-error re-render; this only confirms the server side of that contract.
+        response = self.client.get(self.url)
+        self.assertContains(response, 'data-owner-row')
+        self.assertContains(response, 'Meet &amp; greet')
+        self.assertContains(response, 'Clean on departure')
 
 
 class StaffBookingLookupViewTests(TestCase):

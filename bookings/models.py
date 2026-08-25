@@ -442,10 +442,11 @@ class Arrival(models.Model):
     bookings/views.py::BookingManageArrivalDepartureView) - editable any time once the deposit is
     paid, no cutoff. method drives which of flight_number/time/travelling_from/hiring_car are
     relevant - travelling_from is only meaningful for DRIVING, hiring_car only for the two flight
-    methods. self_check_in/meet_greet are staff/ops-only (decided by a different, not-yet-built
-    process - see Property.default_meet_greet) - only ever supplied as creation defaults (via
-    get_or_create), never touched on a later guest save, same pattern as Departure.clean/
-    manual_date below."""
+    methods. self_check_in/meet_greet are staff/ops-only - the guest-facing save path never
+    touches them (only supplies creation defaults via get_or_create so the row can exist before
+    staff have set anything); they're edited from the staff booking detail page's Booking Info
+    panel instead (see StaffBookingDetailView._update_booking()), same pattern as Departure.clean
+    below."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='arrival')
     method = models.CharField(max_length=20, choices=TravelMethod.choices, default=TravelMethod.FLIGHT_FARO)
     flight_number = models.CharField(max_length=50, blank=True, null=True)
@@ -468,10 +469,10 @@ class Arrival(models.Model):
 class Departure(models.Model):
     """Guest-facing departure information, same self-serve role as Arrival above (see method's
     docstring there - travelling_from is reused here as "travelling to", same field different
-    context). clean and manual_date are staff/ops-only flags (turnover-cleaning scheduling and a
-    manual-date-override marker respectively) - the guest-facing save path never touches them,
-    only supplies these defaults at row creation so the row can exist before staff have set
-    anything, and never resets them again afterward (see BookingManageArrivalDepartureView)."""
+    context). clean is a staff/ops-only flag (turnover-cleaning scheduling) - the guest-facing
+    save path never touches it, only supplies its default at row creation so the row can exist
+    before staff have set anything; edited from the staff booking detail page's Booking Info panel
+    instead (see StaffBookingDetailView._update_booking())."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='departure')
     method = models.CharField(max_length=20, choices=TravelMethod.choices, default=TravelMethod.FLIGHT_FARO)
     flight_number = models.CharField(max_length=50, blank=True, null=True)
@@ -479,7 +480,6 @@ class Departure(models.Model):
     time = models.TimeField(blank=True, null=True)
     details = models.TextField(blank=True, null=True)
     clean = models.BooleanField(default=False)
-    manual_date = models.BooleanField(blank=True, null=True, default=False)
 
     class Meta:
         db_table = 'booking_departures'

@@ -1,3 +1,4 @@
+import re
 import secrets
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -494,3 +495,37 @@ def sync_ical_link(link, ics_text):
     link.save(update_fields=['last_synced'])
 
     return summary
+
+
+FLIGHT_NUMBER_RE = re.compile(r'^(?=.*[A-Za-z])[A-Za-z0-9]{1,3}[ -]?\d{3,5}$')
+FLIGHT_NUMBER_HINT = "That doesn't look like a flight number (e.g. TP1234) - please double-check it."
+
+
+def parsed_travel_method(raw):
+    """Falls back to FLIGHT_FARO if raw isn't a real TravelMethod value - this form has never
+    hard-required a method and shouldn't start now, guest or staff side."""
+    from bookings.models import TravelMethod
+    return raw if raw in TravelMethod.values else TravelMethod.FLIGHT_FARO
+
+
+def valid_flight_number(method, flight_number):
+    """1-3 letters/digits (at least one letter, so real IATA codes like easyJet's "U2" - which
+    mixes a digit into the airline code - still pass) then 3-5 digits, e.g. TP1234 or U21234. Only
+    enforced for the two flight TravelMethods, and only when non-blank. Shared by every
+    Arrival/Departure entry point (guest-facing BookingManageArrivalDepartureView/
+    BookingBalanceDetailsView and the staff booking detail page) so the rule can't drift between
+    them."""
+    from bookings.models import TravelMethod
+    if method not in (TravelMethod.FLIGHT_FARO, TravelMethod.FLIGHT_LISBON) or not flight_number:
+        return True
+    return bool(FLIGHT_NUMBER_RE.match(flight_number))
+
+
+def parsed_arrival_departure_time(raw):
+    raw = (raw or '').strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, '%H:%M').time()
+    except ValueError:
+        return None

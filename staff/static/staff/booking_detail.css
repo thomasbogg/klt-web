@@ -186,6 +186,14 @@ body {
     gap: 10px;
 }
 
+/* Owner booking/Self check-in and Meet & greet/Clean on departure sit in two stacked rows of
+   checkboxes - without this, each label only takes its own text width, so differing label
+   lengths between the rows (e.g. "Owner booking" vs "Meet & greet") leave the checkboxes
+   misaligned between rows instead of forming two visual columns. */
+.staff-field-row > .staff-checkbox-label {
+    flex: 1;
+}
+
 .staff-input {
     width: 100%;
     box-sizing: border-box;
@@ -212,6 +220,19 @@ body {
     gap: 8px;
     font-size: 0.85rem;
     color: #444;
+}
+
+.details-section-hidden {
+    display: none;
+}
+
+/* .staff-field-row/.staff-checkbox-label's own display:flex would otherwise win the cascade over
+   .details-section-hidden (equal specificity) when both classes land on the same element - the
+   Arrival/Departure method field-groups and the Owner-booking-conditional row. */
+.staff-field-row.details-section-hidden,
+.staff-checkbox-label.details-section-hidden,
+.staff-task-history-row.details-section-hidden {
+    display: none;
 }
 
 .staff-button {
@@ -428,6 +449,72 @@ body {
 .staff-lookup-form label {
     font-size: 0.85rem;
     color: #666;
+}
+
+.staff-task-history-stub {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.staff-info-icon {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #eee;
+    color: #888;
+    font-size: 0.7rem;
+    font-style: normal;
+    line-height: 1;
+    cursor: default;
+}
+
+.staff-info-icon .staff-tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    z-index: 10;
+    width: max-content;
+    max-width: 260px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #333;
+    color: #fff;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    white-space: normal;
+    box-shadow: var(--primary-box-shadow);
+}
+
+.staff-info-icon:hover .staff-tooltip,
+.staff-info-icon:focus .staff-tooltip {
+    display: block;
+}
+
+.staff-show-more-link {
+    display: inline-block;
+    margin: 0 0 12px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--primary-color);
+    font-family: inherit;
+    font-size: 0.82rem;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.staff-show-more-link:hover {
+    color: var(--primary-color-dark);
+}
+
+.staff-show-more-link.details-section-hidden {
+    display: none;
 }
 
 @media (max-width: 1000px) {

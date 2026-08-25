@@ -382,7 +382,6 @@ class Command(BaseCommand):
                     details=row['details'],
                     self_check_in=bool(row['selfCheckIn']) if row['selfCheckIn'] is not None else None,
                     meet_greet=bool(row['meetGreet']),
-                    manual_date=bool(row['manualDate']) if row['manualDate'] is not None else None
                 )
                 #Booking.objects.filter(id=row['bookingId']).update(arrival_date=parse_date(row['date']) if row['date'] else None)
 
@@ -410,7 +409,6 @@ class Command(BaseCommand):
                     time=parse_time(row['time']) if row['time'] else None,
                     details=row['details'],
                     clean=bool(row['clean']),
-                    manual_date=bool(row['manualDate']) if row['manualDate'] is not None else None
                 )
                 #Booking.objects.filter(id=row['bookingId']).update(departure_date=parse_date(row['date']) if row['date'] else None)
 
