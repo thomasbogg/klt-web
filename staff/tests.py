@@ -160,6 +160,21 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertEqual(list(response.context['task_history']), [])
         self.assertIn('items', response.context['extras'])
 
+    def test_platform_reference_hidden_for_a_direct_booking(self):
+        # self.booking's enquiry_source is 'Website' (direct) in this fixture.
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['is_platform_booking'])
+        self.assertNotContains(response, "Platform Reference")
+
+    def test_platform_reference_shown_for_a_platform_booking(self):
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.platform_id = 'HMABC12345'
+        self.booking.save(update_fields=['enquiry_source', 'platform_id'])
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['is_platform_booking'])
+        self.assertContains(response, "Platform Reference")
+        self.assertContains(response, "HMABC12345")
+
     def test_owner_payout_unavailable_reason_shown_when_property_has_no_owner(self):
         # self.property has no owner assigned in this fixture, so this is the natural "not
         # available" case to exercise on the default setup.

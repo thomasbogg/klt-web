@@ -152,6 +152,11 @@
                         <label class="staff-field">Source of enquiry
                             <input type="text" class="staff-input" value="{{ booking.enquiry_source }}" readonly>
                         </label>
+                        {% if is_platform_booking %}
+                        <label class="staff-field">Platform Reference
+                            <input type="text" class="staff-input" value="{{ booking.platform_id|default:'' }}" readonly>
+                        </label>
+                        {% endif %}
                         <label class="staff-field">Date of enquiry
                             <input type="text" class="staff-input" value="{{ booking.enquiry_date|date:'d M Y' }}" readonly>
                         </label>

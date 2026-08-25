@@ -15,6 +15,7 @@ from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
 
+import env_settings
 from availability.utils import get_property_calendar
 from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Booking, BookingCondition,
@@ -1469,6 +1470,7 @@ class StaffBookingDetailView(View):
             'booking': booking,
             'guest': booking.guest,
             'charge': charge,
+            'is_platform_booking': booking.enquiry_source in env_settings.PLATFORMS,
             'payment': getattr(booking, 'payment', None),
             'balance_payment': balance_payment,
             'subtotal': subtotal,
