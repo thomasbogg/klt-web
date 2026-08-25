@@ -1551,6 +1551,12 @@ class StaffBookingDetailView(View):
             ):
                 raw = post.get(field, '').strip()
                 if not raw:
+                    # Discount/extra-guest are often legitimately absent, so clearing the input
+                    # should actually clear the stored value - unlike the other fields here, which
+                    # stay untouched on blank as a safety net against an accidental empty submit.
+                    if field in ('discount_total', 'extra_guest_total') and getattr(charge, field) is not None:
+                        charge_changed = True
+                        setattr(charge, field, None)
                     continue
                 value = _parsed_decimal(raw)
                 if value is None:

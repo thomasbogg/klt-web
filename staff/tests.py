@@ -218,6 +218,26 @@ class StaffBookingDetailViewTests(TestCase):
         response = self.client.post(self.url, {'action': 'recalculate_payment_split'})
         self.assertRedirects(response, self.url)
 
+    def test_clearing_discount_and_extra_guest_actually_clears_them(self):
+        self.charge.discount_total = Decimal('10.00')
+        self.charge.extra_guest_total = Decimal('1.00')
+        self.charge.save(update_fields=['discount_total', 'extra_guest_total'])
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'discount_total': '', 'extra_guest_total': '',
+        })
+        self.assertRedirects(response, self.url)
+        self.charge.refresh_from_db()
+        self.assertIsNone(self.charge.discount_total)
+        self.assertIsNone(self.charge.extra_guest_total)
+
+    def test_blank_basic_rental_leaves_it_untouched(self):
+        # Unlike discount_total/extra_guest_total, the other Charge fields keep the existing
+        # "blank means don't touch" safety net against an accidental empty submit.
+        response = self.client.post(self.url, {'action': 'update_booking', 'basic_rental': ''})
+        self.assertRedirects(response, self.url)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.basic_rental, Decimal('700.00'))
+
     def test_update_booking_saves_fields_across_every_panel_at_once(self):
         # Regression guard for the whole point of the merge: one POST, one action, and every
         # panel's fields land together - see StaffBookingDetailView._update_booking's docstring.
