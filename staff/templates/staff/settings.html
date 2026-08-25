@@ -738,7 +738,19 @@
                                 <label class="staff-field">Extra bed fee (&euro;)
                                     <input type="text" name="extra_bed_fee" class="staff-input" value="{{ payment_settings.extra_bed_fee }}">
                                 </label>
+                                <label class="staff-field">Regular payout: days after arrival
+                                    <input type="text" name="regular_payout_days_after_arrival" class="staff-input" value="{{ payment_settings.regular_payout_days_after_arrival }}">
+                                </label>
                             </div>
+                            <label class="staff-checkbox-label">
+                                <input type="checkbox" name="charge_vat_on_low_season_direct_commission" {% if payment_settings.charge_vat_on_low_season_direct_commission %}checked{% endif %}>
+                                Charge VAT on commission for a low-season direct booking
+                            </label>
+                            <label class="staff-checkbox-label">
+                                <input type="checkbox" name="charge_vat_on_low_season_platform_commission" {% if payment_settings.charge_vat_on_low_season_platform_commission %}checked{% endif %}>
+                                Charge VAT on commission for a low-season platform booking
+                            </label>
+                            <p class="staff-settings-hint">High-season commission always carries VAT, regardless of origin.</p>
                             <button type="submit" class="staff-button">Save payment settings</button>
                         </form>
                     </div>

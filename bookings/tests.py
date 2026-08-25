@@ -8,9 +8,10 @@ from django.utils import timezone
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge,
-    Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, Payment, RequestType,
-    WelcomePackItem,
+    Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, Payment,
+    PaymentSettings, PlatformPayout, RequestType, WelcomePackItem,
 )
+from bookings.payouts import compute_owner_payout
 from bookings.utils import (
     add_business_days, create_booking, determine_payment_provider, expire_stale_holds, extras_summary,
     guest_counts_by_age, has_completed_previous_stay, payment_clearing_expiry, recalculate_balance_for_party,
@@ -18,7 +19,7 @@ from bookings.utils import (
 )
 from bookings.templatetags.bookings_extras import linkify
 from guests.models import Guest
-from properties.models import Amenity, Location, LocationRules, Price, Property, PropertySpec, iCalLink
+from properties.models import Amenity, Location, LocationRules, Owner, Price, Property, PropertySpec, iCalLink
 
 
 def _normalized_text(response):
@@ -266,6 +267,217 @@ class ComputeCostsTests(TestCase):
         costs_gbp = settings.costs_in_gbp(costs)
         self.assertEqual(costs_gbp['due_at_booking'], settings.to_gbp(costs['due_at_booking']))
         self.assertEqual(costs_gbp['due_at_balance'], Decimal('0.00'))
+
+
+class ComputeOwnerPayoutTests(TestCase):
+    """Formula reverse-engineered against a real legacy Bookings Report export (Quinta da
+    Barracuda, D12) - see the "Owner payouts: timing + amount calculation" plan. Rows 5093 (direct,
+    low season) and 5441 (platform, high season) are reproduced exactly below as regression
+    guards."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Payout Owner', email='payout-owner@example.com', default_clean=False,
+            default_meet_greet=False, takes_euros=True, takes_pounds=False,
+            cleans_are_invoiced=False, rental_commissions_are_invoiced=False,
+            is_paid_regularly=True,
+        )
+        self.property = Property.objects.create(
+            title='Payout Property', short_title='PAYOUTPROP', owner=self.owner, we_clean=False,
+        )
+        PropertySpec.objects.create(property=self.property, bedrooms=2)
+        self.guest = Guest.objects.create(first_name='Pay', last_name='Out', email='payout-guest@example.com')
+        self.settings = PaymentSettings.load()
+        self.settings.high_season_commission_percent = Decimal('15.00')
+        self.settings.low_season_commission_percent = Decimal('10.00')
+        self.settings.high_season_start_month = 4
+        self.settings.high_season_end_month = 10
+        self.settings.vat_rate_percent = Decimal('23.00')
+        self.settings.charge_vat_on_low_season_direct_commission = False
+        self.settings.charge_vat_on_low_season_platform_commission = True
+        self.settings.regular_payout_days_after_arrival = 3
+        self.settings.cleaning_surcharge_one_bedroom = Decimal('10.00')
+        self.settings.cleaning_surcharge_multi_bedroom = Decimal('15.00')
+        self.settings.cleaning_high_occupancy_surcharge = Decimal('15.00')
+        self.settings.meet_greet_fee = Decimal('28.00')
+        self.settings.save()
+
+    def _make_booking(self, arrival_date, departure_date, enquiry_source='Website', is_owner=False, adults=2, property=None):
+        return Booking.objects.create(
+            property=property or self.property, guest=self.guest, arrival_date=arrival_date,
+            departure_date=departure_date, is_owner=is_owner, enquiry_status='Booking confirmed',
+            enquiry_source=enquiry_source, adults=adults, children=0, babies=0,
+            last_updated=timezone.now(),
+        )
+
+    # --- Report regression guards ---
+
+    def test_matches_report_row_5093_direct_low_season(self):
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        result = compute_owner_payout(booking, self.settings)
+        self.assertTrue(result['available'])
+        self.assertEqual(result['commission'], Decimal('28.40'))
+        self.assertEqual(result['commission_vat'], Decimal('0'))
+        self.assertEqual(result['owner_balance'], Decimal('255.60'))
+
+    def test_matches_report_row_5441_platform_high_season(self):
+        booking = self._make_booking(date(2026, 5, 7), date(2026, 5, 11), enquiry_source='Airbnb')
+        PlatformPayout.objects.create(
+            booking=booking, gross_amount=Decimal('460.35'), payout_amount=Decimal('446.54'),
+            platform_commission=Decimal('13.81'),
+        )
+        result = compute_owner_payout(booking, self.settings)
+        self.assertTrue(result['available'])
+        self.assertEqual(result['commission'], Decimal('66.98'))
+        self.assertEqual(result['platform_fee'], Decimal('13.81'))
+        self.assertEqual(result['platform_fee_vat'], Decimal('3.18'))
+        # Commission VAT is a new behaviour not reflected in the legacy report (high season always
+        # charges it now) - report row 5441 predates this, so owner_balance differs from the report.
+        self.assertEqual(result['commission_vat'], Decimal('15.41'))
+        self.assertEqual(result['owner_balance'], Decimal('360.97'))
+
+    # --- Rental base source ---
+
+    def test_direct_booking_without_a_charge_is_unavailable(self):
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
+        result = compute_owner_payout(booking, self.settings)
+        self.assertFalse(result['available'])
+        self.assertEqual(result['reason'], "No Charge record for this booking.")
+
+    def test_platform_booking_without_a_platform_payout_is_unavailable(self):
+        booking = self._make_booking(date(2026, 5, 7), date(2026, 5, 11), enquiry_source='Airbnb')
+        result = compute_owner_payout(booking, self.settings)
+        self.assertFalse(result['available'])
+        self.assertEqual(result['reason'], "No PlatformPayout figures recorded yet.")
+
+    # --- Not-applicable cases ---
+
+    def test_owner_stay_is_unavailable(self):
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20), is_owner=True)
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        result = compute_owner_payout(booking, self.settings)
+        self.assertFalse(result['available'])
+        self.assertEqual(result['reason'], "Owner stay - no payout due.")
+
+    def test_property_without_an_owner_is_unavailable(self):
+        ownerless = Property.objects.create(title='Ownerless Property', short_title='NOOWNER')
+        PropertySpec.objects.create(property=ownerless, bedrooms=2)
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20), property=ownerless)
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        result = compute_owner_payout(booking, self.settings)
+        self.assertFalse(result['available'])
+        self.assertEqual(result['reason'], "Property has no owner assigned.")
+
+    # --- Commission VAT gating ---
+
+    def test_commission_vat_always_charged_in_high_season_direct(self):
+        booking = self._make_booking(date(2026, 7, 1), date(2026, 7, 8))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('1000.00'))
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['commission_vat'], Decimal('34.50'))  # 15% * 23%
+
+    def test_low_season_direct_commission_vat_off_by_default(self):
+        booking = self._make_booking(date(2026, 1, 5), date(2026, 1, 10))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('1000.00'))
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['commission_vat'], Decimal('0'))
+
+    def test_low_season_direct_commission_vat_on_when_toggled(self):
+        self.settings.charge_vat_on_low_season_direct_commission = True
+        self.settings.save()
+        booking = self._make_booking(date(2026, 1, 5), date(2026, 1, 10))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('1000.00'))
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['commission_vat'], Decimal('23.00'))  # 10% * 23%
+
+    def test_low_season_platform_commission_vat_on_by_default(self):
+        booking = self._make_booking(date(2026, 1, 5), date(2026, 1, 10), enquiry_source='Airbnb')
+        PlatformPayout.objects.create(
+            booking=booking, gross_amount=Decimal('1050.00'), payout_amount=Decimal('1000.00'),
+            platform_commission=Decimal('50.00'),
+        )
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['commission_vat'], Decimal('23.00'))
+        self.assertEqual(result['platform_fee_vat'], Decimal('11.50'))  # always, any season
+
+    def test_low_season_platform_commission_vat_off_when_toggled_off(self):
+        self.settings.charge_vat_on_low_season_platform_commission = False
+        self.settings.save()
+        booking = self._make_booking(date(2026, 1, 5), date(2026, 1, 10), enquiry_source='Airbnb')
+        PlatformPayout.objects.create(
+            booking=booking, gross_amount=Decimal('1050.00'), payout_amount=Decimal('1000.00'),
+            platform_commission=Decimal('50.00'),
+        )
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['commission_vat'], Decimal('0'))
+        self.assertEqual(result['platform_fee_vat'], Decimal('11.50'))  # still always charged
+
+    # --- Management fee ---
+
+    def test_management_fee_zero_when_property_does_not_clean(self):
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        Departure.objects.create(booking=booking, clean=True)
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['management_fee'], Decimal('0'))
+
+    def test_management_fee_includes_cleaning_and_multi_bedroom_surcharge(self):
+        self.property.we_clean = True
+        self.property.standard_cleaning_fee = Decimal('80.00')
+        self.property.save()
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        Departure.objects.create(booking=booking, clean=True)
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['management_fee'], Decimal('95.00'))  # 80 + 15 (multi-bedroom)
+
+    def test_management_fee_high_occupancy_surcharge(self):
+        self.property.we_clean = True
+        self.property.standard_cleaning_fee = Decimal('80.00')
+        self.property.save()
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20), adults=5)  # 5 guests / 2 bedrooms > 2
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        Departure.objects.create(booking=booking, clean=True)
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['management_fee'], Decimal('110.00'))  # 80 + 15 + 15 (high occupancy)
+
+    def test_management_fee_includes_meet_greet(self):
+        self.property.we_clean = True
+        self.property.save()
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        Arrival.objects.create(booking=booking, meet_greet=True)
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['management_fee'], Decimal('28.00'))
+
+    def test_management_fee_zero_without_arrival_or_departure_rows(self):
+        self.property.we_clean = True
+        self.property.save()
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['management_fee'], Decimal('0'))
+
+    # --- Due date ---
+
+    def test_due_date_for_a_regularly_paid_owner(self):
+        self.owner.is_paid_regularly = True
+        self.owner.save()
+        booking = self._make_booking(date(2026, 5, 7), date(2026, 5, 11))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['due_date'], date(2026, 5, 10))  # arrival + 3 days
+        self.assertTrue(result['is_regular'])
+
+    def test_due_date_for_a_non_regular_owner_is_end_of_arrival_month(self):
+        self.owner.is_paid_regularly = False
+        self.owner.save()
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['due_date'], date(2026, 2, 28))
+        self.assertFalse(result['is_regular'])
 
 
 class GuestCountsByAgeTests(TestCase):

@@ -9,7 +9,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from bookings.models import BalancePayment, Booking, BookingCondition, Charge, FAQ, Payment
+from bookings.models import BalancePayment, Booking, BookingCondition, Charge, FAQ, Payment, PaymentSettings
 from guests.models import Guest
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, Manager, Owner, Price,
@@ -158,6 +158,24 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertEqual(list(response.context['owner_payments']), [])
         self.assertEqual(list(response.context['task_history']), [])
         self.assertIn('items', response.context['extras'])
+
+    def test_owner_payout_unavailable_reason_shown_when_property_has_no_owner(self):
+        # self.property has no owner assigned in this fixture, so this is the natural "not
+        # available" case to exercise on the default setup.
+        response = self.client.get(self.url)
+        owner_payout = response.context['owner_payout']
+        self.assertFalse(owner_payout['available'])
+        self.assertEqual(owner_payout['reason'], "Property has no owner assigned.")
+        self.assertContains(response, "Property has no owner assigned.")
+
+    def test_owner_payout_panel_shows_computed_figures_when_available(self):
+        owner = make_owner()
+        self.property.owner = owner
+        self.property.save()
+        response = self.client.get(self.url)
+        owner_payout = response.context['owner_payout']
+        self.assertTrue(owner_payout['available'])
+        self.assertContains(response, "Owner balance")
 
     def test_update_booking_saves_fields_across_every_panel_at_once(self):
         # Regression guard for the whole point of the merge: one POST, one action, and every
@@ -1472,3 +1490,22 @@ class StaffSettingsViewTests(TestCase):
         response = self.client.get(self.url)
         questions = [f.question for f in response.context['faqs']]
         self.assertEqual(questions, ['First', 'Second'])
+
+    def test_update_payment_settings_saves_fields(self):
+        response = self.client.post(self.url, {
+            'action': 'update_payment_settings',
+            'high_season_commission_percent': '16.00', 'low_season_commission_percent': '11.00',
+            'high_season_start_month': '5', 'high_season_end_month': '9',
+            'klt_commission_share_percent': '100.00', 'vat_rate_percent': '23.00',
+            'cleaning_surcharge_one_bedroom': '10.00', 'cleaning_surcharge_multi_bedroom': '15.00',
+            'cleaning_high_occupancy_surcharge': '15.00', 'meet_greet_fee': '28.00',
+            'extra_bed_fee': '25.00', 'regular_payout_days_after_arrival': '5',
+            'charge_vat_on_low_season_direct_commission': 'on',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=payments')
+        settings = PaymentSettings.load()
+        self.assertEqual(settings.regular_payout_days_after_arrival, 5)
+        self.assertTrue(settings.charge_vat_on_low_season_direct_commission)
+        # Omitted checkbox - unchecked, not left at its previous value, matching how the other
+        # boolean-checkbox settings on this page (e.g. OWNER_BOOLEAN_FIELDS) already behave.
+        self.assertFalse(settings.charge_vat_on_low_season_platform_commission)

@@ -907,11 +907,13 @@ class ExtrasSettings(models.Model):
 
 class PaymentSettings(models.Model):
     """Site-wide default owner-payout/commission figures - same singleton pattern as
-    BookingSettings/ExtrasSettings. Owner payment is rental minus commission minus platform-fee
-    VAT (see the legacy management-software's determine_commission()/determine_owner_payment()),
-    not a flat "owner payout %". Still a starting point only: nothing in klt-web's payout system
-    reads these yet (PlatformPayout's amounts are still entered per-booking by hand) - deliberately
-    simplified from the legacy system's full complexity (see field help text for what got dropped)."""
+    BookingSettings/ExtrasSettings. Owner payment is rental minus commission minus VAT on that
+    commission minus VAT on the platform's own fee (see bookings/payouts.py::compute_owner_payout(),
+    reverse-engineered against a real legacy Bookings Report export rather than assumed from the
+    legacy management-software's determine_commission()/determine_owner_payment() alone), not a
+    flat "owner payout %". PlatformPayout's amounts are still entered per-booking by hand -
+    deliberately simplified from the legacy system's full complexity (see field help text for
+    what got dropped)."""
     high_season_commission_percent = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal('15.00'),
         validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))],
@@ -972,6 +974,28 @@ class PaymentSettings(models.Model):
         help_text="Flat fee for an extra bed. In the legacy system this only ever triggered for "
                   "one specific property - stored here as a general default, not yet tied to any "
                   "automatic per-property trigger."
+    )
+    regular_payout_days_after_arrival = models.PositiveIntegerField(
+        default=3,
+        help_text="For an owner paid on a regular schedule (Owner.is_paid_regularly), how many "
+                  "days after guest arrival their payout is due. An owner not on a regular "
+                  "schedule is instead batched into a single payout at the end of the arrival "
+                  "month."
+    )
+    charge_vat_on_low_season_direct_commission = models.BooleanField(
+        default=False,
+        help_text="Whether Internal Commission carries VAT for a direct booking outside high "
+                  "season. High-season commission always carries VAT regardless of origin - "
+                  "this only controls the low-season direct case, which can be disregarded for "
+                  "simplicity."
+    )
+    charge_vat_on_low_season_platform_commission = models.BooleanField(
+        default=True,
+        help_text="Whether Internal Commission carries VAT for a platform booking outside high "
+                  "season. High-season commission always carries VAT regardless of origin, and "
+                  "a platform booking already carries VAT on the platform's own fee year-round - "
+                  "defaults on for consistency, but kept togglable separately from the direct "
+                  "case."
     )
 
     class Meta:

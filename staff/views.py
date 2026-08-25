@@ -20,6 +20,7 @@ from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Booking, BookingCondition,
     BookingSettings, ExtrasSettings, FAQ, PaymentSettings, RequestType, WelcomePackItem,
 )
+from bookings.payouts import compute_owner_payout
 from bookings.utils import PLATFORM_NAMES_BY_ICAL_SOURCE, extras_summary, sync_ical_link
 from guests.models import Guest
 from libraries.utils import logerror
@@ -926,10 +927,12 @@ class StaffSettingsView(View):
             value = _parsed_decimal(post.get(field))
             if value is not None:
                 setattr(settings, field, value)
-        for field in ('high_season_start_month', 'high_season_end_month'):
+        for field in ('high_season_start_month', 'high_season_end_month', 'regular_payout_days_after_arrival'):
             value = _parsed_int(post.get(field))
             if value is not None:
                 setattr(settings, field, value)
+        for field in ('charge_vat_on_low_season_direct_commission', 'charge_vat_on_low_season_platform_commission'):
+            setattr(settings, field, post.get(field) == 'on')
         try:
             settings.full_clean()
         except ValidationError as error:
@@ -1471,6 +1474,7 @@ class StaffBookingDetailView(View):
             'next_step': next_step_hint(booking, charge, balance_payment),
             'deductions': booking.deductions.all(),
             'owner_payments': booking.owner_payments.all(),
+            'owner_payout': compute_owner_payout(booking),
             'task_history': booking.task_history.all(),
             'currency_choices': CURRENCY_CHOICES,
             'payment_status_choices': PAYMENT_STATUS_CHOICES,

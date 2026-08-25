@@ -227,6 +227,28 @@
                 </section>
 
                 <section class="staff-panel">
+                    <h2 class="staff-panel-title">Owner payout</h2>
+                    {% if owner_payout.available %}
+                    <ul class="staff-list">
+                        <li>Rental base <span class="staff-list-amount">&euro;{{ owner_payout.rental_base|floatformat:2 }}</span></li>
+                        <li>Internal commission ({{ owner_payout.commission_percent }}%) <span class="staff-list-amount">-&euro;{{ owner_payout.commission|floatformat:2 }}</span></li>
+                        {% if owner_payout.commission_vat %}
+                        <li>VAT on commission <span class="staff-list-amount">-&euro;{{ owner_payout.commission_vat|floatformat:2 }}</span></li>
+                        {% endif %}
+                        {% if owner_payout.platform_fee_vat %}
+                        <li>VAT on platform fee (&euro;{{ owner_payout.platform_fee|floatformat:2 }} fee) <span class="staff-list-amount">-&euro;{{ owner_payout.platform_fee_vat|floatformat:2 }}</span></li>
+                        {% endif %}
+                        {% if owner_payout.management_fee %}
+                        <li>Management fee <span class="staff-list-amount">-&euro;{{ owner_payout.management_fee|floatformat:2 }}</span></li>
+                        {% endif %}
+                    </ul>
+                    <p class="staff-list-total">Owner balance: &euro;{{ owner_payout.owner_balance|floatformat:2 }} - due {{ owner_payout.due_date }}{% if owner_payout.is_regular %} (regular schedule){% else %} (month-end batch){% endif %}</p>
+                    {% else %}
+                    <p class="staff-empty">{{ owner_payout.reason }}</p>
+                    {% endif %}
+                </section>
+
+                <section class="staff-panel">
                     <h2 class="staff-panel-title">Payments to owner</h2>
                     <ul class="staff-list">
                         {% for owner_payment in owner_payments %}
