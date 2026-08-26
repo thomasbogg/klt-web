@@ -1,0 +1,19 @@
+#cleaning-calendar {
+    background: #fff;
+    border-radius: 8px;
+    padding: 16px;
+}
+
+#cleaning-calendar .fc-event {
+    border: none;
+    cursor: pointer;
+    font-size: 0.75rem;
+}
+
+#cleaning-calendar .fc-daygrid-day.staff-cal-invalid-day {
+    background: #f1f1f1;
+}
+
+#cleaning-calendar .fc-daygrid-day.staff-cal-invalid-day .fc-daygrid-day-number {
+    color: #bbb;
+}

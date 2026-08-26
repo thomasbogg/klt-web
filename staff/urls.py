@@ -22,4 +22,13 @@ urlpatterns = [
     path('locations/<int:pk>/', views.StaffLocationDetailView.as_view(), name='location_detail'),
     path('bookings/<str:reference>/', views.StaffBookingDetailView.as_view(), name='booking_detail'),
     path('cleaning/', views.StaffCleaningRotaView.as_view(), name='cleaning_rota'),
+    path('cleaning/calendar/', views.StaffCleaningCalendarView.as_view(), name='cleaning_calendar'),
+    path(
+        'cleaning/calendar/events/',
+        views.StaffCleaningEventsView.as_view(), name='cleaning_calendar_events',
+    ),
+    path(
+        'cleaning/calendar/tasks/<int:pk>/move/',
+        views.StaffCleaningTaskMoveView.as_view(), name='cleaning_calendar_move',
+    ),
 ]

@@ -34,11 +34,11 @@ from properties.models import (
     iCalLink,
 )
 from staff.models import CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
-from staff.permissions import staff_page_required
+from staff.permissions import staff_page_required, superuser_required
 from staff.utils import (
     AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, ENQUIRY_STATUS_GROUPS, ENQUIRY_STATUSES, GUEST_LETTERS,
     LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAFF_PAGE_PERMISSION_FIELDS,
-    STAGE_TABS, STATUS_BUCKETS, booking_stage, next_step_hint, reservation_rows,
+    STAGE_TABS, STATUS_BUCKETS, booking_stage, cleaning_task_valid_range, next_step_hint, reservation_rows,
 )
 
 
@@ -1994,3 +1994,87 @@ class StaffCleaningRotaView(View):
             'assignable_users': assignable_users,
             'is_superuser': request.user.is_superuser,
         }
+
+
+@method_decorator(superuser_required, name='dispatch')
+class StaffCleaningCalendarView(View):
+    """A drag-to-reschedule calendar over the same CleaningTask rows as StaffCleaningRotaView,
+    for the cleaning manager to shuffle a clean's date within its safe window (never before
+    checkout, never so late the next confirmed arrival lands on an unclean property - see
+    staff/utils.py::cleaning_task_valid_range). Deliberately superuser-only (not gated by a
+    StaffRole field like the day-list rota) and deliberately a separate page rather than a
+    replacement for it - the day-list stays the simple view a cleaner checks for their own day."""
+    template_name = 'staff/cleaning_calendar.html'
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name, {})
+
+
+@method_decorator(superuser_required, name='dispatch')
+class StaffCleaningEventsView(View):
+    """JSON event feed for StaffCleaningCalendarView's FullCalendar instance - one object per
+    CleaningTask whose date falls in the requested [start, end) range, with the valid drag window
+    embedded in extendedProps so the frontend can shade invalid drop days without a round trip."""
+
+    def get(self, request, *args, **kwargs):
+        # FullCalendar sends full ISO datetimes (with a timezone offset) for its events-feed
+        # start/end params, not plain dates - only the date portion matters for this all-day feed.
+        start_date = _parsed_date((request.GET.get('start') or '').split('T')[0])
+        end_date = _parsed_date((request.GET.get('end') or '').split('T')[0])
+        tasks = CleaningTask.objects.select_related('booking__property', 'assigned_to')
+        if start_date:
+            tasks = tasks.filter(date__gte=start_date)
+        if end_date:
+            tasks = tasks.filter(date__lt=end_date)
+
+        events = []
+        for task in tasks:
+            min_date, max_date = cleaning_task_valid_range(task)
+            events.append({
+                'id': task.pk,
+                'title': f"{task.booking.property} — {task.get_task_type_display()}",
+                'start': task.date.isoformat(),
+                'allDay': True,
+                'extendedProps': {
+                    'task_type': task.task_type,
+                    'status': task.status,
+                    'property_id': task.booking.property_id,
+                    'assigned_to': task.assigned_to.username if task.assigned_to else None,
+                    'booking_reference': task.booking.reference,
+                    'min_date': min_date.isoformat(),
+                    'max_date': max_date.isoformat() if max_date else None,
+                },
+            })
+        return JsonResponse(events, safe=False)
+
+
+@method_decorator(superuser_required, name='dispatch')
+class StaffCleaningTaskMoveView(View):
+    """Drag-drop endpoint for StaffCleaningCalendarView - re-validates the new date against
+    cleaning_task_valid_range() server-side (the client-side shading in cleaning_calendar.js is
+    just a UX aid, never trusted here), then marks the task manually_scheduled so the next
+    unrelated booking save doesn't silently revert it (see staff/utils.py::_sync_task_date)."""
+
+    def post(self, request, *args, **kwargs):
+        task = CleaningTask.objects.select_related('booking').filter(pk=kwargs['pk']).first()
+        if task is None:
+            return JsonResponse({'error': 'That cleaning task no longer exists.'}, status=404)
+
+        new_date = _parsed_date(request.POST.get('date'))
+        if new_date is None:
+            return JsonResponse({'error': 'Invalid date.'}, status=400)
+
+        min_date, max_date = cleaning_task_valid_range(task)
+        upper_ok = max_date is None or (new_date < max_date if task.task_type == 'turnover' else new_date <= max_date)
+        if new_date < min_date or not upper_ok:
+            return JsonResponse({'error': "That date is outside this task's valid window."}, status=400)
+
+        computed_date = (
+            task.booking.departure_date if task.task_type == 'turnover'
+            else task.booking.extras.mid_stay_clean_date
+        )
+        task.date = new_date
+        task.manually_scheduled = True
+        task.auto_date = computed_date
+        task.save(update_fields=['date', 'manually_scheduled', 'auto_date'])
+        return JsonResponse({'ok': True})

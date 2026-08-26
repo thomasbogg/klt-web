@@ -188,6 +188,17 @@ class BookingQuerySet(models.QuerySet):
             departure_date__gt=start_date,
         )
 
+    def next_confirmed_arrival_after(self, property, date):
+        """Earliest confirmed (VALID_BOOKING_STATUSES) arrival for `property` strictly after
+        `date`, or None if uncapped. Confirmed only, not holding() - a still-provisional hold
+        shouldn't constrain where a cleaning task can be dragged to (see
+        staff/utils.py::cleaning_task_valid_range)."""
+        return self.filter(
+            property_id=getattr(property, 'pk', property),
+            enquiry_status__in=VALID_BOOKING_STATUSES,
+            arrival_date__gt=date,
+        ).order_by('arrival_date').values_list('arrival_date', flat=True).first()
+
 
 class Booking(models.Model):
     """Main booking model."""

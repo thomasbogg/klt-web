@@ -23,3 +23,16 @@ def staff_page_required(field_name):
             raise PermissionDenied
         return staff_member_required(check_role)
     return decorator
+
+
+def superuser_required(view_func):
+    """Gates a view to superusers only - no StaffRole field involved at all, unlike
+    staff_page_required. For pages/actions that are deliberately not exposed to any role, however
+    permissioned (currently just the cleaning calendar's drag-to-reschedule view and its JSON
+    endpoints - see staff/views.py::StaffCleaningCalendarView)."""
+    @wraps(view_func)
+    def check_superuser(request, *args, **kwargs):
+        if not request.user.is_superuser:
+            raise PermissionDenied
+        return view_func(request, *args, **kwargs)
+    return staff_member_required(check_superuser)

@@ -1,0 +1,32 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cleaning calendar | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/cleaning_calendar.css' %}">
+    <script src="{% static 'staff/vendor/fullcalendar/index.global.min.js' %}" defer></script>
+    <script src="{% static 'staff/cleaning_calendar.js' %}" defer></script>
+</head>
+<body>
+    <div class="staff-page">
+        {% csrf_token %}
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Cleaning calendar</h1>
+            <a href="{% url 'staff:cleaning_rota' %}" class="staff-button staff-button-small">&larr; Day list</a>
+        </header>
+
+        <div
+            id="cleaning-calendar"
+            data-events-url="{% url 'staff:cleaning_calendar_events' %}"
+            data-move-url-template="{% url 'staff:cleaning_calendar_move' pk=0 %}"
+            data-booking-url-template="{% url 'staff:booking_detail' reference='REFERENCE' %}"
+        ></div>
+    </div>
+</body>
+</html>

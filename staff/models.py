@@ -149,6 +149,15 @@ class CleaningTask(models.Model):
     )
     completed_at = models.DateTimeField(blank=True, null=True)
     notes = models.TextField(blank=True)
+    # Set when a superuser drags this task to a new date on the cleaning calendar view (staff/
+    # views.py::StaffCleaningTaskMoveView) - tells sync_cleaning_tasks_for_booking() (staff/
+    # utils.py) not to blindly overwrite `date` from Departure/Extra on the next unrelated save.
+    # auto_date records what the auto-computed date was at the moment of the drag, so the sync can
+    # tell "source date moved since the drag" (always resync) apart from "still the same source,
+    # just check the drag is still inside its valid window" - see cleaning_task_valid_range().
+    # Only meaningful while manually_scheduled=True; null otherwise, no backfill needed.
+    manually_scheduled = models.BooleanField(default=False)
+    auto_date = models.DateField(blank=True, null=True)
 
     class Meta:
         db_table = 'staff_cleaning_tasks'

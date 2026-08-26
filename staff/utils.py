@@ -217,16 +217,65 @@ def sync_cleaning_tasks_for_booking(booking):
 
     departure = getattr(booking, 'departure', None)
     if departure and departure.clean:
-        CleaningTask.objects.update_or_create(
+        task, _ = CleaningTask.objects.get_or_create(
             booking=booking, task_type='turnover', defaults={'date': booking.departure_date},
         )
+        _sync_task_date(task, booking.departure_date)
     else:
         CleaningTask.objects.filter(booking=booking, task_type='turnover', status='pending').delete()
 
     extra = getattr(booking, 'extras', None)
     if extra and extra.mid_stay_clean and extra.mid_stay_clean_date:
-        CleaningTask.objects.update_or_create(
+        task, _ = CleaningTask.objects.get_or_create(
             booking=booking, task_type='mid_stay', defaults={'date': extra.mid_stay_clean_date},
         )
+        _sync_task_date(task, extra.mid_stay_clean_date)
     else:
         CleaningTask.objects.filter(booking=booking, task_type='mid_stay', status='pending').delete()
+
+
+def _sync_task_date(task, computed_date):
+    """computed_date = booking.departure_date (turnover) or extra.mid_stay_clean_date (mid_stay) -
+    the date this task would auto-place at absent any manual drag (see
+    staff/views.py::StaffCleaningTaskMoveView). Three cases:
+    1. Not manually_scheduled: always adopt computed_date (today's behaviour).
+    2. Manually scheduled but the source date itself moved since the drag (computed_date !=
+       task.auto_date): an explicit edit to the departure/mid-stay-clean date should always win
+       over an old drag - clear the override and adopt the new computed_date.
+    3. Manually scheduled and the source date is unchanged: check the drag is still inside its
+       valid window (cleaning_task_valid_range). Still valid -> leave date untouched (the whole
+       point of the flag). No longer valid (e.g. a new confirmed booking now arrives before it) ->
+       clear the override and adopt computed_date - a stale override is a property-cleanliness
+       risk, so this is a hard reset, not a warning."""
+    if not task.manually_scheduled:
+        if task.date != computed_date:
+            task.date = computed_date
+            task.save(update_fields=['date'])
+        return
+
+    if computed_date != task.auto_date:
+        task.date, task.manually_scheduled, task.auto_date = computed_date, False, None
+        task.save(update_fields=['date', 'manually_scheduled', 'auto_date'])
+        return
+
+    min_date, max_date = cleaning_task_valid_range(task)
+    still_valid = task.date >= min_date and (
+        max_date is None or (task.date < max_date if task.task_type == 'turnover' else task.date <= max_date)
+    )
+    if not still_valid:
+        task.date, task.manually_scheduled, task.auto_date = computed_date, False, None
+        task.save(update_fields=['date', 'manually_scheduled', 'auto_date'])
+
+
+def cleaning_task_valid_range(task):
+    """(min_date, max_date_or_None) this task's date may occupy. Turnover's max_date is an
+    EXCLUSIVE ceiling (guest arrives that day - can't be cleaning then); mid-stay's max_date is
+    INCLUSIVE (the stay's own last day). Callers (the move endpoint, _sync_task_date, and the
+    calendar's client-side drag feedback) must respect this asymmetry."""
+    from bookings.models import Booking
+
+    booking = task.booking
+    if task.task_type == 'turnover':
+        min_date = booking.departure_date
+        return min_date, Booking.objects.next_confirmed_arrival_after(booking.property, min_date)
+    return booking.arrival_date, booking.departure_date

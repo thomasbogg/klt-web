@@ -15,6 +15,9 @@
 
         <header class="staff-header">
             <h1 class="staff-page-title">Cleaning rota</h1>
+            {% if is_superuser %}
+            <a href="{% url 'staff:cleaning_calendar' %}" class="staff-button staff-button-small">Calendar view &rarr;</a>
+            {% endif %}
         </header>
 
         {% if messages %}
