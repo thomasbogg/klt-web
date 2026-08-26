@@ -259,19 +259,17 @@ def _sync_task_date(task, computed_date):
         return
 
     min_date, max_date = cleaning_task_valid_range(task)
-    still_valid = task.date >= min_date and (
-        max_date is None or (task.date < max_date if task.task_type == 'turnover' else task.date <= max_date)
-    )
+    still_valid = task.date >= min_date and (max_date is None or task.date <= max_date)
     if not still_valid:
         task.date, task.manually_scheduled, task.auto_date = computed_date, False, None
         task.save(update_fields=['date', 'manually_scheduled', 'auto_date'])
 
 
 def cleaning_task_valid_range(task):
-    """(min_date, max_date_or_None) this task's date may occupy. Turnover's max_date is an
-    EXCLUSIVE ceiling (guest arrives that day - can't be cleaning then); mid-stay's max_date is
-    INCLUSIVE (the stay's own last day). Callers (the move endpoint, _sync_task_date, and the
-    calendar's client-side drag feedback) must respect this asymmetry."""
+    """(min_date, max_date_or_None) this task's date may occupy, both ends inclusive - a turnover
+    clean can land on the same day the next guest arrives (a normal same-day turnover: guest
+    leaves in the morning, cleaners come, next guest checks in later that day), and a mid-stay
+    clean can land on the stay's own last day."""
     from bookings.models import Booking
 
     booking = task.booking
@@ -279,3 +277,26 @@ def cleaning_task_valid_range(task):
         min_date = booking.departure_date
         return min_date, Booking.objects.next_confirmed_arrival_after(booking.property, min_date)
     return booking.arrival_date, booking.departure_date
+
+
+def apply_manual_task_date(task, new_date):
+    """Validates new_date against cleaning_task_valid_range(task), then sets
+    date/manually_scheduled/auto_date and saves - exactly what a calendar drag
+    (staff/views.py::StaffCleaningTaskMoveView) does, and the same thing the clean-planner popup
+    and the booking detail page's embedded planner do when a date is actually changed there too.
+    Returns None on success, or a human-readable error string on failure. Callers should only call
+    this when new_date differs from task.date - saving an unrelated field (e.g. just ticking a
+    cleaning-staff checkbox) must never flip manually_scheduled or touch auto_date."""
+    min_date, max_date = cleaning_task_valid_range(task)
+    if new_date < min_date or (max_date is not None and new_date > max_date):
+        return "That date is outside this task's valid window."
+
+    computed_date = (
+        task.booking.departure_date if task.task_type == 'turnover'
+        else task.booking.extras.mid_stay_clean_date
+    )
+    task.date = new_date
+    task.manually_scheduled = True
+    task.auto_date = computed_date
+    task.save(update_fields=['date', 'manually_scheduled', 'auto_date'])
+    return None

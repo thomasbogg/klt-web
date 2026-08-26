@@ -72,6 +72,9 @@
                                 <label class="staff-field">Map link
                                     <input type="text" name="map_link" class="staff-input" value="{{ location.map_link }}" required>
                                 </label>
+                                <label class="staff-field">Colour
+                                    <input type="color" name="color" class="staff-input" value="{{ location.color|default:'#4C6EF5' }}">
+                                </label>
                                 <label class="staff-field">Directions
                                     <textarea name="directions" class="staff-input" rows="3">{{ location.directions|default:'' }}</textarea>
                                 </label>

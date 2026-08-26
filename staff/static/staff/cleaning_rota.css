@@ -1,5 +1,12 @@
-.staff-cleaning-date-nav {
+.staff-cleaning-title-row {
     display: flex;
+    align-items: baseline;
+    gap: 16px;
+}
+
+.staff-cleaning-date-nav {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
     align-items: center;
     gap: 16px;
     margin-bottom: 24px;
@@ -9,13 +16,40 @@
     font-family: var(--secondary-font);
     font-weight: 700;
     font-size: 1rem;
+    text-align: center;
 }
 
-.staff-cleaning-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+.staff-cleaning-days {
+    display: flex;
     gap: 16px;
-    align-items: start;
+    align-items: flex-start;
+    /* No wrapping and no shrinking below each column's min-width - a wide viewport fits all 5
+       days (yesterday/today/next 3) at even widths; a narrower one just shows fewer at their
+       natural width and scrolls sideways for the rest, without any breakpoint logic needed. */
+    overflow-x: auto;
+    padding-bottom: 8px;
+}
+
+.staff-cleaning-day-column {
+    flex: 1 1 220px;
+    min-width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.staff-cleaning-day-heading {
+    font-family: var(--secondary-font);
+    font-weight: 700;
+    font-size: 0.9rem;
+    margin: 0;
+    padding-bottom: 6px;
+    border-bottom: 2px solid #e0e0e0;
+}
+
+.staff-cleaning-day-column-today .staff-cleaning-day-heading {
+    color: var(--secondary-color);
+    border-bottom-color: var(--secondary-color-soft-dark);
 }
 
 .staff-cleaning-card {
@@ -29,14 +63,11 @@
     opacity: 0.7;
 }
 
-.staff-cleaning-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-}
-
 .staff-cleaning-badge {
+    align-self: flex-start;
+    /* Pulls it closer to the property title above it than the card's general 10px row gap - the
+       badge is a second half of the same "what and where" line, not its own separate row. */
+    margin-top: -6px;
     font-family: var(--secondary-font);
     font-size: 0.65rem;
     font-weight: 700;
@@ -77,12 +108,7 @@
     margin: 0;
 }
 
-.staff-cleaning-assign-form,
 .staff-cleaning-status-form {
     display: flex;
     align-items: center;
-}
-
-.staff-cleaning-assign-form .staff-input {
-    width: 100%;
 }

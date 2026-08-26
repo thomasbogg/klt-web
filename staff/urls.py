@@ -31,4 +31,12 @@ urlpatterns = [
         'cleaning/calendar/tasks/<int:pk>/move/',
         views.StaffCleaningTaskMoveView.as_view(), name='cleaning_calendar_move',
     ),
+    path(
+        'cleaning/tasks/<int:pk>/detail/',
+        views.StaffCleaningTaskDetailView.as_view(), name='cleaning_task_detail',
+    ),
+    path(
+        'cleaning/tasks/<int:pk>/save/',
+        views.StaffCleaningTaskSaveView.as_view(), name='cleaning_task_save',
+    ),
 ]

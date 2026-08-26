@@ -21,6 +21,11 @@ class Location(models.Model):
     nearest_bins = models.TextField(blank=True, null=True)
     nearest_corner_shop = models.TextField(blank=True, null=True)
     nearest_supermarket = models.TextField(blank=True, null=True)
+    # Hex colour (e.g. "#4C6EF5"), curated by staff from the Location detail page - lets the
+    # staff cleaning calendar (staff/views.py::StaffCleaningEventsView) group same-location
+    # properties visually. Blank means "not curated yet" - the calendar falls back to an
+    # auto-generated colour rather than requiring every location to have one set.
+    color = models.CharField(max_length=7, blank=True)
 
     @property
     def slug(self):

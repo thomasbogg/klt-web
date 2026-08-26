@@ -1,0 +1,26 @@
+<div class="staff-clean-planner">
+    <label class="staff-field">{{ label|default:"Clean" }} date
+        <input
+            type="text" name="{{ field_prefix }}date" class="staff-input staff-date-input" autocomplete="off"
+            value="{{ task.date|date:'Y-m-d' }}"
+            data-min-date="{{ min_date|date:'Y-m-d' }}"
+            data-max-date="{{ max_date|date:'Y-m-d' }}"
+            {% if not standalone %}form="booking-detail-form"{% endif %}
+        >
+    </label>
+    <fieldset class="staff-popup-section">
+        <legend>{{ label|default:"Cleaning" }} staff</legend>
+        {% for user in assignable_users %}
+        <label class="staff-checkbox-label">
+            <input
+                type="checkbox" name="{{ field_prefix }}assigned_to" value="{{ user.pk }}"
+                {% if not standalone %}form="booking-detail-form"{% endif %}
+                {% if user.pk in assigned_ids %}checked{% endif %}
+            >
+            {{ user.username }}
+        </label>
+        {% empty %}
+        <p class="staff-empty">No cleaning staff roles set up yet.</p>
+        {% endfor %}
+    </fieldset>
+</div>

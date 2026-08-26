@@ -522,3 +522,48 @@ body {
         grid-template-columns: 1fr;
     }
 }
+
+/* Shared boxed-section styling for the clean-planner fields (cleaning_calendar.html's popup and
+   this page's embedded "Cleaning" panel) and the read-only Departure/Arrival summaries inside
+   the popup - one visual language for "a bordered group of related fields", used in both places. */
+.staff-popup-section {
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin: 0 0 12px;
+}
+
+.staff-popup-section legend {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #666;
+    padding: 0 4px;
+}
+
+.staff-departure-summary {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    margin: 0 0 8px;
+    font-size: 0.9rem;
+}
+
+.staff-departure-summary dt {
+    font-weight: 700;
+    color: #666;
+}
+
+.staff-departure-summary dd {
+    margin: 0;
+}
+
+.staff-departure-summary .staff-cleaning-extras {
+    margin: 0;
+    padding-left: 16px;
+}
+
+.staff-clean-planner > .staff-field {
+    margin-bottom: 12px;
+}

@@ -199,6 +199,17 @@ class BookingQuerySet(models.QuerySet):
             arrival_date__gt=date,
         ).order_by('arrival_date').values_list('arrival_date', flat=True).first()
 
+    def next_confirmed_booking_after(self, property, date):
+        """Same lookup as next_confirmed_arrival_after but returns the whole Booking (not just its
+        arrival_date) - for display purposes (the cleaning-task popup's "next check-in" summary,
+        staff/views.py::StaffCleaningTaskDetailView), not the date-boundary math that function
+        exists for."""
+        return self.filter(
+            property_id=getattr(property, 'pk', property),
+            enquiry_status__in=VALID_BOOKING_STATUSES,
+            arrival_date__gt=date,
+        ).select_related('arrival', 'guest').order_by('arrival_date').first()
+
 
 class Booking(models.Model):
     """Main booking model."""

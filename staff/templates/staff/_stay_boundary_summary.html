@@ -1,0 +1,25 @@
+<fieldset class="staff-popup-section">
+    <legend>{{ heading }}</legend>
+    {% if date %}
+    <dl class="staff-departure-summary">
+        <dt>Date</dt><dd>{{ date|date:'D, j M Y' }}</dd>
+        <dt>Method</dt><dd>{{ method_label|default:"—" }}</dd>
+        <dt>Flight number</dt><dd>{{ record.flight_number|default:"—" }}</dd>
+        <dt>Time</dt><dd>{{ record.time|time:'H:i'|default:"—" }}</dd>
+        {% if record.travelling_from %}<dt>Travelling {% if is_arrival %}from{% else %}to{% endif %}</dt><dd>{{ record.travelling_from }}</dd>{% endif %}
+        {% if record.details %}<dt>Details</dt><dd>{{ record.details }}</dd>{% endif %}
+        {% if guests %}<dt>Guests</dt><dd>{{ guests }}</dd>{% endif %}
+        {% if extras.items %}
+        <dt>Extras</dt>
+        <dd>
+            <ul class="staff-cleaning-extras">
+                {% for item in extras.items %}<li>{{ item.label }}</li>{% endfor %}
+            </ul>
+        </dd>
+        {% endif %}
+    </dl>
+    <a href="{% url 'staff:booking_detail' reference=booking.reference %}" class="staff-header-link">{{ booking.guest }} &rarr;</a>
+    {% else %}
+    <p class="staff-empty">{{ empty_message|default:"No details on file." }}</p>
+    {% endif %}
+</fieldset>

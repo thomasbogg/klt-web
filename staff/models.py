@@ -90,6 +90,12 @@ class StaffRole(models.Model):
     can_view_locations = models.BooleanField(default=False)
     can_view_settings = models.BooleanField(default=False)
     can_view_cleaning_rota = models.BooleanField(default=False)
+    # Assignability, not page visibility - deliberately excluded from STAFF_PAGE_PERMISSION_FIELDS
+    # (staff/utils.py), which drives the generic per-page-flag loop in views.py's
+    # _add_role/_update_role and the settings.html role table. This flag instead means "a user
+    # holding this role can be ticked as a cleaner" (StaffCleaningRotaView/the cleaning calendar's
+    # assignable-users queries), independent of whether they can even see the rota page.
+    is_cleaning_staff = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'staff_roles'
@@ -133,16 +139,17 @@ class CleaningTask(models.Model):
 
     assigned_to/status/completed_by/completed_at/notes are real fields on this row, not on
     Departure/Extra, since assignment and completion tracking are staff-rota concerns distinct
-    from travel logistics (Departure) or guest-requested extras (Extra)."""
+    from travel logistics (Departure) or guest-requested extras (Extra). assigned_to is a
+    many-to-many (not a single FK) since different staff can share a day's cleans - membership is
+    what the rota/calendar's "my tasks" filters and mark-done permission check against, not a
+    single owner."""
     TASK_TYPE_CHOICES = [('turnover', 'Turnover'), ('mid_stay', 'Mid-stay')]
     STATUS_CHOICES = [('pending', 'Pending'), ('done', 'Done')]
 
     booking = models.ForeignKey('bookings.Booking', on_delete=models.CASCADE, related_name='cleaning_tasks')
     task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES)
     date = models.DateField()
-    assigned_to = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='cleaning_tasks',
-    )
+    assigned_to = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name='cleaning_tasks')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     completed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',

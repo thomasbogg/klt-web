@@ -814,6 +814,7 @@
                                     {% for field, label in permission_fields %}
                                     <th title="{{ label }}">{{ label }}</th>
                                     {% endfor %}
+                                    <th title="Assignable as a cleaner on the cleaning rota/calendar - independent of page access">Cleaning staff</th>
                                     <th title="Number of staff accounts currently holding this role">Users</th>
                                     <th></th>
                                 </tr>
@@ -825,6 +826,7 @@
                                     {% for field, label in permission_fields %}
                                     <td><input type="checkbox" name="{{ field }}" form="role-form-{{ role.pk }}" {% if role|get_attr:field %}checked{% endif %}></td>
                                     {% endfor %}
+                                    <td><input type="checkbox" name="is_cleaning_staff" form="role-form-{{ role.pk }}" {% if role.is_cleaning_staff %}checked{% endif %}></td>
                                     <td class="staff-property-count-cell">{{ role.user_count }}</td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="role-form-{{ role.pk }}" class="staff-button staff-button-small">Save</button>
@@ -837,13 +839,14 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="{{ permission_fields|length|add:3 }}" class="staff-empty">No roles yet.</td></tr>
+                                <tr><td colspan="{{ permission_fields|length|add:4 }}" class="staff-empty">No roles yet.</td></tr>
                                 {% endfor %}
                                 <tr class="staff-price-row-new">
                                     <td><input type="text" name="name" form="role-form-new" class="staff-input"></td>
                                     {% for field, label in permission_fields %}
                                     <td><input type="checkbox" name="{{ field }}" form="role-form-new"></td>
                                     {% endfor %}
+                                    <td><input type="checkbox" name="is_cleaning_staff" form="role-form-new"></td>
                                     <td></td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="role-form-new" class="staff-button staff-button-small">Add</button>

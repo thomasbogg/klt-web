@@ -17,3 +17,33 @@
 #cleaning-calendar .fc-daygrid-day.staff-cal-invalid-day .fc-daygrid-day-number {
     color: #bbb;
 }
+
+#clean-task-dialog {
+    width: min(420px, 90vw);
+    max-height: 85vh;
+    border: none;
+    border-radius: 8px;
+    padding: 20px;
+    overflow: visible;
+}
+
+#clean-task-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.4);
+}
+
+#clean-task-dialog-body {
+    /* Deliberately not scrollable/clipped - flatpickr's dropdown calendar (staff-date-input,
+       `static: true` in cleaning_calendar.js) is absolutely positioned relative to the date
+       field and can be taller than the space left inside the dialog. Rather than clip it or
+       force an inner scroll, let it spill past the dialog's own edge onto the page, the same way
+       a native dropdown isn't confined to its trigger's container. */
+    overflow: visible;
+}
+
+.staff-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+    flex-shrink: 0;
+}

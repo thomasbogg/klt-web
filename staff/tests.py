@@ -20,7 +20,7 @@ from properties.models import (
     iCalLink,
 )
 from staff.models import CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
-from staff.utils import booking_stage, next_step_hint, status_bucket
+from staff.utils import apply_manual_task_date, booking_stage, cleaning_task_valid_range, next_step_hint, status_bucket
 
 User = get_user_model()
 
@@ -862,7 +862,7 @@ class StaffCleaningRotaViewTests(TestCase):
     non-superuser with the role sees only their own assigned tasks."""
 
     def setUp(self):
-        self.role = StaffRole.objects.create(name='Cleaner', can_view_cleaning_rota=True)
+        self.role = StaffRole.objects.create(name='Cleaner', can_view_cleaning_rota=True, is_cleaning_staff=True)
         self.cleaner = User.objects.create_user(username='cleaner1', password='pw', is_staff=True)
         StaffProfile.objects.create(user=self.cleaner, role=self.role)
         self.other_cleaner = User.objects.create_user(username='cleaner2', password='pw', is_staff=True)
@@ -889,15 +889,32 @@ class StaffCleaningRotaViewTests(TestCase):
         self.client.login(username='norole', password='pw')
         self.assertEqual(self.client.get(self.url).status_code, 403)
 
-    def test_superuser_sees_unassigned_task_with_assign_control(self):
+    def test_superuser_sees_task_with_unassigned_status(self):
         self.client.login(username='rotasuperuser', password='pw')
         response = self.client.get(self.url)
         self.assertContains(response, 'Rota Property')
-        self.assertContains(response, 'staff-cleaning-assign-form')
+        self.assertContains(response, 'Unassigned')
+
+    def test_assigned_names_shown_read_only(self):
+        """Assignment itself now happens on the cleaning calendar (StaffCleaningTaskSaveView) -
+        this page only displays who's assigned, for superusers and cleaners alike."""
+        self.task.assigned_to.set([self.cleaner])
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        self.assertContains(response, f'Assigned to {self.cleaner.username}')
+        self.assertNotContains(response, 'staff-cleaning-assign-form')
+
+    def test_posting_assign_action_is_a_no_op(self):
+        self.client.login(username='rotasuperuser', password='pw')
+        self.client.post(self.url, {
+            'action': 'assign', 'task_id': self.task.pk, 'assigned_to': self.cleaner.pk,
+            'date': self.today.isoformat(),
+        })
+        self.task.refresh_from_db()
+        self.assertFalse(self.task.assigned_to.exists())
 
     def test_non_superuser_sees_only_own_assigned_tasks(self):
-        self.task.assigned_to = self.other_cleaner
-        self.task.save()
+        self.task.assigned_to.set([self.other_cleaner])
         self.client.login(username='cleaner1', password='pw')
         response = self.client.get(self.url)
         self.assertNotContains(response, 'Rota Property')
@@ -906,29 +923,36 @@ class StaffCleaningRotaViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertContains(response, 'Rota Property')
 
-    def test_superuser_can_assign(self):
-        self.client.login(username='rotasuperuser', password='pw')
-        response = self.client.post(self.url, {
-            'action': 'assign', 'task_id': self.task.pk, 'assigned_to': self.cleaner.pk,
-            'date': self.today.isoformat(),
-        })
-        self.assertRedirects(response, f"{self.url}?date={self.today.isoformat()}")
-        self.task.refresh_from_db()
-        self.assertEqual(self.task.assigned_to, self.cleaner)
+    def test_turnover_shows_next_bookings_extras_not_own(self):
+        """A turnover card must show what the ARRIVING guest ordered (relevant to prepping the
+        property), not what the guest who just left ordered (irrelevant once they're gone) -
+        2026-08-26 fix after this showed the departing booking's own extras, confusingly including
+        an unrelated mid-stay-clean note from the wrong stay."""
+        Extra.objects.create(
+            booking=self.booking, welcome_pack=True,
+            welcome_pack_food='standard', welcome_pack_drinks='standard', welcome_pack_charge=10,
+        )
+        next_guest = Guest.objects.create(first_name='Bo', last_name='Costa', email='rota-next@example.com')
+        next_booking = Booking.objects.create(
+            property=self.property, guest=next_guest, arrival_date=self.today + timedelta(days=2),
+            departure_date=self.today + timedelta(days=9), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Extra.objects.create(booking=next_booking, cot=True, cot_high_chair_charge=15)
 
-    def test_non_superuser_cannot_assign(self):
-        self.client.login(username='cleaner1', password='pw')
-        response = self.client.post(self.url, {
-            'action': 'assign', 'task_id': self.task.pk, 'assigned_to': self.cleaner.pk,
-            'date': self.today.isoformat(),
-        })
-        self.assertEqual(response.status_code, 403)
-        self.task.refresh_from_db()
-        self.assertIsNone(self.task.assigned_to)
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Welcome Pack')
+        self.assertContains(response, 'Cot')
+
+    def test_turnover_with_no_next_booking_says_so(self):
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Next arrival not yet booked.')
 
     def test_assignee_can_mark_done(self):
-        self.task.assigned_to = self.cleaner
-        self.task.save()
+        self.task.assigned_to.set([self.cleaner])
         self.client.login(username='cleaner1', password='pw')
         response = self.client.post(self.url, {
             'action': 'mark_done', 'task_id': self.task.pk, 'date': self.today.isoformat(),
@@ -940,8 +964,7 @@ class StaffCleaningRotaViewTests(TestCase):
         self.assertIsNotNone(self.task.completed_at)
 
     def test_non_assignee_cannot_mark_done(self):
-        self.task.assigned_to = self.other_cleaner
-        self.task.save()
+        self.task.assigned_to.set([self.other_cleaner])
         self.client.login(username='cleaner1', password='pw')
         response = self.client.post(self.url, {
             'action': 'mark_done', 'task_id': self.task.pk, 'date': self.today.isoformat(),
@@ -949,14 +972,6 @@ class StaffCleaningRotaViewTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, 'pending')
-
-    def test_assignable_users_excludes_accounts_without_the_role(self):
-        no_role_user = User.objects.create_user(username='noclean', password='pw', is_staff=True)
-        self.client.login(username='rotasuperuser', password='pw')
-        response = self.client.get(self.url)
-        assignable = list(response.context['assignable_users'])
-        self.assertIn(self.cleaner, assignable)
-        self.assertNotIn(no_role_user, assignable)
 
 
 class StaffBookingLookupViewTests(TestCase):
@@ -2149,3 +2164,245 @@ class StaffSettingsViewTests(TestCase):
         # Omitted checkbox - unchecked, not left at its previous value, matching how the other
         # boolean-checkbox settings on this page (e.g. OWNER_BOOLEAN_FIELDS) already behave.
         self.assertFalse(settings.charge_vat_on_low_season_platform_commission)
+
+
+class CleaningTaskValidRangeTests(TestCase):
+    """staff/utils.py::cleaning_task_valid_range() - both ends inclusive for both task types
+    (2026-08-26 fix: a turnover clean can land on the same day the next guest arrives - a normal
+    same-day turnover - so the upper bound must not be exclusive)."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Valid Range Property', short_title='VALIDRANGE')
+        self.guest = Guest.objects.create(first_name='Ana', last_name='Silva', email='valid-range@example.com')
+        self.start = date.today() + timedelta(days=30)
+        self.end = self.start + timedelta(days=10)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Departure.objects.create(booking=self.booking, clean=True)
+        self.task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+
+    def test_turnover_uncapped_when_no_next_booking(self):
+        min_date, max_date = cleaning_task_valid_range(self.task)
+        self.assertEqual(min_date, self.end)
+        self.assertIsNone(max_date)
+
+    def test_turnover_capped_by_next_confirmed_booking_arrival(self):
+        next_arrival = self.end + timedelta(days=2)
+        next_guest = Guest.objects.create(first_name='Bo', last_name='Costa', email='next-guest@example.com')
+        Booking.objects.create(
+            property=self.property, guest=next_guest, arrival_date=next_arrival,
+            departure_date=next_arrival + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        min_date, max_date = cleaning_task_valid_range(self.task)
+        self.assertEqual(max_date, next_arrival)
+
+    def test_mid_stay_range_is_the_booking_own_stay(self):
+        extra = Extra.objects.create(
+            booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=self.start + timedelta(days=3),
+        )
+        mid_task = CleaningTask.objects.get(booking=self.booking, task_type='mid_stay')
+        min_date, max_date = cleaning_task_valid_range(mid_task)
+        self.assertEqual(min_date, self.start)
+        self.assertEqual(max_date, self.end)
+
+
+class ApplyManualTaskDateTests(TestCase):
+    """staff/utils.py::apply_manual_task_date() - the shared validate-and-override helper behind
+    a calendar drag, the popup's save button, and the booking detail page's embedded planner."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Manual Date Property', short_title='MANUALDATE')
+        self.guest = Guest.objects.create(first_name='Ana', last_name='Silva', email='manual-date@example.com')
+        self.start = date.today() + timedelta(days=30)
+        self.end = self.start + timedelta(days=10)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Departure.objects.create(booking=self.booking, clean=True)
+        self.task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        next_guest = Guest.objects.create(first_name='Bo', last_name='Costa', email='manual-date-next@example.com')
+        self.next_arrival = self.end + timedelta(days=2)
+        Booking.objects.create(
+            property=self.property, guest=next_guest, arrival_date=self.next_arrival,
+            departure_date=self.next_arrival + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_date_within_window_is_accepted(self):
+        error = apply_manual_task_date(self.task, self.end + timedelta(days=1))
+        self.assertIsNone(error)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.date, self.end + timedelta(days=1))
+        self.assertTrue(self.task.manually_scheduled)
+        self.assertEqual(self.task.auto_date, self.end)
+
+    def test_date_exactly_on_next_arrival_day_is_accepted(self):
+        """The exact boundary bug reported 2026-08-26: same-day turnover (clean before the next
+        guest checks in later that day) must be allowed, not rejected as 'too late'."""
+        error = apply_manual_task_date(self.task, self.next_arrival)
+        self.assertIsNone(error)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.date, self.next_arrival)
+
+    def test_date_after_next_arrival_is_rejected(self):
+        error = apply_manual_task_date(self.task, self.next_arrival + timedelta(days=1))
+        self.assertIsNotNone(error)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.date, self.end)
+        self.assertFalse(self.task.manually_scheduled)
+
+    def test_date_before_departure_is_rejected(self):
+        error = apply_manual_task_date(self.task, self.end - timedelta(days=1))
+        self.assertIsNotNone(error)
+        self.task.refresh_from_db()
+        self.assertFalse(self.task.manually_scheduled)
+
+
+class StaffCleaningCalendarEndpointTests(TestCase):
+    """The drag-to-reschedule calendar's own page/endpoints - superuser-only, not gated by any
+    StaffRole flag like the day-list rota."""
+
+    def setUp(self):
+        self.superuser = User.objects.create_user(
+            username='calendarsuperuser', password='pw', is_staff=True, is_superuser=True,
+        )
+        self.role = StaffRole.objects.create(name='Cleaner', is_cleaning_staff=True)
+        self.cleaner = User.objects.create_user(username='calendarcleaner', password='pw', is_staff=True)
+        StaffProfile.objects.create(user=self.cleaner, role=self.role)
+
+        self.location = Location.objects.create(
+            title='Calendar Location', street='Rua Test', zip_code='8200-001', city='Albufeira',
+            coordinates='37.0,-8.2', map_link='https://maps.example.com', color='#123456',
+        )
+        self.property = Property.objects.create(
+            title='Calendar Property', short_title='CALPROP', location=self.location,
+        )
+        self.guest = Guest.objects.create(first_name='Ana', last_name='Silva', email='calendar-task@example.com')
+        self.start = date.today() + timedelta(days=30)
+        self.end = self.start + timedelta(days=10)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Departure.objects.create(booking=self.booking, clean=True)
+        self.task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+
+    def test_calendar_page_requires_superuser(self):
+        self.client.login(username='calendarcleaner', password='pw')
+        response = self.client.get(reverse('staff:cleaning_calendar'))
+        self.assertEqual(response.status_code, 403)
+
+    def test_events_feed_returns_location_color_and_range(self):
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.end + timedelta(days=30)).isoformat() + 'T00:00:00',
+        })
+        self.assertEqual(response.status_code, 200)
+        events = response.json()
+        event = next(e for e in events if e['id'] == self.task.pk)
+        self.assertEqual(event['extendedProps']['location_id'], self.location.pk)
+        self.assertEqual(event['extendedProps']['location_color'], '#123456')
+        self.assertEqual(event['extendedProps']['min_date'], self.end.isoformat())
+        self.assertEqual(event['extendedProps']['assigned_to'], [])
+
+    def test_move_view_accepts_valid_date_and_sets_override(self):
+        self.client.login(username='calendarsuperuser', password='pw')
+        new_date = self.end + timedelta(days=1)
+        response = self.client.post(
+            reverse('staff:cleaning_calendar_move', kwargs={'pk': self.task.pk}), {'date': new_date.isoformat()},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.date, new_date)
+        self.assertTrue(self.task.manually_scheduled)
+
+    def test_move_view_rejects_date_before_departure(self):
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.post(
+            reverse('staff:cleaning_calendar_move', kwargs={'pk': self.task.pk}),
+            {'date': (self.end - timedelta(days=1)).isoformat()},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.task.refresh_from_db()
+        self.assertFalse(self.task.manually_scheduled)
+
+    def test_move_view_requires_superuser(self):
+        self.client.login(username='calendarcleaner', password='pw')
+        response = self.client.post(
+            reverse('staff:cleaning_calendar_move', kwargs={'pk': self.task.pk}),
+            {'date': (self.end + timedelta(days=1)).isoformat()},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_detail_view_includes_departure_and_planner_html(self):
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_task_detail', kwargs={'pk': self.task.pk}))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn('Departure', data['departure_html'])
+        self.assertIn('calendarcleaner', data['planner_html'])
+
+    def test_detail_view_includes_next_arrival_for_turnover(self):
+        next_guest = Guest.objects.create(first_name='Bo', last_name='Costa', email='calendar-next@example.com')
+        next_arrival = self.end + timedelta(days=2)
+        Booking.objects.create(
+            property=self.property, guest=next_guest, arrival_date=next_arrival,
+            departure_date=next_arrival + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_task_detail', kwargs={'pk': self.task.pk}))
+        data = response.json()
+        self.assertIn('Next Arrival', data['arrival_html'])
+        self.assertIn('Bo Costa', data['arrival_html'])
+
+    def test_detail_view_omits_arrival_for_mid_stay(self):
+        Extra.objects.create(
+            booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=self.start + timedelta(days=3),
+        )
+        mid_task = CleaningTask.objects.get(booking=self.booking, task_type='mid_stay')
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_task_detail', kwargs={'pk': mid_task.pk}))
+        data = response.json()
+        self.assertEqual(data['arrival_html'], '')
+
+    def test_save_view_sets_date_and_assignees(self):
+        self.client.login(username='calendarsuperuser', password='pw')
+        new_date = self.end + timedelta(days=1)
+        response = self.client.post(reverse('staff:cleaning_task_save', kwargs={'pk': self.task.pk}), {
+            'date': new_date.isoformat(), 'assigned_to': [self.cleaner.pk],
+        })
+        self.assertEqual(response.status_code, 200)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.date, new_date)
+        self.assertTrue(self.task.manually_scheduled)
+        self.assertEqual(list(self.task.assigned_to.all()), [self.cleaner])
+
+    def test_save_view_rejects_invalid_date_but_still_reports_error(self):
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.post(reverse('staff:cleaning_task_save', kwargs={'pk': self.task.pk}), {
+            'date': (self.end - timedelta(days=1)).isoformat(),
+        })
+        self.assertEqual(response.status_code, 400)
+        self.task.refresh_from_db()
+        self.assertFalse(self.task.manually_scheduled)
+
+    def test_save_view_setting_assignees_alone_does_not_flip_manually_scheduled(self):
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.post(reverse('staff:cleaning_task_save', kwargs={'pk': self.task.pk}), {
+            'date': self.task.date.isoformat(), 'assigned_to': [self.cleaner.pk],
+        })
+        self.assertEqual(response.status_code, 200)
+        self.task.refresh_from_db()
+        self.assertFalse(self.task.manually_scheduled)
+        self.assertEqual(list(self.task.assigned_to.all()), [self.cleaner])

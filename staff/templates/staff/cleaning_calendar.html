@@ -8,7 +8,10 @@
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
     <link rel="stylesheet" href="{% static 'staff/cleaning_calendar.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
+    <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
     <script src="{% static 'staff/vendor/fullcalendar/index.global.min.js' %}" defer></script>
+    <script src="{% static 'staff/vendor/fullcalendar/locale-en-gb.global.min.js' %}" defer></script>
     <script src="{% static 'staff/cleaning_calendar.js' %}" defer></script>
 </head>
 <body>
@@ -25,8 +28,17 @@
             id="cleaning-calendar"
             data-events-url="{% url 'staff:cleaning_calendar_events' %}"
             data-move-url-template="{% url 'staff:cleaning_calendar_move' pk=0 %}"
-            data-booking-url-template="{% url 'staff:booking_detail' reference='REFERENCE' %}"
+            data-detail-url-template="{% url 'staff:cleaning_task_detail' pk=0 %}"
+            data-save-url-template="{% url 'staff:cleaning_task_save' pk=0 %}"
         ></div>
+
+        <dialog id="clean-task-dialog" class="staff-panel">
+            <div id="clean-task-dialog-body"></div>
+            <div class="staff-dialog-actions">
+                <button type="button" id="clean-task-dialog-save" class="staff-button staff-button-small">Save</button>
+                <button type="button" id="clean-task-dialog-close" class="staff-button staff-button-small staff-button-danger">Close</button>
+            </div>
+        </dialog>
     </div>
 </body>
 </html>

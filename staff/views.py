@@ -9,6 +9,7 @@ from django.db import transaction
 from django.db.models import Count, ProtectedError, Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
+from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -38,7 +39,8 @@ from staff.permissions import staff_page_required, superuser_required
 from staff.utils import (
     AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, ENQUIRY_STATUS_GROUPS, ENQUIRY_STATUSES, GUEST_LETTERS,
     LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAFF_PAGE_PERMISSION_FIELDS,
-    STAGE_TABS, STATUS_BUCKETS, booking_stage, cleaning_task_valid_range, next_step_hint, reservation_rows,
+    STAGE_TABS, STATUS_BUCKETS, apply_manual_task_date, booking_stage, cleaning_task_valid_range,
+    next_step_hint, reservation_rows,
 )
 
 
@@ -861,6 +863,7 @@ class StaffSettingsView(View):
         role = StaffRole(name=name)
         for field_name, _label in STAFF_PAGE_PERMISSION_FIELDS:
             setattr(role, field_name, post.get(field_name) == 'on')
+        role.is_cleaning_staff = post.get('is_cleaning_staff') == 'on'
         try:
             role.full_clean()
         except ValidationError as error:
@@ -878,6 +881,7 @@ class StaffSettingsView(View):
         role.name = post.get('name', '').strip()
         for field_name, _label in STAFF_PAGE_PERMISSION_FIELDS:
             setattr(role, field_name, post.get(field_name) == 'on')
+        role.is_cleaning_staff = post.get('is_cleaning_staff') == 'on'
         try:
             role.full_clean()
         except ValidationError as error:
@@ -1487,6 +1491,7 @@ class StaffLocationDetailView(View):
         location.nearest_bins = post.get('nearest_bins', '').strip()
         location.nearest_corner_shop = post.get('nearest_corner_shop', '').strip()
         location.nearest_supermarket = post.get('nearest_supermarket', '').strip()
+        location.color = post.get('color', '').strip()
         try:
             location.full_clean()
         except ValidationError as error:
@@ -1576,6 +1581,15 @@ class StaffBookingDetailView(View):
             handler(request, booking)
         return redirect('staff:booking_detail', reference=booking.reference)
 
+    def _planner_context(self, task):
+        if task is None:
+            return None
+        min_date, max_date = cleaning_task_valid_range(task)
+        return {
+            'task': task, 'min_date': min_date, 'max_date': max_date,
+            'assigned_ids': set(task.assigned_to.values_list('pk', flat=True)),
+        }
+
     def _context(self, booking):
         charge = getattr(booking, 'charges', None)
         balance_payment = getattr(booking, 'balance_payment', None)
@@ -1614,6 +1628,11 @@ class StaffBookingDetailView(View):
             'payment_status_choices': PAYMENT_STATUS_CHOICES,
             'enquiry_status_groups': ENQUIRY_STATUS_GROUPS,
             'enquiry_statuses': ENQUIRY_STATUSES,
+            'turnover_planner': self._planner_context(booking.cleaning_tasks.filter(task_type='turnover').first()),
+            'mid_stay_planner': self._planner_context(booking.cleaning_tasks.filter(task_type='mid_stay').first()),
+            'cleaning_assignable_users': User.objects.filter(
+                staff_profile__role__is_cleaning_staff=True,
+            ).order_by('username'),
         }
 
     def _update_booking(self, request, booking):
@@ -1791,6 +1810,13 @@ class StaffBookingDetailView(View):
             extra.save()
             extra_changed = extra_before != (extra.mid_stay_clean, extra.mid_stay_clean_date)
 
+            # Runs after departure/extra are saved above (their post_save signals - staff/
+            # signals.py - have by now created/updated this booking's CleaningTask rows), so
+            # there's something for the planner fields to apply to. A validation failure here
+            # only skips that one task (see _update_cleaning_tasks) - it never rolls back the
+            # core booking fields already validated and about to be saved above.
+            self._update_cleaning_tasks(request, booking)
+
             if arrival_changed or departure_changed or extra_changed:
                 TaskHistoryEntry.objects.create(
                     booking=booking, description="Arrival/Departure updated", created_by=request.user,
@@ -1815,6 +1841,24 @@ class StaffBookingDetailView(View):
                 )
 
         messages.success(request, "Booking updated.")
+
+    def _update_cleaning_tasks(self, request, booking):
+        """Applies the embedded clean-planner fields (staff/_clean_planner_fields.html) for
+        whichever of this booking's turnover/mid-stay CleaningTask rows currently exist - a date
+        change goes through apply_manual_task_date() (same validation/override logic as a
+        calendar drag or the popup's save), so it can never silently write an out-of-window date;
+        assignees are always set regardless, since a checkbox change carries no such risk."""
+        for task_type, prefix in (('turnover', 'turnover_'), ('mid_stay', 'mid_stay_')):
+            task = booking.cleaning_tasks.filter(task_type=task_type).first()
+            if task is None:
+                continue
+            new_date = _parsed_date(request.POST.get(f'{prefix}date'))
+            if new_date and new_date != task.date:
+                error = apply_manual_task_date(task, new_date)
+                if error:
+                    messages.error(request, error)
+                    continue
+            task.assigned_to.set(request.POST.getlist(f'{prefix}assigned_to'))
 
     def _add_deduction(self, request, booking):
         post = request.POST
@@ -1927,11 +1971,12 @@ class StaffBookingDetailView(View):
 class StaffCleaningRotaView(View):
     """The digital cleaning diary/rota (Phase 3 of the staff-admin roadmap) - replaces a legacy
     daily email to one hardcoded cleaning contact. CleaningTask rows are the actual data, kept in
-    sync with Departure.clean/Extra.mid_stay_clean via signals (see staff/signals.py) - this view
-    is a read + assign + status page over that synced data, not a place to edit the underlying
-    flags (still the booking detail page's Booking Info panel). Superusers see every task for the
-    selected date with an assign control; a non-superuser with the role sees only their own
-    assigned tasks - "cleaning staff logging in to see their day's rota", not the whole portfolio."""
+    sync with Departure.clean/Extra.mid_stay_clean via signals (see staff/signals.py). A read +
+    mark-done status page over that synced data, not a place to edit the underlying flags (still
+    the booking detail page's Booking Info panel) or who's assigned (2026-08-26: assignment moved
+    to the cleaning calendar's popup - staff/views.py::StaffCleaningTaskSaveView - so this stays a
+    "my day"/"staff visualiser" page; who's currently assigned is shown read-only). Superusers see
+    every task in the window; a non-superuser with the role sees only their own assigned tasks."""
     template_name = 'staff/cleaning_rota.html'
 
     def get(self, request, *args, **kwargs):
@@ -1948,14 +1993,8 @@ class StaffCleaningRotaView(View):
             messages.error(request, "That cleaning task no longer exists.")
             return redirect(redirect_url)
 
-        if action == 'assign':
-            if not request.user.is_superuser:
-                raise PermissionDenied
-            task.assigned_to_id = request.POST.get('assigned_to') or None
-            task.save(update_fields=['assigned_to'])
-            messages.success(request, "Cleaning task assigned.")
-        elif action in ('mark_done', 'mark_pending'):
-            if not (request.user.is_superuser or task.assigned_to_id == request.user.pk):
+        if action in ('mark_done', 'mark_pending'):
+            if not (request.user.is_superuser or task.assigned_to.filter(pk=request.user.pk).exists()):
                 raise PermissionDenied
             if action == 'mark_done':
                 task.status = 'done'
@@ -1971,29 +2010,52 @@ class StaffCleaningRotaView(View):
         return redirect(redirect_url)
 
     def _context(self, request, target_date):
+        # Yesterday, today, and the next 3 days - a 5-day rolling window centred just behind
+        # `target_date` (2026-08-26, per Thomas: wants to see what's just happened alongside
+        # what's coming). Previous/Next day still shift by a single day, sliding the whole window
+        # rather than paging through non-overlapping blocks.
+        window_dates = [target_date + timedelta(days=offset) for offset in range(-1, 4)]
+
         if request.user.is_superuser:
-            tasks = CleaningTask.objects.filter(date=target_date).select_related(
-                'booking__property', 'booking__guest', 'assigned_to',
-            )
-            assignable_users = User.objects.filter(
-                staff_profile__role__can_view_cleaning_rota=True,
-            ).order_by('username')
+            tasks = CleaningTask.objects.filter(date__range=(window_dates[0], window_dates[-1])).select_related(
+                'booking__property', 'booking__guest',
+            ).prefetch_related('assigned_to')
         else:
             tasks = CleaningTask.objects.filter(
-                date=target_date, assigned_to=request.user,
-            ).select_related('booking__property', 'booking__guest')
-            assignable_users = User.objects.none()
+                date__range=(window_dates[0], window_dates[-1]), assigned_to=request.user,
+            ).select_related('booking__property', 'booking__guest').prefetch_related('assigned_to')
 
-        rows = [{'task': task, 'extras': extras_summary(task.booking)} for task in tasks]
+        rows_by_date = {}
+        for task in tasks:
+            rows_by_date.setdefault(task.date, []).append({
+                'task': task,
+                'extras': self._extras_for_row(task),
+                'assigned_names': ', '.join(u.username for u in task.assigned_to.all()),
+            })
+        days = [{'date': day, 'rows': rows_by_date.get(day, [])} for day in window_dates]
 
         return {
             'target_date': target_date,
+            'window_start': window_dates[0],
+            'window_end': window_dates[-1],
             'prev_date': target_date - timedelta(days=1),
             'next_date': target_date + timedelta(days=1),
-            'rows': rows,
-            'assignable_users': assignable_users,
+            'days': days,
             'is_superuser': request.user.is_superuser,
         }
+
+    def _extras_for_row(self, task):
+        """What a cleaner actually needs to know, which is NOT always "this booking's own
+        extras": for a turnover, the departing guest's extras are irrelevant to prepping the
+        property - what matters is what the NEXT guest ordered (a cot to set up, a welcome pack to
+        leave out). Only a mid-stay clean (same guest still in-house, no next-arrival concept)
+        shows the booking's own extras. Returns None (distinct from an empty extras_summary) when
+        a turnover has no next booking yet, so the template can say so rather than implying
+        "nothing ordered"."""
+        if task.task_type != 'turnover':
+            return extras_summary(task.booking)
+        next_booking = Booking.objects.next_confirmed_booking_after(task.booking.property, task.booking.departure_date)
+        return extras_summary(next_booking) if next_booking else None
 
 
 @method_decorator(superuser_required, name='dispatch')
@@ -2021,7 +2083,7 @@ class StaffCleaningEventsView(View):
         # start/end params, not plain dates - only the date portion matters for this all-day feed.
         start_date = _parsed_date((request.GET.get('start') or '').split('T')[0])
         end_date = _parsed_date((request.GET.get('end') or '').split('T')[0])
-        tasks = CleaningTask.objects.select_related('booking__property', 'assigned_to')
+        tasks = CleaningTask.objects.select_related('booking__property__location').prefetch_related('assigned_to')
         if start_date:
             tasks = tasks.filter(date__gte=start_date)
         if end_date:
@@ -2030,6 +2092,7 @@ class StaffCleaningEventsView(View):
         events = []
         for task in tasks:
             min_date, max_date = cleaning_task_valid_range(task)
+            location = task.booking.property.location
             events.append({
                 'id': task.pk,
                 'title': f"{task.booking.property} — {task.get_task_type_display()}",
@@ -2039,7 +2102,9 @@ class StaffCleaningEventsView(View):
                     'task_type': task.task_type,
                     'status': task.status,
                     'property_id': task.booking.property_id,
-                    'assigned_to': task.assigned_to.username if task.assigned_to else None,
+                    'location_id': location.pk if location else None,
+                    'location_color': (location.color or None) if location else None,
+                    'assigned_to': [u.username for u in task.assigned_to.all()],
                     'booking_reference': task.booking.reference,
                     'min_date': min_date.isoformat(),
                     'max_date': max_date.isoformat() if max_date else None,
@@ -2064,17 +2129,87 @@ class StaffCleaningTaskMoveView(View):
         if new_date is None:
             return JsonResponse({'error': 'Invalid date.'}, status=400)
 
-        min_date, max_date = cleaning_task_valid_range(task)
-        upper_ok = max_date is None or (new_date < max_date if task.task_type == 'turnover' else new_date <= max_date)
-        if new_date < min_date or not upper_ok:
-            return JsonResponse({'error': "That date is outside this task's valid window."}, status=400)
-
-        computed_date = (
-            task.booking.departure_date if task.task_type == 'turnover'
-            else task.booking.extras.mid_stay_clean_date
-        )
-        task.date = new_date
-        task.manually_scheduled = True
-        task.auto_date = computed_date
-        task.save(update_fields=['date', 'manually_scheduled', 'auto_date'])
+        error = apply_manual_task_date(task, new_date)
+        if error:
+            return JsonResponse({'error': error}, status=400)
         return JsonResponse({'ok': True})
+
+
+@method_decorator(superuser_required, name='dispatch')
+class StaffCleaningTaskDetailView(View):
+    """Fetched by cleaning_calendar.js when a calendar event is clicked - returns everything the
+    clean-planner popup needs to render: read-only Departure (this booking) and, for a turnover
+    task, Arrival (the next confirmed booking on the same property - the actual guest this clean
+    is racing to be ready for) summaries, both rendered server-side (this codebase has no JS
+    templating anywhere), plus the task's current date/assignees and its valid drag window (same
+    as the calendar's own event feed, so the popup's date field can be validated the same way
+    client-side before ever hitting the save endpoint)."""
+
+    def get(self, request, *args, **kwargs):
+        task = CleaningTask.objects.select_related(
+            'booking__guest', 'booking__departure', 'booking__property',
+        ).filter(pk=kwargs['pk']).first()
+        if task is None:
+            return JsonResponse({'error': 'That cleaning task no longer exists.'}, status=404)
+
+        min_date, max_date = cleaning_task_valid_range(task)
+        booking = task.booking
+
+        departure = getattr(booking, 'departure', None)
+        departure_method_label = dict(TravelMethod.departure_choices()).get(departure.method) if departure else None
+        departure_html = render_to_string('staff/_stay_boundary_summary.html', {
+            'heading': 'Departure', 'date': booking.departure_date, 'record': departure,
+            'method_label': departure_method_label, 'booking': booking, 'is_arrival': False,
+        })
+
+        arrival_html = ''
+        if task.task_type == 'turnover':
+            next_booking = Booking.objects.next_confirmed_booking_after(booking.property, booking.departure_date)
+            next_arrival = getattr(next_booking, 'arrival', None) if next_booking else None
+            next_arrival_method_label = dict(TravelMethod.choices).get(next_arrival.method) if next_arrival else None
+            arrival_html = render_to_string('staff/_stay_boundary_summary.html', {
+                'heading': 'Next Arrival', 'date': next_booking.arrival_date if next_booking else None,
+                'record': next_arrival, 'method_label': next_arrival_method_label,
+                'booking': next_booking, 'is_arrival': True,
+                'guests': next_booking.total_guests() if next_booking else None,
+                'extras': extras_summary(next_booking) if next_booking else None,
+                'empty_message': 'No upcoming arrival scheduled for this property.',
+            })
+
+        assignable_users = User.objects.filter(staff_profile__role__is_cleaning_staff=True).order_by('username')
+        planner_html = render_to_string('staff/_clean_planner_fields.html', {
+            'task': task, 'field_prefix': '', 'standalone': True,
+            'assignable_users': assignable_users,
+            'assigned_ids': set(task.assigned_to.values_list('pk', flat=True)),
+            'min_date': min_date, 'max_date': max_date,
+        })
+        return JsonResponse({'departure_html': departure_html, 'arrival_html': arrival_html, 'planner_html': planner_html})
+
+
+@method_decorator(superuser_required, name='dispatch')
+class StaffCleaningTaskSaveView(View):
+    """Save handler for the clean-planner popup (and, via the same helper, the booking detail
+    page's embedded planner) - sets the task's assignees unconditionally, and only runs the date
+    through apply_manual_task_date() when it actually changed, so ticking a cleaner's checkbox
+    alone never falsely marks the task as manually rescheduled."""
+
+    def post(self, request, *args, **kwargs):
+        task = CleaningTask.objects.select_related('booking').filter(pk=kwargs['pk']).first()
+        if task is None:
+            return JsonResponse({'error': 'That cleaning task no longer exists.'}, status=404)
+
+        new_date = _parsed_date(request.POST.get('date'))
+        if new_date is None:
+            return JsonResponse({'error': 'Invalid date.'}, status=400)
+
+        if new_date != task.date:
+            error = apply_manual_task_date(task, new_date)
+            if error:
+                return JsonResponse({'error': error}, status=400)
+
+        task.assigned_to.set(request.POST.getlist('assigned_to'))
+        return JsonResponse({
+            'ok': True,
+            'date': task.date.isoformat(),
+            'assigned_to': list(task.assigned_to.values_list('pk', flat=True)),
+        })
