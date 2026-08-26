@@ -74,3 +74,44 @@ class TaskHistoryEntry(models.Model):
 
     def __str__(self):
         return f"{self.booking} - {self.description}"
+
+
+class StaffRole(models.Model):
+    """A named set of staff pages a non-superuser account may access - see
+    staff/permissions.py::staff_page_required and staff/utils.py::STAFF_PAGE_PERMISSION_FIELDS.
+    Page-level only (not per-panel within a page) and visibility-only (a role that can see a page
+    can also edit whatever that page already lets any staff user edit) - deliberate v1 scope,
+    2026-08-26. Superusers bypass this entirely and always have full access."""
+    name = models.CharField(max_length=100, unique=True)
+    can_view_home = models.BooleanField(default=False)
+    can_view_bookings = models.BooleanField(default=False)
+    can_view_guests = models.BooleanField(default=False)
+    can_view_properties = models.BooleanField(default=False)
+    can_view_locations = models.BooleanField(default=False)
+    can_view_settings = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'staff_roles'
+        verbose_name = 'Staff Role'
+        verbose_name_plural = 'Staff Roles'
+        ordering = ('name',)
+
+    def __str__(self):
+        return self.name
+
+
+class StaffProfile(models.Model):
+    """Extends the built-in User with the one Role it holds (see StaffRole) - deliberately a
+    single optional FK, not a many-to-many, per Thomas's explicit choice of one role per user.
+    role is SET_NULL on delete: removing a Role just leaves its former holders with no role
+    (locked out of every page until reassigned), not a hard block on deleting the Role."""
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='staff_profile')
+    role = models.ForeignKey(StaffRole, on_delete=models.SET_NULL, null=True, blank=True, related_name='profiles')
+
+    class Meta:
+        db_table = 'staff_profiles'
+        verbose_name = 'Staff Profile'
+        verbose_name_plural = 'Staff Profiles'
+
+    def __str__(self):
+        return f"{self.user} ({self.role or 'no role'})"

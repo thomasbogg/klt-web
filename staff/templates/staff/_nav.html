@@ -1,8 +1,18 @@
 <nav class="staff-nav">
+    {% if staff_nav_permissions.can_view_home %}
     <a href="{% url 'staff:home' %}" class="staff-nav-link">Home</a>
+    {% endif %}
+    {% if staff_nav_permissions.can_view_guests %}
     <a href="{% url 'staff:guest_list' %}" class="staff-nav-link">Guests</a>
+    {% endif %}
+    {% if staff_nav_permissions.can_view_properties %}
     <a href="{% url 'staff:property_list' %}" class="staff-nav-link">Properties</a>
+    {% endif %}
+    {% if staff_nav_permissions.can_view_locations %}
     <a href="{% url 'staff:location_list' %}" class="staff-nav-link">Locations</a>
+    {% endif %}
+    {% if staff_nav_permissions.can_view_settings %}
     <a href="{% url 'staff:settings' %}" class="staff-nav-link">Settings</a>
+    {% endif %}
     <a href="/admin/logout/" class="staff-nav-link staff-nav-link-logout">Logout</a>
 </nav>

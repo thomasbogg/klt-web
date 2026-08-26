@@ -34,9 +34,21 @@
                         {% endfor %}
                     </select>
                 </label>
+                <label class="staff-checkbox-label">
+                    <input type="checkbox" name="direct_only" onchange="this.form.submit()" {% if direct_only %}checked{% endif %}> Direct Only
+                </label>
+                <label class="staff-checkbox-label">
+                    <input type="checkbox" name="ical_only" onchange="this.form.submit()" {% if ical_only %}checked{% endif %}> iCal Only
+                </label>
+                <label class="staff-checkbox-label">
+                    <input type="checkbox" name="owner_only" onchange="this.form.submit()" {% if owner_only %}checked{% endif %}> Owner Only
+                </label>
+                <label class="staff-checkbox-label">
+                    <input type="checkbox" name="exclude_owner" onchange="this.form.submit()" {% if exclude_owner %}checked{% endif %}> Exclude Owner
+                </label>
                 <noscript><button type="submit" class="staff-button">Apply</button></noscript>
             </form>
-            <form method="post" action="{% url 'staff:booking_lookup' %}" class="staff-home-filter-group">
+            <form method="post" action="{% url 'staff:booking_lookup' %}" class="staff-home-filter-group staff-home-search-group">
                 {% csrf_token %}
                 <label class="staff-field">Search by reference
                     <input type="text" name="reference" class="staff-input" placeholder="e.g. DDPP-3QSK">

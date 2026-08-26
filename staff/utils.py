@@ -116,6 +116,21 @@ LOCATION_SPEC_BOOLEAN_FIELDS = (
     ('gym', 'Gym'),
 )
 
+# staff.models.StaffRole's page-access boolean fields, same (field, label) pattern as
+# AMENITY_BOOLEAN_FIELDS above - drives both the Settings > Roles tab's checkbox grid and
+# staff/permissions.py::staff_page_required's field lookup. 'can_view_properties' also covers
+# StaffQuickAddView and StaffIcalSyncView, and 'can_view_settings' covers only the Bookings/
+# Extras/People/Payments panels - the Staff and Roles panels are superuser-only regardless of
+# role, see StaffSettingsView.
+STAFF_PAGE_PERMISSION_FIELDS = (
+    ('can_view_home', 'Home'),
+    ('can_view_bookings', 'Bookings'),
+    ('can_view_guests', 'Guests'),
+    ('can_view_properties', 'Properties'),
+    ('can_view_locations', 'Locations'),
+    ('can_view_settings', 'Settings'),
+)
+
 
 def status_bucket(stage):
     """Valid = still a real, active/upcoming/ongoing booking (Provisional/Confirmed/Holiday

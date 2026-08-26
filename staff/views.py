@@ -3,9 +3,8 @@ from decimal import Decimal, InvalidOperation
 
 import requests
 from django.contrib import messages
-from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.models import User
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Count, ProtectedError, Q
 from django.http import Http404, JsonResponse
@@ -34,15 +33,16 @@ from properties.models import (
     Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail,
     iCalLink,
 )
-from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
+from staff.models import Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
+from staff.permissions import staff_page_required
 from staff.utils import (
     AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, ENQUIRY_STATUS_GROUPS, ENQUIRY_STATUSES, GUEST_LETTERS,
-    LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAGE_TABS,
-    STATUS_BUCKETS, booking_stage, next_step_hint, reservation_rows,
+    LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAFF_PAGE_PERMISSION_FIELDS,
+    STAGE_TABS, STATUS_BUCKETS, booking_stage, next_step_hint, reservation_rows,
 )
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_home'), name='dispatch')
 class StaffHomeView(View):
     """Mini-calendars + active-reservations list, per property or across all of them - mirrors
     PIMS' own Home screen. Reuses availability/utils.py::get_property_calendar() as-is (built for
@@ -70,6 +70,29 @@ class StaffHomeView(View):
 
         status_filter = request.GET.get('status', '').strip() or 'Valid'
         base = Booking.objects.filter(property=selected_property) if selected_property else Booking.objects.all()
+
+        direct_only = request.GET.get('direct_only') == 'on'
+        ical_only = request.GET.get('ical_only') == 'on'
+        owner_only = request.GET.get('owner_only') == 'on'
+        exclude_owner = request.GET.get('exclude_owner') == 'on'
+        if direct_only:
+            # Same "direct vs platform" definition already used for payout math - see
+            # bookings/payouts.py::_is_platform_booking(). Deliberately enquiry_source-based, not
+            # ical_uid-based (see ical_only below) - a different concept: which platform the guest
+            # actually booked through, not whether this row happened to arrive via iCal sync.
+            base = base.exclude(enquiry_source__in=env_settings.PLATFORMS)
+        if ical_only:
+            # ical_uid is only ever populated by bookings/utils.py::sync_ical_link() - blank/null
+            # means the booking was created directly (guest-facing site or staff), not imported
+            # from a platform's iCal feed. exclude(ical_uid__in=[None, '']) looks equivalent but
+            # isn't - Django/psycopg silently drop NULL from the IN() SQL list, so it excludes
+            # nothing at all (confirmed empirically); Q objects are needed for a real NULL check.
+            base = base.exclude(Q(ical_uid__isnull=True) | Q(ical_uid=''))
+        if owner_only:
+            base = base.filter(is_owner=True)
+        if exclude_owner:
+            base = base.filter(is_owner=False)
+
         rows = reservation_rows(base, status_filter)
 
         context = {
@@ -79,11 +102,15 @@ class StaffHomeView(View):
             'rows': rows,
             'status_buckets': STATUS_BUCKETS,
             'status_filter': status_filter,
+            'direct_only': direct_only,
+            'ical_only': ical_only,
+            'owner_only': owner_only,
+            'exclude_owner': exclude_owner,
         }
         return render(request, self.template_name, context)
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_bookings'), name='dispatch')
 class StaffBookingLookupView(View):
     """A single reference lookup, not a search - for quickly opening a known booking without
     going through the Home reservation list (see StaffHomeView)."""
@@ -100,7 +127,7 @@ class StaffBookingLookupView(View):
         return render(request, self.template_name, {})
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_guests'), name='dispatch')
 class StaffGuestListView(View):
     """PIMS-style "All Customers" list - an A-Z surname index plus a free-text search box (name,
     email, or phone - phone included so an unfamiliar incoming call can be matched to a guest),
@@ -138,7 +165,7 @@ class StaffGuestListView(View):
         return render(request, self.template_name, context)
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_guests'), name='dispatch')
 class StaffGuestDetailView(View):
     """PIMS-style "View/Modify Customer" page - a guest-info form on the left (PIMS' own address/
     flight/extras/discount fields have no klt-web equivalent - those are per-booking concepts
@@ -229,7 +256,7 @@ def _parsed_time(raw):
         return None
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_properties'), name='dispatch')
 class StaffPropertyListView(View):
     """PIMS puts property CRUD behind Settings rather than a dedicated list; klt-web instead
     mirrors the Home/Guests list pattern already used elsewhere - a list filterable by Location
@@ -255,7 +282,7 @@ class StaffPropertyListView(View):
         return render(request, self.template_name, context)
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_locations'), name='dispatch')
 class StaffLocationListView(View):
     """Location's own list page, same shape as StaffPropertyListView minus the filter (there's no
     obvious thing to filter Locations by) - each row also shows how many properties currently
@@ -279,7 +306,7 @@ def _property_form_context():
     }
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_properties'), name='dispatch')
 class StaffPropertyCreateView(View):
     """A minimal create form for exactly the fields StaffPropertyDetailView's "Property info"
     panel edits - everything else (specification, amenities, rate card, SEF details, iCal links,
@@ -318,7 +345,7 @@ class StaffPropertyCreateView(View):
         return redirect('staff:property_detail', pk=property.pk)
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_locations'), name='dispatch')
 class StaffLocationCreateView(View):
     """Same minimal-fields philosophy as StaffPropertyCreateView - exactly the fields the existing
     quick-add panel already asks for (see StaffQuickAddView._build_location), since a location
@@ -349,7 +376,7 @@ class StaffLocationCreateView(View):
         return redirect('staff:location_detail', pk=location.pk)
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_properties'), name='dispatch')
 class StaffQuickAddView(View):
     """Backs the "+ New" quick-add panels next to the Location/Owner/Accountant/Management company
     dropdowns on the Create Property page - fetch()-only (no full-page navigation), so creating one of these
@@ -420,16 +447,22 @@ class StaffQuickAddView(View):
         )
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_settings'), name='dispatch')
 class StaffSettingsView(View):
     """Site-wide configuration the Staff admin doesn't have a page for yet, pulled out of
     Django-admin-only territory into one CSS-only tabbed page (same radio-input sidebar
     technique as StaffPropertyDetailView). Bookings/Extras wrap the existing BookingSettings/
     ExtrasSettings singletons (plus Extras' three admin-only catalog lists, each following the
-    Rate card's inline-edit-plus-blank-bottom-row table pattern). Staff is deliberately basic
-    Django User management only (list/add accounts, toggle is_staff/is_superuser/is_active) -
-    there's no existing role/permission concept anywhere in the app to build real roles on top
-    of, and Thomas asked for this scope specifically rather than a new Role model. People gives
+    Rate card's inline-edit-plus-blank-bottom-row table pattern). Staff is basic Django User
+    management (list/add accounts, toggle is_staff/is_superuser/is_active, assign the one
+    StaffRole each account holds) - password resets still punt to Django admin. Roles is the
+    real role/permission model this app was missing until 2026-08-26 (see staff.models.StaffRole/
+    StaffProfile, staff.permissions.staff_page_required): superusers define named roles and
+    toggle, per role, which top-level staff pages it can see (page-level and visibility-only by
+    design, not per-panel or view/edit-split - see STAFF_PAGE_PERMISSION_FIELDS). Staff and Roles
+    are BOTH superuser-only regardless of can_view_settings - see PANELS/_available_panels() and
+    the {% if request.user.is_superuser %} wrap around both panels' content in settings.html;
+    `can_view_settings` alone only grants Bookings/Extras/People/Payments. People gives
     Owner/Accountant/Management company full CRUD (previously select-only on the Property forms,
     see StaffQuickAddView) via the same inline-edit-plus-blank-bottom-row table pattern as Extras'
     catalog lists - Management company's table shows the head contact inline, with the other four
@@ -437,13 +470,18 @@ class StaffSettingsView(View):
     toggle (staff-management-company-details-row, see settings.html/settings.js) rather than a
     table column each, since 5 roles x 3 fields doesn't fit a table row; every role is genuinely
     optional, left blank until filled in. Each of these tables also shows a live count of
-    properties currently pointing at that row and warns (client-side, settings.js) before a delete
-    that would orphan them, since Property's owner/accountant FKs and ManagementCompany's
-    booking/cleaning FKs are all SET_NULL rather than protected. Payments is a new PaymentSettings
-    singleton storing default owner-payout/commission percentages that nothing else in the app
-    reads yet - a deliberate starting point, not a finished payout system."""
+    properties (or, for Roles, users) currently pointing at that row and warns (client-side,
+    settings.js) before a delete that would orphan them, since Property's owner/accountant FKs,
+    ManagementCompany's booking/cleaning FKs, and StaffProfile's role FK are all SET_NULL rather
+    than protected. Payments is a new PaymentSettings singleton storing default owner-payout/
+    commission percentages that nothing else in the app reads yet - a deliberate starting point,
+    not a finished payout system."""
     template_name = 'staff/settings.html'
-    PANELS = ('bookings', 'extras', 'staff', 'people', 'payments')
+    PANELS = ('bookings', 'extras', 'staff', 'people', 'payments', 'roles')
+    SUPERUSER_ONLY_PANELS = ('staff', 'roles')
+    SUPERUSER_ONLY_ACTIONS = (
+        'add_staff_user', 'update_staff_user', 'add_role', 'update_role', 'delete_role',
+    )
     ACTION_PANELS = {
         'update_booking_settings': 'bookings',
         'add_booking_condition': 'bookings',
@@ -461,6 +499,9 @@ class StaffSettingsView(View):
         'delete_request_type': 'extras',
         'add_staff_user': 'staff',
         'update_staff_user': 'staff',
+        'add_role': 'roles',
+        'update_role': 'roles',
+        'delete_role': 'roles',
         'add_owner': 'people',
         'update_owner': 'people',
         'delete_owner': 'people',
@@ -473,13 +514,25 @@ class StaffSettingsView(View):
         'update_payment_settings': 'payments',
     }
 
+    def _available_panels(self, request):
+        # Staff and Roles are the meta-configuration surface itself (who can see what) - kept
+        # superuser-only regardless of can_view_settings, which only ever grants Bookings/Extras/
+        # People/Payments. Filtering here (not just hiding the tab controls in the template) is
+        # what stops ?panel=staff URL-tampering from landing a non-superuser on that tab.
+        if request.user.is_superuser:
+            return self.PANELS
+        return tuple(panel for panel in self.PANELS if panel not in self.SUPERUSER_ONLY_PANELS)
+
     def get(self, request, *args, **kwargs):
         panel = request.GET.get('panel', '')
-        active_panel = panel if panel in self.PANELS else 'bookings'
+        available_panels = self._available_panels(request)
+        active_panel = panel if panel in available_panels else 'bookings'
         return render(request, self.template_name, self._context(active_panel))
 
     def post(self, request, *args, **kwargs):
         action = request.POST.get('action')
+        if action in self.SUPERUSER_ONLY_ACTIONS and not request.user.is_superuser:
+            raise PermissionDenied
         handler = {
             'update_booking_settings': self._update_booking_settings,
             'add_booking_condition': self._add_booking_condition,
@@ -497,6 +550,9 @@ class StaffSettingsView(View):
             'delete_request_type': self._delete_request_type,
             'add_staff_user': self._add_staff_user,
             'update_staff_user': self._update_staff_user,
+            'add_role': self._add_role,
+            'update_role': self._update_role,
+            'delete_role': self._delete_role,
             'add_owner': self._add_owner,
             'update_owner': self._update_owner,
             'delete_owner': self._delete_owner,
@@ -526,7 +582,11 @@ class StaffSettingsView(View):
             'welcome_pack_items': WelcomePackItem.objects.all(),
             'welcome_pack_categories': WelcomePackItem.Category.choices,
             'request_types': RequestType.objects.all(),
-            'staff_users': User.objects.order_by('username'),
+            # select_related across the reverse OneToOne (staff_profile) plus its role avoids an
+            # N+1 when the Staff tab's role <select> renders each user's current role.
+            'staff_users': User.objects.select_related('staff_profile__role').order_by('username'),
+            'roles': StaffRole.objects.annotate(user_count=Count('profiles')).order_by('name'),
+            'permission_fields': STAFF_PAGE_PERMISSION_FIELDS,
             # property_count (via the reverse FK's default accessor - Property.owner/accountant
             # have no related_name) drives the confirm-before-delete warning in settings.js, so
             # staff can see how many properties would be orphaned (SET_NULL, not blocked) before
@@ -781,7 +841,52 @@ class StaffSettingsView(View):
         user.is_superuser = post.get('is_superuser') == 'on'
         user.is_active = post.get('is_active') == 'on'
         user.save()
+        StaffProfile.objects.update_or_create(
+            user=user, defaults={'role_id': post.get('role') or None}
+        )
         messages.success(request, f'"{user.username}" updated.')
+
+    # --- Roles ---
+
+    def _add_role(self, request):
+        post = request.POST
+        name = post.get('name', '').strip()
+        if not name:
+            messages.error(request, "A role needs a name.")
+            return
+        role = StaffRole(name=name)
+        for field_name, _label in STAFF_PAGE_PERMISSION_FIELDS:
+            setattr(role, field_name, post.get(field_name) == 'on')
+        try:
+            role.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        role.save()
+        messages.success(request, f'Role "{role.name}" created.')
+
+    def _update_role(self, request):
+        role = StaffRole.objects.filter(pk=request.POST.get('role_id')).first()
+        if role is None:
+            messages.error(request, "That role no longer exists.")
+            return
+        post = request.POST
+        role.name = post.get('name', '').strip()
+        for field_name, _label in STAFF_PAGE_PERMISSION_FIELDS:
+            setattr(role, field_name, post.get(field_name) == 'on')
+        try:
+            role.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        role.save()
+        messages.success(request, f'Role "{role.name}" updated.')
+
+    def _delete_role(self, request):
+        role = StaffRole.objects.filter(pk=request.POST.get('role_id')).first()
+        if role is not None:
+            messages.success(request, f'Role "{role.name}" deleted.')
+            role.delete()
 
     # --- People (Owners / Accountants / Management companies) ---
 
@@ -954,7 +1059,7 @@ class StaffSettingsView(View):
         messages.success(request, "Payment settings updated.")
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_properties'), name='dispatch')
 class StaffPropertyDetailView(View):
     """PIMS-style "Change Property" page - one panel per related model (info, specification,
     amenities, SEF details), the rate card (each row directly editable in place - via the input
@@ -1251,7 +1356,7 @@ class StaffPropertyDetailView(View):
         messages.success(request, f"Ownership transferred to {new_owner} effective {effective_date}.")
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_properties'), name='dispatch')
 class StaffIcalSyncView(View):
     """Staff "Sync now" popup for one iCalLink - fetches the feed live and runs it through the
     same sync_ical_link() logic bookings/management/commands/sync_ical_feeds.py uses on its own
@@ -1306,7 +1411,7 @@ LOCATION_RULES_DEFAULTS = {
 }
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_locations'), name='dispatch')
 class StaffLocationDetailView(View):
     """Location's equivalent of StaffPropertyDetailView - same CSS-only radio-tab sidebar
     technique, three panels instead of seven since Location has no rate card, SEF details, iCal
@@ -1432,7 +1537,7 @@ class StaffLocationDetailView(View):
         messages.success(request, "Photo deleted.")
 
 
-@method_decorator(staff_member_required, name='dispatch')
+@method_decorator(staff_page_required('can_view_bookings'), name='dispatch')
 class StaffBookingDetailView(View):
     """PIMS-style single-booking admin page - see the staff booking detail page plan for the
     full panel-by-panel field mapping and what's deliberately deferred (per-line charge locking,

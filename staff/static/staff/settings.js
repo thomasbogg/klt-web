@@ -12,16 +12,21 @@ document.addEventListener('click', function (event) {
     }
 });
 
-// Property.owner/manager/accountant are all SET_NULL, not PROTECT, so deleting one of these rows
-// silently orphans any property still pointing at it rather than erroring - warn first using the
-// live property_count each row already carries (see StaffSettingsView._context).
+// Property.owner/manager/accountant and StaffProfile.role are all SET_NULL, not PROTECT, so
+// deleting one of these rows silently orphans whatever still points at it rather than erroring -
+// warn first using the live count each row already carries (see StaffSettingsView._context).
+// data-count-noun-singular/-plural default to property/properties (the original, most common
+// case) but the Roles table overrides them to user/users, since data-property-count there
+// actually holds a user count, not a property count.
 document.addEventListener('submit', function (event) {
     var form = event.target;
     if (!form.classList.contains('staff-confirm-delete')) return;
     var count = parseInt(form.dataset.propertyCount || '0', 10);
     if (count <= 0) return;
-    var noun = count === 1 ? 'property' : 'properties';
-    var subject = count === 1 ? 'that property' : 'those properties';
+    var noun = count === 1
+        ? (form.dataset.countNounSingular || 'property')
+        : (form.dataset.countNounPlural || 'properties');
+    var subject = (count === 1 ? 'that ' : 'those ') + noun;
     var role = form.dataset.roleLabel || 'entry';
     var label = form.dataset.entityLabel || 'This';
     var confirmed = window.confirm(

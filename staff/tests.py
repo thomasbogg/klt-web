@@ -19,7 +19,7 @@ from properties.models import (
     Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail,
     iCalLink,
 )
-from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
+from staff.models import Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.utils import booking_stage, next_step_hint, status_bucket
 
 User = get_user_model()
@@ -85,7 +85,7 @@ class StaffAuthGateTests(TestCase):
         self.assertIn('/admin/login/', response.url)
 
     def test_staff_user_can_view(self):
-        User.objects.create_user(username='areal_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='areal_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='areal_staffer', password='pw')
         response = self.client.get(self.detail_url)
         self.assertEqual(response.status_code, 200)
@@ -121,9 +121,77 @@ class StaffAuthGateTests(TestCase):
         self.assertIn('/admin/login/', response.url)
 
 
+class StaffRolePermissionTests(TestCase):
+    """staff.permissions.staff_page_required + the Settings > Staff/Roles superuser carve-out -
+    see StaffRole/StaffProfile (staff/models.py) and STAFF_PAGE_PERMISSION_FIELDS (staff/utils.py).
+    Page-level, visibility-only, one role per user - see the design plan this was built from."""
+
+    def setUp(self):
+        self.role = StaffRole.objects.create(name='Guests only', can_view_guests=True)
+        self.role_less_user = User.objects.create_user(username='roleless', password='pw', is_staff=True)
+        self.guests_user = User.objects.create_user(username='guestsonly', password='pw', is_staff=True)
+        StaffProfile.objects.create(user=self.guests_user, role=self.role)
+        self.superuser = User.objects.create_user(
+            username='rolessuperuser', password='pw', is_staff=True, is_superuser=True,
+        )
+
+    def test_role_less_staff_user_gets_403_on_every_page(self):
+        self.client.login(username='roleless', password='pw')
+        for url in (reverse('staff:home'), reverse('staff:guest_list'), reverse('staff:property_list'),
+                    reverse('staff:location_list'), reverse('staff:settings')):
+            self.assertEqual(self.client.get(url).status_code, 403, url)
+
+    def test_role_grants_only_its_own_pages(self):
+        self.client.login(username='guestsonly', password='pw')
+        self.assertEqual(self.client.get(reverse('staff:guest_list')).status_code, 200)
+        for url in (reverse('staff:home'), reverse('staff:property_list'),
+                    reverse('staff:location_list'), reverse('staff:settings')):
+            self.assertEqual(self.client.get(url).status_code, 403, url)
+
+    def test_superuser_bypasses_role_entirely(self):
+        self.client.login(username='rolessuperuser', password='pw')
+        for url in (reverse('staff:home'), reverse('staff:guest_list'), reverse('staff:property_list'),
+                    reverse('staff:location_list'), reverse('staff:settings')):
+            self.assertEqual(self.client.get(url).status_code, 200, url)
+
+    def test_nav_hides_links_for_a_limited_role(self):
+        self.client.login(username='guestsonly', password='pw')
+        response = self.client.get(reverse('staff:guest_list'))
+        self.assertContains(response, reverse('staff:guest_list'))
+        self.assertNotContains(response, reverse('staff:property_list'))
+        self.assertNotContains(response, reverse('staff:location_list'))
+        self.assertNotContains(response, reverse('staff:settings'))
+
+    def test_can_view_settings_does_not_grant_staff_or_roles_panels(self):
+        self.role.can_view_settings = True
+        self.role.save()
+        self.client.login(username='guestsonly', password='pw')
+
+        response = self.client.get(reverse('staff:settings'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Booking settings')
+        self.assertNotContains(response, 'Staff accounts')
+        self.assertNotContains(response, 'id="settings-pane-roles"')
+
+        # ?panel= tampering must not leak the panel's HTML either, not just fail to mark it active.
+        tampered = self.client.get(reverse('staff:settings') + '?panel=staff')
+        self.assertNotContains(tampered, 'Staff accounts')
+
+        # Direct POST of a superuser-only action must be rejected outright, independent of nav/UI.
+        post_response = self.client.post(reverse('staff:settings'), {'action': 'add_role', 'name': 'Sneaky'})
+        self.assertEqual(post_response.status_code, 403)
+        self.assertFalse(StaffRole.objects.filter(name='Sneaky').exists())
+
+    def test_superuser_sees_staff_and_roles_panels(self):
+        self.client.login(username='rolessuperuser', password='pw')
+        response = self.client.get(reverse('staff:settings'))
+        self.assertContains(response, 'Staff accounts')
+        self.assertContains(response, 'id="settings-pane-roles"')
+
+
 class StaffBookingDetailViewTests(TestCase):
     def setUp(self):
-        self.staff_user = User.objects.create_user(username='staffer', password='pw', is_staff=True)
+        self.staff_user = User.objects.create_user(username='staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='staffer', password='pw')
 
         self.property = Property.objects.create(title='Staff Detail Property', short_title='STAFFDET')
@@ -579,7 +647,7 @@ class StaffBookingDetailArrivalDepartureTests(TestCase):
     added 2026-08-25 (see StaffBookingDetailView._update_booking()'s docstring)."""
 
     def setUp(self):
-        self.staff_user = User.objects.create_user(username='staffer2', password='pw', is_staff=True)
+        self.staff_user = User.objects.create_user(username='staffer2', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='staffer2', password='pw')
         self.property = Property.objects.create(title='Staff AD Property', short_title='STAFFAD')
         self.guest = Guest.objects.create(first_name='Rui', last_name='Nunes', email='staff-ad@example.com')
@@ -705,7 +773,7 @@ class StaffBookingDetailArrivalDepartureTests(TestCase):
 
 class StaffBookingLookupViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='lookup_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='lookup_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='lookup_staffer', password='pw')
         self.property = Property.objects.create(title='Lookup Property', short_title='LOOKUPPROP')
         self.guest = Guest.objects.create(first_name='Look', last_name='Up', email='staff-lookup@example.com')
@@ -806,7 +874,7 @@ class NextStepHintTests(TestCase):
 
 class StaffHomeViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='home_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='home_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='home_staffer', password='pw')
 
         self.property_a = Property.objects.create(title='Home Property A', short_title='HOMEPROPA')
@@ -912,7 +980,7 @@ class StaffHomeViewTests(TestCase):
 
 class StaffGuestListViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='guests_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='guests_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='guests_staffer', password='pw')
 
         self.adams = Guest.objects.create(
@@ -961,7 +1029,7 @@ class StaffGuestListViewTests(TestCase):
 
 class StaffGuestDetailViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='guest_detail_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='guest_detail_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='guest_detail_staffer', password='pw')
 
         self.property = Property.objects.create(title='Guest Detail Property', short_title='GUESTDETAILPROP')
@@ -1028,7 +1096,7 @@ class StaffGuestDetailViewTests(TestCase):
 
 class StaffPropertyListViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='property_list_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='property_list_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='property_list_staffer', password='pw')
 
         self.location_a = make_location(title='Location A')
@@ -1063,7 +1131,7 @@ class StaffPropertyListViewTests(TestCase):
 
 class StaffPropertyCreateViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='property_create_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='property_create_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='property_create_staffer', password='pw')
         self.url = reverse('staff:property_create')
 
@@ -1124,7 +1192,7 @@ class StaffPropertyCreateViewTests(TestCase):
 
 class StaffQuickAddViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='quick_add_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='quick_add_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='quick_add_staffer', password='pw')
 
     def test_management_company_quick_add_creates_and_returns_json(self):
@@ -1151,7 +1219,7 @@ class StaffQuickAddViewTests(TestCase):
 
 class StaffPropertyDetailViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='property_detail_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='property_detail_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='property_detail_staffer', password='pw')
 
         self.owner = make_owner()
@@ -1490,7 +1558,7 @@ class StaffIcalSyncViewTests(TestCase):
     """Covers the view wiring around sync_ical_link() (fetch, error handling, template choice) -
     see bookings/tests.py::SyncIcalLinkTests for the actual sync-logic coverage."""
     def setUp(self):
-        User.objects.create_user(username='ical_sync_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='ical_sync_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='ical_sync_staffer', password='pw')
         self.property = Property.objects.create(title='Sync View Property', short_title='SYNCVIEWPROP')
         self.link = iCalLink.objects.create(
@@ -1578,7 +1646,7 @@ class StaffIcalSyncViewTests(TestCase):
 
 class StaffLocationListViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='location_list_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='location_list_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='location_list_staffer', password='pw')
         self.location = make_location(title='Location List Test')
         self.url = reverse('staff:location_list')
@@ -1596,7 +1664,7 @@ class StaffLocationListViewTests(TestCase):
 
 class StaffLocationCreateViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='location_create_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='location_create_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='location_create_staffer', password='pw')
         self.url = reverse('staff:location_create')
 
@@ -1621,7 +1689,7 @@ class StaffLocationCreateViewTests(TestCase):
 
 class StaffLocationDetailViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='location_detail_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='location_detail_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='location_detail_staffer', password='pw')
         self.location = make_location(title='Detail Location')
         self.url = reverse('staff:location_detail', kwargs={'pk': self.location.pk})
@@ -1696,7 +1764,7 @@ class StaffLocationDetailViewTests(TestCase):
 
 class StaffSettingsViewTests(TestCase):
     def setUp(self):
-        User.objects.create_user(username='settings_staffer', password='pw', is_staff=True)
+        User.objects.create_user(username='settings_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='settings_staffer', password='pw')
         self.url = reverse('staff:settings')
 

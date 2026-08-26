@@ -31,6 +31,14 @@
     min-width: 200px;
 }
 
+/* Booking lookup is functionally separate from the Property/Status/checkbox filters above it (a
+   direct jump to one known booking, not a filter on the list) - pushed to the row's far right to
+   read as its own group rather than just another filter, while staying in the same wrapping flex
+   row (so it drops to its own line on narrow viewports rather than overlapping). */
+.staff-home-search-group {
+    margin-left: auto;
+}
+
 .staff-home-layout {
     display: grid;
     grid-template-columns: 360px 1fr;

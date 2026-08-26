@@ -59,7 +59,8 @@
 #settings-panel-extras:checked ~ .staff-settings-content #settings-pane-extras,
 #settings-panel-staff:checked ~ .staff-settings-content #settings-pane-staff,
 #settings-panel-people:checked ~ .staff-settings-content #settings-pane-people,
-#settings-panel-payments:checked ~ .staff-settings-content #settings-pane-payments {
+#settings-panel-payments:checked ~ .staff-settings-content #settings-pane-payments,
+#settings-panel-roles:checked ~ .staff-settings-content #settings-pane-roles {
     display: flex;
 }
 
@@ -67,7 +68,8 @@
 #settings-panel-extras:checked ~ .staff-settings-sidebar label[for="settings-panel-extras"],
 #settings-panel-staff:checked ~ .staff-settings-sidebar label[for="settings-panel-staff"],
 #settings-panel-people:checked ~ .staff-settings-sidebar label[for="settings-panel-people"],
-#settings-panel-payments:checked ~ .staff-settings-sidebar label[for="settings-panel-payments"] {
+#settings-panel-payments:checked ~ .staff-settings-sidebar label[for="settings-panel-payments"],
+#settings-panel-roles:checked ~ .staff-settings-sidebar label[for="settings-panel-roles"] {
     background: var(--primary-color);
     color: #fff;
 }
@@ -259,9 +261,26 @@
     display: block;
 }
 
+/* text-align: center matters on the th too, not just the td (.staff-property-count-cell already
+   centers the data) - the base .staff-price-table th rule defaults every header to text-align:
+   left, so without this the "Properties" header sits left-aligned in its own column while the
+   count below it is centered, reading as misaligned even though the column boundaries match
+   exactly (confirmed via getBoundingClientRect - a cell-rect measurement alone would have missed
+   this, since it's the text position within the cell, not the cell itself, that was off).
+   vertical-align: bottom on the th matters separately - the wrapping boolean headers next door
+   (th:nth-child(n+5):nth-child(-n+11) below) are already bottom-aligned, which is what makes the
+   header row tall in the first place; without matching that here, this single-line header
+   defaults to vertical-align:middle and floats above the boolean headers' shared baseline
+   (confirmed via getComputedStyle, not assumed - Thomas caught this from a screenshot after the
+   text-align fix alone). */
 .staff-owners-table th:nth-child(12),
 .staff-owners-table td:nth-child(12) {
     width: 80px;
+    text-align: center;
+}
+
+.staff-owners-table th:nth-child(12) {
+    vertical-align: bottom;
 }
 
 /* 130px fits Save+Delete (the widest case here - measured 112px combined, plus cell padding and
@@ -305,11 +324,21 @@
     table-layout: fixed;
 }
 
+/* Same header-text-align/vertical-align gap as .staff-owners-table th:nth-child(12) above, same
+   fix - neither table currently has wrapping boolean headers to create a visible mismatch, but
+   keeping all four count-column headers (Owners/Accountants/Management companies/Roles)
+   behaviorally consistent as a set. */
 .staff-management-companies-table th:nth-child(5),
 .staff-management-companies-table td:nth-child(5),
 .staff-accountants-table th:nth-child(5),
 .staff-accountants-table td:nth-child(5) {
     width: 80px;
+    text-align: center;
+}
+
+.staff-management-companies-table th:nth-child(5),
+.staff-accountants-table th:nth-child(5) {
+    vertical-align: bottom;
 }
 
 /* Management companies rows can show 3 buttons (More fields+Save+Delete), so keep the wider
@@ -329,6 +358,55 @@
 .staff-accountants-table .staff-price-row-actions {
     justify-content: flex-end;
     flex-wrap: wrap;
+}
+
+/* Roles' STAFF_PAGE_PERMISSION_FIELDS checkbox columns push the table wide, same reasoning as
+   .staff-owners-table above - Name (1), 6 page checkboxes (2-7), Users count (8), actions (9). */
+.staff-roles-table {
+    table-layout: fixed;
+}
+
+.staff-roles-table th:nth-child(1), .staff-roles-table td:nth-child(1) { width: 160px; }
+
+.staff-roles-table th:nth-child(n+2):nth-child(-n+7),
+.staff-roles-table td:nth-child(n+2):nth-child(-n+7) {
+    width: 95px;
+    text-align: center;
+}
+
+.staff-roles-table th:nth-child(n+2):nth-child(-n+7) {
+    white-space: normal;
+    font-size: 0.68rem;
+    line-height: 1.2;
+    padding: 6px 4px;
+    vertical-align: bottom;
+}
+
+.staff-roles-table td:nth-child(n+2):nth-child(-n+7) input[type="checkbox"] {
+    margin: 0 auto;
+    display: block;
+}
+
+/* Same header-text-align/vertical-align gap as .staff-owners-table th:nth-child(12), same fix -
+   Roles' own boolean-column headers (th:nth-child(n+2):nth-child(-n+7) above) are already
+   vertical-align:bottom, which this needs to match. */
+.staff-roles-table th:nth-child(8),
+.staff-roles-table td:nth-child(8) {
+    width: 70px;
+    text-align: center;
+}
+
+.staff-roles-table th:nth-child(8) {
+    vertical-align: bottom;
+}
+
+.staff-roles-table th:last-child,
+.staff-roles-table td:last-child {
+    width: 130px;
+}
+
+.staff-roles-table .staff-price-row-actions {
+    justify-content: flex-end;
 }
 
 /* The "More fields" toggle reveals staff-management-company-details-row (a full-width <tr> holding
