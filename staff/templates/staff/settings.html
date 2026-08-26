@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
     <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=5">
-    <link rel="stylesheet" href="{% static 'staff/settings.css' %}?v=8">
+    <link rel="stylesheet" href="{% static 'staff/settings.css' %}?v=12">
     <script src="{% static 'staff/settings.js' %}" defer></script>
 </head>
 <body>
@@ -252,10 +252,12 @@
                         <form method="post" class="staff-form staff-settings-form">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="update_extras_settings">
-                            <label class="staff-field">Welcome pack price (&euro;)
-                                <input type="text" name="welcome_pack_price" class="staff-input" value="{{ extras_settings.welcome_pack_price }}">
-                            </label>
-                            <button type="submit" class="staff-button">Save welcome pack price</button>
+                            <div class="staff-settings-field-with-button">
+                                <label class="staff-field">Welcome pack price (&euro;)
+                                    <input type="text" name="welcome_pack_price" class="staff-input" value="{{ extras_settings.welcome_pack_price }}">
+                                </label>
+                                <button type="submit" class="staff-button">Save welcome pack price</button>
+                            </div>
                         </form>
                         <table class="staff-price-table staff-extras-aligned-table staff-welcome-pack-table">
                             <thead>
@@ -370,10 +372,32 @@
                         <form method="post" class="staff-form staff-settings-form">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="update_extras_settings">
-                            <label class="staff-field">Late checkout price (&euro;)
-                                <input type="text" name="late_checkout_price" class="staff-input" value="{{ extras_settings.late_checkout_price }}">
-                            </label>
-                            <button type="submit" class="staff-button">Save late checkout price</button>
+                            <div class="staff-settings-field-with-button">
+                                <label class="staff-field">Late checkout price (&euro;)
+                                    <input type="text" name="late_checkout_price" class="staff-input" value="{{ extras_settings.late_checkout_price }}">
+                                </label>
+                                <button type="submit" class="staff-button">Save late checkout price</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div class="staff-panel">
+                        <h2 class="staff-panel-title">Mid-stay clean</h2>
+                        <form method="post" class="staff-form staff-settings-form">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_extras_settings">
+                            <div class="staff-settings-field-grid-compact staff-settings-field-grid-compact-3col">
+                                <label class="staff-field">Price - 1 bedroom (&euro;)
+                                    <input type="text" name="mid_stay_clean_price_one_bedroom" class="staff-input" value="{{ extras_settings.mid_stay_clean_price_one_bedroom }}">
+                                </label>
+                                <label class="staff-field">Price - multi-bedroom (&euro;)
+                                    <input type="text" name="mid_stay_clean_price_multi_bedroom" class="staff-input" value="{{ extras_settings.mid_stay_clean_price_multi_bedroom }}">
+                                </label>
+                                <label class="staff-field">Minimum nights booked
+                                    <input type="text" name="mid_stay_clean_minimum_nights" class="staff-input" value="{{ extras_settings.mid_stay_clean_minimum_nights }}">
+                                </label>
+                            </div>
+                            <button type="submit" class="staff-button">Save mid-stay clean prices</button>
                         </form>
                     </div>
 

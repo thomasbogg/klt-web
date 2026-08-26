@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 
 import requests
@@ -18,8 +18,8 @@ import env_settings
 from availability.utils import get_property_calendar
 from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Arrival, Booking, BookingCondition,
-    BookingSettings, Departure, ExtrasSettings, FAQ, PaymentSettings, RequestType, TravelMethod,
-    WelcomePackItem,
+    BookingSettings, Departure, Extra, ExtrasSettings, FAQ, PaymentSettings, RequestType,
+    TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
 from bookings.utils import (
@@ -33,7 +33,7 @@ from properties.models import (
     Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail,
     iCalLink,
 )
-from staff.models import Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
+from staff.models import CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.permissions import staff_page_required
 from staff.utils import (
     AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, ENQUIRY_STATUS_GROUPS, ENQUIRY_STATUSES, GUEST_LETTERS,
@@ -717,10 +717,14 @@ class StaffSettingsView(View):
             'airport_transfer_night_surcharge', 'cot_price_short_stay', 'cot_price_long_stay',
             'high_chair_price_short_stay', 'high_chair_price_long_stay',
             'cot_and_high_chair_combo_discount_percent', 'welcome_pack_price', 'late_checkout_price',
+            'mid_stay_clean_price_one_bedroom', 'mid_stay_clean_price_multi_bedroom',
         ):
             value = _parsed_decimal(post.get(field))
             if value is not None:
                 setattr(settings, field, value)
+        minimum_nights = _parsed_int(post.get('mid_stay_clean_minimum_nights'))
+        if minimum_nights is not None:
+            settings.mid_stay_clean_minimum_nights = minimum_nights
         night_start = _parsed_time(post.get('airport_transfer_night_window_start'))
         if night_start is not None:
             settings.airport_transfer_night_window_start = night_start
@@ -1593,6 +1597,7 @@ class StaffBookingDetailView(View):
             'split_mismatch': split_mismatch,
             'arrival': getattr(booking, 'arrival', None),
             'departure': getattr(booking, 'departure', None),
+            'extra': getattr(booking, 'extras', None),
             'arrival_travel_methods': TravelMethod.choices,
             'departure_travel_methods': TravelMethod.departure_choices(),
             'properties': Property.objects.all(),
@@ -1675,6 +1680,15 @@ class StaffBookingDetailView(View):
             return
         if not valid_flight_number(departure_method, departure_flight_number):
             messages.error(request, f"Departure: {FLIGHT_NUMBER_HINT}")
+            return
+
+        mid_stay_clean = post.get('mid_stay_clean') == 'on'
+        mid_stay_clean_date = _parsed_date(post.get('mid_stay_clean_date')) if mid_stay_clean else None
+        if mid_stay_clean_date and not (booking.arrival_date <= mid_stay_clean_date <= booking.departure_date):
+            messages.error(
+                request,
+                f"Mid-stay clean date must fall within the stay ({booking.arrival_date} to {booking.departure_date}).",
+            )
             return
 
         charge = getattr(booking, 'charges', None)
@@ -1765,7 +1779,19 @@ class StaffBookingDetailView(View):
                 departure.details, departure.clean,
             )
 
-            if arrival_changed or departure_changed:
+            extra, _ = Extra.objects.get_or_create(booking=booking)
+            # bool(...) matters here - mid_stay_clean is nullable and a freshly created/untouched
+            # Extra row has None, but the posted value is always a real True/False (post.get(...)
+            # == 'on'), so comparing raw values against an unchecked box's False would always read
+            # as "changed" on first save - same None-vs-'' normalisation issue already handled for
+            # arrival/departure's flight_number/details above.
+            extra_before = (bool(extra.mid_stay_clean), extra.mid_stay_clean_date)
+            extra.mid_stay_clean = mid_stay_clean
+            extra.mid_stay_clean_date = mid_stay_clean_date
+            extra.save()
+            extra_changed = extra_before != (extra.mid_stay_clean, extra.mid_stay_clean_date)
+
+            if arrival_changed or departure_changed or extra_changed:
                 TaskHistoryEntry.objects.create(
                     booking=booking, description="Arrival/Departure updated", created_by=request.user,
                 )
@@ -1895,3 +1921,76 @@ class StaffBookingDetailView(View):
             detail=f"From '{old_status}' to 'Booking confirmed'", created_by=request.user,
         )
         messages.success(request, "Booking revived.")
+
+
+@method_decorator(staff_page_required('can_view_cleaning_rota'), name='dispatch')
+class StaffCleaningRotaView(View):
+    """The digital cleaning diary/rota (Phase 3 of the staff-admin roadmap) - replaces a legacy
+    daily email to one hardcoded cleaning contact. CleaningTask rows are the actual data, kept in
+    sync with Departure.clean/Extra.mid_stay_clean via signals (see staff/signals.py) - this view
+    is a read + assign + status page over that synced data, not a place to edit the underlying
+    flags (still the booking detail page's Booking Info panel). Superusers see every task for the
+    selected date with an assign control; a non-superuser with the role sees only their own
+    assigned tasks - "cleaning staff logging in to see their day's rota", not the whole portfolio."""
+    template_name = 'staff/cleaning_rota.html'
+
+    def get(self, request, *args, **kwargs):
+        target_date = _parsed_date(request.GET.get('date')) or timezone.now().date()
+        return render(request, self.template_name, self._context(request, target_date))
+
+    def post(self, request, *args, **kwargs):
+        target_date = _parsed_date(request.POST.get('date')) or timezone.now().date()
+        redirect_url = f"{reverse('staff:cleaning_rota')}?date={target_date.isoformat()}"
+
+        action = request.POST.get('action')
+        task = CleaningTask.objects.filter(pk=request.POST.get('task_id')).first()
+        if task is None:
+            messages.error(request, "That cleaning task no longer exists.")
+            return redirect(redirect_url)
+
+        if action == 'assign':
+            if not request.user.is_superuser:
+                raise PermissionDenied
+            task.assigned_to_id = request.POST.get('assigned_to') or None
+            task.save(update_fields=['assigned_to'])
+            messages.success(request, "Cleaning task assigned.")
+        elif action in ('mark_done', 'mark_pending'):
+            if not (request.user.is_superuser or task.assigned_to_id == request.user.pk):
+                raise PermissionDenied
+            if action == 'mark_done':
+                task.status = 'done'
+                task.completed_by = request.user
+                task.completed_at = timezone.now()
+            else:
+                task.status = 'pending'
+                task.completed_by = None
+                task.completed_at = None
+            task.save(update_fields=['status', 'completed_by', 'completed_at'])
+            messages.success(request, "Cleaning task updated.")
+
+        return redirect(redirect_url)
+
+    def _context(self, request, target_date):
+        if request.user.is_superuser:
+            tasks = CleaningTask.objects.filter(date=target_date).select_related(
+                'booking__property', 'booking__guest', 'assigned_to',
+            )
+            assignable_users = User.objects.filter(
+                staff_profile__role__can_view_cleaning_rota=True,
+            ).order_by('username')
+        else:
+            tasks = CleaningTask.objects.filter(
+                date=target_date, assigned_to=request.user,
+            ).select_related('booking__property', 'booking__guest')
+            assignable_users = User.objects.none()
+
+        rows = [{'task': task, 'extras': extras_summary(task.booking)} for task in tasks]
+
+        return {
+            'target_date': target_date,
+            'prev_date': target_date - timedelta(days=1),
+            'next_date': target_date + timedelta(days=1),
+            'rows': rows,
+            'assignable_users': assignable_users,
+            'is_superuser': request.user.is_superuser,
+        }

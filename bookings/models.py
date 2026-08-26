@@ -743,6 +743,19 @@ class Extra(models.Model):
                   "afterward for a rare exception outside the standard fixed pack choices.",
     )
     mid_stay_clean = models.BooleanField(blank=True, null=True)
+    mid_stay_clean_date = models.DateField(
+        blank=True, null=True,
+        help_text="When the mid-stay clean happens - guest-selectable from the Extras section "
+                  "(BookingFormMixin._save_extras(), same cash-at-check-in convention as every "
+                  "other Extra), or staff-set from the booking detail page's Booking Info panel. "
+                  "Feeds staff.utils.sync_cleaning_tasks_for_booking() to create a CleaningTask.",
+    )
+    mid_stay_clean_charge = models.DecimalField(
+        max_digits=8, decimal_places=2, blank=True, null=True,
+        help_text="Snapshotted from ExtrasSettings.compute_mid_stay_clean_price() at request time "
+                  "(same convention as every other Extras price field) - priced by the property's "
+                  "bedroom count, not stay length.",
+    )
     late_checkout = models.BooleanField(blank=True, null=True)
     late_checkout_time = models.TimeField(
         blank=True, null=True,
@@ -762,6 +775,16 @@ class Extra(models.Model):
         db_table = 'booking_extras'
         verbose_name = 'Extra'
         verbose_name_plural = 'Extras'
+
+    def clean(self):
+        super().clean()
+        if self.mid_stay_clean_date and self.booking_id:
+            if not (self.booking.arrival_date <= self.mid_stay_clean_date <= self.booking.departure_date):
+                message = (
+                    f"Mid-stay clean date must fall within the stay ({self.booking.arrival_date} "
+                    f"to {self.booking.departure_date})."
+                )
+                raise ValidationError({'mid_stay_clean_date': message})
 
     def __str__(self):
         return f"{self.booking} - Extras"
@@ -882,6 +905,25 @@ class ExtrasSettings(models.Model):
                   "vary this by how late the checkout is - kept as a single flat fee for now.",
     )
 
+    mid_stay_clean_price_one_bedroom = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        help_text="Flat price for a mid-stay clean on a 1-bedroom property. Same one-bedroom/"
+                  "multi-bedroom split as PaymentSettings.cleaning_surcharge_one_bedroom - a "
+                  "different, guest-facing fee though, not the owner-side cleaning surcharge.",
+    )
+    mid_stay_clean_price_multi_bedroom = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        help_text="Flat price for a mid-stay clean on a property with more than 1 bedroom.",
+    )
+    mid_stay_clean_minimum_nights = models.IntegerField(
+        default=2, validators=[MinValueValidator(2)],
+        help_text="Mid-stay clean isn't offered on a shorter stay than this. 2 is the structural "
+                  "floor - a 1-night stay has no day strictly between arrival and departure at "
+                  "all (see bookings/views.py::BookingFormMixin._extras_context's "
+                  "show_mid_stay_clean and _parse_mid_stay_clean, which both enforce this, not "
+                  "just the display gate).",
+    )
+
     class Meta:
         db_table = 'extras_settings'
         verbose_name = 'Extras Settings'
@@ -936,6 +978,16 @@ class ExtrasSettings(models.Model):
         if wants_cot and wants_high_chair:
             total -= total * (self.cot_and_high_chair_combo_discount_percent / Decimal('100'))
         return max(total, Decimal('0'))
+
+    def compute_mid_stay_clean_price(self, property):
+        """Priced by bedroom count, not stay length - the one new pricing axis Thomas asked for
+        (2026-08-26), mirroring PaymentSettings' existing one-bedroom/multi-bedroom cleaning-fee
+        split. PropertySpec isn't guaranteed to exist for every Property (confirmed elsewhere in
+        this codebase) - falls back to 1 bedroom, matching PropertySpec.bedrooms' own model
+        default, so a property with no spec row prices the same as an explicit 1-bedroom one."""
+        specs = getattr(property, 'specs', None)
+        bedrooms = specs.bedrooms if specs else 1
+        return self.mid_stay_clean_price_one_bedroom if bedrooms == 1 else self.mid_stay_clean_price_multi_bedroom
 
 
 class PaymentSettings(models.Model):

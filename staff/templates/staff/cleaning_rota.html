@@ -1,0 +1,99 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cleaning | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/cleaning_rota.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Cleaning rota</h1>
+        </header>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="staff-cleaning-date-nav">
+            <a href="?date={{ prev_date|date:'Y-m-d' }}" class="staff-button staff-button-small">&larr; Previous day</a>
+            <span class="staff-cleaning-date-label">{{ target_date|date:'l, j F Y' }}</span>
+            <a href="?date={{ next_date|date:'Y-m-d' }}" class="staff-button staff-button-small">Next day &rarr;</a>
+        </div>
+
+        {% if rows %}
+        <div class="staff-cleaning-list">
+            {% for row in rows %}
+            <div class="staff-panel staff-cleaning-card{% if row.task.status == 'done' %} staff-cleaning-card-done{% endif %}">
+                <div class="staff-cleaning-card-header">
+                    <h2 class="staff-panel-title">{{ row.task.booking.property }}</h2>
+                    <span class="staff-cleaning-badge staff-cleaning-badge-{{ row.task.task_type }}">{{ row.task.get_task_type_display }}</span>
+                </div>
+                <p class="staff-cleaning-meta">
+                    <a href="{% url 'staff:booking_detail' reference=row.task.booking.reference %}">{{ row.task.booking.guest }}</a>
+                    &middot; {{ row.task.booking.total_guests }} guests
+                </p>
+
+                {% if row.extras.items %}
+                <ul class="staff-cleaning-extras">
+                    {% for item in row.extras.items %}
+                    <li>{{ item.label }}</li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="staff-cleaning-meta">No extras on file.</p>
+                {% endif %}
+
+                {% if row.task.notes %}
+                <p class="staff-cleaning-notes">{{ row.task.notes }}</p>
+                {% endif %}
+
+                {% if is_superuser %}
+                <form method="post" class="staff-cleaning-assign-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="assign">
+                    <input type="hidden" name="task_id" value="{{ row.task.pk }}">
+                    <input type="hidden" name="date" value="{{ target_date|date:'Y-m-d' }}">
+                    <select name="assigned_to" class="staff-input" onchange="this.form.submit()">
+                        <option value="">&mdash; Unassigned &mdash;</option>
+                        {% for cleaner in assignable_users %}
+                        <option value="{{ cleaner.pk }}" {% if row.task.assigned_to_id == cleaner.pk %}selected{% endif %}>{{ cleaner.username }}</option>
+                        {% endfor %}
+                    </select>
+                    <noscript><button type="submit" class="staff-button staff-button-small">Assign</button></noscript>
+                </form>
+                {% elif row.task.assigned_to %}
+                <p class="staff-cleaning-meta">Assigned to {{ row.task.assigned_to.username }}</p>
+                {% endif %}
+
+                <form method="post" class="staff-cleaning-status-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="task_id" value="{{ row.task.pk }}">
+                    <input type="hidden" name="date" value="{{ target_date|date:'Y-m-d' }}">
+                    {% if row.task.status == 'done' %}
+                    <input type="hidden" name="action" value="mark_pending">
+                    <button type="submit" class="staff-button staff-button-small">Mark pending</button>
+                    {% else %}
+                    <input type="hidden" name="action" value="mark_done">
+                    <button type="submit" class="staff-button staff-button-small">Mark done</button>
+                    {% endif %}
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="staff-empty">No cleaning tasks for this day.</p>
+        {% endif %}
+    </div>
+</body>
+</html>

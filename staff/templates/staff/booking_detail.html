@@ -85,6 +85,15 @@
                                 <input type="checkbox" name="clean" {% if departure.clean %}checked{% endif %}> Clean on departure
                             </label>
                         </div>
+                        <div class="staff-field-row">
+                            <label class="staff-checkbox-label">
+                                <input type="checkbox" name="mid_stay_clean" id="staff-mid-stay-clean" {% if extra.mid_stay_clean %}checked{% endif %}> Mid-stay clean
+                            </label>
+                            <label class="staff-field details-section-hidden" data-mid-stay-clean-row>
+                                Clean date
+                                <input type="text" name="mid_stay_clean_date" class="staff-input staff-date-input" value="{{ extra.mid_stay_clean_date|date:'Y-m-d' }}" autocomplete="off">
+                            </label>
+                        </div>
                     </form>
                 </section>
 

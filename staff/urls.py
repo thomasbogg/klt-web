@@ -21,4 +21,5 @@ urlpatterns = [
     ),
     path('locations/<int:pk>/', views.StaffLocationDetailView.as_view(), name='location_detail'),
     path('bookings/<str:reference>/', views.StaffBookingDetailView.as_view(), name='booking_detail'),
+    path('cleaning/', views.StaffCleaningRotaView.as_view(), name='cleaning_rota'),
 ]

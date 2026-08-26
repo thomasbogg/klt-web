@@ -1,0 +1,88 @@
+.staff-cleaning-date-nav {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.staff-cleaning-date-label {
+    font-family: var(--secondary-font);
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+.staff-cleaning-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    align-items: start;
+}
+
+.staff-cleaning-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.staff-cleaning-card-done {
+    background: #fafafa;
+    opacity: 0.7;
+}
+
+.staff-cleaning-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.staff-cleaning-badge {
+    font-family: var(--secondary-font);
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 10px;
+    white-space: nowrap;
+}
+
+.staff-cleaning-badge-turnover {
+    background: var(--status-booked-bg);
+    color: var(--status-booked-color);
+}
+
+.staff-cleaning-badge-mid_stay {
+    background: var(--status-provisional-bg);
+    color: var(--status-provisional-color);
+}
+
+.staff-cleaning-meta {
+    font-size: 0.85rem;
+    color: #666;
+    margin: 0;
+}
+
+.staff-cleaning-extras {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 0.85rem;
+    color: #444;
+}
+
+.staff-cleaning-notes {
+    font-size: 0.85rem;
+    color: #444;
+    font-style: italic;
+    margin: 0;
+}
+
+.staff-cleaning-assign-form,
+.staff-cleaning-status-form {
+    display: flex;
+    align-items: center;
+}
+
+.staff-cleaning-assign-form .staff-input {
+    width: 100%;
+}

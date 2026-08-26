@@ -14,5 +14,8 @@
     {% if staff_nav_permissions.can_view_settings %}
     <a href="{% url 'staff:settings' %}" class="staff-nav-link">Settings</a>
     {% endif %}
+    {% if staff_nav_permissions.can_view_cleaning_rota %}
+    <a href="{% url 'staff:cleaning_rota' %}" class="staff-nav-link">Cleaning</a>
+    {% endif %}
     <a href="/admin/logout/" class="staff-nav-link staff-nav-link-logout">Logout</a>
 </nav>

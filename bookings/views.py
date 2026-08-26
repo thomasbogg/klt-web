@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from django.db import transaction
@@ -127,10 +127,16 @@ class BookingFormMixin:
         extra.late_checkout, extra.late_checkout_time, _ = self._parse_late_checkout(post_data)
         extra.late_checkout_charge = settings.late_checkout_price if extra.late_checkout else None
 
+        extra.mid_stay_clean, extra.mid_stay_clean_date, _ = self._parse_mid_stay_clean(booking, post_data)
+        extra.mid_stay_clean_charge = (
+            settings.compute_mid_stay_clean_price(booking.property) if extra.mid_stay_clean else None
+        )
+
         extra.save(update_fields=[
             'welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note', 'welcome_pack_charge',
             'cot', 'high_chair', 'cot_high_chair_charge',
             'late_checkout', 'late_checkout_time', 'late_checkout_charge',
+            'mid_stay_clean', 'mid_stay_clean_date', 'mid_stay_clean_charge',
         ])
 
         booking.requested_extras.all().delete()
@@ -165,6 +171,8 @@ class BookingFormMixin:
             high_chair = post_data.get('high_chair') == 'on'
             late_checkout = post_data.get('late_checkout') == 'on'
             late_checkout_time = post_data.get('late_checkout_time', '').strip()
+            mid_stay_clean = post_data.get('mid_stay_clean') == 'on'
+            mid_stay_clean_date = post_data.get('mid_stay_clean_date', '').strip()
             quantities = {t.id: post_data.get(f'request_qty_{t.id}', '0').strip() or '0' for t in active_types}
             notes = {t.id: post_data.get(f'request_note_{t.id}', '').strip() for t in active_types}
         else:
@@ -180,6 +188,10 @@ class BookingFormMixin:
             late_checkout = bool(extra and extra.late_checkout)
             late_checkout_time = (
                 extra.late_checkout_time.strftime('%H:%M') if extra and extra.late_checkout_time else ''
+            )
+            mid_stay_clean = bool(extra and extra.mid_stay_clean)
+            mid_stay_clean_date = (
+                extra.mid_stay_clean_date.isoformat() if extra and extra.mid_stay_clean_date else ''
             )
             existing = {r.request_type_id: r for r in booking.requested_extras.all()}
             quantities = {t.id: str(existing[t.id].quantity) if t.id in existing else '0' for t in active_types}
@@ -208,6 +220,16 @@ class BookingFormMixin:
             'late_checkout': late_checkout,
             'late_checkout_time': late_checkout_time,
             'late_checkout_price': settings.late_checkout_price,
+            'mid_stay_clean': mid_stay_clean,
+            'mid_stay_clean_date': mid_stay_clean_date,
+            'mid_stay_clean_price': settings.compute_mid_stay_clean_price(booking.property),
+            # ExtrasSettings.mid_stay_clean_minimum_nights (staff-configurable, floor of 2 - a
+            # 1-night stay has no day strictly between its own arrival/departure at all) - see
+            # _parse_mid_stay_clean's docstring for the same rule enforced server-side on save,
+            # not just this display gate.
+            'show_mid_stay_clean': nights >= settings.mid_stay_clean_minimum_nights,
+            'mid_stay_clean_min_date': (booking.arrival_date + timedelta(days=1)).isoformat(),
+            'mid_stay_clean_max_date': (booking.departure_date - timedelta(days=1)).isoformat(),
             'request_rows': [
                 {'request_type': t, 'quantity': quantities[t.id], 'note': notes[t.id]}
                 for t in active_types
@@ -358,6 +380,31 @@ class BookingFormMixin:
             return True, datetime.strptime(time_raw, '%H:%M').time(), None
         except ValueError:
             return True, None, "Enter a valid checkout time."
+
+    def _parse_mid_stay_clean(self, booking, post_data):
+        """Same optional-field-behind-a-checkbox shape as _parse_late_checkout above. The date must
+        fall strictly between arrival and departure (not on either boundary day - those are the
+        checkout/check-in cleans, not a mid-stay one), and the stay must meet
+        ExtrasSettings.mid_stay_clean_minimum_nights - _extras_form.html only offers this section
+        when both are already satisfied (see _extras_context's show_mid_stay_clean), but both are
+        re-checked here too since the display gate is just a convenience, not the real guard."""
+        mid_stay_clean = post_data.get('mid_stay_clean') == 'on'
+        date_raw = post_data.get('mid_stay_clean_date', '').strip()
+        if not mid_stay_clean:
+            return False, None, None
+
+        nights = (booking.departure_date - booking.arrival_date).days
+        if nights < ExtrasSettings.load().mid_stay_clean_minimum_nights:
+            return True, None, "A mid-stay clean isn't available for a stay this short."
+        if not date_raw:
+            return True, None, "Choose a date for your mid-stay clean."
+        try:
+            parsed = date.fromisoformat(date_raw)
+        except ValueError:
+            return True, None, "Enter a valid date for your mid-stay clean."
+        if not (booking.arrival_date < parsed < booking.departure_date):
+            return True, None, "That date isn't during your stay."
+        return True, parsed, None
 
     def _any_infant_age(self, rows, child_min_age):
         """Whether any current guest-list row is age'd as an infant (below child_min_age) - the
@@ -541,8 +588,10 @@ class BookingDetailsView(BookingFormMixin, View):
         if not is_two_stage:
             transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
             _, _, late_checkout_error = self._parse_late_checkout(request.POST)
+            _, _, mid_stay_clean_error = self._parse_mid_stay_clean(booking, request.POST)
         else:
             transfer_rows, transfer_non_field_error, late_checkout_error = [], None, None
+            mid_stay_clean_error = None
         child_min_age = BookingSettings.load().child_min_age
         context = {
             'booking': booking,
@@ -559,6 +608,7 @@ class BookingDetailsView(BookingFormMixin, View):
             context.update(self._extras_context(booking, post_data=request.POST))
             context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
             context['late_checkout_error'] = late_checkout_error
+            context['mid_stay_clean_error'] = mid_stay_clean_error
 
         if non_field_error or any(row['errors'] for row in rows):
             return render(request, self.template_name, context)
@@ -566,7 +616,7 @@ class BookingDetailsView(BookingFormMixin, View):
         if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
             return render(request, self.template_name, context)
 
-        if late_checkout_error:
+        if late_checkout_error or mid_stay_clean_error:
             return render(request, self.template_name, context)
 
         if len(rows) > max_guests:
@@ -694,6 +744,7 @@ class BookingBalanceDetailsView(BookingFormMixin, View):
         rows, non_field_error = self._parse_rows(request.POST)
         transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
         _, _, late_checkout_error = self._parse_late_checkout(request.POST)
+        _, _, mid_stay_clean_error = self._parse_mid_stay_clean(booking, request.POST)
         arrival_data = _arrival_data_from_post(request.POST)
         departure_data = _departure_data_from_post(request.POST)
         child_min_age = BookingSettings.load().child_min_age
@@ -709,6 +760,7 @@ class BookingBalanceDetailsView(BookingFormMixin, View):
         context.update(self._extras_context(booking, post_data=request.POST))
         context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
         context['late_checkout_error'] = late_checkout_error
+        context['mid_stay_clean_error'] = mid_stay_clean_error
 
         if non_field_error or any(row['errors'] for row in rows):
             return render(request, self.template_name, context)
@@ -716,7 +768,7 @@ class BookingBalanceDetailsView(BookingFormMixin, View):
         if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
             return render(request, self.template_name, context)
 
-        if late_checkout_error:
+        if late_checkout_error or mid_stay_clean_error:
             return render(request, self.template_name, context)
 
         arrival_departure_errors = _arrival_departure_flight_number_errors(arrival_data, departure_data)
@@ -1438,16 +1490,18 @@ class BookingManageExtrasView(BookingFormMixin, View):
 
         transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
         _, _, late_checkout_error = self._parse_late_checkout(request.POST)
+        _, _, mid_stay_clean_error = self._parse_mid_stay_clean(booking, request.POST)
         context = {'booking': booking, 'extras_locked': False,
                    'show_cot_high_chair': self._show_cot_high_chair(booking)}
         context.update(_manage_nav_context(booking, 'extras'))
         context.update(self._extras_context(booking, post_data=request.POST))
         context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
         context['late_checkout_error'] = late_checkout_error
+        context['mid_stay_clean_error'] = mid_stay_clean_error
 
         if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
             return render(request, self.template_name, context)
-        if late_checkout_error:
+        if late_checkout_error or mid_stay_clean_error:
             return render(request, self.template_name, context)
 
         with transaction.atomic():

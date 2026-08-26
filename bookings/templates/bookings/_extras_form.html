@@ -173,9 +173,32 @@ for the one substring that differs per caller ("the amount due now" / "your bala
     </div>
 </section>
 
+{% if show_mid_stay_clean %}
 <section class="details-section">
-    <h2 class="details-section-title">Welcome Pack and Special Requests</h2>
-    <p class="details-note">Everything below is paid in cash at check-in - it isn't included in {{ due_phrase }}.</p>
+    <h2 class="details-section-title">Mid-stay Clean</h2>
+    <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}.</p>
+
+    <div class="welcome-pack-block">
+        <label class="details-checkbox-label details-checkbox-label-primary">
+            <input type="checkbox" name="mid_stay_clean" id="mid_stay_clean_checkbox" data-price="{{ mid_stay_clean_price|floatformat:2 }}" {% if mid_stay_clean %}checked{% endif %}>
+            I'd like a clean partway through my stay
+        </label>
+
+        <div class="welcome-pack-picker" id="mid-stay-clean-picker">
+            <div class="welcome-pack-field">
+                <label for="mid_stay_clean_date">Preferred date</label>
+                <input type="date" name="mid_stay_clean_date" id="mid_stay_clean_date" class="reserve-input" value="{{ mid_stay_clean_date }}" min="{{ mid_stay_clean_min_date }}" max="{{ mid_stay_clean_max_date }}">
+                {% if mid_stay_clean_error %}<p class="reserve-form-error">{{ mid_stay_clean_error }}</p>{% endif %}
+            </div>
+            <p class="cot-high-chair-price">Flat fee: &euro;{{ mid_stay_clean_price|floatformat:2 }}</p>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<section class="details-section">
+    <h2 class="details-section-title">Welcome Pack</h2>
+    <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}.</p>
 
     <div class="welcome-pack-block">
         <label class="details-checkbox-label details-checkbox-label-primary">
@@ -210,9 +233,12 @@ for the one substring that differs per caller ("the amount due now" / "your bala
             </div>
         </div>
     </div>
+</section>
 
-    {% if request_rows %}
-    <p class="details-note">Anything else you'd like waiting for you?</p>
+{% if request_rows %}
+<section class="details-section">
+    <h2 class="details-section-title">Special Requests</h2>
+    <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}. Anything else you'd like waiting for you?</p>
     <div class="request-rows">
         <div class="request-row request-row-header">
             <span>Item</span>
@@ -231,5 +257,5 @@ for the one substring that differs per caller ("the amount due now" / "your bala
         </div>
         {% endfor %}
     </div>
-    {% endif %}
 </section>
+{% endif %}

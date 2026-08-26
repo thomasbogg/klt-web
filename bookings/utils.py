@@ -313,6 +313,10 @@ def extras_summary(booking):
         time_label = f" ({extra.late_checkout_time.strftime('%H:%M')})" if extra.late_checkout_time else ''
         items.append({'label': f"Late Checkout{time_label}", 'price': extra.late_checkout_charge or 0})
 
+    if extra and extra.mid_stay_clean:
+        date_label = f" ({extra.mid_stay_clean_date})" if extra.mid_stay_clean_date else ''
+        items.append({'label': f"Mid-stay Clean{date_label}", 'price': extra.mid_stay_clean_charge or 0})
+
     for transfer in booking.airport_transfers.all():
         detail = transfer.flight_number or (transfer.time.strftime('%H:%M') if transfer.time else '')
         label = f"Airport Transfer - {transfer.get_direction_display()}"

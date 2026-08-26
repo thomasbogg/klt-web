@@ -1,5 +1,5 @@
 // Live running total across every Extras section (Welcome Pack, Cot & High Chair, Late Checkout,
-// Airport Transfers, RequestType rows) - manage_extras.html only. Deliberately recomputes from
+// Mid-stay Clean, Airport Transfers, RequestType rows) - manage_extras.html only. Deliberately recomputes from
 // scratch on any relevant DOM change rather than listening to each existing script's own output,
 // so it stays correct regardless of dynamically added/removed transfer rows and doesn't need to
 // coordinate load order with cot_high_chair.js/airport_transfers.js. The cot/high-chair and
@@ -77,7 +77,7 @@ function requestedExtrasTotal() {
 function computeTotal() {
     if (!totalValue) return;
     const total = flatPrice('welcome_pack_checkbox') + flatPrice('late_checkout_checkbox')
-        + cotHighChairPrice() + transfersTotal() + requestedExtrasTotal();
+        + flatPrice('mid_stay_clean_checkbox') + cotHighChairPrice() + transfersTotal() + requestedExtrasTotal();
     totalValue.textContent = `€${total.toFixed(2)}`;
 }
 

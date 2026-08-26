@@ -89,6 +89,7 @@ class StaffRole(models.Model):
     can_view_properties = models.BooleanField(default=False)
     can_view_locations = models.BooleanField(default=False)
     can_view_settings = models.BooleanField(default=False)
+    can_view_cleaning_rota = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'staff_roles'
@@ -115,3 +116,48 @@ class StaffProfile(models.Model):
 
     def __str__(self):
         return f"{self.user} ({self.role or 'no role'})"
+
+
+class CleaningTask(models.Model):
+    """A rota-visible clean for one booking - either the turnover clean tied to its departure
+    (Departure.clean/Booking.departure_date) or its optional mid-stay clean (Extra.mid_stay_clean/
+    mid_stay_clean_date). Departure.clean/Extra.mid_stay_clean stay the source of truth (edited
+    from the booking detail page's Booking Info panel, same as always) - this row is kept in sync
+    via post_save signals on Departure/Extra/Booking (staff/signals.py, connected from
+    StaffConfig.ready() - this app's first use of Django signals), not a call embedded in one view
+    method, since bookings/admin.py's ExtraInline/DepartureInline/BookingDateAdjustmentInline are a
+    second, admin-side write path that would otherwise silently desync a call-site-based approach.
+    See staff/utils.py::sync_cleaning_tasks_for_booking(). date is deliberately denormalized from
+    Booking.departure_date/Extra.mid_stay_clean_date at sync time so the rota can query by date
+    directly without joining back through Departure/Extra/Booking each time.
+
+    assigned_to/status/completed_by/completed_at/notes are real fields on this row, not on
+    Departure/Extra, since assignment and completion tracking are staff-rota concerns distinct
+    from travel logistics (Departure) or guest-requested extras (Extra)."""
+    TASK_TYPE_CHOICES = [('turnover', 'Turnover'), ('mid_stay', 'Mid-stay')]
+    STATUS_CHOICES = [('pending', 'Pending'), ('done', 'Done')]
+
+    booking = models.ForeignKey('bookings.Booking', on_delete=models.CASCADE, related_name='cleaning_tasks')
+    task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES)
+    date = models.DateField()
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='cleaning_tasks',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    completed_at = models.DateTimeField(blank=True, null=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'staff_cleaning_tasks'
+        verbose_name = 'Cleaning Task'
+        verbose_name_plural = 'Cleaning Tasks'
+        # One turnover clean and one mid-stay clean per booking - matches the 1-per-booking
+        # ceiling Departure/Extra's own OneToOne-with-Booking shape already imposes.
+        unique_together = ('booking', 'task_type')
+        ordering = ('date', 'booking__property__title')
+
+    def __str__(self):
+        return f"{self.booking} - {self.get_task_type_display()} clean ({self.date})"

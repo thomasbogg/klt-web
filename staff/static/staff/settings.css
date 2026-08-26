@@ -98,26 +98,62 @@
     margin-bottom: 14px;
 }
 
-/* For a handful of short fields that should sit in one row rather than stretch full width.
-   align-self stops the parent .staff-form's flex stretch, but a fr-based track still grows to
-   fill whatever space that leaves (each .staff-input is width:100%, which defeats the grid's own
-   intrinsic/max-content sizing) - so the width is capped explicitly instead of left to shrink-to-
-   fit, sized for 5 columns just wide enough for the longest label ("Cot + high chair combo
-   discount"). */
+/* Panel presentation rule (2026-08-26, Extras tab only): max 4 non-table fields per row. Extras'
+   auto-fit grid can pack 5 220px+ columns into one row on a wide viewport (confirmed - Airport
+   transfers has 5 fields), which doesn't self-limit the way the fixed-column -compact grid below
+   does - so it needs an explicit cap here, scoped to the Extras pane only since other tabs
+   (Bookings/Payments) use this same shared class and weren't asked to change. */
+#settings-pane-extras .staff-settings-field-grid {
+    grid-template-columns: repeat(4, minmax(220px, 1fr));
+}
+
+/* Panel presentation rules 3-4 (2026-08-26, refined): a row of 4 fields spans the whole panel; a
+   section with only 2-3 fields total (no row of 4 anywhere) also spans the row, dividing it among
+   just those fields (see the -3col override below). But when a section DOES have a row of 4, any
+   wrapped remainder row's fields stay the SAME per-field width as the row of 4 above them, rather
+   than stretching to fill the leftover space themselves - Airport transfers' 5th field ("night
+   surcharge window end") gets this for free from the plain repeat(4, ...) template with no extra
+   rule needed: a lone item auto-places into column 1, which is already the same width as columns
+   1-4 in the row above (an earlier pass here added an explicit grid-column:1/-1 override to make
+   it span instead - that was wrong per this clarification, removed). No more max-width cap or
+   align-self override on the class below either: .staff-form's default flex stretch (not
+   overridden here any more) plus each column's own 1fr already fills 100% of the panel on its
+   own. 4 columns, not 5 - see the max-4-per-row rule above. */
 .staff-settings-field-grid-compact {
     display: grid;
-    grid-template-columns: repeat(5, minmax(190px, 1fr));
+    grid-template-columns: repeat(4, minmax(190px, 1fr));
     gap: 10px 16px;
     margin-bottom: 14px;
-    max-width: 1150px;
-    align-self: flex-start;
+}
+
+/* Mid-stay clean: exactly 3 fields, always, no row of 4 anywhere in this section - a real column
+   count instead of sharing the 4-column template above, so all 3 genuinely divide the full row
+   width (rule 4's "section with only 2-3 fields" case) rather than leaving a 4th column's worth
+   of dead space the way an unpopulated explicit track otherwise would. */
+.staff-settings-field-grid-compact-3col {
+    grid-template-columns: repeat(3, 1fr);
 }
 
 @media (max-width: 900px) {
     .staff-settings-field-grid-compact {
         grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        align-self: stretch;
     }
+}
+
+/* Panel presentation rule, part 2: a panel whose form is just one field and a save button that
+   updates from it alone puts both on one row, spanning the panel's full width - the field
+   stretches (via .staff-field's own flex:1), the button stays sized to its text (align-self
+   overrides .staff-button's default flex-start, matching the same fix already needed for Home's
+   filter-row "Go" button - a flex-row child of .staff-button's usual flex-column .staff-form
+   parent otherwise pins to the row's top instead of level with the input). */
+.staff-settings-field-with-button {
+    display: flex;
+    align-items: flex-end;
+    gap: 16px;
+}
+
+.staff-settings-field-with-button .staff-button {
+    align-self: flex-end;
 }
 
 .staff-settings-hint {
@@ -361,20 +397,25 @@
 }
 
 /* Roles' STAFF_PAGE_PERMISSION_FIELDS checkbox columns push the table wide, same reasoning as
-   .staff-owners-table above - Name (1), 6 page checkboxes (2-7), Users count (8), actions (9). */
+   .staff-owners-table above - Name (1), N page checkboxes (2 to N+1), Users count (N+2), actions
+   (last). N = len(STAFF_PAGE_PERMISSION_FIELDS) in staff/utils.py, currently 7 (Home/Bookings/
+   Guests/Properties/Locations/Settings/Cleaning rota) - these nth-child ranges are hardcoded to
+   that count and MUST be updated together whenever a permission field is added or removed (this
+   drifted out of sync once already when Cleaning rota was added, overlapping the Users column -
+   fixed 2026-08-26). */
 .staff-roles-table {
     table-layout: fixed;
 }
 
 .staff-roles-table th:nth-child(1), .staff-roles-table td:nth-child(1) { width: 160px; }
 
-.staff-roles-table th:nth-child(n+2):nth-child(-n+7),
-.staff-roles-table td:nth-child(n+2):nth-child(-n+7) {
+.staff-roles-table th:nth-child(n+2):nth-child(-n+8),
+.staff-roles-table td:nth-child(n+2):nth-child(-n+8) {
     width: 95px;
     text-align: center;
 }
 
-.staff-roles-table th:nth-child(n+2):nth-child(-n+7) {
+.staff-roles-table th:nth-child(n+2):nth-child(-n+8) {
     white-space: normal;
     font-size: 0.68rem;
     line-height: 1.2;
@@ -382,21 +423,21 @@
     vertical-align: bottom;
 }
 
-.staff-roles-table td:nth-child(n+2):nth-child(-n+7) input[type="checkbox"] {
+.staff-roles-table td:nth-child(n+2):nth-child(-n+8) input[type="checkbox"] {
     margin: 0 auto;
     display: block;
 }
 
 /* Same header-text-align/vertical-align gap as .staff-owners-table th:nth-child(12), same fix -
-   Roles' own boolean-column headers (th:nth-child(n+2):nth-child(-n+7) above) are already
+   Roles' own boolean-column headers (th:nth-child(n+2):nth-child(-n+8) above) are already
    vertical-align:bottom, which this needs to match. */
-.staff-roles-table th:nth-child(8),
-.staff-roles-table td:nth-child(8) {
+.staff-roles-table th:nth-child(9),
+.staff-roles-table td:nth-child(9) {
     width: 70px;
     text-align: center;
 }
 
-.staff-roles-table th:nth-child(8) {
+.staff-roles-table th:nth-child(9) {
     vertical-align: bottom;
 }
 

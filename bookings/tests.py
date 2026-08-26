@@ -1023,6 +1023,105 @@ class BookingDetailsViewTests(TestCase):
         self.assertTrue(response.context['late_checkout_error'])
         self.assertEqual(self.booking.party.count(), 0)
 
+    def test_post_persists_mid_stay_clean_with_bedroom_priced_charge(self):
+        # self.property's PropertySpec has no bedrooms set, defaulting to 1 - see setUp.
+        settings = ExtrasSettings.load()
+        settings.mid_stay_clean_price_one_bedroom = Decimal('45.00')
+        settings.mid_stay_clean_price_multi_bedroom = Decimal('65.00')
+        settings.save()
+        self._set_session()
+        target = self.start + timedelta(days=3)
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['mid_stay_clean'] = 'on'
+        data['mid_stay_clean_date'] = target.isoformat()
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.extras.mid_stay_clean)
+        self.assertEqual(self.booking.extras.mid_stay_clean_date, target)
+        self.assertEqual(self.booking.extras.mid_stay_clean_charge, Decimal('45.00'))
+
+    def test_post_mid_stay_clean_prices_multi_bedroom_property_differently(self):
+        self.property.specs.bedrooms = 3
+        self.property.specs.save()
+        settings = ExtrasSettings.load()
+        settings.mid_stay_clean_price_one_bedroom = Decimal('45.00')
+        settings.mid_stay_clean_price_multi_bedroom = Decimal('65.00')
+        settings.save()
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['mid_stay_clean'] = 'on'
+        data['mid_stay_clean_date'] = (self.start + timedelta(days=3)).isoformat()
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.extras.mid_stay_clean_charge, Decimal('65.00'))
+
+    def test_post_without_mid_stay_clean_charges_nothing(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertFalse(self.booking.extras.mid_stay_clean)
+        self.assertIsNone(self.booking.extras.mid_stay_clean_date)
+        self.assertIsNone(self.booking.extras.mid_stay_clean_charge)
+
+    def test_post_mid_stay_clean_without_a_date_is_rejected(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['mid_stay_clean'] = 'on'
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['mid_stay_clean_error'])
+        self.assertEqual(self.booking.party.count(), 0)
+
+    def test_post_mid_stay_clean_on_arrival_day_is_rejected(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['mid_stay_clean'] = 'on'
+        data['mid_stay_clean_date'] = self.start.isoformat()
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['mid_stay_clean_error'])
+        self.assertEqual(self.booking.party.count(), 0)
+
+    def test_get_hides_mid_stay_clean_section_for_a_one_night_stay(self):
+        short_booking = Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=self.start, departure_date=self.start + timedelta(days=1),
+            is_owner=False, enquiry_status='Awaiting payment', enquiry_source='Website',
+            adults=1, children=0, babies=0, last_updated=timezone.now(),
+            hold_expires_at=timezone.now() + timedelta(minutes=20),
+        )
+        Charge.objects.create(booking=short_booking, basic_rental=Decimal('100.00'), currency='EUR')
+        Payment.objects.create(booking=short_booking, provider='revolut', status='pending')
+        url = reverse('bookings:details', kwargs={'reference': short_booking.reference})
+        response = self.client.get(url)
+        self.assertFalse(response.context['show_mid_stay_clean'])
+        self.assertNotContains(response, 'Mid-stay Clean')
+
+    def test_get_hides_mid_stay_clean_below_the_configured_minimum_nights(self):
+        settings = ExtrasSettings.load()
+        settings.mid_stay_clean_minimum_nights = 10
+        settings.save()
+        # self.booking is a 7-night stay (setUp) - below the raised minimum.
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['show_mid_stay_clean'])
+
+    def test_post_mid_stay_clean_below_the_configured_minimum_nights_is_rejected(self):
+        settings = ExtrasSettings.load()
+        settings.mid_stay_clean_minimum_nights = 10
+        settings.save()
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['mid_stay_clean'] = 'on'
+        data['mid_stay_clean_date'] = (self.start + timedelta(days=3)).isoformat()
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['mid_stay_clean_error'])
+        self.assertEqual(self.booking.party.count(), 0)
+
     def test_post_with_zero_quantity_does_not_create_a_requested_extra(self):
         extra_bed = RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
         self._set_session()
@@ -1565,6 +1664,27 @@ class ExtrasSettingsCotHighChairPricingTests(TestCase):
         self.assertEqual(self.settings.compute_cot_high_chair_price(5, True, True), Decimal('0'))
 
 
+class ExtrasSettingsMidStayCleanPricingTests(TestCase):
+    def setUp(self):
+        self.settings = ExtrasSettings.load()
+        self.settings.mid_stay_clean_price_one_bedroom = Decimal('45.00')
+        self.settings.mid_stay_clean_price_multi_bedroom = Decimal('65.00')
+        self.settings.save()
+        self.property = Property.objects.create(title='Test Property MSC', short_title='TESTMSC')
+
+    def test_one_bedroom_property_uses_one_bedroom_price(self):
+        PropertySpec.objects.create(property=self.property, bedrooms=1)
+        self.assertEqual(self.settings.compute_mid_stay_clean_price(self.property), Decimal('45.00'))
+
+    def test_multi_bedroom_property_uses_multi_bedroom_price(self):
+        PropertySpec.objects.create(property=self.property, bedrooms=2)
+        self.assertEqual(self.settings.compute_mid_stay_clean_price(self.property), Decimal('65.00'))
+
+    def test_missing_spec_defaults_to_one_bedroom_price(self):
+        # No PropertySpec row at all - PropertySpec.bedrooms' own model default is 1.
+        self.assertEqual(self.settings.compute_mid_stay_clean_price(self.property), Decimal('45.00'))
+
+
 class ExtrasSummaryTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Test Property ES', short_title='TESTES')
@@ -1615,6 +1735,15 @@ class ExtrasSummaryTests(TestCase):
         Extra.objects.create(booking=self.booking, cot=True, cot_high_chair_charge=Decimal('20.00'))
         summary = extras_summary(self.booking)
         self.assertEqual(summary['items'], [{'label': 'Cot', 'price': Decimal('20.00')}])
+
+    def test_mid_stay_clean_included_with_date(self):
+        target = self.booking.arrival_date + timedelta(days=2)
+        Extra.objects.create(
+            booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=target,
+            mid_stay_clean_charge=Decimal('45.00'),
+        )
+        summary = extras_summary(self.booking)
+        self.assertEqual(summary['items'], [{'label': f'Mid-stay Clean ({target})', 'price': Decimal('45.00')}])
 
 
 class BookingDateAdjustmentTests(TestCase):

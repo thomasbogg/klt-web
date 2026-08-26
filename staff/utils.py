@@ -129,6 +129,7 @@ STAFF_PAGE_PERMISSION_FIELDS = (
     ('can_view_properties', 'Properties'),
     ('can_view_locations', 'Locations'),
     ('can_view_settings', 'Settings'),
+    ('can_view_cleaning_rota', 'Cleaning rota'),
 )
 
 
@@ -203,3 +204,29 @@ def next_step_hint(booking, charge, balance_payment):
     if booking.departure_date > today:
         return "Guest is currently on-site."
     return "Stay has ended."
+
+
+def sync_cleaning_tasks_for_booking(booking):
+    """Keeps CleaningTask rows in sync with Departure.clean/Booking.departure_date (turnover) and
+    Extra.mid_stay_clean/mid_stay_clean_date (mid-stay), which stay the actual source of truth -
+    see CleaningTask's own docstring (staff/models.py) for why this is signal-driven (staff/
+    signals.py) rather than called from one view. Never deletes a task whose status is 'done' -
+    only a still-pending task is removed when its source flag/date goes away, so a completed
+    clean's record survives even if the underlying flag is later unchecked."""
+    from staff.models import CleaningTask
+
+    departure = getattr(booking, 'departure', None)
+    if departure and departure.clean:
+        CleaningTask.objects.update_or_create(
+            booking=booking, task_type='turnover', defaults={'date': booking.departure_date},
+        )
+    else:
+        CleaningTask.objects.filter(booking=booking, task_type='turnover', status='pending').delete()
+
+    extra = getattr(booking, 'extras', None)
+    if extra and extra.mid_stay_clean and extra.mid_stay_clean_date:
+        CleaningTask.objects.update_or_create(
+            booking=booking, task_type='mid_stay', defaults={'date': extra.mid_stay_clean_date},
+        )
+    else:
+        CleaningTask.objects.filter(booking=booking, task_type='mid_stay', status='pending').delete()

@@ -10,8 +10,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import (
-    Arrival, BalancePayment, Booking, BookingCondition, BookingSettings, Charge, Departure, FAQ,
-    Payment, PaymentSettings,
+    Arrival, BalancePayment, Booking, BookingCondition, BookingSettings, Charge, Departure, Extra,
+    FAQ, Payment, PaymentSettings,
 )
 from guests.models import Guest
 from properties.models import (
@@ -19,7 +19,7 @@ from properties.models import (
     Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail,
     iCalLink,
 )
-from staff.models import Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
+from staff.models import CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.utils import booking_stage, next_step_hint, status_bucket
 
 User = get_user_model()
@@ -769,6 +769,194 @@ class StaffBookingDetailArrivalDepartureTests(TestCase):
         self.assertContains(response, 'data-owner-row')
         self.assertContains(response, 'Meet &amp; greet')
         self.assertContains(response, 'Clean on departure')
+
+    def test_mid_stay_clean_date_outside_stay_is_rejected(self):
+        response = self.client.post(self.url, {
+            'action': 'update_booking',
+            'mid_stay_clean': 'on', 'mid_stay_clean_date': (self.end + timedelta(days=1)).isoformat(),
+        })
+        self.assertRedirects(response, self.url)
+        self.assertFalse(hasattr(self.booking, 'extras'))
+
+    def test_mid_stay_clean_saved_within_stay(self):
+        target = self.start + timedelta(days=2)
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'mid_stay_clean': 'on', 'mid_stay_clean_date': target.isoformat(),
+        })
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.extras.mid_stay_clean)
+        self.assertEqual(self.booking.extras.mid_stay_clean_date, target)
+
+
+class CleaningTaskSyncTests(TestCase):
+    """staff/signals.py + staff/utils.py::sync_cleaning_tasks_for_booking() - CleaningTask stays
+    in sync with Departure.clean/Extra.mid_stay_clean via post_save signals, not a call embedded
+    in one view, so it has to work regardless of which code path saves those models."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Cleaning Sync Property', short_title='CLEANSYNC')
+        self.guest = Guest.objects.create(first_name='Ana', last_name='Silva', email='cleaning-sync@example.com')
+        self.start = date.today() + timedelta(days=30)
+        self.end = self.start + timedelta(days=10)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_departure_clean_true_creates_turnover_task(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        self.assertEqual(task.date, self.end)
+        self.assertEqual(task.status, 'pending')
+
+    def test_departure_clean_false_creates_no_task(self):
+        Departure.objects.create(booking=self.booking, clean=False)
+        self.assertFalse(CleaningTask.objects.filter(booking=self.booking, task_type='turnover').exists())
+
+    def test_unchecking_clean_removes_pending_task(self):
+        departure = Departure.objects.create(booking=self.booking, clean=True)
+        self.assertTrue(CleaningTask.objects.filter(booking=self.booking, task_type='turnover').exists())
+        departure.clean = False
+        departure.save()
+        self.assertFalse(CleaningTask.objects.filter(booking=self.booking, task_type='turnover').exists())
+
+    def test_unchecking_clean_does_not_remove_a_done_task(self):
+        departure = Departure.objects.create(booking=self.booking, clean=True)
+        task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        task.status = 'done'
+        task.save()
+        departure.clean = False
+        departure.save()
+        task.refresh_from_db()
+        self.assertEqual(task.status, 'done')
+
+    def test_mid_stay_clean_with_date_creates_task(self):
+        target = self.start + timedelta(days=3)
+        Extra.objects.create(booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=target)
+        task = CleaningTask.objects.get(booking=self.booking, task_type='mid_stay')
+        self.assertEqual(task.date, target)
+
+    def test_mid_stay_clean_without_date_creates_no_task(self):
+        Extra.objects.create(booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=None)
+        self.assertFalse(CleaningTask.objects.filter(booking=self.booking, task_type='mid_stay').exists())
+
+    def test_departure_date_change_updates_existing_turnover_task_date(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        new_end = self.end + timedelta(days=5)
+        self.booking.departure_date = new_end
+        self.booking.save()
+        task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        self.assertEqual(task.date, new_end)
+
+    def test_repeated_saves_do_not_duplicate_tasks(self):
+        departure = Departure.objects.create(booking=self.booking, clean=True)
+        departure.save()
+        departure.save()
+        self.assertEqual(CleaningTask.objects.filter(booking=self.booking, task_type='turnover').count(), 1)
+
+
+class StaffCleaningRotaViewTests(TestCase):
+    """StaffCleaningRotaView - superuser sees every task for the date with an assign control; a
+    non-superuser with the role sees only their own assigned tasks."""
+
+    def setUp(self):
+        self.role = StaffRole.objects.create(name='Cleaner', can_view_cleaning_rota=True)
+        self.cleaner = User.objects.create_user(username='cleaner1', password='pw', is_staff=True)
+        StaffProfile.objects.create(user=self.cleaner, role=self.role)
+        self.other_cleaner = User.objects.create_user(username='cleaner2', password='pw', is_staff=True)
+        StaffProfile.objects.create(user=self.other_cleaner, role=self.role)
+        self.superuser = User.objects.create_user(
+            username='rotasuperuser', password='pw', is_staff=True, is_superuser=True,
+        )
+
+        self.property = Property.objects.create(title='Rota Property', short_title='ROTAPROP')
+        self.guest = Guest.objects.create(first_name='Joao', last_name='Costa', email='rota@example.com')
+        self.today = date.today()
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=self.today - timedelta(days=3), departure_date=self.today,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Departure.objects.create(booking=self.booking, clean=True)
+        self.task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        self.url = reverse('staff:cleaning_rota')
+
+    def test_role_less_user_gets_403(self):
+        User.objects.create_user(username='norole', password='pw', is_staff=True)
+        self.client.login(username='norole', password='pw')
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_superuser_sees_unassigned_task_with_assign_control(self):
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Rota Property')
+        self.assertContains(response, 'staff-cleaning-assign-form')
+
+    def test_non_superuser_sees_only_own_assigned_tasks(self):
+        self.task.assigned_to = self.other_cleaner
+        self.task.save()
+        self.client.login(username='cleaner1', password='pw')
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Rota Property')
+
+        self.client.login(username='cleaner2', password='pw')
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Rota Property')
+
+    def test_superuser_can_assign(self):
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.post(self.url, {
+            'action': 'assign', 'task_id': self.task.pk, 'assigned_to': self.cleaner.pk,
+            'date': self.today.isoformat(),
+        })
+        self.assertRedirects(response, f"{self.url}?date={self.today.isoformat()}")
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.assigned_to, self.cleaner)
+
+    def test_non_superuser_cannot_assign(self):
+        self.client.login(username='cleaner1', password='pw')
+        response = self.client.post(self.url, {
+            'action': 'assign', 'task_id': self.task.pk, 'assigned_to': self.cleaner.pk,
+            'date': self.today.isoformat(),
+        })
+        self.assertEqual(response.status_code, 403)
+        self.task.refresh_from_db()
+        self.assertIsNone(self.task.assigned_to)
+
+    def test_assignee_can_mark_done(self):
+        self.task.assigned_to = self.cleaner
+        self.task.save()
+        self.client.login(username='cleaner1', password='pw')
+        response = self.client.post(self.url, {
+            'action': 'mark_done', 'task_id': self.task.pk, 'date': self.today.isoformat(),
+        })
+        self.assertRedirects(response, f"{self.url}?date={self.today.isoformat()}")
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, 'done')
+        self.assertEqual(self.task.completed_by, self.cleaner)
+        self.assertIsNotNone(self.task.completed_at)
+
+    def test_non_assignee_cannot_mark_done(self):
+        self.task.assigned_to = self.other_cleaner
+        self.task.save()
+        self.client.login(username='cleaner1', password='pw')
+        response = self.client.post(self.url, {
+            'action': 'mark_done', 'task_id': self.task.pk, 'date': self.today.isoformat(),
+        })
+        self.assertEqual(response.status_code, 403)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, 'pending')
+
+    def test_assignable_users_excludes_accounts_without_the_role(self):
+        no_role_user = User.objects.create_user(username='noclean', password='pw', is_staff=True)
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        assignable = list(response.context['assignable_users'])
+        self.assertIn(self.cleaner, assignable)
+        self.assertNotIn(no_role_user, assignable)
 
 
 class StaffBookingLookupViewTests(TestCase):
