@@ -25,9 +25,11 @@ def migrate_all(db_path):
     print("🔄 Starting migration...")
     
     # Quick migration for each table - simplified version
+    # Manager no longer exists (folded into ManagementCompany, properties/models.py) - this
+    # already-run, one-shot import script can't be re-run unmodified.
     tables_order = [
         ('propertyAddresses', Location),
-        ('propertyManagers', Manager), 
+        ('propertyManagers', Manager),
         ('propertyOwners', Owner),
         ('propertyAccountants', Accountant),
         ('propertyPrices', Price),

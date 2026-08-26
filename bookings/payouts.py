@@ -32,7 +32,7 @@ def _round(amount):
 
 
 def _management_fee(payment_settings, booking):
-    if not booking.property.we_clean:
+    if booking.property.cleaning_company_id is None:
         return ZERO
     total = ZERO
     departure = getattr(booking, 'departure', None)

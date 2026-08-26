@@ -8,7 +8,7 @@
     <title>{{ property }} | Staff</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
-    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=5">
     <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
     <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
     <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
@@ -91,14 +91,6 @@
                                         <a href="?panel=ownership" class="staff-button staff-button-small">Change owner</a>
                                     </div>
                                 </label>
-                                <label class="staff-field">Manager
-                                    <select name="manager" class="staff-input">
-                                        <option value="">-</option>
-                                        {% for manager in managers %}
-                                        <option value="{{ manager.pk }}" {% if property.manager_id == manager.pk %}selected{% endif %}>{{ manager }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </label>
                                 <label class="staff-field">Accountant
                                     <select name="accountant" class="staff-input">
                                         <option value="">-</option>
@@ -110,11 +102,21 @@
                                 <label class="staff-field">AL number
                                     <input type="text" name="al_number" class="staff-input" value="{{ property.al_number|default:'' }}">
                                 </label>
-                                <label class="staff-checkbox-label">
-                                    <input type="checkbox" name="we_book" {% if property.we_book %}checked{% endif %}> We book
+                                <label class="staff-field">Booking company
+                                    <select name="booking_company" class="staff-input">
+                                        <option value="">-</option>
+                                        {% for company in management_companies %}
+                                        <option value="{{ company.pk }}" {% if property.booking_company_id == company.pk %}selected{% endif %}>{{ company }}</option>
+                                        {% endfor %}
+                                    </select>
                                 </label>
-                                <label class="staff-checkbox-label">
-                                    <input type="checkbox" name="we_clean" {% if property.we_clean %}checked{% endif %}> We clean
+                                <label class="staff-field">Cleaning company
+                                    <select name="cleaning_company" class="staff-input">
+                                        <option value="">-</option>
+                                        {% for company in management_companies %}
+                                        <option value="{{ company.pk }}" {% if property.cleaning_company_id == company.pk %}selected{% endif %}>{{ company }}</option>
+                                        {% endfor %}
+                                    </select>
                                 </label>
                                 <label class="staff-field">Booking.com ID
                                     <input type="text" name="booking_com_id" class="staff-input" value="{{ property.booking_com_id|default:'' }}">

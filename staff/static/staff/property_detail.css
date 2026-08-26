@@ -273,7 +273,15 @@
     margin-bottom: 12px;
 }
 
+/* border-box on both matters wherever a column also gets an explicit width (see settings.css'
+   .staff-owners-table/.staff-accountants-table/.staff-management-companies-table, and the fixed
+   column widths on the Extras catalog tables) - without it, `width: Npx` sets only the content
+   box, so each cell's own padding gets added on top of that at render time, quietly stealing a few
+   px from whichever other columns are meant to flexibly absorb the remaining space and leaving a
+   visible gap before the actions column (confirmed via direct getBoundingClientRect measurement,
+   not assumed - a "th width: 80px" cell was actually rendering 92px wide). */
 .staff-price-table th {
+    box-sizing: border-box;
     text-align: left;
     font-family: var(--secondary-font);
     font-size: 0.65rem;
@@ -287,6 +295,7 @@
 }
 
 .staff-price-table td {
+    box-sizing: border-box;
     padding: 4px;
     border-bottom: 1px solid #f2f2f2;
     color: #444;

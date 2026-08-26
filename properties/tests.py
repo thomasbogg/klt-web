@@ -10,7 +10,9 @@ from django.utils import timezone
 
 from bookings.models import Booking
 from guests.models import Guest
-from properties.models import Amenity, Location, Owner, Price, Property, PropertyOwnership, PropertySpec
+from properties.models import (
+    Amenity, Location, ManagementCompany, Owner, Price, Property, PropertyOwnership, PropertySpec,
+)
 from properties.utils import get_stay_total_price
 
 
@@ -33,9 +35,10 @@ class ReserveOwnPendingBookingTests(TestCase):
             title='Test Location', street='Test St', zip_code='0000',
             city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
         )
+        self.management_company = ManagementCompany.objects.create(name='Test Management Co')
         self.property = Property.objects.create(
             title=f'{self.location} - RETRYTEST', short_title='RETRYTEST',
-            location=self.location, we_book=True,
+            location=self.location, booking_company=self.management_company,
         )
         PropertySpec.objects.create(property=self.property, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
         self.start = date.today() + timedelta(days=330)

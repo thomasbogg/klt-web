@@ -111,6 +111,8 @@ class Command(BaseCommand):
                 )
 
     def migrate_managers(self, cursor, dry_run):
+        # Manager no longer exists at all (folded into ManagementCompany, properties/models.py) -
+        # this already-run, one-shot import script can't be re-run unmodified.
         cursor.execute("SELECT * FROM propertyManagers")
         rows = cursor.fetchall()
         
@@ -241,6 +243,9 @@ class Command(BaseCommand):
                     #price_id=row['priceId'] if row['priceId'] else None,
                     accountant_id=row['accountantId'] if row['accountantId'] else None,
                     al_number=row['alNumber'],
+                    # we_book/we_clean no longer exist on Property (replaced by
+                    # booking_company/cleaning_company FKs, see properties/models.py) - this
+                    # already-run, one-shot import script can't be re-run unmodified.
                     we_book=bool(row['weBook']),
                     booking_com_title=row['bookingComName'],
                     airbnb_title=row['airbnbName'],

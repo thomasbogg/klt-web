@@ -102,35 +102,6 @@
                     <button type="button" class="staff-button staff-button-small staff-quick-add-submit">Add owner</button>
                 </div>
 
-                <label class="staff-field">Manager
-                    <div class="staff-field-with-action">
-                        <select name="manager" class="staff-input">
-                            <option value="">-</option>
-                            {% for manager in managers %}
-                            <option value="{{ manager.pk }}">{{ manager }}</option>
-                            {% endfor %}
-                        </select>
-                        <button type="button" class="staff-button staff-button-small staff-quick-add-toggle" data-target="manager">+ New</button>
-                    </div>
-                </label>
-                <div class="staff-quick-add-panel" data-quick-add="manager" data-endpoint="{% url 'staff:quick_add' model='manager' %}">
-                    <p class="staff-quick-add-hint">Just the head contact for now - the maintenance, liaison, cleaning and finance contacts default to the same details, editable later from Django admin.</p>
-                    <label class="staff-field">Company
-                        <input type="text" data-field="company" class="staff-input">
-                    </label>
-                    <label class="staff-field">Head contact name
-                        <input type="text" data-field="head_name" class="staff-input">
-                    </label>
-                    <label class="staff-field">Head contact email
-                        <input type="email" data-field="head_email" class="staff-input">
-                    </label>
-                    <label class="staff-field">Head contact phone
-                        <input type="text" data-field="head_phone" class="staff-input">
-                    </label>
-                    <p class="staff-quick-add-error"></p>
-                    <button type="button" class="staff-button staff-button-small staff-quick-add-submit">Add manager</button>
-                </div>
-
                 <label class="staff-field">Accountant
                     <div class="staff-field-with-action">
                         <select name="accountant" class="staff-input">
@@ -161,12 +132,42 @@
                 <label class="staff-field">AL number
                     <input type="text" name="al_number" class="staff-input">
                 </label>
-                <label class="staff-checkbox-label">
-                    <input type="checkbox" name="we_book"> We book
+                <label class="staff-field">Booking company
+                    <div class="staff-field-with-action">
+                        <select name="booking_company" class="staff-input">
+                            <option value="">-</option>
+                            {% for company in management_companies %}
+                            <option value="{{ company.pk }}">{{ company }}</option>
+                            {% endfor %}
+                        </select>
+                        <button type="button" class="staff-button staff-button-small staff-quick-add-toggle" data-target="booking_company">+ New</button>
+                    </div>
                 </label>
-                <label class="staff-checkbox-label">
-                    <input type="checkbox" name="we_clean"> We clean
+                <label class="staff-field">Cleaning company
+                    <select name="cleaning_company" class="staff-input">
+                        <option value="">-</option>
+                        {% for company in management_companies %}
+                        <option value="{{ company.pk }}">{{ company }}</option>
+                        {% endfor %}
+                    </select>
                 </label>
+                <div class="staff-quick-add-panel" data-quick-add="booking_company" data-endpoint="{% url 'staff:quick_add' model='booking_company' %}">
+                    <p class="staff-quick-add-hint">Just the name and (optionally) a head contact for now - the maintenance, liaison, cleaning and finance contacts can be filled in later from Settings &gt; People.</p>
+                    <label class="staff-field">Name
+                        <input type="text" data-field="name" class="staff-input">
+                    </label>
+                    <label class="staff-field">Head contact name
+                        <input type="text" data-field="head_name" class="staff-input">
+                    </label>
+                    <label class="staff-field">Head contact email
+                        <input type="email" data-field="head_email" class="staff-input">
+                    </label>
+                    <label class="staff-field">Head contact phone
+                        <input type="text" data-field="head_phone" class="staff-input">
+                    </label>
+                    <p class="staff-quick-add-error"></p>
+                    <button type="button" class="staff-button staff-button-small staff-quick-add-submit">Add management company</button>
+                </div>
                 <label class="staff-field">Booking.com ID
                     <input type="text" name="booking_com_id" class="staff-input">
                 </label>

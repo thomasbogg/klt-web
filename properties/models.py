@@ -125,32 +125,37 @@ class LocationRules(models.Model):
     def __str__(self):
         return f"{self.location.title} - Rules"
 
-class Manager(models.Model):
-    """Property management company information."""
-    company = models.CharField(max_length=200)
-    head_name = models.CharField(max_length=200)
-    head_email = models.EmailField()
-    head_phone = models.CharField(max_length=50)
-    maintenance_name = models.CharField(max_length=200)
-    maintenance_phone = models.CharField(max_length=50)
-    maintenance_email = models.EmailField()
-    liaison_name = models.CharField(max_length=200)
-    liaison_phone = models.CharField(max_length=50)
-    liaison_email = models.EmailField()
-    cleaning_name = models.CharField(max_length=200)
-    cleaning_phone = models.CharField(max_length=50)
-    cleaning_email = models.EmailField()
-    finance_name = models.CharField(max_length=200, default="N/A")
-    finance_phone = models.CharField(max_length=50, default="N/A")
-    finance_email = models.EmailField(default="N/A")
+class ManagementCompany(models.Model):
+    """The business entity that books and/or cleans a property, tracked independently per property
+    via Property.booking_company/cleaning_company below. A company can optionally have contacts for
+    any of five roles (head/maintenance/liaison/cleaning/finance) - none are required, and a company
+    acting on a narrow scope (e.g. cleaning only) may only ever need one. An untracked/external
+    booking or cleaning party simply has no ManagementCompany row - that's what
+    Property.booking_company/cleaning_company being NULL means."""
+    name = models.CharField(max_length=200, unique=True)
+    head_name = models.CharField(max_length=200, blank=True, default='')
+    head_email = models.EmailField(blank=True, default='')
+    head_phone = models.CharField(max_length=50, blank=True, default='')
+    maintenance_name = models.CharField(max_length=200, blank=True, default='')
+    maintenance_phone = models.CharField(max_length=50, blank=True, default='')
+    maintenance_email = models.EmailField(blank=True, default='')
+    liaison_name = models.CharField(max_length=200, blank=True, default='')
+    liaison_phone = models.CharField(max_length=50, blank=True, default='')
+    liaison_email = models.EmailField(blank=True, default='')
+    cleaning_name = models.CharField(max_length=200, blank=True, default='')
+    cleaning_phone = models.CharField(max_length=50, blank=True, default='')
+    cleaning_email = models.EmailField(blank=True, default='')
+    finance_name = models.CharField(max_length=200, blank=True, default='')
+    finance_phone = models.CharField(max_length=50, blank=True, default='')
+    finance_email = models.EmailField(blank=True, default='')
 
     class Meta:
-        db_table = 'property_managers'
-        verbose_name = 'Property Manager'
-        verbose_name_plural = 'Property Managers'
+        db_table = 'management_companies'
+        verbose_name = 'Management Company'
+        verbose_name_plural = 'Management Companies'
 
     def __str__(self):
-        return f"{self.company} - {self.head_name}"
+        return self.name
 
 
 class Owner(models.Model):
@@ -200,14 +205,19 @@ class Property(models.Model):
     
     # Foreign key relationships
     owner = models.ForeignKey(Owner, on_delete=models.SET_NULL, null=True)
-    manager = models.ForeignKey(Manager, on_delete=models.SET_NULL, null=True)
     location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True)
     accountant = models.ForeignKey(Accountant, on_delete=models.SET_NULL, null=True, blank=True)
-    
+
     # Property details
     al_number = models.IntegerField(blank=True, null=True)
-    we_book = models.BooleanField(default=False)
-    we_clean = models.BooleanField(default=False)
+    # Which company (if any) actually books this property vs. cleans it. Both NULL means an
+    # untracked external party does that job.
+    booking_company = models.ForeignKey(
+        ManagementCompany, on_delete=models.SET_NULL, null=True, blank=True, related_name='booked_properties'
+    )
+    cleaning_company = models.ForeignKey(
+        ManagementCompany, on_delete=models.SET_NULL, null=True, blank=True, related_name='cleaned_properties'
+    )
     booking_com_id = models.CharField(max_length=200, blank=True, null=True)
     airbnb_id = models.CharField(max_length=200, blank=True, null=True)
     vrbo_id = models.CharField(max_length=200, blank=True, null=True)

@@ -90,7 +90,7 @@ AMENITY_BOOLEAN_FIELDS = (
 )
 
 # properties.models.Owner's boolean fields have no model-level default (a genuine choice always
-# has to be made, unlike e.g. Manager's spare contact channels), so the quick-add panel on the
+# has to be made, unlike e.g. ManagementCompany's optional contact roles), so the quick-add panel on the
 # Create Property page surfaces all of them rather than guessing - same (field, label) pattern as
 # AMENITY_BOOLEAN_FIELDS above, driving both the panel's checkboxes and StaffQuickAddView.
 OWNER_BOOLEAN_FIELDS = (

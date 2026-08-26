@@ -30,8 +30,9 @@ from bookings.utils import (
 from guests.models import Guest
 from libraries.utils import logerror
 from properties.models import (
-    Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, Manager, Owner, Price,
-    Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail, iCalLink,
+    Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
+    Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail,
+    iCalLink,
 )
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
 from staff.utils import (
@@ -242,7 +243,7 @@ class StaffPropertyListView(View):
         if location_id.isdigit():
             selected_location = locations.filter(pk=location_id).first()
 
-        properties = Property.objects.select_related('location', 'owner', 'manager').order_by('title')
+        properties = Property.objects.select_related('location', 'owner', 'booking_company', 'cleaning_company').order_by('title')
         if selected_location:
             properties = properties.filter(location=selected_location)
 
@@ -271,9 +272,9 @@ class StaffLocationListView(View):
 def _property_form_context():
     return {
         'owners': Owner.objects.order_by('name'),
-        'managers': Manager.objects.order_by('company'),
         'locations': Location.objects.order_by('title'),
         'accountants': Accountant.objects.order_by('company'),
+        'management_companies': ManagementCompany.objects.order_by('name'),
         'owner_boolean_fields': OWNER_BOOLEAN_FIELDS,
     }
 
@@ -295,12 +296,11 @@ class StaffPropertyCreateView(View):
             short_title=post.get('short_title', '').strip(),
             door_number=post.get('door_number', '').strip(),
             owner_id=post.get('owner') or None,
-            manager_id=post.get('manager') or None,
             location_id=post.get('location') or None,
             accountant_id=post.get('accountant') or None,
             al_number=_parsed_int(post.get('al_number')),
-            we_book=post.get('we_book') == 'on',
-            we_clean=post.get('we_clean') == 'on',
+            booking_company_id=post.get('booking_company') or None,
+            cleaning_company_id=post.get('cleaning_company') or None,
             booking_com_id=post.get('booking_com_id', '').strip(),
             airbnb_id=post.get('airbnb_id', '').strip(),
             vrbo_id=post.get('vrbo_id', '').strip(),
@@ -351,8 +351,8 @@ class StaffLocationCreateView(View):
 
 @method_decorator(staff_member_required, name='dispatch')
 class StaffQuickAddView(View):
-    """Backs the "+ New" quick-add panels next to the Location/Owner/Manager/Accountant dropdowns
-    on the Create Property page - fetch()-only (no full-page navigation), so creating one of these
+    """Backs the "+ New" quick-add panels next to the Location/Owner/Accountant/Management company
+    dropdowns on the Create Property page - fetch()-only (no full-page navigation), so creating one of these
     can never disturb whatever's already been typed into the rest of the Create Property form.
     Returns the new row as JSON so the calling page's <select> can just gain a new, pre-selected
     option in place. Only touches full_clean()-valid rows; unique-field clashes (e.g. a duplicate
@@ -362,8 +362,13 @@ class StaffQuickAddView(View):
         builder = {
             'location': self._build_location,
             'owner': self._build_owner,
-            'manager': self._build_manager,
             'accountant': self._build_accountant,
+            # Keyed by the FK field name it populates (booking_company), not the model class name,
+            # matching this dict's existing convention (owner/accountant/location all use their FK
+            # field name too) - the quick-add JS finds its target <select> by that same name (see
+            # property_create.js), and ManagementCompany has two candidate selects
+            # (booking_company/cleaning_company) with no single field name matching the class.
+            'booking_company': self._build_management_company,
         }.get(model)
         if builder is None:
             return JsonResponse({'error': 'Unknown type.'}, status=404)
@@ -393,23 +398,6 @@ class StaffQuickAddView(View):
             **fields,
         )
 
-    def _build_manager(self, post):
-        # "Just the essentials" - only the head contact is asked for here; the other four contact
-        # roles (maintenance/liaison/cleaning/finance) have no sensible universal default and no
-        # model-level default of their own (unlike Manager.finance_* alone), so they start out as
-        # copies of the head contact rather than being left blank/invalid. Thomas can fill in the
-        # real per-role contacts later via /admin/properties/manager/.
-        head_name = post.get('head_name', '').strip()
-        head_email = post.get('head_email', '').strip()
-        head_phone = post.get('head_phone', '').strip()
-        return Manager(
-            company=post.get('company', '').strip(),
-            head_name=head_name, head_email=head_email, head_phone=head_phone,
-            maintenance_name=head_name, maintenance_email=head_email, maintenance_phone=head_phone,
-            liaison_name=head_name, liaison_email=head_email, liaison_phone=head_phone,
-            cleaning_name=head_name, cleaning_email=head_email, cleaning_phone=head_phone,
-            finance_name=head_name, finance_email=head_email, finance_phone=head_phone,
-        )
 
     def _build_accountant(self, post):
         return Accountant(
@@ -417,6 +405,18 @@ class StaffQuickAddView(View):
             name=post.get('name', '').strip(),
             email=post.get('email', '').strip(),
             phone=post.get('phone', '').strip(),
+        )
+
+    def _build_management_company(self, post):
+        # Just the essentials here (name + optionally a head contact) - the other four contact
+        # roles (maintenance/liaison/cleaning/finance) are genuinely optional and left blank until
+        # filled in later via Settings > People, rather than defaulting to a copy of the head
+        # contact (every role can differ, or simply not apply, depending on the company's scope).
+        return ManagementCompany(
+            name=post.get('name', '').strip(),
+            head_name=post.get('head_name', '').strip(),
+            head_email=post.get('head_email', '').strip(),
+            head_phone=post.get('head_phone', '').strip(),
         )
 
 
@@ -430,18 +430,18 @@ class StaffSettingsView(View):
     Django User management only (list/add accounts, toggle is_staff/is_superuser/is_active) -
     there's no existing role/permission concept anywhere in the app to build real roles on top
     of, and Thomas asked for this scope specifically rather than a new Role model. People gives
-    Owner/Manager/Accountant full CRUD (previously select-only on the Property forms, see
-    StaffQuickAddView) via the same inline-edit-plus-blank-bottom-row table pattern as Extras'
-    catalog lists - Manager's table shows the head contact inline, with the other four contact
-    roles (maintenance/liaison/cleaning/finance) editable via a per-row "More fields" toggle
-    (staff-manager-details-row, see settings.html/settings.js) rather than a table column each,
-    since 5 roles x 3 fields doesn't fit a table row; left blank on add they still default to a
-    copy of the head contact. Each of the three tables also shows a live count of properties
-    currently pointing at that row and warns (client-side, settings.js) before a delete that would
-    orphan them, since Property's owner/manager/accountant FKs are SET_NULL rather than
-    protected. Payments is a new PaymentSettings singleton storing default owner-payout/commission
-    percentages that nothing else in the app reads yet - a deliberate starting point, not a
-    finished payout system."""
+    Owner/Accountant/Management company full CRUD (previously select-only on the Property forms,
+    see StaffQuickAddView) via the same inline-edit-plus-blank-bottom-row table pattern as Extras'
+    catalog lists - Management company's table shows the head contact inline, with the other four
+    contact roles (maintenance/liaison/cleaning/finance) editable via a per-row "More fields"
+    toggle (staff-management-company-details-row, see settings.html/settings.js) rather than a
+    table column each, since 5 roles x 3 fields doesn't fit a table row; every role is genuinely
+    optional, left blank until filled in. Each of these tables also shows a live count of
+    properties currently pointing at that row and warns (client-side, settings.js) before a delete
+    that would orphan them, since Property's owner/accountant FKs and ManagementCompany's
+    booking/cleaning FKs are all SET_NULL rather than protected. Payments is a new PaymentSettings
+    singleton storing default owner-payout/commission percentages that nothing else in the app
+    reads yet - a deliberate starting point, not a finished payout system."""
     template_name = 'staff/settings.html'
     PANELS = ('bookings', 'extras', 'staff', 'people', 'payments')
     ACTION_PANELS = {
@@ -464,12 +464,12 @@ class StaffSettingsView(View):
         'add_owner': 'people',
         'update_owner': 'people',
         'delete_owner': 'people',
-        'add_manager': 'people',
-        'update_manager': 'people',
-        'delete_manager': 'people',
         'add_accountant': 'people',
         'update_accountant': 'people',
         'delete_accountant': 'people',
+        'add_management_company': 'people',
+        'update_management_company': 'people',
+        'delete_management_company': 'people',
         'update_payment_settings': 'payments',
     }
 
@@ -500,12 +500,12 @@ class StaffSettingsView(View):
             'add_owner': self._add_owner,
             'update_owner': self._update_owner,
             'delete_owner': self._delete_owner,
-            'add_manager': self._add_manager,
-            'update_manager': self._update_manager,
-            'delete_manager': self._delete_manager,
             'add_accountant': self._add_accountant,
             'update_accountant': self._update_accountant,
             'delete_accountant': self._delete_accountant,
+            'add_management_company': self._add_management_company,
+            'update_management_company': self._update_management_company,
+            'delete_management_company': self._delete_management_company,
             'update_payment_settings': self._update_payment_settings,
         }.get(action)
         if handler is not None:
@@ -527,15 +527,29 @@ class StaffSettingsView(View):
             'welcome_pack_categories': WelcomePackItem.Category.choices,
             'request_types': RequestType.objects.all(),
             'staff_users': User.objects.order_by('username'),
-            # property_count (via the reverse FK's default accessor - Property.owner/manager/
-            # accountant have no related_name) drives the confirm-before-delete warning in
-            # settings.js, so staff can see how many properties would be orphaned (SET_NULL, not
-            # blocked) before deleting one of these.
+            # property_count (via the reverse FK's default accessor - Property.owner/accountant
+            # have no related_name) drives the confirm-before-delete warning in settings.js, so
+            # staff can see how many properties would be orphaned (SET_NULL, not blocked) before
+            # deleting one of these.
             'owners': Owner.objects.annotate(property_count=Count('property')).order_by('name'),
-            'managers': Manager.objects.annotate(property_count=Count('property')).order_by('company'),
             'accountants': Accountant.objects.annotate(property_count=Count('property')).order_by('company'),
+            'management_companies': self._management_companies_with_property_count(),
             'owner_boolean_fields': OWNER_BOOLEAN_FIELDS,
         }
+
+    def _management_companies_with_property_count(self):
+        # A company's booking_properties/cleaning_properties can genuinely overlap (the common
+        # case: one company both books and cleans the same property) - counting each relation
+        # separately and summing them (Count('booked_properties') + Count('cleaned_properties'))
+        # would double-count that property. Computed in Python per company (cheap at this app's
+        # scale) rather than one annotated queryset, since a single Count() can't express "distinct
+        # properties across either of two separate reverse FKs" without a subquery.
+        companies = list(ManagementCompany.objects.order_by('name'))
+        for company in companies:
+            company.property_count = Property.objects.filter(
+                Q(booking_company=company) | Q(cleaning_company=company)
+            ).distinct().count()
+        return companies
 
     # --- Bookings ---
 
@@ -769,7 +783,7 @@ class StaffSettingsView(View):
         user.save()
         messages.success(request, f'"{user.username}" updated.')
 
-    # --- People (Owners / Managers / Accountants) ---
+    # --- People (Owners / Accountants / Management companies) ---
 
     def _add_owner(self, request):
         post = request.POST
@@ -824,62 +838,6 @@ class StaffSettingsView(View):
             return
         messages.success(request, "Owner deleted.")
 
-    # The four non-head contact roles (each name/email/phone), used both to build a new Manager
-    # and to update an existing one - the Settings table only shows the head contact inline, with
-    # these tucked behind each row's "More fields" toggle (see staff-manager-details-row in
-    # settings.html / settings.js).
-    MANAGER_CONTACT_ROLES = ('maintenance', 'liaison', 'cleaning', 'finance')
-
-    def _add_manager(self, request):
-        # Same head-contact-first spirit as StaffQuickAddView._build_manager, extended: any of the
-        # other four contacts left blank falls back to a copy of the head contact (no sensible
-        # universal default otherwise), but a staff member can now fill them in directly via the
-        # "More fields" toggle on the blank add row instead of only editing them later in Django
-        # admin.
-        post = request.POST
-        head_name = post.get('head_name', '').strip()
-        head_email = post.get('head_email', '').strip()
-        head_phone = post.get('head_phone', '').strip()
-        fields = {'head_name': head_name, 'head_email': head_email, 'head_phone': head_phone}
-        for role in self.MANAGER_CONTACT_ROLES:
-            fields[f'{role}_name'] = post.get(f'{role}_name', '').strip() or head_name
-            fields[f'{role}_email'] = post.get(f'{role}_email', '').strip() or head_email
-            fields[f'{role}_phone'] = post.get(f'{role}_phone', '').strip() or head_phone
-        manager = Manager(company=post.get('company', '').strip(), **fields)
-        try:
-            manager.full_clean()
-        except ValidationError as error:
-            _flash_validation_error(request, error)
-            return
-        manager.save()
-        messages.success(request, "Manager added.")
-
-    def _update_manager(self, request):
-        manager = Manager.objects.filter(pk=request.POST.get('manager_id')).first()
-        if manager is None:
-            messages.error(request, "That manager no longer exists.")
-            return
-        post = request.POST
-        manager.company = post.get('company', '').strip()
-        manager.head_name = post.get('head_name', '').strip()
-        manager.head_email = post.get('head_email', '').strip()
-        manager.head_phone = post.get('head_phone', '').strip()
-        for role in self.MANAGER_CONTACT_ROLES:
-            setattr(manager, f'{role}_name', post.get(f'{role}_name', '').strip())
-            setattr(manager, f'{role}_email', post.get(f'{role}_email', '').strip())
-            setattr(manager, f'{role}_phone', post.get(f'{role}_phone', '').strip())
-        try:
-            manager.full_clean()
-        except ValidationError as error:
-            _flash_validation_error(request, error)
-            return
-        manager.save()
-        messages.success(request, "Manager updated.")
-
-    def _delete_manager(self, request):
-        Manager.objects.filter(pk=request.POST.get('manager_id')).delete()
-        messages.success(request, "Manager deleted.")
-
     def _add_accountant(self, request):
         post = request.POST
         accountant = Accountant(
@@ -917,6 +875,55 @@ class StaffSettingsView(View):
     def _delete_accountant(self, request):
         Accountant.objects.filter(pk=request.POST.get('accountant_id')).delete()
         messages.success(request, "Accountant deleted.")
+
+    # Every one of the 5 contact roles (each name/email/phone) is genuinely optional - a company
+    # acting on a narrow scope (e.g. cleaning only) may only ever fill in one. The Settings table
+    # only shows the head contact inline, with the other four tucked behind each row's "More
+    # fields" toggle (see staff-management-company-details-row in settings.html / settings.js).
+    MANAGEMENT_COMPANY_CONTACT_ROLES = ('head', 'maintenance', 'liaison', 'cleaning', 'finance')
+
+    def _add_management_company(self, request):
+        post = request.POST
+        fields = {'name': post.get('name', '').strip()}
+        for role in self.MANAGEMENT_COMPANY_CONTACT_ROLES:
+            fields[f'{role}_name'] = post.get(f'{role}_name', '').strip()
+            fields[f'{role}_email'] = post.get(f'{role}_email', '').strip()
+            fields[f'{role}_phone'] = post.get(f'{role}_phone', '').strip()
+        company = ManagementCompany(**fields)
+        try:
+            company.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        company.save()
+        messages.success(request, "Management company added.")
+
+    def _update_management_company(self, request):
+        company = ManagementCompany.objects.filter(pk=request.POST.get('management_company_id')).first()
+        if company is None:
+            messages.error(request, "That management company no longer exists.")
+            return
+        post = request.POST
+        company.name = post.get('name', '').strip()
+        for role in self.MANAGEMENT_COMPANY_CONTACT_ROLES:
+            setattr(company, f'{role}_name', post.get(f'{role}_name', '').strip())
+            setattr(company, f'{role}_email', post.get(f'{role}_email', '').strip())
+            setattr(company, f'{role}_phone', post.get(f'{role}_phone', '').strip())
+        try:
+            company.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        company.save()
+        messages.success(request, "Management company updated.")
+
+    def _delete_management_company(self, request):
+        company = ManagementCompany.objects.filter(pk=request.POST.get('management_company_id')).first()
+        if company is None:
+            messages.error(request, "That management company no longer exists.")
+            return
+        company.delete()
+        messages.success(request, "Management company deleted.")
 
     # --- Payments ---
 
@@ -1055,12 +1062,11 @@ class StaffPropertyDetailView(View):
         # No owner field here deliberately - Property.owner only ever changes via
         # PropertyOwnership.record_handover() (see the Ownership tab / _record_handover below),
         # so ownership history can never silently drift out of sync with it.
-        property.manager_id = post.get('manager') or None
         property.location_id = post.get('location') or None
         property.accountant_id = post.get('accountant') or None
         property.al_number = _parsed_int(post.get('al_number'))
-        property.we_book = post.get('we_book') == 'on'
-        property.we_clean = post.get('we_clean') == 'on'
+        property.booking_company_id = post.get('booking_company') or None
+        property.cleaning_company_id = post.get('cleaning_company') or None
         property.booking_com_id = post.get('booking_com_id', '').strip()
         property.airbnb_id = post.get('airbnb_id', '').strip()
         property.vrbo_id = post.get('vrbo_id', '').strip()

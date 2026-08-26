@@ -21,7 +21,9 @@ from bookings.utils import (
 )
 from bookings.templatetags.bookings_extras import linkify
 from guests.models import Guest
-from properties.models import Amenity, Location, LocationRules, Owner, Price, Property, PropertySpec, iCalLink
+from properties.models import (
+    Amenity, Location, LocationRules, ManagementCompany, Owner, Price, Property, PropertySpec, iCalLink,
+)
 
 
 def _normalized_text(response):
@@ -333,8 +335,9 @@ class ComputeOwnerPayoutTests(TestCase):
             cleans_are_invoiced=False, rental_commissions_are_invoiced=False,
             is_paid_regularly=True,
         )
+        self.management_company = ManagementCompany.objects.create(name='Test Management Co')
         self.property = Property.objects.create(
-            title='Payout Property', short_title='PAYOUTPROP', owner=self.owner, we_clean=False,
+            title='Payout Property', short_title='PAYOUTPROP', owner=self.owner, cleaning_company=None,
         )
         PropertySpec.objects.create(property=self.property, bedrooms=2)
         self.guest = Guest.objects.create(first_name='Pay', last_name='Out', email='payout-guest@example.com')
@@ -474,7 +477,7 @@ class ComputeOwnerPayoutTests(TestCase):
         self.assertEqual(result['management_fee'], Decimal('0'))
 
     def test_management_fee_includes_cleaning_and_multi_bedroom_surcharge(self):
-        self.property.we_clean = True
+        self.property.cleaning_company = self.management_company
         self.property.standard_cleaning_fee = Decimal('80.00')
         self.property.save()
         booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
@@ -484,7 +487,7 @@ class ComputeOwnerPayoutTests(TestCase):
         self.assertEqual(result['management_fee'], Decimal('95.00'))  # 80 + 15 (multi-bedroom)
 
     def test_management_fee_high_occupancy_surcharge(self):
-        self.property.we_clean = True
+        self.property.cleaning_company = self.management_company
         self.property.standard_cleaning_fee = Decimal('80.00')
         self.property.save()
         booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20), adults=5)  # 5 guests / 2 bedrooms > 2
@@ -494,7 +497,7 @@ class ComputeOwnerPayoutTests(TestCase):
         self.assertEqual(result['management_fee'], Decimal('110.00'))  # 80 + 15 + 15 (high occupancy)
 
     def test_management_fee_includes_meet_greet(self):
-        self.property.we_clean = True
+        self.property.cleaning_company = self.management_company
         self.property.save()
         booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
         Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
@@ -503,7 +506,7 @@ class ComputeOwnerPayoutTests(TestCase):
         self.assertEqual(result['management_fee'], Decimal('28.00'))
 
     def test_management_fee_zero_without_arrival_or_departure_rows(self):
-        self.property.we_clean = True
+        self.property.cleaning_company = self.management_company
         self.property.save()
         booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20))
         Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))

@@ -39,7 +39,7 @@
                         <th>Property</th>
                         <th>Location</th>
                         <th>Owner</th>
-                        <th>Manager</th>
+                        <th>Booking company</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -48,7 +48,7 @@
                         <td><a href="{% url 'staff:property_detail' pk=property.pk %}">{{ property }}</a></td>
                         <td>{{ property.location|default:"" }}</td>
                         <td>{{ property.owner|default:"" }}</td>
-                        <td>{{ property.manager|default:"" }}</td>
+                        <td>{{ property.booking_company|default:"" }}</td>
                     </tr>
                     {% empty %}
                     <tr><td colspan="4" class="staff-empty">No properties match this filter.</td></tr>

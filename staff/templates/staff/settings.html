@@ -7,8 +7,8 @@
     <title>Settings | Staff</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
-    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}">
-    <link rel="stylesheet" href="{% static 'staff/settings.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=5">
+    <link rel="stylesheet" href="{% static 'staff/settings.css' %}?v=5">
     <script src="{% static 'staff/settings.js' %}" defer></script>
 </head>
 <body>
@@ -455,7 +455,7 @@
                     <div class="staff-panel">
                         <h2 class="staff-panel-title">Owners</h2>
                         <div class="staff-table-scroll">
-                        <table class="staff-price-table staff-owners-table">
+                        <table class="staff-price-table staff-owners-table{% if not owners %} staff-price-table-empty{% endif %}">
                             <thead>
                                 <tr>
                                     <th>Name</th><th>Email</th><th>Phone</th><th>NIF</th>
@@ -520,123 +520,8 @@
                     </div>
 
                     <div class="staff-panel">
-                        <h2 class="staff-panel-title">Managers</h2>
-                        <p class="staff-settings-hint">The head contact is shown inline - use "More fields" to open the maintenance, liaison, cleaning and finance contacts for that same row. Left blank when adding a manager, they default to a copy of the head contact.</p>
-                        <table class="staff-price-table staff-managers-table">
-                            <thead>
-                                <tr><th>Company</th><th>Head name</th><th>Head email</th><th>Head phone</th><th title="Number of properties currently assigned to this manager">Properties</th><th></th></tr>
-                            </thead>
-                            <tbody>
-                                {% for manager in managers %}
-                                <tr>
-                                    <td><input type="text" name="company" form="manager-form-{{ manager.pk }}" value="{{ manager.company }}" class="staff-input"></td>
-                                    <td><input type="text" name="head_name" form="manager-form-{{ manager.pk }}" value="{{ manager.head_name }}" class="staff-input"></td>
-                                    <td><input type="email" name="head_email" form="manager-form-{{ manager.pk }}" value="{{ manager.head_email }}" class="staff-input"></td>
-                                    <td><input type="text" name="head_phone" form="manager-form-{{ manager.pk }}" value="{{ manager.head_phone }}" class="staff-input"></td>
-                                    <td class="staff-property-count-cell">{{ manager.property_count }}</td>
-                                    <td class="staff-price-row-actions">
-                                        <button type="button" class="staff-button staff-button-small staff-row-expand-toggle" data-target="manager-details-{{ manager.pk }}">More fields</button>
-                                        <button type="submit" form="manager-form-{{ manager.pk }}" class="staff-button staff-button-small">Save</button>
-                                        <form method="post" class="staff-inline-delete staff-confirm-delete" data-property-count="{{ manager.property_count }}" data-entity-label="{{ manager }}" data-role-label="manager">
-                                            {% csrf_token %}
-                                            <input type="hidden" name="action" value="delete_manager">
-                                            <input type="hidden" name="manager_id" value="{{ manager.pk }}">
-                                            <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
-                                        </form>
-                                    </td>
-                                </tr>
-                                <tr class="staff-manager-details-row" id="manager-details-{{ manager.pk }}" hidden>
-                                    <td colspan="6">
-                                        <div class="staff-manager-contacts-grid">
-                                            <div class="staff-manager-contact-group">
-                                                <h4 class="staff-manager-contact-title">Maintenance</h4>
-                                                <label class="staff-field">Name<input type="text" name="maintenance_name" form="manager-form-{{ manager.pk }}" value="{{ manager.maintenance_name }}" class="staff-input"></label>
-                                                <label class="staff-field">Email<input type="email" name="maintenance_email" form="manager-form-{{ manager.pk }}" value="{{ manager.maintenance_email }}" class="staff-input"></label>
-                                                <label class="staff-field">Phone<input type="text" name="maintenance_phone" form="manager-form-{{ manager.pk }}" value="{{ manager.maintenance_phone }}" class="staff-input"></label>
-                                            </div>
-                                            <div class="staff-manager-contact-group">
-                                                <h4 class="staff-manager-contact-title">Liaison</h4>
-                                                <label class="staff-field">Name<input type="text" name="liaison_name" form="manager-form-{{ manager.pk }}" value="{{ manager.liaison_name }}" class="staff-input"></label>
-                                                <label class="staff-field">Email<input type="email" name="liaison_email" form="manager-form-{{ manager.pk }}" value="{{ manager.liaison_email }}" class="staff-input"></label>
-                                                <label class="staff-field">Phone<input type="text" name="liaison_phone" form="manager-form-{{ manager.pk }}" value="{{ manager.liaison_phone }}" class="staff-input"></label>
-                                            </div>
-                                            <div class="staff-manager-contact-group">
-                                                <h4 class="staff-manager-contact-title">Cleaning</h4>
-                                                <label class="staff-field">Name<input type="text" name="cleaning_name" form="manager-form-{{ manager.pk }}" value="{{ manager.cleaning_name }}" class="staff-input"></label>
-                                                <label class="staff-field">Email<input type="email" name="cleaning_email" form="manager-form-{{ manager.pk }}" value="{{ manager.cleaning_email }}" class="staff-input"></label>
-                                                <label class="staff-field">Phone<input type="text" name="cleaning_phone" form="manager-form-{{ manager.pk }}" value="{{ manager.cleaning_phone }}" class="staff-input"></label>
-                                            </div>
-                                            <div class="staff-manager-contact-group">
-                                                <h4 class="staff-manager-contact-title">Finance</h4>
-                                                <label class="staff-field">Name<input type="text" name="finance_name" form="manager-form-{{ manager.pk }}" value="{{ manager.finance_name }}" class="staff-input"></label>
-                                                <label class="staff-field">Email<input type="email" name="finance_email" form="manager-form-{{ manager.pk }}" value="{{ manager.finance_email }}" class="staff-input"></label>
-                                                <label class="staff-field">Phone<input type="text" name="finance_phone" form="manager-form-{{ manager.pk }}" value="{{ manager.finance_phone }}" class="staff-input"></label>
-                                            </div>
-                                        </div>
-                                    </td>
-                                </tr>
-                                {% empty %}
-                                <tr><td colspan="6" class="staff-empty">No managers yet.</td></tr>
-                                {% endfor %}
-                                <tr class="staff-price-row-new">
-                                    <td><input type="text" name="company" form="manager-form-new" class="staff-input"></td>
-                                    <td><input type="text" name="head_name" form="manager-form-new" class="staff-input"></td>
-                                    <td><input type="email" name="head_email" form="manager-form-new" class="staff-input"></td>
-                                    <td><input type="text" name="head_phone" form="manager-form-new" class="staff-input"></td>
-                                    <td></td>
-                                    <td class="staff-price-row-actions">
-                                        <button type="button" class="staff-button staff-button-small staff-row-expand-toggle" data-target="manager-details-new">More fields</button>
-                                        <button type="submit" form="manager-form-new" class="staff-button staff-button-small">Add</button>
-                                    </td>
-                                </tr>
-                                <tr class="staff-manager-details-row" id="manager-details-new" hidden>
-                                    <td colspan="6">
-                                        <div class="staff-manager-contacts-grid">
-                                            <div class="staff-manager-contact-group">
-                                                <h4 class="staff-manager-contact-title">Maintenance</h4>
-                                                <label class="staff-field">Name<input type="text" name="maintenance_name" form="manager-form-new" class="staff-input"></label>
-                                                <label class="staff-field">Email<input type="email" name="maintenance_email" form="manager-form-new" class="staff-input"></label>
-                                                <label class="staff-field">Phone<input type="text" name="maintenance_phone" form="manager-form-new" class="staff-input"></label>
-                                            </div>
-                                            <div class="staff-manager-contact-group">
-                                                <h4 class="staff-manager-contact-title">Liaison</h4>
-                                                <label class="staff-field">Name<input type="text" name="liaison_name" form="manager-form-new" class="staff-input"></label>
-                                                <label class="staff-field">Email<input type="email" name="liaison_email" form="manager-form-new" class="staff-input"></label>
-                                                <label class="staff-field">Phone<input type="text" name="liaison_phone" form="manager-form-new" class="staff-input"></label>
-                                            </div>
-                                            <div class="staff-manager-contact-group">
-                                                <h4 class="staff-manager-contact-title">Cleaning</h4>
-                                                <label class="staff-field">Name<input type="text" name="cleaning_name" form="manager-form-new" class="staff-input"></label>
-                                                <label class="staff-field">Email<input type="email" name="cleaning_email" form="manager-form-new" class="staff-input"></label>
-                                                <label class="staff-field">Phone<input type="text" name="cleaning_phone" form="manager-form-new" class="staff-input"></label>
-                                            </div>
-                                            <div class="staff-manager-contact-group">
-                                                <h4 class="staff-manager-contact-title">Finance</h4>
-                                                <label class="staff-field">Name<input type="text" name="finance_name" form="manager-form-new" class="staff-input"></label>
-                                                <label class="staff-field">Email<input type="email" name="finance_email" form="manager-form-new" class="staff-input"></label>
-                                                <label class="staff-field">Phone<input type="text" name="finance_phone" form="manager-form-new" class="staff-input"></label>
-                                            </div>
-                                        </div>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                        {% for manager in managers %}
-                        <form method="post" id="manager-form-{{ manager.pk }}">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="update_manager">
-                            <input type="hidden" name="manager_id" value="{{ manager.pk }}">
-                        </form>
-                        {% endfor %}
-                        <form method="post" id="manager-form-new">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="add_manager">
-                        </form>
-                    </div>
-
-                    <div class="staff-panel">
                         <h2 class="staff-panel-title">Accountants</h2>
-                        <table class="staff-price-table staff-accountants-table">
+                        <table class="staff-price-table staff-accountants-table{% if not accountants %} staff-price-table-empty{% endif %}">
                             <thead>
                                 <tr><th>Company</th><th>Name</th><th>Email</th><th>Phone</th><th title="Number of properties currently assigned to this accountant">Properties</th><th></th></tr>
                             </thead>
@@ -683,6 +568,121 @@
                         <form method="post" id="accountant-form-new">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="add_accountant">
+                        </form>
+                    </div>
+
+                    <div class="staff-panel">
+                        <h2 class="staff-panel-title">Management companies</h2>
+                        <p class="staff-settings-hint">The head contact is shown inline - use "More fields" to open the maintenance, liaison, cleaning and finance contacts for that same row. Every contact is optional - fill in only the roles that apply to this company's scope.</p>
+                        <table class="staff-price-table staff-management-companies-table{% if not management_companies %} staff-price-table-empty{% endif %}">
+                            <thead>
+                                <tr><th>Name</th><th>Head name</th><th>Head email</th><th>Head phone</th><th title="Number of properties currently booked or cleaned by this company">Properties</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                {% for company in management_companies %}
+                                <tr>
+                                    <td><input type="text" name="name" form="management-company-form-{{ company.pk }}" value="{{ company.name }}" class="staff-input"></td>
+                                    <td><input type="text" name="head_name" form="management-company-form-{{ company.pk }}" value="{{ company.head_name }}" class="staff-input"></td>
+                                    <td><input type="email" name="head_email" form="management-company-form-{{ company.pk }}" value="{{ company.head_email }}" class="staff-input"></td>
+                                    <td><input type="text" name="head_phone" form="management-company-form-{{ company.pk }}" value="{{ company.head_phone }}" class="staff-input"></td>
+                                    <td class="staff-property-count-cell">{{ company.property_count }}</td>
+                                    <td class="staff-price-row-actions">
+                                        <button type="button" class="staff-button staff-button-small staff-row-expand-toggle" data-target="management-company-details-{{ company.pk }}">More fields</button>
+                                        <button type="submit" form="management-company-form-{{ company.pk }}" class="staff-button staff-button-small">Save</button>
+                                        <form method="post" class="staff-inline-delete staff-confirm-delete" data-property-count="{{ company.property_count }}" data-entity-label="{{ company }}" data-role-label="management company">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="delete_management_company">
+                                            <input type="hidden" name="management_company_id" value="{{ company.pk }}">
+                                            <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                <tr class="staff-management-company-details-row" id="management-company-details-{{ company.pk }}" hidden>
+                                    <td colspan="6">
+                                        <div class="staff-manager-contacts-grid">
+                                            <div class="staff-manager-contact-group">
+                                                <h4 class="staff-manager-contact-title">Maintenance</h4>
+                                                <label class="staff-field">Name<input type="text" name="maintenance_name" form="management-company-form-{{ company.pk }}" value="{{ company.maintenance_name }}" class="staff-input"></label>
+                                                <label class="staff-field">Email<input type="email" name="maintenance_email" form="management-company-form-{{ company.pk }}" value="{{ company.maintenance_email }}" class="staff-input"></label>
+                                                <label class="staff-field">Phone<input type="text" name="maintenance_phone" form="management-company-form-{{ company.pk }}" value="{{ company.maintenance_phone }}" class="staff-input"></label>
+                                            </div>
+                                            <div class="staff-manager-contact-group">
+                                                <h4 class="staff-manager-contact-title">Liaison</h4>
+                                                <label class="staff-field">Name<input type="text" name="liaison_name" form="management-company-form-{{ company.pk }}" value="{{ company.liaison_name }}" class="staff-input"></label>
+                                                <label class="staff-field">Email<input type="email" name="liaison_email" form="management-company-form-{{ company.pk }}" value="{{ company.liaison_email }}" class="staff-input"></label>
+                                                <label class="staff-field">Phone<input type="text" name="liaison_phone" form="management-company-form-{{ company.pk }}" value="{{ company.liaison_phone }}" class="staff-input"></label>
+                                            </div>
+                                            <div class="staff-manager-contact-group">
+                                                <h4 class="staff-manager-contact-title">Cleaning</h4>
+                                                <label class="staff-field">Name<input type="text" name="cleaning_name" form="management-company-form-{{ company.pk }}" value="{{ company.cleaning_name }}" class="staff-input"></label>
+                                                <label class="staff-field">Email<input type="email" name="cleaning_email" form="management-company-form-{{ company.pk }}" value="{{ company.cleaning_email }}" class="staff-input"></label>
+                                                <label class="staff-field">Phone<input type="text" name="cleaning_phone" form="management-company-form-{{ company.pk }}" value="{{ company.cleaning_phone }}" class="staff-input"></label>
+                                            </div>
+                                            <div class="staff-manager-contact-group">
+                                                <h4 class="staff-manager-contact-title">Finance</h4>
+                                                <label class="staff-field">Name<input type="text" name="finance_name" form="management-company-form-{{ company.pk }}" value="{{ company.finance_name }}" class="staff-input"></label>
+                                                <label class="staff-field">Email<input type="email" name="finance_email" form="management-company-form-{{ company.pk }}" value="{{ company.finance_email }}" class="staff-input"></label>
+                                                <label class="staff-field">Phone<input type="text" name="finance_phone" form="management-company-form-{{ company.pk }}" value="{{ company.finance_phone }}" class="staff-input"></label>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="6" class="staff-empty">No management companies yet.</td></tr>
+                                {% endfor %}
+                                <tr class="staff-price-row-new">
+                                    <td><input type="text" name="name" form="management-company-form-new" class="staff-input"></td>
+                                    <td><input type="text" name="head_name" form="management-company-form-new" class="staff-input"></td>
+                                    <td><input type="email" name="head_email" form="management-company-form-new" class="staff-input"></td>
+                                    <td><input type="text" name="head_phone" form="management-company-form-new" class="staff-input"></td>
+                                    <td></td>
+                                    <td class="staff-price-row-actions">
+                                        <button type="button" class="staff-button staff-button-small staff-row-expand-toggle" data-target="management-company-details-new">More fields</button>
+                                        <button type="submit" form="management-company-form-new" class="staff-button staff-button-small">Add</button>
+                                    </td>
+                                </tr>
+                                <tr class="staff-management-company-details-row" id="management-company-details-new" hidden>
+                                    <td colspan="6">
+                                        <div class="staff-manager-contacts-grid">
+                                            <div class="staff-manager-contact-group">
+                                                <h4 class="staff-manager-contact-title">Maintenance</h4>
+                                                <label class="staff-field">Name<input type="text" name="maintenance_name" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Email<input type="email" name="maintenance_email" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Phone<input type="text" name="maintenance_phone" form="management-company-form-new" class="staff-input"></label>
+                                            </div>
+                                            <div class="staff-manager-contact-group">
+                                                <h4 class="staff-manager-contact-title">Liaison</h4>
+                                                <label class="staff-field">Name<input type="text" name="liaison_name" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Email<input type="email" name="liaison_email" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Phone<input type="text" name="liaison_phone" form="management-company-form-new" class="staff-input"></label>
+                                            </div>
+                                            <div class="staff-manager-contact-group">
+                                                <h4 class="staff-manager-contact-title">Cleaning</h4>
+                                                <label class="staff-field">Name<input type="text" name="cleaning_name" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Email<input type="email" name="cleaning_email" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Phone<input type="text" name="cleaning_phone" form="management-company-form-new" class="staff-input"></label>
+                                            </div>
+                                            <div class="staff-manager-contact-group">
+                                                <h4 class="staff-manager-contact-title">Finance</h4>
+                                                <label class="staff-field">Name<input type="text" name="finance_name" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Email<input type="email" name="finance_email" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Phone<input type="text" name="finance_phone" form="management-company-form-new" class="staff-input"></label>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        {% for company in management_companies %}
+                        <form method="post" id="management-company-form-{{ company.pk }}">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_management_company">
+                            <input type="hidden" name="management_company_id" value="{{ company.pk }}">
+                        </form>
+                        {% endfor %}
+                        <form method="post" id="management-company-form-new">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="add_management_company">
                         </form>
                     </div>
                 </section>

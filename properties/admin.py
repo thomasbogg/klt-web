@@ -17,7 +17,7 @@ NARROW_FIELD_WIDTHS = {
 
 # Register your models here.
 from .models import (
-    Property, Price, Location, Owner, Manager, Accountant, PropertyOwnership,
+    Property, Price, Location, Owner, Accountant, ManagementCompany, PropertyOwnership,
     Amenity, PropertySpec, SEFDetail, iCalLink, PropertyImage,
     LocationImage, LocationSpec, LocationRules,
 )
@@ -137,5 +137,5 @@ admin.site.register(Property, PropertyAdmin)
 admin.site.register(Price, PriceAdmin)
 admin.site.register(Location, LocationAdmin)
 admin.site.register(Owner)
-admin.site.register(Manager)
 admin.site.register(Accountant)
+admin.site.register(ManagementCompany)

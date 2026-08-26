@@ -15,8 +15,9 @@ from bookings.models import (
 )
 from guests.models import Guest
 from properties.models import (
-    Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, Manager, Owner, Price,
-    Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail, iCalLink,
+    Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
+    Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail,
+    iCalLink,
 )
 from staff.models import Deduction, OwnerPayment, TaskHistoryEntry
 from staff.utils import booking_stage, next_step_hint, status_bucket
@@ -34,18 +35,6 @@ def make_owner(**overrides):
     return Owner.objects.create(**defaults)
 
 
-def make_manager(**overrides):
-    defaults = dict(
-        company='Test Management Co', head_name='Head Person', head_email='head@example.com',
-        head_phone='+351900000001', maintenance_name='Maint Person', maintenance_phone='+351900000002',
-        maintenance_email='maint@example.com', liaison_name='Liaison Person', liaison_phone='+351900000003',
-        liaison_email='liaison@example.com', cleaning_name='Cleaning Person', cleaning_phone='+351900000004',
-        cleaning_email='cleaning@example.com',
-    )
-    defaults.update(overrides)
-    return Manager.objects.create(**defaults)
-
-
 def make_accountant(**overrides):
     defaults = dict(
         company='Test Accounting Co', name='Accountant Person', email='accountant@example.com',
@@ -53,6 +42,12 @@ def make_accountant(**overrides):
     )
     defaults.update(overrides)
     return Accountant.objects.create(**defaults)
+
+
+def make_management_company(**overrides):
+    defaults = dict(name='Test Management Co')
+    defaults.update(overrides)
+    return ManagementCompany.objects.create(**defaults)
 
 
 def make_location(**overrides):
@@ -1077,10 +1072,10 @@ class StaffPropertyCreateViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_post_creates_property_and_redirects_to_detail(self):
-        owner, manager, location = make_owner(), make_manager(), make_location()
+        owner, location = make_owner(), make_location()
         response = self.client.post(self.url, {
             'title': 'Brand New Property', 'short_title': 'BRANDNEW', 'al_number': '12345',
-            'owner': owner.pk, 'manager': manager.pk, 'location': location.pk,
+            'owner': owner.pk, 'location': location.pk,
             'standard_cleaning_fee': '75.00',
         })
         property = Property.objects.get(short_title='BRANDNEW')
@@ -1092,25 +1087,66 @@ class StaffPropertyCreateViewTests(TestCase):
         self.assertIsNone(ownership.start_date)
         self.assertIsNone(ownership.end_date)
 
-    def test_post_missing_owner_manager_location_shows_error_and_does_not_create(self):
-        """owner/manager/location are DB-nullable but not blank=True, so Django's own admin (and
-        this form, via full_clean()) has always required all three up front - not new behaviour,
-        just now exercised through this view too."""
+    def test_post_saves_booking_and_cleaning_company(self):
+        owner, location = make_owner(), make_location()
+        booking_co = make_management_company(name='Booking Co')
+        cleaning_co = make_management_company(name='Cleaning Co')
+        response = self.client.post(self.url, {
+            'title': 'Company-Scoped Property', 'short_title': 'COMPANYSCOPED',
+            'owner': owner.pk, 'location': location.pk,
+            'booking_company': booking_co.pk, 'cleaning_company': cleaning_co.pk,
+        })
+        property = Property.objects.get(short_title='COMPANYSCOPED')
+        self.assertRedirects(response, reverse('staff:property_detail', kwargs={'pk': property.pk}))
+        self.assertEqual(property.booking_company_id, booking_co.pk)
+        self.assertEqual(property.cleaning_company_id, cleaning_co.pk)
+
+    def test_post_missing_owner_location_shows_error_and_does_not_create(self):
+        """owner/location are DB-nullable but not blank=True, so Django's own admin (and this
+        form, via full_clean()) has always required both up front - not new behaviour, just now
+        exercised through this view too."""
         response = self.client.post(self.url, {'title': 'Incomplete Property', 'short_title': 'INCOMPLETE'})
         self.assertEqual(response.status_code, 200)
         self.assertFalse(Property.objects.filter(short_title='INCOMPLETE').exists())
 
     def test_post_duplicate_title_shows_error_and_does_not_create(self):
-        owner, manager, location = make_owner(), make_manager(), make_location()
+        owner, location = make_owner(), make_location()
         Property.objects.create(
-            title='Existing Title', short_title='EXISTINGONE', owner=owner, manager=manager, location=location,
+            title='Existing Title', short_title='EXISTINGONE', owner=owner, location=location,
         )
         response = self.client.post(self.url, {
             'title': 'Existing Title', 'short_title': 'EXISTINGTWO',
-            'owner': owner.pk, 'manager': manager.pk, 'location': location.pk,
+            'owner': owner.pk, 'location': location.pk,
         })
         self.assertEqual(response.status_code, 200)
         self.assertFalse(Property.objects.filter(short_title='EXISTINGTWO').exists())
+
+
+class StaffQuickAddViewTests(TestCase):
+    def setUp(self):
+        User.objects.create_user(username='quick_add_staffer', password='pw', is_staff=True)
+        self.client.login(username='quick_add_staffer', password='pw')
+
+    def test_management_company_quick_add_creates_and_returns_json(self):
+        # Keyed as 'booking_company' (the <select> field name it populates), not
+        # 'management_company' (the model name) - see StaffQuickAddView's dispatch dict comment.
+        url = reverse('staff:quick_add', kwargs={'model': 'booking_company'})
+        response = self.client.post(url, {'name': 'Quick Add Co'})
+        self.assertEqual(response.status_code, 200)
+        company = ManagementCompany.objects.get(name='Quick Add Co')
+        self.assertEqual(response.json(), {'id': company.pk, 'label': 'Quick Add Co'})
+
+    def test_management_company_quick_add_duplicate_name_returns_error(self):
+        make_management_company(name='Existing Co')
+        url = reverse('staff:quick_add', kwargs={'model': 'booking_company'})
+        response = self.client.post(url, {'name': 'Existing Co'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('error', response.json())
+
+    def test_unknown_model_returns_404(self):
+        url = reverse('staff:quick_add', kwargs={'model': 'not_a_real_model'})
+        response = self.client.post(url, {})
+        self.assertEqual(response.status_code, 404)
 
 
 class StaffPropertyDetailViewTests(TestCase):
@@ -1119,8 +1155,8 @@ class StaffPropertyDetailViewTests(TestCase):
         self.client.login(username='property_detail_staffer', password='pw')
 
         self.owner = make_owner()
-        self.manager = make_manager()
         self.accountant = make_accountant()
+        self.management_company = make_management_company()
         self.location = make_location()
         # Property.owner is blank=False (required by full_clean(), not just DB-nullable - see
         # StaffPropertyCreateViewTests), so every property here starts with a real owner + matching
@@ -1151,16 +1187,17 @@ class StaffPropertyDetailViewTests(TestCase):
     def test_update_property_info_saves_fields(self):
         response = self.client.post(self.url, {
             'action': 'update_property_info', 'title': 'Detail Property', 'short_title': 'DETAILPROP',
-            'door_number': '12B', 'manager': self.manager.pk,
+            'door_number': '12B',
             'location': self.location.pk, 'accountant': self.accountant.pk, 'al_number': '9999',
-            'we_book': 'on', 'booking_com_id': 'BDC123', 'standard_cleaning_fee': '90.00',
+            'booking_company': self.management_company.pk, 'booking_com_id': 'BDC123',
+            'standard_cleaning_fee': '90.00',
         })
         self.assertRedirects(response, f'{self.url}?panel=main')
         self.property.refresh_from_db()
         self.assertEqual(self.property.door_number, '12B')
         self.assertEqual(self.property.al_number, 9999)
-        self.assertTrue(self.property.we_book)
-        self.assertFalse(self.property.we_clean)
+        self.assertEqual(self.property.booking_company_id, self.management_company.pk)
+        self.assertIsNone(self.property.cleaning_company_id)
         self.assertEqual(self.property.standard_cleaning_fee, Decimal('90.00'))
 
     def test_update_property_info_no_longer_accepts_an_owner_field(self):
@@ -1676,6 +1713,84 @@ class StaffSettingsViewTests(TestCase):
         self.assertTrue(Owner.objects.filter(pk=owner.pk).exists())
         messages = [str(m) for m in response.context['messages']]
         self.assertTrue(any('ownership history' in m for m in messages))
+
+    def test_add_management_company_with_no_contacts_set_succeeds(self):
+        # Every contact role is genuinely optional - a company can be added with just a name.
+        self.client.post(self.url, {'action': 'add_management_company', 'name': 'New Management Co'})
+        company = ManagementCompany.objects.get(name='New Management Co')
+        self.assertEqual(company.head_name, '')
+        self.assertEqual(company.cleaning_email, '')
+
+    def test_add_management_company_with_only_head_contact_succeeds(self):
+        self.client.post(self.url, {
+            'action': 'add_management_company', 'name': 'Head Only Co',
+            'head_name': 'Jane Doe', 'head_email': 'jane@example.com', 'head_phone': '+351911111111',
+        })
+        company = ManagementCompany.objects.get(name='Head Only Co')
+        self.assertEqual(company.head_name, 'Jane Doe')
+        self.assertEqual(company.maintenance_name, '')
+
+    def test_add_management_company_requires_a_name(self):
+        # count() starts at 1, not 0: migration 0024 seeds the real "KLT Property Services Lda."
+        # row, which exists in the test database too (migrations run there the same as production).
+        before = ManagementCompany.objects.count()
+        self.client.post(self.url, {'action': 'add_management_company', 'name': ''})
+        self.assertEqual(ManagementCompany.objects.count(), before)
+
+    def test_update_management_company_saves_fields(self):
+        company = make_management_company(name='Original Co')
+        response = self.client.post(self.url, {
+            'action': 'update_management_company', 'management_company_id': company.pk,
+            'name': 'Renamed Co',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=people')
+        company.refresh_from_db()
+        self.assertEqual(company.name, 'Renamed Co')
+
+    def test_update_management_company_round_trips_a_maintenance_contact(self):
+        company = make_management_company()
+        self.client.post(self.url, {
+            'action': 'update_management_company', 'management_company_id': company.pk,
+            'name': company.name,
+            'maintenance_name': 'Maint Person', 'maintenance_email': 'maint@example.com',
+            'maintenance_phone': '+351922222222',
+        })
+        company.refresh_from_db()
+        self.assertEqual(company.maintenance_name, 'Maint Person')
+        self.assertEqual(company.maintenance_email, 'maint@example.com')
+        self.assertEqual(company.maintenance_phone, '+351922222222')
+        # Clearing it back out (blank fields posted) should genuinely clear it, not leave it stuck.
+        self.client.post(self.url, {
+            'action': 'update_management_company', 'management_company_id': company.pk,
+            'name': company.name,
+        })
+        company.refresh_from_db()
+        self.assertEqual(company.maintenance_name, '')
+
+    def test_delete_management_company_missing_row_shows_friendly_message(self):
+        response = self.client.post(self.url, {
+            'action': 'delete_management_company', 'management_company_id': 999999,
+        }, follow=True)
+        messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('no longer exists' in m for m in messages))
+
+    def test_delete_management_company_orphans_its_properties(self):
+        # ManagementCompany's FKs from Property are SET_NULL, not PROTECT (unlike
+        # PropertyOwnership.owner above) - deleting one should cleanly null out any property
+        # pointing at it rather than erroring.
+        company = make_management_company()
+        booked = Property.objects.create(
+            title='Booked By Deleted Co', short_title='BOOKEDDEL', booking_company=company,
+        )
+        cleaned = Property.objects.create(
+            title='Cleaned By Deleted Co', short_title='CLEANEDDEL', cleaning_company=company,
+        )
+        self.client.post(self.url, {'action': 'delete_management_company', 'management_company_id': company.pk})
+        self.assertFalse(ManagementCompany.objects.filter(pk=company.pk).exists())
+        booked.refresh_from_db()
+        cleaned.refresh_from_db()
+        self.assertIsNone(booked.booking_company_id)
+        self.assertIsNone(cleaned.cleaning_company_id)
 
     def test_add_booking_condition(self):
         self.client.post(self.url, {

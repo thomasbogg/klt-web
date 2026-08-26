@@ -264,48 +264,80 @@
     width: 80px;
 }
 
+/* 130px fits Save+Delete (the widest case here - measured 112px combined, plus cell padding and
+   the flex gap between them) without much left over - the previous 190px was sized to match
+   Management companies' 3-button row (More fields+Save+Delete) despite Owners never having a
+   third button, leaving a large empty strip on the left of this flex-end-aligned cell before the
+   buttons actually started. */
 .staff-owners-table th:last-child,
 .staff-owners-table td:last-child {
-    width: 190px;
+    width: 130px;
 }
 
 .staff-owners-table .staff-price-row-actions {
     justify-content: flex-end;
 }
 
-/* Shared by Owners/Managers/Accountants - the read-only property-assignment count column. */
+/* Shared by Owners/Management companies/Accountants - the read-only property-assignment count
+   column. */
 .staff-property-count-cell {
     text-align: center;
     color: #666;
 }
 
-.staff-managers-table th:nth-child(5),
-.staff-managers-table td:nth-child(5),
+/* A blank "Add" row's lone action button still right-aligns (flex-end) when there's at least one
+   real row above it to line up with - e.g. Owners' Add button sits under its own Save/Delete
+   column, which is the point of flex-end in the first place. Only when a table has NO real rows
+   yet (e.g. "No accountants yet.") does the Add button have nothing to align with, floating with a
+   wide dead strip in front of it - staff-price-table-empty (added server-side only in that case,
+   see settings.html) switches just that one row to flex-start so it sits snug against the Properties
+   column instead. */
+.staff-price-table-empty .staff-price-row-new .staff-price-row-actions {
+    justify-content: flex-start;
+}
+
+/* table-layout: fixed makes the 4 free-text columns (Company/Name/Email/Phone) actually absorb
+   the remaining width evenly instead of collapsing to their empty-input intrinsic size, same
+   reasoning as .staff-owners-table above - on auto layout, an empty width:100% input contributes
+   nothing to the column's preferred-width calculation, so the browser had no signal to expand
+   these columns even though the table itself was genuinely 100% wide. */
+.staff-accountants-table {
+    table-layout: fixed;
+}
+
+.staff-management-companies-table th:nth-child(5),
+.staff-management-companies-table td:nth-child(5),
 .staff-accountants-table th:nth-child(5),
 .staff-accountants-table td:nth-child(5) {
     width: 80px;
 }
 
-.staff-managers-table th:last-child,
-.staff-managers-table td:last-child,
-.staff-accountants-table th:last-child,
-.staff-accountants-table td:last-child {
+/* Management companies rows can show 3 buttons (More fields+Save+Delete), so keep the wider
+   220px; Accountants only ever has Save+Delete (like Owners above) so gets the same tighter 130px
+   rather than sharing this wider value and leaving the same dead space Owners had. */
+.staff-management-companies-table th:last-child,
+.staff-management-companies-table td:last-child {
     width: 220px;
 }
 
-.staff-managers-table .staff-price-row-actions,
+.staff-accountants-table th:last-child,
+.staff-accountants-table td:last-child {
+    width: 130px;
+}
+
+.staff-management-companies-table .staff-price-row-actions,
 .staff-accountants-table .staff-price-row-actions {
     justify-content: flex-end;
     flex-wrap: wrap;
 }
 
-/* The "More fields" toggle reveals staff-manager-details-row (a full-width <tr> holding the
-   maintenance/liaison/cleaning/finance contacts) directly below a manager's summary row - a real
-   <tr>, not a CSS-only sibling trick like the page's tab switchers, since here the trigger button
-   lives inside a <td> nested inside the summary row rather than as a true CSS sibling of the row
-   being revealed; see settings.js for the (small, delegated) toggle handler. */
-.staff-manager-details-row td {
-    padding: 14px 10px;
+/* The "More fields" toggle reveals staff-management-company-details-row (a full-width <tr> holding
+   the maintenance/liaison/cleaning/finance contacts) directly below a company's summary row - a
+   real <tr>, not a CSS-only sibling trick like the page's tab switchers, since here the trigger
+   button lives inside a <td> nested inside the summary row rather than as a true CSS sibling of
+   the row being revealed; see settings.js for the (small, delegated) toggle handler. */
+.staff-management-company-details-row td {
+    padding: 22px 10px 26px;
     background: #fafafa;
 }
 
