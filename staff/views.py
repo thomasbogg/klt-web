@@ -220,6 +220,16 @@ def _parsed_date(raw):
         return None
 
 
+def _parsed_team(raw):
+    """Falls back to 1 for anything missing/invalid rather than rejecting the save outright - the
+    team picker is a visual-grouping aid, not data worth blocking a clean-planner save over."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 1
+    return value if value in dict(CleaningTask.TEAM_CHOICES) else 1
+
+
 def _flash_validation_error(request, error):
     """ValidationError.messages repeats a message once per field it's attached to (e.g. an
     overlap error raised against both start_date and end_date), so dedupe before joining."""
@@ -1859,6 +1869,8 @@ class StaffBookingDetailView(View):
                     messages.error(request, error)
                     continue
             task.assigned_to.set(request.POST.getlist(f'{prefix}assigned_to'))
+            task.team = _parsed_team(request.POST.get(f'{prefix}team'))
+            task.save(update_fields=['team'])
 
     def _add_deduction(self, request, booking):
         post = request.POST
@@ -2107,6 +2119,7 @@ class StaffCleaningEventsView(View):
                     'location_id': location.pk if location else None,
                     'location_color': (location.color or None) if location else None,
                     'assigned_to': [u.username for u in task.assigned_to.all()],
+                    'team': task.team,
                     'booking_reference': task.booking.reference,
                     'min_date': min_date.isoformat(),
                     'max_date': max_date.isoformat() if max_date else None,
@@ -2210,8 +2223,11 @@ class StaffCleaningTaskSaveView(View):
                 return JsonResponse({'error': error}, status=400)
 
         task.assigned_to.set(request.POST.getlist('assigned_to'))
+        task.team = _parsed_team(request.POST.get('team'))
+        task.save(update_fields=['team'])
         return JsonResponse({
             'ok': True,
             'date': task.date.isoformat(),
+            'team': task.team,
             'assigned_to': list(task.assigned_to.values_list('pk', flat=True)),
         })

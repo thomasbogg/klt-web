@@ -57,6 +57,53 @@
             shadedCells = [];
         }
 
+        // Visual banding within a day cell: unassigned cleans (no assigned_to yet) always sort
+        // first, then assigned ones by team (Group 1/2/3) - lets a manager see at a glance how
+        // the day's workload is already split across crews. The actual stacking order is handled
+        // by FullCalendar's own `eventOrder` option below (confirmed, via a throwaway probe page,
+        // that its custom-function form does receive extendedProps). applyGrouping() re-derives
+        // that same order client-side to know where to drop a divider line between buckets, then
+        // marks that event's harness with a CSS class for cleaning_calendar.css to draw the line
+        // above. It's re-run from a MutationObserver on the whole calendar (below, after render())
+        // rather than just FullCalendar's eventsSet hook, because a busy day (more cleans than
+        // dayMaxEventRows) triggers FullCalendar's own "+more" overflow pass, which rebuilds day
+        // cells' event harnesses in a later, separate tick - confirmed via a throwaway probe page
+        // that eventsSet alone fires too early and the divider classes it set get silently wiped
+        // when that overflow pass replaces the harnesses a moment later. A structural observer
+        // re-applies the classes whenever that happens, no matter when it happens.
+        var eventElsById = {};
+
+        function bucketRank(event) {
+            var assigned = event.extendedProps.assigned_to || [];
+            return assigned.length === 0 ? 0 : (event.extendedProps.team || 1);
+        }
+
+        function applyGrouping(events) {
+            Object.keys(eventElsById).forEach(function (id) {
+                var harness = eventElsById[id] && eventElsById[id].closest('.fc-daygrid-event-harness');
+                if (harness) harness.classList.remove('staff-clean-group-start');
+            });
+
+            var byDate = {};
+            events.forEach(function (event) {
+                (byDate[event.startStr] = byDate[event.startStr] || []).push(event);
+            });
+
+            Object.keys(byDate).forEach(function (dateStr) {
+                var dayEvents = byDate[dateStr].slice().sort(function (a, b) {
+                    return bucketRank(a) - bucketRank(b);
+                });
+                var prevRank = null;
+                dayEvents.forEach(function (event) {
+                    var harness = eventElsById[event.id] && eventElsById[event.id].closest('.fc-daygrid-event-harness');
+                    if (!harness) return;
+                    var rank = bucketRank(event);
+                    if (prevRank !== null && rank !== prevRank) harness.classList.add('staff-clean-group-start');
+                    prevRank = rank;
+                });
+            });
+        }
+
         var calendar = new FullCalendar.Calendar(el, {
             initialView: 'cleaningWeek',
             locale: 'en-gb',
@@ -86,6 +133,9 @@
             eventDurationEditable: false,
             dayMaxEventRows: 4,
             events: eventsUrl,
+            eventOrder: function (a, b) {
+                return bucketRank(a) - bucketRank(b);
+            },
 
             eventDidMount: function (info) {
                 var props = info.event.extendedProps;
@@ -96,6 +146,10 @@
                 if (props.status === 'done') {
                     info.el.style.opacity = '0.55';
                 }
+                eventElsById[info.event.id] = info.el;
+            },
+            eventWillUnmount: function (info) {
+                delete eventElsById[info.event.id];
             },
 
             eventDragStart: function (info) {
@@ -180,6 +234,9 @@
             params.set('date', dateInput.value);
             checked.forEach(function (box) { params.append('assigned_to', box.value); });
 
+            var teamInput = dialogBody.querySelector('[name="team"]');
+            if (teamInput) params.set('team', teamInput.value);
+
             fetch(saveUrl, {
                 method: 'POST',
                 headers: {
@@ -202,5 +259,14 @@
         }
 
         calendar.render();
+
+        // Re-derives the divider lines any time the calendar's own DOM structure changes for any
+        // reason (a fetch, a drag-drop, the "+more" overflow pass) - see the comment above
+        // eventElsById for why this can't just be done once from an eventsSet/eventDrop hook.
+        // Only watches childList/subtree (element added/removed), never attributes, so our own
+        // classList.add/remove calls below don't re-trigger it.
+        new MutationObserver(function () {
+            applyGrouping(calendar.getEvents());
+        }).observe(el, { childList: true, subtree: true });
     });
 })();

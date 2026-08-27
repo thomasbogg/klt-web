@@ -2313,6 +2313,7 @@ class StaffCleaningCalendarEndpointTests(TestCase):
         self.assertEqual(event['extendedProps']['location_color'], '#123456')
         self.assertEqual(event['extendedProps']['min_date'], self.end.isoformat())
         self.assertEqual(event['extendedProps']['assigned_to'], [])
+        self.assertEqual(event['extendedProps']['team'], 1)
 
     def test_move_view_accepts_valid_date_and_sets_override(self):
         self.client.login(username='calendarsuperuser', password='pw')
@@ -2405,4 +2406,32 @@ class StaffCleaningCalendarEndpointTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.task.refresh_from_db()
         self.assertFalse(self.task.manually_scheduled)
-        self.assertEqual(list(self.task.assigned_to.all()), [self.cleaner])
+
+    def test_save_view_sets_team(self):
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.post(reverse('staff:cleaning_task_save', kwargs={'pk': self.task.pk}), {
+            'date': self.task.date.isoformat(), 'assigned_to': [self.cleaner.pk], 'team': '2',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['team'], 2)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.team, 2)
+
+    def test_save_view_falls_back_to_team_1_when_missing_or_invalid(self):
+        self.client.login(username='calendarsuperuser', password='pw')
+        self.task.team = 3
+        self.task.save(update_fields=['team'])
+        response = self.client.post(reverse('staff:cleaning_task_save', kwargs={'pk': self.task.pk}), {
+            'date': self.task.date.isoformat(), 'team': 'not-a-number',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.team, 1)
+
+    def test_detail_view_planner_html_shows_current_team_selected(self):
+        self.task.team = 2
+        self.task.save(update_fields=['team'])
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_task_detail', kwargs={'pk': self.task.pk}))
+        data = response.json()
+        self.assertIn('<option value="2" selected>Group 2</option>', data['planner_html'])

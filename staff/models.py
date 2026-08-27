@@ -145,11 +145,17 @@ class CleaningTask(models.Model):
     single owner."""
     TASK_TYPE_CHOICES = [('turnover', 'Turnover'), ('mid_stay', 'Mid-stay')]
     STATUS_CHOICES = [('pending', 'Pending'), ('done', 'Done')]
+    TEAM_CHOICES = [(1, 'Group 1'), (2, 'Group 2'), (3, 'Group 3')]
 
     booking = models.ForeignKey('bookings.Booking', on_delete=models.CASCADE, related_name='cleaning_tasks')
     task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES)
     date = models.DateField()
     assigned_to = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name='cleaning_tasks')
+    # Which crew this clean belongs to, for the calendar's visual banding when more than one team
+    # works the same day - meaningless until assigned_to is non-empty (the calendar always puts
+    # unassigned tasks in their own section ahead of any team, regardless of this value), but
+    # still defaults to 1 so the field always has a sane value to show in the planner dropdown.
+    team = models.PositiveSmallIntegerField(choices=TEAM_CHOICES, default=1)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     completed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',

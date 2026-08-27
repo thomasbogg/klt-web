@@ -23,4 +23,14 @@
         <p class="staff-empty">No cleaning staff roles set up yet.</p>
         {% endfor %}
     </fieldset>
+    <label class="staff-field">Team
+        <select
+            name="{{ field_prefix }}team" class="staff-input"
+            {% if not standalone %}form="booking-detail-form"{% endif %}
+        >
+            {% for value, display in task.TEAM_CHOICES %}
+            <option value="{{ value }}" {% if task.team == value %}selected{% endif %}>{{ display }}</option>
+            {% endfor %}
+        </select>
+    </label>
 </div>
