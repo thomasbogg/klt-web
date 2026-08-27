@@ -19,13 +19,13 @@ import env_settings
 from availability.utils import get_property_calendar
 from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Arrival, Booking, BookingCondition,
-    BookingSettings, Departure, ExtrasSettings, FAQ, PaymentSettings, RequestType,
+    BookingSettings, CheckinSettings, Departure, ExtrasSettings, FAQ, PaymentSettings, RequestType,
     TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
 from bookings.utils import (
-    FLIGHT_NUMBER_HINT, PLATFORM_NAMES_BY_ICAL_SOURCE, extras_summary, parsed_arrival_departure_time,
-    parsed_travel_method, sync_ical_link, valid_flight_number,
+    FLIGHT_NUMBER_HINT, PLATFORM_NAMES_BY_ICAL_SOURCE, extras_summary, has_completed_previous_stay,
+    parsed_arrival_departure_time, parsed_travel_method, sync_ical_link, valid_flight_number,
 )
 from guests.models import Guest
 from libraries.utils import logerror
@@ -34,13 +34,14 @@ from properties.models import (
     Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail, WashingMaterial,
     iCalLink,
 )
-from staff.models import CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
+from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.permissions import staff_page_required, superuser_required
 from staff.utils import (
     AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, ENQUIRY_STATUS_GROUPS, ENQUIRY_STATUSES, GUEST_LETTERS,
     LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAFF_PAGE_PERMISSION_FIELDS,
-    STAGE_TABS, STATUS_BUCKETS, apply_manual_task_date, booking_stage, cleaning_task_valid_range,
-    next_step_hint, reservation_rows,
+    STAGE_TABS, STATUS_BUCKETS, apply_manual_checkin_time, apply_manual_task_date, booking_stage,
+    checkin_valid_range, cleaning_task_valid_range, next_step_hint, property_last_clean_before,
+    reservation_rows,
 )
 
 
@@ -504,6 +505,7 @@ class StaffSettingsView(View):
     )
     ACTION_PANELS = {
         'update_booking_settings': 'bookings',
+        'update_checkin_settings': 'bookings',
         'add_booking_condition': 'bookings',
         'update_booking_condition': 'bookings',
         'delete_booking_condition': 'bookings',
@@ -557,6 +559,7 @@ class StaffSettingsView(View):
             raise PermissionDenied
         handler = {
             'update_booking_settings': self._update_booking_settings,
+            'update_checkin_settings': self._update_checkin_settings,
             'add_booking_condition': self._add_booking_condition,
             'update_booking_condition': self._update_booking_condition,
             'delete_booking_condition': self._delete_booking_condition,
@@ -597,6 +600,7 @@ class StaffSettingsView(View):
         return {
             'active_panel': active_panel,
             'booking_settings': BookingSettings.load(),
+            'checkin_settings': CheckinSettings.load(),
             'booking_conditions': BookingCondition.objects.all(),
             'faqs': FAQ.objects.select_related('location').all(),
             'faq_locations': Location.objects.order_by('title'),
@@ -664,6 +668,25 @@ class StaffSettingsView(View):
             return
         settings.save()
         messages.success(request, "Booking settings updated.")
+
+    def _update_checkin_settings(self, request):
+        settings = CheckinSettings.load()
+        post = request.POST
+        for field in ('faro_buffer_minutes', 'lisbon_buffer_minutes', 'transit_buffer_minutes'):
+            value = _parsed_int(post.get(field))
+            if value is not None:
+                setattr(settings, field, value)
+        for field in ('key_box_prep_time', 'welcome_visit_time'):
+            value = _parsed_time(post.get(field))
+            if value is not None:
+                setattr(settings, field, value)
+        try:
+            settings.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        settings.save()
+        messages.success(request, "Check-in settings updated.")
 
     def _add_booking_condition(self, request):
         post = request.POST
@@ -1645,6 +1668,8 @@ class StaffBookingDetailView(View):
             'add_task_note': self._add_task_note,
             'cancel_booking': self._cancel_booking,
             'uncancel_booking': self._uncancel_booking,
+            'dismiss_freshen': self._dismiss_freshen_task,
+            'undo_dismiss_freshen': self._undo_dismiss_freshen_task,
         }.get(request.POST.get('action'))
         if handler is not None:
             handler(request, booking)
@@ -1698,6 +1723,7 @@ class StaffBookingDetailView(View):
             'enquiry_statuses': ENQUIRY_STATUSES,
             'turnover_planner': self._planner_context(booking.cleaning_tasks.filter(task_type='turnover').first()),
             'mid_stay_planner': self._planner_context(booking.cleaning_tasks.filter(task_type='mid_stay').first()),
+            'freshen_planner': self._planner_context(booking.cleaning_tasks.filter(task_type='freshen').first()),
             'cleaning_assignable_users': User.objects.filter(
                 staff_profile__role__is_cleaning_staff=True,
             ).order_by('username'),
@@ -1964,9 +1990,9 @@ class StaffBookingDetailView(View):
         correct new one - confirmed live 2026-08-27: changing just the departure date raised "That
         date is outside this task's valid window." trying to move the task (already correctly
         auto-advanced) back to the stale date the page had loaded with."""
-        for task_type, prefix in (('turnover', 'turnover_'), ('mid_stay', 'mid_stay_')):
+        for task_type, prefix in (('turnover', 'turnover_'), ('mid_stay', 'mid_stay_'), ('freshen', 'freshen_')):
             task = booking.cleaning_tasks.filter(task_type=task_type).first()
-            if task is None:
+            if task is None or task.status == 'dismissed':
                 continue
             new_date = _parsed_date(request.POST.get(f'{prefix}date'))
             if new_date and new_date != task_dates_before.get(task_type):
@@ -2083,6 +2109,30 @@ class StaffBookingDetailView(View):
             detail=f"From '{old_status}' to 'Booking confirmed'", created_by=request.user,
         )
         messages.success(request, "Booking revived.")
+
+    def _dismiss_freshen_task(self, request, booking):
+        task = booking.cleaning_tasks.filter(task_type='freshen').first()
+        if task is None or task.status != 'pending':
+            messages.error(request, "There's no Freshen clean to dismiss.")
+            return
+        task.status = 'dismissed'
+        task.dismissed_by = request.user
+        task.dismissed_at = timezone.now()
+        task.dismissed_reason = 'manual'
+        task.save(update_fields=['status', 'dismissed_by', 'dismissed_at', 'dismissed_reason'])
+        messages.success(request, "Freshen clean dismissed.")
+
+    def _undo_dismiss_freshen_task(self, request, booking):
+        task = booking.cleaning_tasks.filter(task_type='freshen').first()
+        if task is None or task.status != 'dismissed':
+            messages.error(request, "There's no dismissed Freshen clean to restore.")
+            return
+        task.status = 'pending'
+        task.dismissed_by = None
+        task.dismissed_at = None
+        task.dismissed_reason = ''
+        task.save(update_fields=['status', 'dismissed_by', 'dismissed_at', 'dismissed_reason'])
+        messages.success(request, "Freshen clean restored.")
 
 
 @method_decorator(staff_page_required('can_view_cleaning_rota'), name='dispatch')
@@ -2203,7 +2253,9 @@ class StaffCleaningEventsView(View):
         # start/end params, not plain dates - only the date portion matters for this all-day feed.
         start_date = _parsed_date((request.GET.get('start') or '').split('T')[0])
         end_date = _parsed_date((request.GET.get('end') or '').split('T')[0])
-        tasks = CleaningTask.objects.select_related('booking__property__location').prefetch_related('assigned_to')
+        tasks = CleaningTask.objects.select_related(
+            'booking__property__location',
+        ).prefetch_related('assigned_to').exclude(status='dismissed')
         if start_date:
             tasks = tasks.filter(date__gte=start_date)
         if end_date:
@@ -2267,16 +2319,22 @@ class StaffCleaningTaskMoveView(View):
 @method_decorator(superuser_required, name='dispatch')
 class StaffCleaningTaskDetailView(View):
     """Fetched by cleaning_calendar.js when a calendar event is clicked - returns everything the
-    clean-planner popup needs to render: read-only Departure (this booking) and, for a turnover
-    task, Arrival (the next confirmed booking on the same property - the actual guest this clean
-    is racing to be ready for) summaries, both rendered server-side (this codebase has no JS
-    templating anywhere), plus the task's current date/assignees and its valid drag window (same
-    as the calendar's own event feed, so the popup's date field can be validated the same way
-    client-side before ever hitting the save endpoint)."""
+    clean-planner popup needs to render, both boundary summaries rendered server-side (this
+    codebase has no JS templating anywhere), plus the task's current date/assignees and its valid
+    drag window (same as the calendar's own event feed, so the popup's date field can be validated
+    the same way client-side before ever hitting the save endpoint). What the two summary panels
+    show depends on task_type, since each clean is racing to be ready for a different moment:
+    - turnover: this booking's own Departure, and the next confirmed booking's Arrival - the
+      actual guest this clean is racing to be ready for.
+    - mid_stay: this booking's own Arrival ('Arrived') and Departure ('Departing') - context for a
+      clean happening mid-way through a single, still-ongoing stay.
+    - freshen: the property's Last Clean (not tied to any one booking - see
+      staff/utils.py::property_last_clean_before) and this booking's own Arrival ('Next Arrival') -
+      the guest this speculative clean exists to prepare for."""
 
     def get(self, request, *args, **kwargs):
         task = CleaningTask.objects.select_related(
-            'booking__guest', 'booking__departure', 'booking__property',
+            'booking__guest', 'booking__departure', 'booking__arrival', 'booking__property',
         ).filter(pk=kwargs['pk']).first()
         if task is None:
             return JsonResponse({'error': 'That cleaning task no longer exists.'}, status=404)
@@ -2284,12 +2342,20 @@ class StaffCleaningTaskDetailView(View):
         min_date, max_date = cleaning_task_valid_range(task)
         booking = task.booking
 
-        departure = getattr(booking, 'departure', None)
-        departure_method_label = dict(TravelMethod.departure_choices()).get(departure.method) if departure else None
-        departure_html = render_to_string('staff/_stay_boundary_summary.html', {
-            'heading': 'Departure', 'date': booking.departure_date, 'record': departure,
-            'method_label': departure_method_label, 'booking': booking, 'is_arrival': False,
-        })
+        if task.task_type == 'freshen':
+            last_clean = property_last_clean_before(booking.property, booking)
+            departure_html = render_to_string('staff/_stay_boundary_summary.html', {
+                'heading': 'Last Clean', 'date': last_clean, 'is_arrival': False,
+                'empty_message': 'No earlier clean on record for this property.',
+            })
+        else:
+            departure = getattr(booking, 'departure', None)
+            departure_method_label = dict(TravelMethod.departure_choices()).get(departure.method) if departure else None
+            departure_html = render_to_string('staff/_stay_boundary_summary.html', {
+                'heading': 'Departing' if task.task_type == 'mid_stay' else 'Departure',
+                'date': booking.departure_date, 'record': departure,
+                'method_label': departure_method_label, 'booking': booking, 'is_arrival': False,
+            })
 
         arrival_html = ''
         if task.task_type == 'turnover':
@@ -2303,6 +2369,15 @@ class StaffCleaningTaskDetailView(View):
                 'guests': next_booking.total_guests() if next_booking else None,
                 'extras': extras_summary(next_booking) if next_booking else None,
                 'empty_message': 'No upcoming arrival scheduled for this property.',
+            })
+        elif task.task_type in ('mid_stay', 'freshen'):
+            arrival = getattr(booking, 'arrival', None)
+            arrival_method_label = dict(TravelMethod.choices).get(arrival.method) if arrival else None
+            arrival_html = render_to_string('staff/_stay_boundary_summary.html', {
+                'heading': 'Arrived' if task.task_type == 'mid_stay' else 'Next Arrival',
+                'date': booking.arrival_date, 'record': arrival, 'method_label': arrival_method_label,
+                'booking': booking, 'is_arrival': True,
+                'guests': booking.total_guests(), 'extras': extras_summary(booking),
             })
 
         assignable_users = User.objects.filter(staff_profile__role__is_cleaning_staff=True).order_by('username')
@@ -2345,3 +2420,188 @@ class StaffCleaningTaskSaveView(View):
             'team': task.team,
             'assigned_to': list(task.assigned_to.values_list('pk', flat=True)),
         })
+
+
+@method_decorator(superuser_required, name='dispatch')
+class StaffCleaningTaskDismissView(View):
+    """Delete handler for the clean-planner popup's Freshen task - only ever meaningful for
+    task_type='freshen' (turnover/mid-stay aren't user-deletable, they follow Departure.clean/
+    Extra.mid_stay_clean instead). A dismissal never removes the row - see CleaningTask's own
+    docstring for why - it's a status flip staff can undo from the booking detail page's Cleaning
+    panel (StaffBookingDetailView._undo_dismiss_freshen_task), not from here."""
+
+    def post(self, request, *args, **kwargs):
+        task = CleaningTask.objects.select_related('booking').filter(pk=kwargs['pk']).first()
+        if task is None:
+            return JsonResponse({'error': 'That cleaning task no longer exists.'}, status=404)
+        if task.task_type != 'freshen':
+            return JsonResponse({'error': 'Only a Freshen clean can be dismissed here.'}, status=400)
+        if task.status != 'pending':
+            return JsonResponse({'error': 'That task is no longer pending.'}, status=400)
+
+        task.status = 'dismissed'
+        task.dismissed_by = request.user
+        task.dismissed_at = timezone.now()
+        task.dismissed_reason = 'manual'
+        task.save(update_fields=['status', 'dismissed_by', 'dismissed_at', 'dismissed_reason'])
+        return JsonResponse({'ok': True})
+
+
+@method_decorator(staff_page_required('can_view_checkins_calendar'), name='dispatch')
+class StaffCheckinCalendarView(View):
+    """The check-ins calendar's own page shell - gated by the can_view_checkins_calendar StaffRole
+    flag rather than superuser_required (unlike the cleaning calendar's drag view): check-ins is
+    meant for day-to-day use by whoever runs arrivals, not a superuser-only scheduling tool."""
+    template_name = 'staff/checkins_calendar.html'
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name, {})
+
+
+@method_decorator(staff_page_required('can_view_checkins_calendar'), name='dispatch')
+class StaffCheckinEventsView(View):
+    """JSON event feed for StaffCheckinCalendarView's FullCalendar timeGrid instance - one object
+    per Checkin whose date falls in the requested [start, end) range. Exact-same-minute
+    collisions are staggered by a minute per collision so FullCalendar's timeGrid never sees two
+    identical start times (which would otherwise trigger its side-by-side column-split layout,
+    not the stacked-list look this calendar wants) - only the *rendered* start moves, the stored
+    Checkin.time and the label text both keep showing the real time."""
+
+    def get(self, request, *args, **kwargs):
+        start_date = _parsed_date((request.GET.get('start') or '').split('T')[0])
+        end_date = _parsed_date((request.GET.get('end') or '').split('T')[0])
+        checkins = Checkin.objects.select_related('booking__property__location', 'booking__guest', 'booking__arrival')
+        if start_date:
+            checkins = checkins.filter(date__gte=start_date)
+        if end_date:
+            checkins = checkins.filter(date__lt=end_date)
+
+        seen = {}
+        events = []
+        for checkin in checkins.order_by('date', 'time', 'pk'):
+            booking = checkin.booking
+            location = booking.property.location
+            arrival = getattr(booking, 'arrival', None)
+            guest_name = f"{booking.guest.first_name or ''} {booking.guest.last_name}".strip()
+            time_label = checkin.time.strftime('%H:%M') if checkin.time else 'No time given'
+            title = f"{booking.property.short_title}, {guest_name}, {time_label}"
+
+            all_day = checkin.time is None
+            if all_day:
+                start = checkin.date.isoformat()
+            else:
+                key = (checkin.date, checkin.time)
+                offset = seen.get(key, 0)
+                seen[key] = offset + 1
+                render_time = (datetime.combine(checkin.date, checkin.time) + timedelta(minutes=offset)).time()
+                start = f"{checkin.date.isoformat()}T{render_time.strftime('%H:%M:%S')}"
+
+            events.append({
+                'id': checkin.pk,
+                'title': title,
+                'start': start,
+                'allDay': all_day,
+                'extendedProps': {
+                    'task_type': checkin.task_type,
+                    'status': checkin.status,
+                    'meet_greet': arrival.meet_greet if arrival else True,
+                    'property_id': booking.property_id,
+                    'location_id': location.pk if location else None,
+                    'location_color': (location.color or None) if location else None,
+                    'booking_reference': booking.reference,
+                },
+            })
+        return JsonResponse(events, safe=False)
+
+
+@method_decorator(staff_page_required('can_view_checkins_calendar'), name='dispatch')
+class StaffCheckinMoveView(View):
+    """Drag-drop endpoint for the check-ins calendar - a Checkin's date is never draggable (an
+    arrival-date change happens on the booking's own page instead), so this only ever accepts a
+    new time on the checkin's existing date. checkin_valid_range()'s window is always that date's
+    full 00:00-23:59 span, so the only real rejection case is an all-day event being dropped onto
+    a timed slot with no time to actually move - the client blocks that already
+    (checkins_calendar.js), this is the server-side backstop."""
+
+    def post(self, request, *args, **kwargs):
+        checkin = Checkin.objects.select_related('booking').filter(pk=kwargs['pk']).first()
+        if checkin is None:
+            return JsonResponse({'error': 'That check-in no longer exists.'}, status=404)
+
+        new_time = _parsed_time(request.POST.get('time'))
+        if new_time is None:
+            return JsonResponse({'error': 'Invalid time.'}, status=400)
+
+        error = apply_manual_checkin_time(checkin, new_time)
+        if error:
+            return JsonResponse({'error': error}, status=400)
+        return JsonResponse({'ok': True})
+
+
+@method_decorator(staff_page_required('can_view_checkins_calendar'), name='dispatch')
+class StaffCheckinDetailView(View):
+    """Fetched by checkins_calendar.js when a calendar event is clicked - returns the popup's
+    content as server-rendered HTML (this codebase has no JS templating anywhere), shaped
+    differently per task_type: an 'arrival' row gets the full guest/travel/extras/deposit picture,
+    a 'key_box'/'welcome_visit' row gets a short property/guest/notes fragment - extras and
+    deposit tracking are meaningless for those."""
+
+    def get(self, request, *args, **kwargs):
+        checkin = Checkin.objects.select_related(
+            'booking__guest', 'booking__property', 'booking__arrival',
+        ).filter(pk=kwargs['pk']).first()
+        if checkin is None:
+            return JsonResponse({'error': 'That check-in no longer exists.'}, status=404)
+
+        booking = checkin.booking
+        context = {'checkin': checkin, 'booking': booking}
+        if checkin.task_type == 'arrival':
+            deposit_waived = has_completed_previous_stay(booking.guest, exclude_booking_id=booking.pk)
+            context.update({
+                'arrival': getattr(booking, 'arrival', None),
+                'extras': extras_summary(booking),
+                'deposit_amount': None if deposit_waived else BookingSettings.load().security_deposit_amount,
+            })
+        popup_html = render_to_string('staff/_checkin_popup.html', context)
+        return JsonResponse({'popup_html': popup_html})
+
+
+@method_decorator(staff_page_required('can_view_checkins_calendar'), name='dispatch')
+class StaffCheckinToggleDoneView(View):
+    """Flips a Checkin between 'pending' and 'done' - the popup's "Mark as done"/"Mark as not
+    done" button, a real two-way toggle (unlike CleaningTask, which has no undo-done today)."""
+
+    def post(self, request, *args, **kwargs):
+        checkin = Checkin.objects.filter(pk=kwargs['pk']).first()
+        if checkin is None:
+            return JsonResponse({'error': 'That check-in no longer exists.'}, status=404)
+
+        if checkin.status == 'done':
+            checkin.status = 'pending'
+            checkin.completed_by = None
+            checkin.completed_at = None
+        else:
+            checkin.status = 'done'
+            checkin.completed_by = request.user
+            checkin.completed_at = timezone.now()
+        checkin.save(update_fields=['status', 'completed_by', 'completed_at'])
+        return JsonResponse({'ok': True, 'status': checkin.status})
+
+
+@method_decorator(staff_page_required('can_view_checkins_calendar'), name='dispatch')
+class StaffCheckinSaveView(View):
+    """Saves the popup's extras-collected/deposit-collected/deposit-returned checkboxes - only
+    meaningful for task_type='arrival', matching Checkin's own docstring on those fields."""
+
+    def post(self, request, *args, **kwargs):
+        checkin = Checkin.objects.filter(pk=kwargs['pk']).first()
+        if checkin is None:
+            return JsonResponse({'error': 'That check-in no longer exists.'}, status=404)
+        if checkin.task_type != 'arrival':
+            return JsonResponse({'error': 'Only an arrival check-in tracks extras/deposit.'}, status=400)
+
+        checkin.extras_collected = request.POST.get('extras_collected') == 'true'
+        checkin.deposit_collected = request.POST.get('deposit_collected') == 'true'
+        checkin.deposit_returned = request.POST.get('deposit_returned') == 'true'
+        checkin.save(update_fields=['extras_collected', 'deposit_collected', 'deposit_returned'])
+        return JsonResponse({'ok': True})

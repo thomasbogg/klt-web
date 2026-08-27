@@ -1,0 +1,56 @@
+#checkins-calendar {
+    background: #fff;
+    border-radius: 8px;
+    padding: 16px;
+}
+
+#checkins-calendar .fc-event {
+    border: none;
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 3px 5px;
+    line-height: 1.25;
+    border-radius: 4px;
+}
+
+/* Visual drag hinting - see shadeOtherDays()/clearShadedDays() in checkins_calendar.js. A
+   check-in's date is never draggable, only its time-of-day within that same date; the actual
+   rejection is enforced authoritatively in eventDrop, this is only the mid-drag aid. */
+#checkins-calendar .fc-timegrid-col.staff-checkin-invalid-day {
+    background: #f1f1f1;
+}
+
+/* This page doesn't pull in cleaning_calendar.css/cleaning_rota.css, so the small set of shared
+   dialog-chrome and extras-list rules those files define get their own copy here, matching their
+   existing rule bodies exactly. */
+#checkin-dialog {
+    width: min(420px, 90vw);
+    max-height: 85vh;
+    border: none;
+    border-radius: 8px;
+    padding: 20px;
+    overflow: visible;
+}
+
+#checkin-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.4);
+}
+
+#checkin-dialog-body {
+    overflow: visible;
+}
+
+.staff-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+    flex-shrink: 0;
+}
+
+.staff-cleaning-extras {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 0.85rem;
+    color: #444;
+}

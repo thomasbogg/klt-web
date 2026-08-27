@@ -17,5 +17,8 @@
     {% if staff_nav_permissions.can_view_cleaning_rota %}
     <a href="{% url 'staff:cleaning_rota' %}" class="staff-nav-link">Cleaning</a>
     {% endif %}
+    {% if staff_nav_permissions.can_view_checkins_calendar %}
+    <a href="{% url 'staff:checkins_calendar' %}" class="staff-nav-link">Check-ins</a>
+    {% endif %}
     <a href="/admin/logout/" class="staff-nav-link staff-nav-link-logout">Logout</a>
 </nav>

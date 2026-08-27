@@ -39,4 +39,23 @@ urlpatterns = [
         'cleaning/tasks/<int:pk>/save/',
         views.StaffCleaningTaskSaveView.as_view(), name='cleaning_task_save',
     ),
+    path(
+        'cleaning/tasks/<int:pk>/dismiss/',
+        views.StaffCleaningTaskDismissView.as_view(), name='cleaning_task_dismiss',
+    ),
+    path('checkins/', views.StaffCheckinCalendarView.as_view(), name='checkins_calendar'),
+    path(
+        'checkins/events/',
+        views.StaffCheckinEventsView.as_view(), name='checkins_calendar_events',
+    ),
+    path(
+        'checkins/<int:pk>/move/',
+        views.StaffCheckinMoveView.as_view(), name='checkins_calendar_move',
+    ),
+    path('checkins/<int:pk>/detail/', views.StaffCheckinDetailView.as_view(), name='checkin_detail'),
+    path(
+        'checkins/<int:pk>/toggle-done/',
+        views.StaffCheckinToggleDoneView.as_view(), name='checkin_toggle_done',
+    ),
+    path('checkins/<int:pk>/save/', views.StaffCheckinSaveView.as_view(), name='checkin_save'),
 ]

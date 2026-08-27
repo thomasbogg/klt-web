@@ -3,6 +3,7 @@
     {% if date %}
     <dl class="staff-departure-summary">
         <dt>Date</dt><dd>{{ date|date:'D, j M Y' }}</dd>
+        {% if booking %}
         <dt>Method</dt><dd>{{ method_label|default:"—" }}</dd>
         <dt>Flight number</dt><dd>{{ record.flight_number|default:"—" }}</dd>
         <dt>Time</dt><dd>{{ record.time|time:'H:i'|default:"—" }}</dd>
@@ -17,8 +18,11 @@
             </ul>
         </dd>
         {% endif %}
+        {% endif %}
     </dl>
+    {% if booking %}
     <a href="{% url 'staff:booking_detail' reference=booking.reference %}" class="staff-header-link">{{ booking.guest }} &rarr;</a>
+    {% endif %}
     {% else %}
     <p class="staff-empty">{{ empty_message|default:"No details on file." }}</p>
     {% endif %}

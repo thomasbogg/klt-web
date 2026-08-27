@@ -7,7 +7,14 @@
 #cleaning-calendar .fc-event {
     border: none;
     cursor: pointer;
-    font-size: 0.75rem;
+    font-size: 0.9rem;
+    padding: 5px 7px;
+    line-height: 1.3;
+    border-radius: 4px;
+}
+
+#cleaning-calendar .fc-daygrid-event-harness {
+    margin-bottom: 3px;
 }
 
 #cleaning-calendar .fc-daygrid-day.staff-cal-invalid-day {
@@ -18,13 +25,63 @@
     color: #bbb;
 }
 
-/* Marks where one visual bucket (unassigned, then Group 1/2/3) ends and the next begins within a
+/* Marks where one *assigned* bucket ends and the next begins (Group 1 -> Group 2, etc.) within a
    day cell - see applyGrouping() in cleaning_calendar.js. A dashed line reads as a soft grouping
-   cut rather than a hard rule between individual cleans. */
+   cut rather than a hard rule between individual cleans. Excludes the unassigned -> first-
+   assigned-band boundary; staff-clean-unassigned-end below owns that one instead. */
 #cleaning-calendar .fc-daygrid-event-harness.staff-clean-group-start {
     margin-top: 16px;
     padding-top: 12px;
     border-top: 2px dashed #999;
+}
+
+/* Closes off the unassigned/"what's left to plan" group - always follows the day's last
+   unassigned clean, whether or not any assigned band follows it, so the group reads the same
+   whether it's mid-day or the only thing scheduled. Mirrors the placeholder message's own
+   always-present line below (applyUnassignedSlots) for the no-unassigned-tasks case, so both
+   ways of ending that top group look identical. */
+#cleaning-calendar .fc-daygrid-event-harness.staff-clean-unassigned-end {
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 2px dashed #999;
+}
+
+/* Small header label at the top of each populated band - "Unassigned"/"Group N" - set via
+   data-band-title on that band's first clean (applyGrouping() in cleaning_calendar.js), only
+   present at all on a day that has at least one clean in that band. A ::before reads the text
+   straight off the attribute rather than being a real inserted node - same reasoning as the
+   no-unassigned-tasks message's own ::before (see below): FullCalendar's Preact tree fully owns
+   this element's children, so anything added has to be pure CSS, not a real DOM child. */
+#cleaning-calendar .fc-daygrid-event-harness[data-band-title]::before {
+    content: attr(data-band-title);
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #777;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 0 2px 3px;
+}
+
+/* The grey "no unassigned tasks" message, see applyUnassignedSlots() in cleaning_calendar.js.
+   A ::before on the real events container, not a real inserted element - always renders before
+   the container's actual children (real events), so it sits in exactly the same top-of-cell slot
+   an unassigned event would occupy, letting unassigned cleans (the "what's left to plan" group)
+   and this message occupy the same visual position depending on whether there are any. Shows
+   whenever the unassigned band is empty that day, whether because nothing at all is scheduled or
+   because everything scheduled has already been assigned - either way it's the same "nothing here
+   needs the manager's attention" signal. The cut sits *below* the message/that top group, not
+   above it - above it there's only the day's date header, nothing worth cutting away from; below
+   it is the actual event list (if any), which is the real boundary worth marking. */
+#cleaning-calendar .fc-daygrid-day-events[data-no-unassigned="true"]::before {
+    content: "No unassigned tasks for today";
+    display: block;
+    color: #999;
+    font-style: italic;
+    font-size: 0.78rem;
+    padding: 6px 4px 8px;
+    margin: 4px 2px 6px;
+    border-bottom: 2px dashed #999;
 }
 
 #clean-task-dialog {

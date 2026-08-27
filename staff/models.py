@@ -90,12 +90,17 @@ class StaffRole(models.Model):
     can_view_locations = models.BooleanField(default=False)
     can_view_settings = models.BooleanField(default=False)
     can_view_cleaning_rota = models.BooleanField(default=False)
+    can_view_checkins_calendar = models.BooleanField(default=False)
     # Assignability, not page visibility - deliberately excluded from STAFF_PAGE_PERMISSION_FIELDS
     # (staff/utils.py), which drives the generic per-page-flag loop in views.py's
     # _add_role/_update_role and the settings.html role table. This flag instead means "a user
     # holding this role can be ticked as a cleaner" (StaffCleaningRotaView/the cleaning calendar's
     # assignable-users queries), independent of whether they can even see the rota page.
     is_cleaning_staff = models.BooleanField(default=False)
+    # Same "assignability, not page visibility" shape as is_cleaning_staff above, but a distinct
+    # flag rather than reuse - check-in duty is a different pool of people from cleaning staff
+    # (Thomas: "the check-ins manager needs to see these distinctly").
+    is_checkin_staff = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'staff_roles'
@@ -145,10 +150,22 @@ class CleaningTask(models.Model):
     from travel logistics (Departure) or guest-requested extras (Extra). assigned_to is a
     many-to-many (not a single FK) since different staff can share a day's cleans - membership is
     what the rota/calendar's "my tasks" filters and mark-done permission check against, not a
-    single owner."""
-    TASK_TYPE_CHOICES = [('turnover', 'Turnover'), ('mid_stay', 'Mid-stay')]
-    STATUS_CHOICES = [('pending', 'Pending'), ('done', 'Done')]
+    single owner.
+
+    A third task_type, 'freshen', covers a vacant stretch between bookings that would otherwise go
+    uncleaned - auto-inserted/auto-dismissed by staff/utils.py::sync_freshen_tasks_for_property()
+    against ManagementCompany.freshen_after_days, called from the same signals as
+    sync_cleaning_tasks_for_booking() above. Unlike turnover/mid-stay it's speculative, so it's
+    dismissible without losing the row: dismissed_by/dismissed_at/dismissed_reason mirror
+    completed_by/completed_at below, and 'dismissed' is a real status rather than a delete, so
+    undo is just clearing those fields back to 'pending' - no reconstruction needed. dismissed_by
+    is null for an automatic dismissal (the gap closed) and set for a staff-initiated one;
+    dismissed_reason distinguishes the two so the automatic sweep never silently reinstates a
+    dismissal a human made on purpose."""
+    TASK_TYPE_CHOICES = [('turnover', 'Turnover'), ('mid_stay', 'Mid-stay'), ('freshen', 'Freshen')]
+    STATUS_CHOICES = [('pending', 'Pending'), ('done', 'Done'), ('dismissed', 'Dismissed')]
     TEAM_CHOICES = [(1, 'Group 1'), (2, 'Group 2'), (3, 'Group 3')]
+    DISMISSED_REASON_CHOICES = [('manual', 'Manual'), ('gap_closed', 'Gap closed')]
 
     booking = models.ForeignKey('bookings.Booking', on_delete=models.CASCADE, related_name='cleaning_tasks')
     task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES)
@@ -164,6 +181,11 @@ class CleaningTask(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
     )
     completed_at = models.DateTimeField(blank=True, null=True)
+    dismissed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    dismissed_at = models.DateTimeField(blank=True, null=True)
+    dismissed_reason = models.CharField(max_length=20, choices=DISMISSED_REASON_CHOICES, blank=True)
     notes = models.TextField(blank=True)
     # Set when a superuser drags this task to a new date on the cleaning calendar view (staff/
     # views.py::StaffCleaningTaskMoveView) - tells sync_cleaning_tasks_for_booking() (staff/
@@ -186,3 +208,64 @@ class CleaningTask(models.Model):
 
     def __str__(self):
         return f"{self.booking} - {self.get_task_type_display()} clean ({self.date})"
+
+
+class Checkin(models.Model):
+    """A check-ins-calendar-visible task for one booking's arrival - either the arrival itself
+    (task_type='arrival', always exactly one per booking) or, for a self-check-in booking, two
+    auto-generated staff prep/policy tasks: setting the key box before the guest arrives, and a
+    next-day in-person welcome visit (company policy: everyone gets met in person eventually, even
+    a guest who let themselves in). Kept in sync via post_save signals on Arrival/Booking/
+    CheckinSettings (staff/signals.py), same reasoning as CleaningTask's own docstring gives for
+    being signal-driven rather than call-site-driven - bookings/admin.py's ArrivalInline/
+    BookingDateAdjustmentInline are a second write path a call-site approach would silently miss.
+    See staff/utils.py::sync_checkins_for_booking().
+
+    time is deliberately denormalized from Arrival.time (adjusted by CheckinSettings' per-method
+    buffer - staff/utils.py::compute_arrival_eta) for 'arrival' rows, or from CheckinSettings'
+    fixed key_box_prep_time/welcome_visit_time for the other two - not read live, so the calendar
+    can query/sort by it directly. manually_scheduled/auto_time are CleaningTask.manually_scheduled
+    /auto_date's exact counterpart: a dragged time needs to survive an unrelated resync (an
+    unrelated field on the same booking being saved) the same way a dragged clean date already
+    does, without silently eating a real Arrival.time edit either.
+
+    extras_collected/deposit_collected/deposit_returned are only meaningful for task_type=
+    'arrival' - key_box/welcome_visit rows just use status/completed_by/completed_at for their own
+    done tracking, same "conditional meaning per task_type" shape as CleaningTask's own
+    dismissed_by/dismissed_at/dismissed_reason. deposit_returned genuinely belongs to a later,
+    post-departure moment, not arrival - kept on this same row anyway since there's no departure-
+    side calendar/task feature yet and building one solely to host one boolean isn't warranted."""
+    TASK_TYPE_CHOICES = [('arrival', 'Arrival'), ('key_box', 'Key box'), ('welcome_visit', 'Welcome visit')]
+    STATUS_CHOICES = [('pending', 'Pending'), ('done', 'Done')]
+
+    booking = models.ForeignKey('bookings.Booking', on_delete=models.CASCADE, related_name='checkins')
+    task_type = models.CharField(max_length=20, choices=TASK_TYPE_CHOICES)
+    date = models.DateField()
+    # None means "no time to show" (Arrival.method='other', which the guest-facing form never
+    # shows a time field for, or Arrival.time simply not filled in yet) - rendered as an all-day
+    # event on the calendar rather than a guessed time.
+    time = models.TimeField(blank=True, null=True)
+    assigned_to = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name='checkins')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    completed_at = models.DateTimeField(blank=True, null=True)
+    manually_scheduled = models.BooleanField(default=False)
+    auto_time = models.TimeField(blank=True, null=True)
+    extras_collected = models.BooleanField(default=False)
+    deposit_collected = models.BooleanField(default=False)
+    deposit_returned = models.BooleanField(default=False)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'staff_checkins'
+        verbose_name = 'Check-in'
+        verbose_name_plural = 'Check-ins'
+        # One arrival, one key-box prep, one welcome visit per booking - matches CleaningTask's
+        # own one-row-per-task_type-per-booking shape.
+        unique_together = ('booking', 'task_type')
+        ordering = ('date', 'time', 'booking__property__title')
+
+    def __str__(self):
+        return f"{self.booking} - {self.get_task_type_display()} ({self.date})"

@@ -1,3 +1,6 @@
+from datetime import date, datetime, timedelta
+
+from django.db.models import Max
 from django.utils import timezone
 
 import env_settings
@@ -130,6 +133,7 @@ STAFF_PAGE_PERMISSION_FIELDS = (
     ('can_view_locations', 'Locations'),
     ('can_view_settings', 'Settings'),
     ('can_view_cleaning_rota', 'Cleaning rota'),
+    ('can_view_checkins_calendar', 'Check-ins calendar'),
 )
 
 
@@ -212,8 +216,22 @@ def sync_cleaning_tasks_for_booking(booking):
     see CleaningTask's own docstring (staff/models.py) for why this is signal-driven (staff/
     signals.py) rather than called from one view. Never deletes a task whose status is 'done' -
     only a still-pending task is removed when its source flag/date goes away, so a completed
-    clean's record survives even if the underlying flag is later unchecked."""
+    clean's record survives even if the underlying flag is later unchecked.
+
+    A cancelled booking (CLOSED_STATUSES) never gets a clean synced at all - any of its pending
+    tasks (turnover, mid-stay, or freshen - unlike the two branches below, this isn't scoped to
+    one task_type, since a cancelled booking needs none of them) are removed outright, matching
+    how cancellation already frees the calendar for booking-overlap purposes (staff/views.py::
+    StaffBookingDetailView._cancel_booking). A hard delete, not Freshen's dismiss-with-undo -
+    reviving via _uncancel_booking() re-triggers this same signal-driven sync and the Freshen
+    property sweep (staff/signals.py), which recreate whatever's still actually due from scratch,
+    so there's nothing to preserve for an explicit undo the way a gap-closed Freshen dismissal
+    needs one."""
     from staff.models import CleaningTask
+
+    if booking.enquiry_status in CLOSED_STATUSES:
+        CleaningTask.objects.filter(booking=booking, status='pending').delete()
+        return
 
     departure = getattr(booking, 'departure', None)
     if departure and departure.clean:
@@ -232,6 +250,103 @@ def sync_cleaning_tasks_for_booking(booking):
         _sync_task_date(task, extra.mid_stay_clean_date)
     else:
         CleaningTask.objects.filter(booking=booking, task_type='mid_stay', status='pending').delete()
+
+
+def property_last_clean_before(property, booking):
+    """The property's most recent recorded clean on or before booking.arrival_date - any
+    CleaningTask type, not just 'done', across the property's other active (non-CLOSED_STATUSES,
+    non-dismissed) bookings; this booking's own tasks are excluded since they can never be what
+    covers its own arrival (a turnover/mid-stay date is always later than its own arrival, and a
+    freshen task existing for this same booking would otherwise count itself as covering its own
+    gap on a re-sweep). "On or before", not strictly before: a same-day turnover is a normal,
+    covering clean (see cleaning_task_valid_range's docstring), not an uncovered gap. Shared by
+    sync_freshen_tasks_for_property(), cleaning_task_valid_range()'s freshen branch, and the
+    Freshen popup's "Last Clean" display (staff/views.py::StaffCleaningTaskDetailView) so all
+    three agree on what counts."""
+    from staff.models import CleaningTask
+
+    return CleaningTask.objects.filter(
+        booking__property=property,
+    ).exclude(
+        booking__enquiry_status__in=CLOSED_STATUSES,
+    ).exclude(status='dismissed').exclude(booking=booking).filter(
+        date__lte=booking.arrival_date,
+    ).aggregate(last=Max('date'))['last']
+
+
+def sync_freshen_tasks_for_property(property):
+    """Property-scoped counterpart to sync_cleaning_tasks_for_booking() above - Freshen depends on
+    a property's whole booking timeline, not one booking in isolation, so it can't be driven off a
+    single Departure/Extra/Booking save the way turnover/mid-stay are. Called from the same
+    signals (staff/signals.py) right after sync_cleaning_tasks_for_booking(), so it re-runs on
+    every booking create/cancel/uncancel/date-change on this property.
+
+    Walks the property's active (non-CLOSED_STATUSES) bookings in arrival order. For each one,
+    the gap since the property's last recorded clean (the latest CleaningTask date on or before
+    this arrival - any type, not just 'done', across this property's other active bookings,
+    excluding dismissed rows and this booking's own tasks) is compared against
+    cleaning_company.freshen_after_days. "On or before", not strictly before: a turnover clean
+    dated the same day as the next arrival is a normal same-day turnover (see
+    cleaning_task_valid_range's own docstring), not an uncovered gap - excluding it undercounts
+    what's actually covering that arrival and, in production, briefly did exactly that for a
+    booking whose turnover had been manually dragged onto its next-arrival's own date.
+    - Gap qualifies, no freshen task yet -> create one dated the day before arrival.
+    - Gap qualifies, an earlier auto-dismissal ('gap_closed') exists -> reinstate it. This is the
+      symmetric case Thomas asked for: cancelling whatever booking had closed the gap should bring
+      the freshen back, since the sweep re-runs on that cancellation too.
+    - Gap qualifies, a manual dismissal exists, or the task is already pending/done -> leave it -
+      a manual dismissal is a staff decision and must never be silently overridden by this sweep.
+    - Gap doesn't qualify, a pending freshen task exists -> auto-dismiss it (dismissed_reason=
+      'gap_closed', dismissed_by=None) - a later booking has closed the gap, so the speculative
+      clean is no longer justified. Fires even if staff already assigned a team to it, per
+      Thomas's explicit description of the requirement.
+    - Gap doesn't qualify, task is 'done' or already dismissed -> leave it.
+
+    Re-queries last-clean on every iteration (rather than precomputing once) so a freshen task
+    created earlier in this same walk correctly feeds into the gap calculation for later bookings
+    in it. No infinite-loop risk from the signals that call this: CleaningTask itself isn't a
+    watched sender, so creating/updating one here doesn't re-trigger sync.
+
+    Two known gaps, not addressed here: a property's very first-ever booking never gets a freshen
+    task (nothing to measure a gap against), and platform-synced (iCal) bookings don't get a
+    Departure row (bookings/utils.py::sync_ical_link()) so they never register as a "last clean"
+    even though the platform's own cleaner may have serviced the property in between."""
+    from bookings.models import Booking
+    from staff.models import CleaningTask
+
+    cleaning_company = property.cleaning_company
+    if cleaning_company is None or cleaning_company.freshen_after_days is None:
+        return
+    freshen_after_days = cleaning_company.freshen_after_days
+
+    bookings = Booking.objects.filter(property=property).exclude(
+        enquiry_status__in=CLOSED_STATUSES,
+    ).order_by('arrival_date')
+
+    for booking in bookings:
+        last_clean = property_last_clean_before(property, booking)
+        existing = CleaningTask.objects.filter(booking=booking, task_type='freshen').first()
+        gap_qualifies = last_clean is not None and (booking.arrival_date - last_clean).days >= freshen_after_days
+
+        if gap_qualifies:
+            if existing is None:
+                CleaningTask.objects.create(
+                    booking=booking, task_type='freshen',
+                    date=booking.arrival_date - timedelta(days=1),
+                )
+            elif existing.status == 'dismissed' and existing.dismissed_reason == 'gap_closed':
+                existing.status = 'pending'
+                existing.dismissed_by = None
+                existing.dismissed_at = None
+                existing.dismissed_reason = ''
+                existing.save(update_fields=['status', 'dismissed_by', 'dismissed_at', 'dismissed_reason'])
+        else:
+            if existing is not None and existing.status == 'pending':
+                existing.status = 'dismissed'
+                existing.dismissed_by = None
+                existing.dismissed_at = timezone.now()
+                existing.dismissed_reason = 'gap_closed'
+                existing.save(update_fields=['status', 'dismissed_by', 'dismissed_at', 'dismissed_reason'])
 
 
 def _sync_task_date(task, computed_date):
@@ -272,7 +387,10 @@ def cleaning_task_valid_range(task):
     is confined to the same ±1-day window around the middle of the stay the guest was shown as
     their estimate (bookings.utils.mid_stay_clean_window) - not the full stay - so a drag on the
     calendar can only ever nudge it a day either way, matching that it's a fixed estimate, not an
-    open-ended reschedule."""
+    open-ended reschedule. A freshen clean can't be dragged past its own booking's arrival (same
+    ceiling logic as turnover, just against this booking rather than the next one) or earlier than
+    the property's last actual clean before that arrival - dragging it earlier than that would put
+    it before a clean that already covers the gap it exists to fill."""
     from bookings.models import Booking
     from bookings.utils import mid_stay_clean_window
 
@@ -280,6 +398,10 @@ def cleaning_task_valid_range(task):
     if task.task_type == 'turnover':
         min_date = booking.departure_date
         return min_date, Booking.objects.next_confirmed_arrival_after(booking.property, min_date)
+    if task.task_type == 'freshen':
+        last_clean = property_last_clean_before(booking.property, booking)
+        min_date = (last_clean + timedelta(days=1)) if last_clean else booking.arrival_date
+        return min_date, booking.arrival_date
     _, min_date, max_date = mid_stay_clean_window(booking)
     return min_date, max_date
 
@@ -291,17 +413,177 @@ def apply_manual_task_date(task, new_date):
     and the booking detail page's embedded planner do when a date is actually changed there too.
     Returns None on success, or a human-readable error string on failure. Callers should only call
     this when new_date differs from task.date - saving an unrelated field (e.g. just ticking a
-    cleaning-staff checkbox) must never flip manually_scheduled or touch auto_date."""
+    cleaning-staff checkbox) must never flip manually_scheduled or touch auto_date.
+
+    Also re-runs sync_freshen_tasks_for_property() for this task's property after a successful
+    save, for any task_type - dragging any clean's date changes the property's actual clean
+    timeline, which can close or reopen a gap for a *different* booking's Freshen task the same
+    way a booking create/cancel does (staff/signals.py normally drives that, but a drag only saves
+    the CleaningTask itself, never Booking/Departure/Extra, so those signals never fire for it -
+    confirmed live 2026-08-27: dragging a turnover clean later closed a gap for a booking three
+    stays down, and it only picked up the change because the reconcile command happened to be
+    re-run manually afterwards, not because the drag itself triggered anything)."""
     min_date, max_date = cleaning_task_valid_range(task)
     if new_date < min_date or (max_date is not None and new_date > max_date):
         return "That date is outside this task's valid window."
 
-    computed_date = (
-        task.booking.departure_date if task.task_type == 'turnover'
-        else task.booking.extras.mid_stay_clean_date
-    )
+    if task.task_type == 'turnover':
+        computed_date = task.booking.departure_date
+    elif task.task_type == 'mid_stay':
+        computed_date = task.booking.extras.mid_stay_clean_date
+    else:
+        computed_date = task.booking.arrival_date - timedelta(days=1)
     task.date = new_date
     task.manually_scheduled = True
     task.auto_date = computed_date
     task.save(update_fields=['date', 'manually_scheduled', 'auto_date'])
+    sync_freshen_tasks_for_property(task.booking.property)
     return None
+
+
+def compute_arrival_eta(booking):
+    """(time_or_None, is_all_day) - the calendar-displayed clock time for this booking's arrival.
+    Arrival.time means something different per travel method, per the guest-facing form
+    (bookings/templates/bookings/_arrival_departure_form.html): a flight's *landing* time, a bus/
+    train's own "expected time in Albufeira" (already an at-property estimate, just needing a
+    last-mile buffer), or - for driving - the guest's own estimated arrival time at the property
+    itself, used as-is with no buffer (explicit choice, not an oversight). method='other' never
+    gets a time field on that form at all, so there's nothing to compute - same as time simply
+    not having been filled in yet. is_all_day=True in both of those cases means "render as an
+    all-day event", not "assume midnight"."""
+    from bookings.models import CheckinSettings, TravelMethod
+
+    arrival = getattr(booking, 'arrival', None)
+    if arrival is None or arrival.time is None:
+        return None, True
+
+    if arrival.method == TravelMethod.FLIGHT_FARO:
+        buffer_minutes = CheckinSettings.load().faro_buffer_minutes
+    elif arrival.method == TravelMethod.FLIGHT_LISBON:
+        buffer_minutes = CheckinSettings.load().lisbon_buffer_minutes
+    elif arrival.method in (TravelMethod.BUS, TravelMethod.TRAIN):
+        buffer_minutes = CheckinSettings.load().transit_buffer_minutes
+    elif arrival.method == TravelMethod.DRIVING:
+        buffer_minutes = 0
+    else:
+        return None, True
+
+    computed = (datetime.combine(date.today(), arrival.time) + timedelta(minutes=buffer_minutes)).time()
+    return computed, False
+
+
+def _computed_checkin_time(booking, task_type):
+    """The 'auto' time for a Checkin of a given task_type - what its time would be absent any
+    manual drag. 'arrival' reads compute_arrival_eta(); 'key_box'/'welcome_visit' just read
+    CheckinSettings' own fixed policy times directly, unrelated to the guest's own arrival time by
+    design. Shared by sync_checkins_for_booking(), apply_manual_checkin_time(), and the
+    CheckinSettings post_save cascade, so all three agree on what "computed" means per type."""
+    if task_type == 'arrival':
+        return compute_arrival_eta(booking)[0]
+    from bookings.models import CheckinSettings
+    settings_obj = CheckinSettings.load()
+    return settings_obj.key_box_prep_time if task_type == 'key_box' else settings_obj.welcome_visit_time
+
+
+def checkin_valid_range(checkin):
+    """(min_time, max_time) a Checkin's time may occupy on a drag - always its own existing date's
+    full 00:00-23:59 span. Deliberately date-invariant (unlike cleaning_task_valid_range, which
+    computes a real cross-booking window) - a check-in's date is never draggable at all (an
+    arrival-date change has to happen from the booking's own page, per Thomas), so the only thing
+    a drag can legally do is move the time-of-day within that fixed date."""
+    from datetime import time as time_cls
+    return time_cls.min, time_cls.max
+
+
+def apply_manual_checkin_time(checkin, new_time):
+    """Same shape as apply_manual_task_date() above, for Checkin.time instead of CleaningTask.date
+    - validates, then sets time/manually_scheduled/auto_time. Callers should only call this when
+    new_time differs from checkin.time. Returns None on success or an error string on failure."""
+    min_time, max_time = checkin_valid_range(checkin)
+    if new_time < min_time or new_time > max_time:
+        return "That time is outside this check-in's valid window."
+
+    checkin.time = new_time
+    checkin.manually_scheduled = True
+    checkin.auto_time = _computed_checkin_time(checkin.booking, checkin.task_type)
+    checkin.save(update_fields=['time', 'manually_scheduled', 'auto_time'])
+    return None
+
+
+def _sync_checkin_time(checkin, computed_time):
+    """Checkin.time counterpart to _sync_task_date() above - same three cases: not manually
+    scheduled, always adopt computed_time; manually scheduled but the source time itself changed
+    since the drag, an explicit edit should win, clear the override and adopt; manually scheduled
+    and the source is unchanged, leave it alone. Unlike _sync_task_date there's no "valid window"
+    re-check on the unchanged-source path - a Checkin's valid window (checkin_valid_range) is
+    always that same fixed date's full 00:00-23:59 span, so a drag can never fall outside it after
+    the fact the way a turnover's next-arrival ceiling can shift."""
+    if not checkin.manually_scheduled:
+        if checkin.time != computed_time:
+            checkin.time = computed_time
+            checkin.save(update_fields=['time'])
+        return
+
+    if computed_time != checkin.auto_time:
+        checkin.time, checkin.manually_scheduled, checkin.auto_time = computed_time, False, None
+        checkin.save(update_fields=['time', 'manually_scheduled', 'auto_time'])
+
+
+def sync_checkins_for_booking(booking):
+    """Keeps Checkin rows in sync with Arrival (the 'arrival' row) and, for a self-check-in
+    booking, two auto-generated policy tasks ('key_box'/'welcome_visit') - see Checkin's own
+    docstring (staff/models.py) for the full reasoning. Never deletes a 'done' row - only a still-
+    pending one is removed when its trigger condition disappears, same rule
+    sync_cleaning_tasks_for_booking() already applies to turnover/mid-stay above. A cancelled
+    booking (CLOSED_STATUSES) gets no check-in tasks at all - one blanket pending-delete across
+    every task_type, matching that function's own cancellation branch exactly (not three separate
+    per-type branches - a cancelled booking needs none of them, full stop)."""
+    from staff.models import Checkin
+
+    if booking.enquiry_status in CLOSED_STATUSES:
+        Checkin.objects.filter(booking=booking, status='pending').delete()
+        return
+
+    task, _ = Checkin.objects.get_or_create(
+        booking=booking, task_type='arrival',
+        defaults={'date': booking.arrival_date, 'time': _computed_checkin_time(booking, 'arrival')},
+    )
+    if task.date != booking.arrival_date:
+        task.date = booking.arrival_date
+        task.save(update_fields=['date'])
+    _sync_checkin_time(task, _computed_checkin_time(booking, 'arrival'))
+
+    arrival = getattr(booking, 'arrival', None)
+    if arrival and arrival.self_check_in:
+        for task_type, offset_days in (('key_box', 0), ('welcome_visit', 1)):
+            sub_task, _ = Checkin.objects.get_or_create(
+                booking=booking, task_type=task_type,
+                defaults={
+                    'date': booking.arrival_date + timedelta(days=offset_days),
+                    'time': _computed_checkin_time(booking, task_type),
+                },
+            )
+            expected_date = booking.arrival_date + timedelta(days=offset_days)
+            if sub_task.date != expected_date:
+                sub_task.date = expected_date
+                sub_task.save(update_fields=['date'])
+            _sync_checkin_time(sub_task, _computed_checkin_time(booking, task_type))
+    else:
+        Checkin.objects.filter(
+            booking=booking, task_type__in=['key_box', 'welcome_visit'], status='pending',
+        ).delete()
+
+
+def resync_checkin_times_for_settings_change():
+    """Called from staff/signals.py on CheckinSettings' own post_save - a changed buffer/policy
+    time is a staff-facing correctness issue (a wrong pickup/greet time on the calendar), not just
+    a cosmetic staleness, so every future, not-yet-manually-dragged row gets its time recomputed
+    immediately rather than waiting for some unrelated save on that booking to happen to trigger
+    it. Bounded to future dates and manually_scheduled=False so this is cheap and never clobbers a
+    deliberate drag."""
+    from staff.models import Checkin
+
+    today = timezone.now().date()
+    checkins = Checkin.objects.filter(manually_scheduled=False, date__gte=today).select_related('booking__arrival')
+    for checkin in checkins:
+        _sync_checkin_time(checkin, _computed_checkin_time(checkin.booking, checkin.task_type))

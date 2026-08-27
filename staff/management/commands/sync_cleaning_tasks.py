@@ -3,7 +3,8 @@ from django.db.models import Q
 from django.utils import timezone
 
 from bookings.models import Booking
-from staff.utils import sync_cleaning_tasks_for_booking
+from properties.models import Property
+from staff.utils import sync_cleaning_tasks_for_booking, sync_freshen_tasks_for_property
 
 
 class Command(BaseCommand):
@@ -12,8 +13,14 @@ class Command(BaseCommand):
     on every save, but this is safe and cheap to re-run any time (e.g. once after this feature's
     migration first ships, to pick up existing bookings whose Departure/Extra rows were saved
     before the signals existed). Skips past departures/mid-stay dates - no value cluttering the
-    rota with already-happened cleans."""
-    help = "Backfill/reconcile CleaningTask rows for upcoming turnover and mid-stay cleans."
+    rota with already-happened cleans.
+
+    Also sweeps Freshen tasks for every property whose cleaning company has freshen_after_days
+    set, independent of the turnover/mid-stay booking filter above - a property's Freshen state
+    depends on its whole active booking timeline (staff/utils.py::sync_freshen_tasks_for_property),
+    not on any single booking's Departure/Extra flags, so it can't reuse that same filtered
+    queryset without under-covering properties whose bookings happen not to match it."""
+    help = "Backfill/reconcile CleaningTask rows for upcoming turnover, mid-stay, and Freshen cleans."
 
     def handle(self, *args, **options):
         today = timezone.now().date()
@@ -27,4 +34,11 @@ class Command(BaseCommand):
             sync_cleaning_tasks_for_booking(booking)
             count += 1
 
-        self.stdout.write(self.style.SUCCESS(f"Synced cleaning tasks for {count} booking(s)."))
+        properties = list(Property.objects.filter(cleaning_company__freshen_after_days__isnull=False))
+        for property in properties:
+            sync_freshen_tasks_for_property(property)
+
+        self.stdout.write(self.style.SUCCESS(
+            f"Synced cleaning tasks for {count} booking(s) and Freshen tasks for "
+            f"{len(properties)} propert{'y' if len(properties) == 1 else 'ies'}."
+        ))

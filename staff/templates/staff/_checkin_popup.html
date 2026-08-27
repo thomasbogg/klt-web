@@ -1,0 +1,71 @@
+<div class="staff-checkin-popup" data-checkin-id="{{ checkin.pk }}" data-status="{{ checkin.status }}" data-task-type="{{ checkin.task_type }}">
+    {% if checkin.task_type == 'arrival' %}
+    <fieldset class="staff-popup-section">
+        <legend>Guest</legend>
+        <dl class="staff-departure-summary">
+            <dt>Name</dt><dd>{{ booking.guest.first_name }} {{ booking.guest.last_name }}</dd>
+            <dt>Guests</dt><dd>{{ booking.total_guests }}</dd>
+            <dt>Phone</dt><dd>{{ booking.guest.phone|default:"—" }}</dd>
+        </dl>
+    </fieldset>
+
+    <fieldset class="staff-popup-section">
+        <legend>Arrival plans</legend>
+        {% if arrival %}
+        <dl class="staff-departure-summary">
+            <dt>Method</dt><dd>{{ arrival.get_method_display }}</dd>
+            {% if arrival.flight_number %}<dt>Flight number</dt><dd>{{ arrival.flight_number }}</dd>{% endif %}
+            <dt>Time given</dt><dd>{{ arrival.time|time:'H:i'|default:"—" }}</dd>
+            {% if arrival.travelling_from %}<dt>Travelling from</dt><dd>{{ arrival.travelling_from }}</dd>{% endif %}
+            {% if arrival.details %}<dt>Details</dt><dd>{{ arrival.details }}</dd>{% endif %}
+        </dl>
+        {% else %}
+        <p class="staff-empty">No arrival details on file.</p>
+        {% endif %}
+    </fieldset>
+
+    <fieldset class="staff-popup-section">
+        <legend>Extras</legend>
+        {% if extras.items %}
+        <ul class="staff-cleaning-extras">
+            {% for item in extras.items %}<li>{{ item.label }} — €{{ item.price }}</li>{% endfor %}
+        </ul>
+        <p>Total: €{{ extras.total }}</p>
+        {% else %}
+        <p class="staff-empty">No extras on this booking.</p>
+        {% endif %}
+        <label class="staff-checkbox-label">
+            <input type="checkbox" id="checkin-extras-collected" {% if checkin.extras_collected %}checked{% endif %}>
+            Extras cash collected
+        </label>
+    </fieldset>
+
+    <fieldset class="staff-popup-section">
+        <legend>Security deposit</legend>
+        {% if deposit_amount %}
+        <p>€{{ deposit_amount }} due</p>
+        <label class="staff-checkbox-label">
+            <input type="checkbox" id="checkin-deposit-collected" {% if checkin.deposit_collected %}checked{% endif %}>
+            Deposit collected
+        </label>
+        <label class="staff-checkbox-label">
+            <input type="checkbox" id="checkin-deposit-returned" {% if checkin.deposit_returned %}checked{% endif %}>
+            Deposit returned (post-departure)
+        </label>
+        {% else %}
+        <p class="staff-empty">Not required for a returning guest.</p>
+        {% endif %}
+    </fieldset>
+    {% else %}
+    <fieldset class="staff-popup-section">
+        <legend>{{ checkin.get_task_type_display }}</legend>
+        <dl class="staff-departure-summary">
+            <dt>Property</dt><dd>{{ booking.property.short_title }}</dd>
+            <dt>Guest</dt><dd>{{ booking.guest.first_name }} {{ booking.guest.last_name }}</dd>
+            <dt>Time</dt><dd>{{ checkin.time|time:'H:i'|default:"—" }}</dd>
+        </dl>
+    </fieldset>
+    {% endif %}
+
+    <a href="{% url 'staff:booking_detail' reference=booking.reference %}" class="staff-header-link">View booking &rarr;</a>
+</div>

@@ -23,6 +23,7 @@
         var moveUrlTemplate = el.dataset.moveUrlTemplate;
         var detailUrlTemplate = el.dataset.detailUrlTemplate;
         var saveUrlTemplate = el.dataset.saveUrlTemplate;
+        var dismissUrlTemplate = el.dataset.dismissUrlTemplate;
         var csrftoken = getCookie('csrftoken');
 
         var dialog = document.getElementById('clean-task-dialog');
@@ -33,6 +34,15 @@
         });
         document.getElementById('clean-task-dialog-save').addEventListener('click', function () {
             if (currentTaskId != null) saveTask(currentTaskId);
+        });
+        // The delete button only exists inside planner_html (pending Freshen tasks only), so it's
+        // rendered fresh into dialogBody on every eventClick - delegate from a static ancestor
+        // rather than re-binding a listener each time the dialog's innerHTML is replaced.
+        dialogBody.addEventListener('click', function (event) {
+            var btn = event.target.closest('#clean-task-dismiss-btn');
+            if (!btn) return;
+            if (!window.confirm('Delete this Freshen clean? You can undo this from the booking\'s detail page afterwards.')) return;
+            dismissTask(btn.dataset.taskId);
         });
 
         // Tracks which day cells are currently shaded invalid mid-drag, so eventDragStop can
@@ -78,10 +88,16 @@
             return assigned.length === 0 ? 0 : (event.extendedProps.team || 1);
         }
 
+        var BAND_TITLES = { 0: 'Unassigned', 1: 'Group 1', 2: 'Group 2', 3: 'Group 3' };
+
         function applyGrouping(events) {
             Object.keys(eventElsById).forEach(function (id) {
                 var harness = eventElsById[id] && eventElsById[id].closest('.fc-daygrid-event-harness');
-                if (harness) harness.classList.remove('staff-clean-group-start');
+                if (harness) {
+                    harness.classList.remove('staff-clean-group-start');
+                    harness.classList.remove('staff-clean-unassigned-end');
+                    harness.removeAttribute('data-band-title');
+                }
             });
 
             var byDate = {};
@@ -94,13 +110,72 @@
                     return bucketRank(a) - bucketRank(b);
                 });
                 var prevRank = null;
+                var lastUnassignedHarness = null;
                 dayEvents.forEach(function (event) {
                     var harness = eventElsById[event.id] && eventElsById[event.id].closest('.fc-daygrid-event-harness');
                     if (!harness) return;
                     var rank = bucketRank(event);
-                    if (prevRank !== null && rank !== prevRank) harness.classList.add('staff-clean-group-start');
+                    if (rank !== prevRank) {
+                        // First clean of a new band - always gets its title label ("Unassigned"/
+                        // "Group N"), only shown at all since this element has at least one clean
+                        // (the whole point of the ask: no label for a team with nothing today).
+                        // Also gets the divider line, except when it's the day's very first band
+                        // (nothing above it to cut from) or when it's the first *assigned* band
+                        // right after unassigned - staff-clean-unassigned-end below already draws
+                        // that specific boundary, so adding staff-clean-group-start there too
+                        // would double it up.
+                        harness.setAttribute('data-band-title', BAND_TITLES[rank] || ('Group ' + rank));
+                        if (prevRank !== null && prevRank !== 0) harness.classList.add('staff-clean-group-start');
+                    }
+                    if (rank === 0) {
+                        // Tracked, not marked here - the unassigned group's own closing line
+                        // (below) always follows the *last* unassigned clean, whether or not
+                        // anything else follows it that day, matching the placeholder message's
+                        // own always-present line for a day with none at all (see
+                        // applyUnassignedSlots). Marking it mid-loop would be wrong if a later
+                        // unassigned clean turns out to be the true last one.
+                        lastUnassignedHarness = harness;
+                    }
                     prevRank = rank;
                 });
+                if (lastUnassignedHarness) lastUnassignedHarness.classList.add('staff-clean-unassigned-end');
+            });
+
+            applyUnassignedSlots(byDate);
+        }
+
+        // Unassigned cleans are "what's left to plan" for the day, so they need to visually
+        // group at the *top* of the cell, not below some fixed top-of-day marker - eventOrder
+        // (below) already sorts real unassigned events there. When there are none, the "No
+        // unassigned tasks for today" message needs to occupy that exact same top slot, not a
+        // separate slot above it. A real DOM node can't be spliced into that position from
+        // outside though: .fc-daygrid-day-events is fully owned/re-rendered by FullCalendar's
+        // internal Preact tree, and a foreign child inserted into it risks being wiped or
+        // corrupting its reconciliation on the next render pass (the "+more" overflow pass, a
+        // refetch, a navigation). A ::before pseudo-element on that same container sidesteps this
+        // entirely - it's pure CSS, invisible to FullCalendar/Preact, always renders before the
+        // container's real children regardless of DOM order, and can't be miscounted by
+        // dayMaxEventRows' overflow logic (see cleaning_calendar.css for the counterpart rule).
+        // Toggling an attribute here - never inserting/removing/reassigning a node's content -
+        // also isn't a childList mutation, so this can't re-trigger the MutationObserver that
+        // calls this function in the first place (confirmed live 2026-08-27: an earlier version
+        // of this that used a real element with unconditional .textContent writes pegged the CPU
+        // in an infinite mutate-observe loop within seconds).
+        function applyUnassignedSlots(byDate) {
+            el.querySelectorAll('.fc-daygrid-day[data-date]').forEach(function (cell) {
+                var eventsContainer = cell.querySelector('.fc-daygrid-day-events');
+                if (!eventsContainer) return;
+                var dateStr = cell.getAttribute('data-date');
+                var hasUnassigned = (byDate[dateStr] || []).some(function (event) {
+                    return bucketRank(event) === 0;
+                });
+                if (hasUnassigned) {
+                    if (eventsContainer.hasAttribute('data-no-unassigned')) {
+                        eventsContainer.removeAttribute('data-no-unassigned');
+                    }
+                } else if (eventsContainer.getAttribute('data-no-unassigned') !== 'true') {
+                    eventsContainer.setAttribute('data-no-unassigned', 'true');
+                }
             });
         }
 
@@ -135,6 +210,20 @@
             events: eventsUrl,
             eventOrder: function (a, b) {
                 return bucketRank(a) - bucketRank(b);
+            },
+            // Belt-and-suspenders with the MutationObserver below: this fires reliably on every
+            // change to the rendered event set, including "changed to zero events" - a case that
+            // can leave nothing at all for the observer to catch. Confirmed live 2026-08-27: on a
+            // week with no cleans anywhere in it, the initial async events fetch resolves to an
+            // empty set FullCalendar's internal render diffs against an already-empty DOM, so
+            // nothing actually mutates and the observer (which only starts watching after
+            // render() returns, so it can't have caught anything earlier either) never fires -
+            // the unassigned-slot message silently never appeared until the next navigation
+            // rebuilt the whole day grid from scratch. eventsSet alone still isn't sufficient on
+            // its own for the "+more" overflow case (see the observer's own comment below), so
+            // this doesn't replace it, just covers the gap it has on first load.
+            eventsSet: function (events) {
+                applyGrouping(events);
             },
 
             eventDidMount: function (info) {
@@ -249,6 +338,25 @@
                 return (isJson ? response.json() : Promise.resolve({})).then(function (data) {
                     if (!response.ok) {
                         throw new Error(data.error || 'Could not save this task.');
+                    }
+                    dialog.close();
+                    calendar.refetchEvents();
+                });
+            }).catch(function (err) {
+                showError(err.message);
+            });
+        }
+
+        function dismissTask(taskId) {
+            var dismissUrl = dismissUrlTemplate.replace('0', taskId);
+            fetch(dismissUrl, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrftoken },
+            }).then(function (response) {
+                var isJson = (response.headers.get('Content-Type') || '').indexOf('application/json') !== -1;
+                return (isJson ? response.json() : Promise.resolve({})).then(function (data) {
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Could not dismiss this task.');
                     }
                     dialog.close();
                     calendar.refetchEvents();

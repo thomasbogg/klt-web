@@ -10,8 +10,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import (
-    Arrival, BalancePayment, Booking, BookingCondition, BookingSettings, Charge, Departure, Extra,
-    FAQ, Payment, PaymentSettings,
+    Arrival, BalancePayment, Booking, BookingCondition, BookingSettings, Charge, CheckinSettings,
+    Departure, Extra, FAQ, Payment, PaymentSettings, TravelMethod,
 )
 from guests.models import Guest
 from properties.models import (
@@ -19,8 +19,11 @@ from properties.models import (
     Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail, WashingMaterial,
     iCalLink,
 )
-from staff.models import CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
-from staff.utils import apply_manual_task_date, booking_stage, cleaning_task_valid_range, next_step_hint, status_bucket
+from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
+from staff.utils import (
+    apply_manual_checkin_time, apply_manual_task_date, booking_stage, checkin_valid_range,
+    cleaning_task_valid_range, compute_arrival_eta, next_step_hint, status_bucket,
+)
 
 User = get_user_model()
 
@@ -710,6 +713,44 @@ class StaffBookingDetailViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertTrue(response.context['can_uncancel'])
 
+    def test_dismiss_freshen_action_dismisses_pending_task(self):
+        task = CleaningTask.objects.create(
+            booking=self.booking, task_type='freshen', date=self.start - timedelta(days=1),
+        )
+        response = self.client.post(self.url, {'action': 'dismiss_freshen'})
+        self.assertRedirects(response, self.url)
+        task.refresh_from_db()
+        self.assertEqual(task.status, 'dismissed')
+        self.assertEqual(task.dismissed_reason, 'manual')
+        self.assertEqual(task.dismissed_by, self.staff_user)
+
+    def test_dismiss_freshen_action_with_no_freshen_task_is_a_noop(self):
+        response = self.client.post(self.url, {'action': 'dismiss_freshen'})
+        self.assertRedirects(response, self.url)
+        self.assertFalse(CleaningTask.objects.filter(booking=self.booking, task_type='freshen').exists())
+
+    def test_undo_dismiss_freshen_action_restores_a_dismissed_task(self):
+        task = CleaningTask.objects.create(
+            booking=self.booking, task_type='freshen', date=self.start - timedelta(days=1),
+            status='dismissed', dismissed_by=self.staff_user, dismissed_at=timezone.now(),
+            dismissed_reason='manual',
+        )
+        response = self.client.post(self.url, {'action': 'undo_dismiss_freshen'})
+        self.assertRedirects(response, self.url)
+        task.refresh_from_db()
+        self.assertEqual(task.status, 'pending')
+        self.assertIsNone(task.dismissed_by)
+        self.assertIsNone(task.dismissed_at)
+        self.assertEqual(task.dismissed_reason, '')
+
+    def test_undo_dismiss_freshen_action_on_a_pending_task_is_a_noop(self):
+        task = CleaningTask.objects.create(
+            booking=self.booking, task_type='freshen', date=self.start - timedelta(days=1),
+        )
+        self.client.post(self.url, {'action': 'undo_dismiss_freshen'})
+        task.refresh_from_db()
+        self.assertEqual(task.status, 'pending')
+
 
 class StaffBookingDetailArrivalDepartureTests(TestCase):
     """The Arrival/Departure panels + Booking Info's self_check_in/meet_greet/clean checkboxes -
@@ -961,6 +1002,234 @@ class CleaningTaskSyncTests(TestCase):
         departure.save()
         departure.save()
         self.assertEqual(CleaningTask.objects.filter(booking=self.booking, task_type='turnover').count(), 1)
+
+    def test_cancelling_a_booking_removes_its_pending_turnover_and_mid_stay_tasks(self):
+        # Regression 2026-08-27: cancelling a booking only ever flipped enquiry_status - nothing
+        # cleaned up its CleaningTask rows, so a cancelled booking's clean kept showing on the
+        # calendar looking exactly like a real one.
+        Departure.objects.create(booking=self.booking, clean=True)
+        Extra.objects.create(
+            booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=self.start + timedelta(days=3),
+        )
+        self.assertEqual(CleaningTask.objects.filter(booking=self.booking).count(), 2)
+
+        self.booking.enquiry_status = 'Cancelled by staff'
+        self.booking.save(update_fields=['enquiry_status'])
+
+        self.assertFalse(CleaningTask.objects.filter(booking=self.booking).exists())
+
+    def test_cancelling_a_booking_does_not_remove_a_done_task(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        task.status = 'done'
+        task.save()
+
+        self.booking.enquiry_status = 'Cancelled by staff'
+        self.booking.save(update_fields=['enquiry_status'])
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, 'done')
+
+    def test_uncancelling_a_booking_recreates_its_turnover_task(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        self.booking.enquiry_status = 'Cancelled by staff'
+        self.booking.save(update_fields=['enquiry_status'])
+        self.assertFalse(CleaningTask.objects.filter(booking=self.booking).exists())
+
+        self.booking.enquiry_status = 'Booking confirmed'
+        self.booking.save(update_fields=['enquiry_status'])
+
+        task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        self.assertEqual(task.date, self.end)
+        self.assertEqual(task.status, 'pending')
+
+
+class FreshenTaskSyncTests(TestCase):
+    """staff/utils.py::sync_freshen_tasks_for_property() - the auto-insert/auto-dismiss cascade
+    for the 'freshen' task type, driven from the same signals as sync_cleaning_tasks_for_booking()
+    above (staff/signals.py) so it stays correct across booking create/cancel/uncancel without a
+    dedicated call site."""
+
+    def setUp(self):
+        self.company = ManagementCompany.objects.create(name='Freshen Co', freshen_after_days=10)
+        self.property = Property.objects.create(
+            title='Freshen Property', short_title='FRESHPROP', cleaning_company=self.company,
+        )
+        self.guest = Guest.objects.create(first_name='Ana', last_name='Silva', email='freshen-sync@example.com')
+        self.baseline = date.today() + timedelta(days=30)
+
+    def _make_booking(self, arrival, departure):
+        return Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=arrival, departure_date=departure,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def _seed_last_clean(self):
+        # A departed booking whose turnover clean gives the property a "last clean" baseline
+        # (self.baseline) for the tests below to measure a gap against.
+        earlier = self._make_booking(self.baseline - timedelta(days=10), self.baseline)
+        Departure.objects.create(booking=earlier, clean=True)
+        return earlier
+
+    def test_no_prior_clean_creates_no_freshen_task(self):
+        # Nothing to measure a gap against yet - see sync_freshen_tasks_for_property()'s docstring.
+        later = self._make_booking(self.baseline, self.baseline + timedelta(days=7))
+        self.assertFalse(CleaningTask.objects.filter(booking=later, task_type='freshen').exists())
+
+    def test_gap_meeting_threshold_creates_pending_freshen_task(self):
+        self._seed_last_clean()
+        later = self._make_booking(self.baseline + timedelta(days=10), self.baseline + timedelta(days=17))
+        task = CleaningTask.objects.get(booking=later, task_type='freshen')
+        self.assertEqual(task.status, 'pending')
+        self.assertEqual(task.date, later.arrival_date - timedelta(days=1))
+
+    def test_gap_below_threshold_creates_no_freshen_task(self):
+        self._seed_last_clean()
+        later = self._make_booking(self.baseline + timedelta(days=9), self.baseline + timedelta(days=16))
+        self.assertFalse(CleaningTask.objects.filter(booking=later, task_type='freshen').exists())
+
+    def test_closing_booking_auto_dismisses_existing_freshen_task(self):
+        self._seed_last_clean()
+        far = self._make_booking(self.baseline + timedelta(days=10), self.baseline + timedelta(days=17))
+        far_task = CleaningTask.objects.get(booking=far, task_type='freshen')
+        self.assertEqual(far_task.status, 'pending')
+
+        closing = self._make_booking(self.baseline + timedelta(days=1), self.baseline + timedelta(days=4))
+        Departure.objects.create(booking=closing, clean=True)
+
+        far_task.refresh_from_db()
+        self.assertEqual(far_task.status, 'dismissed')
+        self.assertEqual(far_task.dismissed_reason, 'gap_closed')
+        self.assertIsNone(far_task.dismissed_by)
+
+    def test_cancelling_the_closing_booking_reinstates_the_freshen_task(self):
+        self._seed_last_clean()
+        far = self._make_booking(self.baseline + timedelta(days=10), self.baseline + timedelta(days=17))
+        far_task = CleaningTask.objects.get(booking=far, task_type='freshen')
+        closing = self._make_booking(self.baseline + timedelta(days=1), self.baseline + timedelta(days=4))
+        Departure.objects.create(booking=closing, clean=True)
+        far_task.refresh_from_db()
+        self.assertEqual(far_task.status, 'dismissed')
+
+        closing.enquiry_status = 'Cancelled by staff'
+        closing.save(update_fields=['enquiry_status'])
+
+        far_task.refresh_from_db()
+        self.assertEqual(far_task.status, 'pending')
+        self.assertEqual(far_task.dismissed_reason, '')
+        self.assertIsNone(far_task.dismissed_at)
+
+    def test_manual_dismissal_is_never_reinstated_by_the_sweep(self):
+        self._seed_last_clean()
+        far = self._make_booking(self.baseline + timedelta(days=10), self.baseline + timedelta(days=17))
+        far_task = CleaningTask.objects.get(booking=far, task_type='freshen')
+        staffer = User.objects.create_user(username='freshendismisser', password='pw', is_staff=True)
+        far_task.status = 'dismissed'
+        far_task.dismissed_by = staffer
+        far_task.dismissed_at = timezone.now()
+        far_task.dismissed_reason = 'manual'
+        far_task.save()
+
+        # Re-trigger the sweep - the gap still qualifies, but a manual dismissal must not be
+        # silently reinstated.
+        far.save()
+
+        far_task.refresh_from_db()
+        self.assertEqual(far_task.status, 'dismissed')
+        self.assertEqual(far_task.dismissed_reason, 'manual')
+
+    def test_no_cleaning_company_never_creates_a_freshen_task(self):
+        self.property.cleaning_company = None
+        self.property.save()
+        self._seed_last_clean()
+        later = self._make_booking(self.baseline + timedelta(days=10), self.baseline + timedelta(days=17))
+        self.assertFalse(CleaningTask.objects.filter(booking=later, task_type='freshen').exists())
+
+    def test_cancelling_the_arriving_booking_removes_its_own_pending_freshen_task(self):
+        self._seed_last_clean()
+        far = self._make_booking(self.baseline + timedelta(days=10), self.baseline + timedelta(days=17))
+        self.assertTrue(CleaningTask.objects.filter(booking=far, task_type='freshen', status='pending').exists())
+
+        far.enquiry_status = 'Cancelled by staff'
+        far.save(update_fields=['enquiry_status'])
+
+        self.assertFalse(CleaningTask.objects.filter(booking=far, task_type='freshen').exists())
+
+    def test_a_same_day_turnover_counts_as_covering_the_gap(self):
+        # Regression: a real production booking's turnover clean had been manually dragged onto
+        # the very date the next booking arrives - a normal same-day turnover, per
+        # cleaning_task_valid_range's own docstring, not an uncovered gap. The gap query used to
+        # be date__lt=arrival_date, which excluded that same-day clean entirely and walked back to
+        # a much older clean instead, wrongly inserting a freshen task for an arrival that was
+        # already covered.
+
+        # A much older clean the gap query must NOT fall back to once the same-day one below is
+        # correctly counted.
+        far_earlier = self._make_booking(self.baseline - timedelta(days=40), self.baseline - timedelta(days=35))
+        Departure.objects.create(booking=far_earlier, clean=True)
+
+        earlier = self._make_booking(self.baseline - timedelta(days=20), self.baseline - timedelta(days=10))
+        Departure.objects.create(booking=earlier, clean=True)
+        # Drag onto where the next booking (created below) will arrive - no next confirmed arrival
+        # exists yet at this point, so the valid-range ceiling is unbounded and this drag is legal
+        # on its own terms, exactly like the real dummy-test-data drag that surfaced this bug.
+        turnover = CleaningTask.objects.get(booking=earlier, task_type='turnover')
+        apply_manual_task_date(turnover, self.baseline)
+
+        arriving = self._make_booking(self.baseline, self.baseline + timedelta(days=7))
+        self.assertFalse(CleaningTask.objects.filter(booking=arriving, task_type='freshen').exists())
+
+    def test_a_freshen_tasks_own_date_is_never_used_as_its_own_last_clean(self):
+        # Regression: the gap query didn't exclude the booking's own already-created freshen task,
+        # so re-running the sweep (e.g. an unrelated save on the same booking) would see that task
+        # itself (dated arrival-minus-1, always inside the window) as "the last clean" and
+        # immediately auto-dismiss itself as gap_closed.
+        self._seed_last_clean()
+        far = self._make_booking(self.baseline + timedelta(days=10), self.baseline + timedelta(days=17))
+        task = CleaningTask.objects.get(booking=far, task_type='freshen')
+        self.assertEqual(task.status, 'pending')
+
+        far.save()  # re-triggers the sweep with no other state changed
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, 'pending')
+
+    def test_dragging_a_turnover_date_retriggers_the_freshen_sweep(self):
+        # Regression 2026-08-27: apply_manual_task_date() only ever saved the CleaningTask itself,
+        # never Booking/Departure/Extra, so a calendar drag never re-triggered the signals that
+        # normally keep Freshen state in sync - confirmed live when dragging a turnover clean
+        # later closed a gap for a booking three stays down, and it only took effect because the
+        # reconcile management command happened to be run manually afterwards.
+        self._seed_last_clean()
+        middle = self._make_booking(self.baseline + timedelta(days=5), self.baseline + timedelta(days=8))
+        Departure.objects.create(booking=middle, clean=True)
+        far = self._make_booking(self.baseline + timedelta(days=20), self.baseline + timedelta(days=27))
+        far_task = CleaningTask.objects.get(booking=far, task_type='freshen')
+        self.assertEqual(far_task.status, 'pending')
+
+        middle_turnover = CleaningTask.objects.get(booking=middle, task_type='turnover')
+        error = apply_manual_task_date(middle_turnover, self.baseline + timedelta(days=15))
+        self.assertIsNone(error)
+
+        far_task.refresh_from_db()
+        self.assertEqual(far_task.status, 'dismissed')
+        self.assertEqual(far_task.dismissed_reason, 'gap_closed')
+
+    def test_dragging_a_freshen_tasks_own_date_does_not_crash(self):
+        # Regression: apply_manual_task_date()'s computed_date logic assumed every task was either
+        # turnover or mid_stay, so dragging a freshen task fell into the mid_stay branch and tried
+        # task.booking.extras.mid_stay_clean_date - a freshen task's booking never has an Extra
+        # row, so this would 500.
+        self._seed_last_clean()
+        far = self._make_booking(self.baseline + timedelta(days=10), self.baseline + timedelta(days=17))
+        far_task = CleaningTask.objects.get(booking=far, task_type='freshen')
+
+        error = apply_manual_task_date(far_task, far_task.date + timedelta(days=1))
+
+        self.assertIsNone(error)
+        far_task.refresh_from_db()
+        self.assertTrue(far_task.manually_scheduled)
 
 
 class StaffCleaningRotaViewTests(TestCase):
@@ -2556,6 +2825,43 @@ class StaffCleaningCalendarEndpointTests(TestCase):
         self.task.refresh_from_db()
         self.assertFalse(self.task.manually_scheduled)
 
+    def test_events_feed_excludes_dismissed_tasks(self):
+        self.task.status = 'dismissed'
+        self.task.save()
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.end + timedelta(days=30)).isoformat() + 'T00:00:00',
+        })
+        ids = [e['id'] for e in response.json()]
+        self.assertNotIn(self.task.pk, ids)
+
+    def test_dismiss_view_requires_superuser(self):
+        freshen_task = CleaningTask.objects.create(
+            booking=self.booking, task_type='freshen', date=self.start - timedelta(days=1),
+        )
+        self.client.login(username='calendarcleaner', password='pw')
+        response = self.client.post(reverse('staff:cleaning_task_dismiss', kwargs={'pk': freshen_task.pk}))
+        self.assertEqual(response.status_code, 403)
+
+    def test_dismiss_view_dismisses_a_pending_freshen_task(self):
+        freshen_task = CleaningTask.objects.create(
+            booking=self.booking, task_type='freshen', date=self.start - timedelta(days=1),
+        )
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.post(reverse('staff:cleaning_task_dismiss', kwargs={'pk': freshen_task.pk}))
+        self.assertEqual(response.status_code, 200)
+        freshen_task.refresh_from_db()
+        self.assertEqual(freshen_task.status, 'dismissed')
+        self.assertEqual(freshen_task.dismissed_reason, 'manual')
+        self.assertEqual(freshen_task.dismissed_by, self.superuser)
+
+    def test_dismiss_view_rejects_a_non_freshen_task(self):
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.post(reverse('staff:cleaning_task_dismiss', kwargs={'pk': self.task.pk}))
+        self.assertEqual(response.status_code, 400)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, 'pending')
+
     def test_move_view_requires_superuser(self):
         self.client.login(username='calendarcleaner', password='pw')
         response = self.client.post(
@@ -2587,7 +2893,8 @@ class StaffCleaningCalendarEndpointTests(TestCase):
         self.assertIn('Next Arrival', data['arrival_html'])
         self.assertIn('Bo Costa', data['arrival_html'])
 
-    def test_detail_view_omits_arrival_for_mid_stay(self):
+    def test_detail_view_shows_arrived_and_departing_for_mid_stay(self):
+        Arrival.objects.create(booking=self.booking, meet_greet=True)
         Extra.objects.create(
             booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=self.start + timedelta(days=3),
         )
@@ -2595,7 +2902,38 @@ class StaffCleaningCalendarEndpointTests(TestCase):
         self.client.login(username='calendarsuperuser', password='pw')
         response = self.client.get(reverse('staff:cleaning_task_detail', kwargs={'pk': mid_task.pk}))
         data = response.json()
-        self.assertEqual(data['arrival_html'], '')
+        self.assertIn('Arrived', data['arrival_html'])
+        self.assertIn('Silva', data['arrival_html'])  # this booking's own guest, not a next arrival
+        self.assertIn('Departing', data['departure_html'])
+        self.assertNotIn('>Departure<', data['departure_html'])
+
+    def test_detail_view_shows_last_clean_and_next_arrival_for_freshen(self):
+        earlier = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start - timedelta(days=30),
+            departure_date=self.start - timedelta(days=20), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Departure.objects.create(booking=earlier, clean=True)
+        freshen_task = CleaningTask.objects.create(
+            booking=self.booking, task_type='freshen', date=self.start - timedelta(days=1),
+        )
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_task_detail', kwargs={'pk': freshen_task.pk}))
+        data = response.json()
+        self.assertIn('Last Clean', data['departure_html'])
+        self.assertNotIn('No earlier clean on record', data['departure_html'])
+        self.assertIn('Next Arrival', data['arrival_html'])
+        self.assertIn('Silva', data['arrival_html'])
+
+    def test_detail_view_last_clean_empty_message_when_no_prior_clean(self):
+        freshen_task = CleaningTask.objects.create(
+            booking=self.booking, task_type='freshen', date=self.start - timedelta(days=1),
+        )
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_task_detail', kwargs={'pk': freshen_task.pk}))
+        data = response.json()
+        self.assertIn('No earlier clean on record', data['departure_html'])
 
     def test_save_view_sets_date_and_assignees(self):
         self.client.login(username='calendarsuperuser', password='pw')
@@ -2655,3 +2993,382 @@ class StaffCleaningCalendarEndpointTests(TestCase):
         response = self.client.get(reverse('staff:cleaning_task_detail', kwargs={'pk': self.task.pk}))
         data = response.json()
         self.assertIn('<option value="2" selected>Group 2</option>', data['planner_html'])
+
+
+class ComputeArrivalEtaTests(TestCase):
+    """staff/utils.py::compute_arrival_eta() - the per-method buffer math the check-ins calendar's
+    displayed time is built from."""
+
+    def setUp(self):
+        CheckinSettings.objects.all().delete()
+        self.settings = CheckinSettings.load()
+        self.settings.faro_buffer_minutes = 90
+        self.settings.lisbon_buffer_minutes = 270
+        self.settings.transit_buffer_minutes = 30
+        self.settings.save()
+
+        self.property = Property.objects.create(title='ETA Property', short_title='ETAPROP')
+        self.guest = Guest.objects.create(first_name='Ana', last_name='Silva', email='eta@example.com')
+        self.start = date.today() + timedelta(days=30)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start,
+            departure_date=self.start + timedelta(days=7), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_faro_flight_adds_faro_buffer(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        computed, is_all_day = compute_arrival_eta(self.booking)
+        self.assertFalse(is_all_day)
+        self.assertEqual(computed, time(15, 30))
+
+    def test_lisbon_flight_adds_lisbon_buffer(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_LISBON, time=time(10, 0), meet_greet=True)
+        computed, is_all_day = compute_arrival_eta(self.booking)
+        self.assertFalse(is_all_day)
+        self.assertEqual(computed, time(14, 30))
+
+    def test_bus_adds_transit_buffer(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.BUS, time=time(12, 0), meet_greet=True)
+        computed, is_all_day = compute_arrival_eta(self.booking)
+        self.assertEqual(computed, time(12, 30))
+
+    def test_train_adds_transit_buffer(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.TRAIN, time=time(9, 15), meet_greet=True)
+        computed, is_all_day = compute_arrival_eta(self.booking)
+        self.assertEqual(computed, time(9, 45))
+
+    def test_driving_uses_given_time_verbatim(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.DRIVING, time=time(16, 0), meet_greet=True)
+        computed, is_all_day = compute_arrival_eta(self.booking)
+        self.assertFalse(is_all_day)
+        self.assertEqual(computed, time(16, 0))
+
+    def test_other_method_has_no_computed_time(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.OTHER, time=None, meet_greet=True)
+        computed, is_all_day = compute_arrival_eta(self.booking)
+        self.assertIsNone(computed)
+        self.assertTrue(is_all_day)
+
+    def test_no_time_given_has_no_computed_time(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=None, meet_greet=True)
+        computed, is_all_day = compute_arrival_eta(self.booking)
+        self.assertIsNone(computed)
+        self.assertTrue(is_all_day)
+
+    def test_no_arrival_row_has_no_computed_time(self):
+        computed, is_all_day = compute_arrival_eta(self.booking)
+        self.assertIsNone(computed)
+        self.assertTrue(is_all_day)
+
+
+class CheckinSyncTests(TestCase):
+    """staff/utils.py::sync_checkins_for_booking() - Checkin stays in sync with Arrival/Booking
+    via post_save signals (staff/signals.py), same reasoning CleaningTask's own sync gives."""
+
+    def setUp(self):
+        CheckinSettings.objects.all().delete()
+        self.settings = CheckinSettings.load()
+        self.settings.faro_buffer_minutes = 90
+        self.settings.key_box_prep_time = time(10, 0)
+        self.settings.welcome_visit_time = time(10, 0)
+        self.settings.save()
+
+        self.property = Property.objects.create(title='Checkin Sync Property', short_title='CHECKINSYNC')
+        self.guest = Guest.objects.create(first_name='Ana', last_name='Silva', email='checkin-sync@example.com')
+        self.start = date.today() + timedelta(days=30)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start,
+            departure_date=self.start + timedelta(days=7), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_arrival_save_creates_arrival_checkin(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
+        self.assertEqual(checkin.date, self.start)
+        self.assertEqual(checkin.time, time(15, 30))
+        self.assertEqual(checkin.status, 'pending')
+
+    def test_self_check_in_creates_key_box_and_welcome_visit(self):
+        Arrival.objects.create(
+            booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0),
+            self_check_in=True, meet_greet=False,
+        )
+        key_box = Checkin.objects.get(booking=self.booking, task_type='key_box')
+        welcome = Checkin.objects.get(booking=self.booking, task_type='welcome_visit')
+        self.assertEqual(key_box.date, self.start)
+        self.assertEqual(key_box.time, time(10, 0))
+        self.assertEqual(welcome.date, self.start + timedelta(days=1))
+        self.assertEqual(welcome.time, time(10, 0))
+
+    def test_non_self_check_in_creates_no_extra_rows(self):
+        Arrival.objects.create(
+            booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0),
+            self_check_in=False, meet_greet=True,
+        )
+        self.assertFalse(Checkin.objects.filter(booking=self.booking, task_type__in=['key_box', 'welcome_visit']).exists())
+
+    def test_turning_off_self_check_in_removes_pending_extra_rows(self):
+        arrival = Arrival.objects.create(
+            booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0),
+            self_check_in=True, meet_greet=False,
+        )
+        self.assertTrue(Checkin.objects.filter(booking=self.booking, task_type='key_box').exists())
+
+        arrival.self_check_in = False
+        arrival.save()
+
+        self.assertFalse(Checkin.objects.filter(booking=self.booking, task_type__in=['key_box', 'welcome_visit']).exists())
+
+    def test_turning_off_self_check_in_does_not_remove_a_done_key_box_row(self):
+        arrival = Arrival.objects.create(
+            booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0),
+            self_check_in=True, meet_greet=False,
+        )
+        key_box = Checkin.objects.get(booking=self.booking, task_type='key_box')
+        key_box.status = 'done'
+        key_box.save()
+
+        arrival.self_check_in = False
+        arrival.save()
+
+        key_box.refresh_from_db()
+        self.assertEqual(key_box.status, 'done')
+
+    def test_cancelling_a_booking_removes_pending_checkin_rows(self):
+        Arrival.objects.create(
+            booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0),
+            self_check_in=True, meet_greet=False,
+        )
+        self.assertEqual(Checkin.objects.filter(booking=self.booking).count(), 3)
+
+        self.booking.enquiry_status = 'Cancelled by staff'
+        self.booking.save(update_fields=['enquiry_status'])
+
+        self.assertFalse(Checkin.objects.filter(booking=self.booking).exists())
+
+    def test_cancelling_a_booking_does_not_remove_a_done_row(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
+        checkin.status = 'done'
+        checkin.save()
+
+        self.booking.enquiry_status = 'Cancelled by staff'
+        self.booking.save(update_fields=['enquiry_status'])
+
+        checkin.refresh_from_db()
+        self.assertEqual(checkin.status, 'done')
+
+    def test_dragging_a_time_survives_an_unrelated_resync(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
+        error = apply_manual_checkin_time(checkin, time(16, 0))
+        self.assertIsNone(error)
+
+        # Re-trigger the sync with nothing about the arrival time actually changed.
+        self.booking.save()
+
+        checkin.refresh_from_db()
+        self.assertEqual(checkin.time, time(16, 0))
+        self.assertTrue(checkin.manually_scheduled)
+
+    def test_editing_arrival_time_after_a_drag_wins_over_the_drag(self):
+        arrival = Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
+        apply_manual_checkin_time(checkin, time(16, 0))
+
+        arrival.time = time(18, 0)
+        arrival.save()
+
+        checkin.refresh_from_db()
+        self.assertEqual(checkin.time, time(19, 30))  # 18:00 + 90min faro buffer
+        self.assertFalse(checkin.manually_scheduled)
+
+    def test_settings_change_resyncs_non_manual_rows(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        self.settings.faro_buffer_minutes = 120
+        self.settings.save()
+
+        checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
+        self.assertEqual(checkin.time, time(16, 0))
+
+    def test_settings_change_does_not_touch_a_manually_scheduled_row(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
+        apply_manual_checkin_time(checkin, time(20, 0))
+
+        self.settings.faro_buffer_minutes = 120
+        self.settings.save()
+
+        checkin.refresh_from_db()
+        self.assertEqual(checkin.time, time(20, 0))
+
+
+class CheckinCalendarEndpointTests(TestCase):
+    """The check-ins calendar's own page/endpoints - gated by can_view_checkins_calendar, not
+    superuser_required, since this is meant for day-to-day staff use."""
+
+    def setUp(self):
+        role = StaffRole.objects.create(name='Checkin Manager', can_view_checkins_calendar=True)
+        self.staffer = User.objects.create_user(username='checkinstaffer', password='pw', is_staff=True)
+        StaffProfile.objects.create(user=self.staffer, role=role)
+        self.no_access_staffer = User.objects.create_user(username='noaccessstaffer', password='pw', is_staff=True)
+
+        CheckinSettings.objects.all().delete()
+        settings_obj = CheckinSettings.load()
+        settings_obj.faro_buffer_minutes = 90
+        settings_obj.save()
+
+        self.location = Location.objects.create(
+            title='Checkin Location', street='Rua Test', zip_code='8200-001', city='Albufeira',
+            coordinates='37.0,-8.2', map_link='https://maps.example.com', color='#654321',
+        )
+        self.property = Property.objects.create(
+            title='Checkin Endpoint Property', short_title='CHECKINEP', location=self.location,
+        )
+        self.guest = Guest.objects.create(first_name='Bo', last_name='Costa', email='checkin-endpoint@example.com', phone='+351911111111')
+        self.start = date.today() + timedelta(days=30)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start,
+            departure_date=self.start + timedelta(days=7), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        self.checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
+
+    def test_calendar_page_requires_permission(self):
+        self.client.login(username='noaccessstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkins_calendar'))
+        self.assertEqual(response.status_code, 403)
+
+    def test_calendar_page_loads_for_permitted_staffer(self):
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkins_calendar'))
+        self.assertEqual(response.status_code, 200)
+
+    def test_events_feed_returns_computed_time_and_location_color(self):
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkins_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.start + timedelta(days=1)).isoformat() + 'T00:00:00',
+        })
+        self.assertEqual(response.status_code, 200)
+        event = next(e for e in response.json() if e['id'] == self.checkin.pk)
+        self.assertEqual(event['start'], f"{self.start.isoformat()}T15:30:00")
+        self.assertFalse(event['allDay'])
+        self.assertEqual(event['extendedProps']['location_color'], '#654321')
+        self.assertIn('CHECKINEP', event['title'])
+        self.assertIn('Bo Costa', event['title'])
+
+    def test_events_feed_marks_no_meet_greet(self):
+        arrival = self.booking.arrival
+        arrival.meet_greet = False
+        arrival.save()
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkins_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.start + timedelta(days=1)).isoformat() + 'T00:00:00',
+        })
+        event = next(e for e in response.json() if e['id'] == self.checkin.pk)
+        self.assertFalse(event['extendedProps']['meet_greet'])
+
+    def test_events_feed_renders_no_time_given_as_all_day(self):
+        arrival = self.booking.arrival
+        arrival.method = TravelMethod.OTHER
+        arrival.time = None
+        arrival.save()
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkins_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.start + timedelta(days=1)).isoformat() + 'T00:00:00',
+        })
+        event = next(e for e in response.json() if e['id'] == self.checkin.pk)
+        self.assertTrue(event['allDay'])
+        self.assertIn('No time given', event['title'])
+
+    def test_move_view_accepts_a_same_day_time_change(self):
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.post(
+            reverse('staff:checkins_calendar_move', kwargs={'pk': self.checkin.pk}), {'time': '17:00'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.checkin.refresh_from_db()
+        self.assertEqual(self.checkin.time, time(17, 0))
+        self.assertTrue(self.checkin.manually_scheduled)
+
+    def test_move_view_rejects_an_invalid_time(self):
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.post(
+            reverse('staff:checkins_calendar_move', kwargs={'pk': self.checkin.pk}), {'time': 'not-a-time'},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_detail_view_shows_arrival_popup_content(self):
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
+        self.assertEqual(response.status_code, 200)
+        html = response.json()['popup_html']
+        self.assertIn('Bo Costa', html)
+        self.assertIn('+351911111111', html)
+        self.assertIn('Flight to Faro', html)
+
+    def test_detail_view_hides_deposit_for_a_returning_guest(self):
+        past_booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start - timedelta(days=100),
+            departure_date=self.start - timedelta(days=93), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
+        html = response.json()['popup_html']
+        self.assertIn('Not required for a returning guest', html)
+
+    def test_detail_view_shows_key_box_popup_content(self):
+        arrival = self.booking.arrival
+        arrival.self_check_in = True
+        arrival.save()
+        key_box = Checkin.objects.get(booking=self.booking, task_type='key_box')
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': key_box.pk}))
+        html = response.json()['popup_html']
+        self.assertIn('Key box', html)
+        self.assertIn('CHECKINEP', html)
+
+    def test_toggle_done_marks_and_unmarks(self):
+        self.client.login(username='checkinstaffer', password='pw')
+        url = reverse('staff:checkin_toggle_done', kwargs={'pk': self.checkin.pk})
+        response = self.client.post(url)
+        self.assertEqual(response.json()['status'], 'done')
+        self.checkin.refresh_from_db()
+        self.assertEqual(self.checkin.status, 'done')
+        self.assertEqual(self.checkin.completed_by, self.staffer)
+
+        response = self.client.post(url)
+        self.assertEqual(response.json()['status'], 'pending')
+        self.checkin.refresh_from_db()
+        self.assertEqual(self.checkin.status, 'pending')
+        self.assertIsNone(self.checkin.completed_by)
+
+    def test_save_view_sets_extras_and_deposit_flags(self):
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.post(reverse('staff:checkin_save', kwargs={'pk': self.checkin.pk}), {
+            'extras_collected': 'true', 'deposit_collected': 'true', 'deposit_returned': 'false',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.checkin.refresh_from_db()
+        self.assertTrue(self.checkin.extras_collected)
+        self.assertTrue(self.checkin.deposit_collected)
+        self.assertFalse(self.checkin.deposit_returned)
+
+    def test_save_view_rejects_non_arrival_checkin(self):
+        arrival = self.booking.arrival
+        arrival.self_check_in = True
+        arrival.save()
+        key_box = Checkin.objects.get(booking=self.booking, task_type='key_box')
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.post(reverse('staff:checkin_save', kwargs={'pk': key_box.pk}), {
+            'extras_collected': 'true',
+        })
+        self.assertEqual(response.status_code, 400)

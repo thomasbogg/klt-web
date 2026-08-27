@@ -108,6 +108,33 @@
                     </div>
 
                     <div class="staff-panel">
+                        <h2 class="staff-panel-title">Check-in settings</h2>
+                        <p class="staff-settings-hint">Drives the check-ins calendar's computed arrival times and self-check-in prep/welcome-visit tasks.</p>
+                        <form method="post" class="staff-form staff-settings-form">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_checkin_settings">
+                            <div class="staff-settings-field-grid">
+                                <label class="staff-field">Faro landing buffer (minutes)
+                                    <input type="text" name="faro_buffer_minutes" class="staff-input" value="{{ checkin_settings.faro_buffer_minutes }}">
+                                </label>
+                                <label class="staff-field">Lisbon landing buffer (minutes)
+                                    <input type="text" name="lisbon_buffer_minutes" class="staff-input" value="{{ checkin_settings.lisbon_buffer_minutes }}">
+                                </label>
+                                <label class="staff-field">Bus/train buffer (minutes)
+                                    <input type="text" name="transit_buffer_minutes" class="staff-input" value="{{ checkin_settings.transit_buffer_minutes }}">
+                                </label>
+                                <label class="staff-field">Key box prep time (self-check-in)
+                                    <input type="text" name="key_box_prep_time" class="staff-input" placeholder="HH:MM" value="{{ checkin_settings.key_box_prep_time|time:'H:i' }}">
+                                </label>
+                                <label class="staff-field">Welcome visit time (next day, self-check-in)
+                                    <input type="text" name="welcome_visit_time" class="staff-input" placeholder="HH:MM" value="{{ checkin_settings.welcome_visit_time|time:'H:i' }}">
+                                </label>
+                            </div>
+                            <button type="submit" class="staff-button">Save check-in settings</button>
+                        </form>
+                    </div>
+
+                    <div class="staff-panel">
                         <h2 class="staff-panel-title">Booking Conditions</h2>
                         <p class="staff-settings-hint">Shown to guests, in order, on the public Booking Conditions page.</p>
                         <table class="staff-price-table staff-extras-aligned-table staff-booking-conditions-table">

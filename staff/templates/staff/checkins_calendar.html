@@ -1,0 +1,42 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Check-ins calendar | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/checkins_calendar.css' %}">
+    <script src="{% static 'staff/vendor/fullcalendar/index.global.min.js' %}" defer></script>
+    <script src="{% static 'staff/vendor/fullcalendar/locale-en-gb.global.min.js' %}" defer></script>
+    <script src="{% static 'staff/checkins_calendar.js' %}" defer></script>
+</head>
+<body>
+    <div class="staff-page">
+        {% csrf_token %}
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Check-ins calendar</h1>
+        </header>
+
+        <div
+            id="checkins-calendar"
+            data-events-url="{% url 'staff:checkins_calendar_events' %}"
+            data-move-url-template="{% url 'staff:checkins_calendar_move' pk=0 %}"
+            data-detail-url-template="{% url 'staff:checkin_detail' pk=0 %}"
+            data-toggle-done-url-template="{% url 'staff:checkin_toggle_done' pk=0 %}"
+            data-save-url-template="{% url 'staff:checkin_save' pk=0 %}"
+        ></div>
+
+        <dialog id="checkin-dialog" class="staff-panel">
+            <div id="checkin-dialog-body"></div>
+            <div class="staff-dialog-actions">
+                <button type="button" id="checkin-dialog-toggle-done" class="staff-button staff-button-small">Mark as done</button>
+                <button type="button" id="checkin-dialog-close" class="staff-button staff-button-small staff-button-danger">Close</button>
+            </div>
+        </dialog>
+    </div>
+</body>
+</html>

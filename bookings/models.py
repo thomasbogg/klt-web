@@ -1021,6 +1021,45 @@ class ExtrasSettings(models.Model):
         return self.mid_stay_clean_price_one_bedroom if bedrooms == 1 else self.mid_stay_clean_price_multi_bedroom
 
 
+class CheckinSettings(models.Model):
+    """Singleton settings for the staff check-ins calendar (staff/utils.py::compute_arrival_eta,
+    staff/models.py::Checkin) - same singleton pattern as BookingSettings/ExtrasSettings, kept
+    separate since travel-time buffers and self-check-in policy timing are a genuinely different
+    concern from either. Global, not per-property/per-company - travel logistics from Faro/Lisbon
+    don't vary by which management company a property happens to be under.
+
+    faro_buffer_minutes/lisbon_buffer_minutes/transit_buffer_minutes are added to the guest's own
+    Arrival.time (see compute_arrival_eta's docstring for exactly what that field means per
+    method) to get the calendar-displayed arrival time - driving is deliberately never buffered,
+    Arrival.time already is the at-property estimate for that method.
+
+    key_box_prep_time/welcome_visit_time are the two fixed, policy-driven times used for a self-
+    check-in booking's auto-generated Checkin rows - not computed from the guest's arrival time at
+    all, by design (mirrors the exact fixed-10:00 approach already used manually today)."""
+    faro_buffer_minutes = models.PositiveSmallIntegerField(default=90)
+    lisbon_buffer_minutes = models.PositiveSmallIntegerField(default=270)
+    transit_buffer_minutes = models.PositiveSmallIntegerField(default=30)
+    key_box_prep_time = models.TimeField(default=time(10, 0))
+    welcome_visit_time = models.TimeField(default=time(10, 0))
+
+    class Meta:
+        db_table = 'checkin_settings'
+        verbose_name = 'Check-in Settings'
+        verbose_name_plural = 'Check-in Settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
 class PaymentSettings(models.Model):
     """Site-wide default owner-payout/commission figures - same singleton pattern as
     BookingSettings/ExtrasSettings. Owner payment is rental minus commission minus VAT on that

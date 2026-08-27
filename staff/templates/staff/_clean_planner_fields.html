@@ -33,4 +33,15 @@
             {% endfor %}
         </select>
     </label>
+    {% if task.task_type == 'freshen' and task.status == 'pending' %}
+        {% if standalone %}
+        <button type="button" id="clean-task-dismiss-btn" data-task-id="{{ task.pk }}" class="staff-button staff-button-danger">Delete Freshen clean</button>
+        {% else %}
+        <form method="post" data-confirm-message="Dismiss this Freshen clean? You can undo this from here afterwards.">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="dismiss_freshen">
+            <button type="submit" class="staff-button staff-button-danger">Delete Freshen clean</button>
+        </form>
+        {% endif %}
+    {% endif %}
 </div>

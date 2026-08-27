@@ -91,6 +91,22 @@
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Cleaning</h2>
                     <div class="staff-form">
+                        {% if freshen_planner %}
+                        {% if freshen_planner.task.status == 'dismissed' %}
+                        <div class="staff-clean-planner">
+                            <p class="staff-empty">Freshen clean dismissed.</p>
+                            <form method="post" data-confirm-message="Restore this Freshen clean?">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="undo_dismiss_freshen">
+                                <button type="submit" class="staff-button">Undo deletion</button>
+                            </form>
+                        </div>
+                        {% else %}
+                        {% include 'staff/_clean_planner_fields.html' with task=freshen_planner.task field_prefix='freshen_' standalone=False label='Freshen clean' assignable_users=cleaning_assignable_users assigned_ids=freshen_planner.assigned_ids min_date=freshen_planner.min_date max_date=freshen_planner.max_date %}
+                        {% endif %}
+                        <div class="staff-cleaning-cut" aria-hidden="true"></div>
+                        {% endif %}
+
                         {% if mid_stay_planner %}
                         {% include 'staff/_clean_planner_fields.html' with task=mid_stay_planner.task field_prefix='mid_stay_' standalone=False label='Mid-stay clean' assignable_users=cleaning_assignable_users assigned_ids=mid_stay_planner.assigned_ids min_date=mid_stay_planner.min_date max_date=mid_stay_planner.max_date %}
                         <div class="staff-cleaning-cut" aria-hidden="true"></div>
