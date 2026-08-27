@@ -58,12 +58,12 @@
         }
 
         var calendar = new FullCalendar.Calendar(el, {
-            initialView: 'dayGridMonth',
+            initialView: 'cleaningWeek',
             locale: 'en-gb',
             headerToolbar: {
                 left: 'prev,next today',
                 center: 'title',
-                right: 'dayGridMonth,cleaningWeek',
+                right: 'cleaningWeek,dayGridMonth',
             },
             views: {
                 // A genuinely custom view, not an override of the built-in dayGridWeek - per-view
