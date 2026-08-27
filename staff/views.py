@@ -2107,9 +2107,17 @@ class StaffCleaningEventsView(View):
         for task in tasks:
             min_date, max_date = cleaning_task_valid_range(task)
             location = task.booking.property.location
+            assigned_usernames = [u.username for u in task.assigned_to.all()]
+            # short_title, not the full property title - the location's own colour (below)
+            # already identifies which property group a clean belongs to, so the extra label
+            # length just crowds out the task-type/NEW/team information that's actually
+            # decision-relevant on a busy day.
+            title = f"{task.booking.property.short_title} — {task.get_task_type_display()}"
+            if not assigned_usernames:
+                title = f"NEW {title}"
             events.append({
                 'id': task.pk,
-                'title': f"{task.booking.property} — {task.get_task_type_display()}",
+                'title': title,
                 'start': task.date.isoformat(),
                 'allDay': True,
                 'extendedProps': {
@@ -2118,7 +2126,7 @@ class StaffCleaningEventsView(View):
                     'property_id': task.booking.property_id,
                     'location_id': location.pk if location else None,
                     'location_color': (location.color or None) if location else None,
-                    'assigned_to': [u.username for u in task.assigned_to.all()],
+                    'assigned_to': assigned_usernames,
                     'team': task.team,
                     'booking_reference': task.booking.reference,
                     'min_date': min_date.isoformat(),

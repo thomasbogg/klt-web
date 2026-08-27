@@ -22,9 +22,9 @@
    day cell - see applyGrouping() in cleaning_calendar.js. A dashed line reads as a soft grouping
    cut rather than a hard rule between individual cleans. */
 #cleaning-calendar .fc-daygrid-event-harness.staff-clean-group-start {
-    margin-top: 6px;
-    padding-top: 6px;
-    border-top: 1px dashed #ccc;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 2px dashed #999;
 }
 
 #clean-task-dialog {

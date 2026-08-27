@@ -2314,6 +2314,16 @@ class StaffCleaningCalendarEndpointTests(TestCase):
         self.assertEqual(event['extendedProps']['min_date'], self.end.isoformat())
         self.assertEqual(event['extendedProps']['assigned_to'], [])
         self.assertEqual(event['extendedProps']['team'], 1)
+        self.assertEqual(event['title'], 'NEW CALPROP — Turnover')
+
+    def test_events_feed_title_uses_short_title_and_drops_new_once_assigned(self):
+        self.task.assigned_to.set([self.cleaner])
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.end + timedelta(days=30)).isoformat() + 'T00:00:00',
+        })
+        event = next(e for e in response.json() if e['id'] == self.task.pk)
+        self.assertEqual(event['title'], 'CALPROP — Turnover')
 
     def test_move_view_accepts_valid_date_and_sets_override(self):
         self.client.login(username='calendarsuperuser', password='pw')
