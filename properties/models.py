@@ -136,7 +136,21 @@ class ManagementCompany(models.Model):
     any of five roles (head/maintenance/liaison/cleaning/finance) - none are required, and a company
     acting on a narrow scope (e.g. cleaning only) may only ever need one. An untracked/external
     booking or cleaning party simply has no ManagementCompany row - that's what
-    Property.booking_company/cleaning_company being NULL means."""
+    Property.booking_company/cleaning_company being NULL means.
+
+    towels_per_guest/includes_beach_towels/standard_meet_and_greet_fee/check_in_method/
+    self_check_in_after/freshen_after_days (2026-08-27, per Thomas) are operational defaults a
+    property under this company's booking/cleaning management can inherit - deliberately all
+    nullable, since a company running its own full operation (e.g. Thomas's own) will want most of
+    these set, while a company we only handle bookings or cleaning for may only ever specify a
+    handful, or none. None means "not specified by this company", distinct from a real zero/off
+    value (e.g. towels_per_guest=0, includes_beach_towels=False). Washing materials are a separate
+    per-company list (see WashingMaterial below), not a single field here."""
+    class CheckInMethod(models.TextChoices):
+        SELF_CHECK_IN = 'self_check_in', 'Always self check-in'
+        IN_PERSON = 'in_person', 'Always in person'
+        MIXED = 'mixed', 'Mixed - depends on arrival time'
+
     name = models.CharField(max_length=200, unique=True)
     head_name = models.CharField(max_length=200, blank=True, default='')
     head_email = models.EmailField(blank=True, default='')
@@ -154,6 +168,28 @@ class ManagementCompany(models.Model):
     finance_phone = models.CharField(max_length=50, blank=True, default='')
     finance_email = models.EmailField(blank=True, default='')
 
+    towels_per_guest = models.PositiveSmallIntegerField(null=True, blank=True)
+    includes_beach_towels = models.BooleanField(
+        null=True, blank=True, help_text="Whether towels_per_guest includes a beach towel.",
+    )
+    linen_provided = models.BooleanField(
+        null=True, blank=True,
+        help_text="Whether this company dresses beds in linen appropriate to the season - drives "
+                  "the Manage Booking hub's Amenities page (bookings/views.py::"
+                  "BookingManageAmenitiesView), via Property.cleaning_company.",
+    )
+    standard_meet_and_greet_fee = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    check_in_method = models.CharField(max_length=20, choices=CheckInMethod.choices, null=True, blank=True)
+    # Only meaningful when check_in_method is MIXED - an arrival at or after this time defaults to
+    # self check-in, anything earlier gets an in-person meet & greet instead.
+    self_check_in_after = models.TimeField(null=True, blank=True)
+    # Only meaningful for a property under this company's cleaning management (Property.
+    # cleaning_company) - triggers a 'freshen' CleaningTask (staff/models.py) ahead of an arrival
+    # when this many days or more will have passed since the property's last clean, covering a
+    # vacant stretch between bookings that would otherwise go uncleaned until the next guest's own
+    # turnover. See staff/utils.py::sync_cleaning_tasks_for_booking for how it's actually applied.
+    freshen_after_days = models.PositiveSmallIntegerField(null=True, blank=True)
+
     class Meta:
         db_table = 'management_companies'
         verbose_name = 'Management Company'
@@ -161,6 +197,25 @@ class ManagementCompany(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class WashingMaterial(models.Model):
+    """One line item in a ManagementCompany's washing-materials list (e.g. "Dish soap" x2,
+    "Laundry tabs" x20) - per-company and freeform (title is whatever the company calls it), not a
+    shared catalog like bookings.models.RequestType, since what a company stocks and how they name
+    it varies too much to usefully standardise across companies."""
+    company = models.ForeignKey(ManagementCompany, on_delete=models.CASCADE, related_name='washing_materials')
+    title = models.CharField(max_length=100)
+    quantity = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        db_table = 'management_company_washing_materials'
+        verbose_name = 'Washing Material'
+        verbose_name_plural = 'Washing Materials'
+        ordering = ('title',)
+
+    def __str__(self):
+        return f"{self.title} x{self.quantity} ({self.company})"
 
 
 class Owner(models.Model):

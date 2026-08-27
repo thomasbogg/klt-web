@@ -493,3 +493,45 @@
         grid-template-columns: 1fr;
     }
 }
+
+/* Kept separate from staff-manager-contacts-grid's fixed 4-up layout - these are per-company
+   operational defaults (towels, washing materials, meet & greet fee, check-in method), a
+   different shape of field than the name/email/phone contact groups above them, not a 5th
+   contact card. */
+.staff-manager-operational-settings {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid #e5e5e5;
+}
+
+/* Same max-4-per-row principle as staff-manager-contacts-grid above it - a 5th/6th field wraps
+   onto its own new row of up to 4, rather than everything squeezing onto one wide row. */
+.staff-manager-operational-fields {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+    .staff-manager-operational-fields {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 550px) {
+    .staff-manager-operational-fields {
+        grid-template-columns: 1fr;
+    }
+}
+
+.staff-washing-materials {
+    margin-top: 16px;
+}
+
+/* Full width (not staff-list's usual narrow column) so Remove lands at the row's far right via
+   justify-content: space-between - the same right edge the "+ Add" row below it reaches by its
+   title field growing to fill the space (staff-input-flex). */
+.staff-washing-materials-list {
+    width: 100%;
+}

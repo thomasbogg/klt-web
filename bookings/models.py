@@ -492,16 +492,22 @@ class Departure(models.Model):
     """Guest-facing departure information, same self-serve role as Arrival above (see method's
     docstring there - travelling_from is reused here as "travelling to", same field different
     context). clean is a staff/ops-only flag (turnover-cleaning scheduling) - the guest-facing
-    save path never touches it, only supplies its default at row creation so the row can exist
-    before staff have set anything; edited from the staff booking detail page's Booking Info panel
-    instead (see StaffBookingDetailView._update_booking())."""
+    save path never touches it. Defaults to True (2026-08-27, per Thomas: an end-of-stay clean is
+    the normal case for every booking, not an opt-in extra) and this row is now created eagerly at
+    booking-creation time (bookings.utils.create_booking()) precisely so that default takes effect
+    without staff needing to visit this booking at all. Still staff-editable for the rare booking
+    that shouldn't get one (e.g. an owner cleaning it themselves) - from the "Clean on departure"
+    checkbox alongside Meet & Greet in the Owner-booking-conditional row on the staff booking
+    detail page's Booking Info panel (StaffBookingDetailView._update_booking()), same place it's
+    always lived. The Cleaning panel elsewhere on that page just displays the resulting
+    CleaningTask - it's not itself where this flag gets toggled."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='departure')
     method = models.CharField(max_length=20, choices=TravelMethod.choices, default=TravelMethod.FLIGHT_FARO)
     flight_number = models.CharField(max_length=50, blank=True, null=True)
     travelling_from = models.CharField(max_length=200, blank=True)
     time = models.TimeField(blank=True, null=True)
     details = models.TextField(blank=True, null=True)
-    clean = models.BooleanField(default=False)
+    clean = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'booking_departures'
@@ -767,10 +773,13 @@ class Extra(models.Model):
     mid_stay_clean = models.BooleanField(blank=True, null=True)
     mid_stay_clean_date = models.DateField(
         blank=True, null=True,
-        help_text="When the mid-stay clean happens - guest-selectable from the Extras section "
-                  "(BookingFormMixin._save_extras(), same cash-at-check-in convention as every "
-                  "other Extra), or staff-set from the booking detail page's Booking Info panel. "
-                  "Feeds staff.utils.sync_cleaning_tasks_for_booking() to create a CleaningTask.",
+        help_text="When the mid-stay clean happens - not guest-editable (auto-set to the middle "
+                  "of the stay by BookingFormMixin._mid_stay_clean_default_date() whenever the "
+                  "guest ticks the Extras-section checkbox, same cash-at-check-in convention as "
+                  "every other Extra), though staff can still hand-set it from the booking detail "
+                  "page's Booking Info panel. Feeds staff.utils.sync_cleaning_tasks_for_booking() "
+                  "to create a CleaningTask - a further nudge within the stay is then a staff-side "
+                  "drag on the cleaning calendar, not a guest choice.",
     )
     mid_stay_clean_charge = models.DecimalField(
         max_digits=8, decimal_places=2, blank=True, null=True,

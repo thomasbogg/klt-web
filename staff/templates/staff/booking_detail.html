@@ -85,31 +85,24 @@
                                 <input type="checkbox" name="clean" {% if departure.clean %}checked{% endif %}> Clean on departure
                             </label>
                         </div>
-                        <div class="staff-field-row">
-                            <label class="staff-checkbox-label">
-                                <input type="checkbox" name="mid_stay_clean" id="staff-mid-stay-clean" {% if extra.mid_stay_clean %}checked{% endif %}> Mid-stay clean
-                            </label>
-                            <label class="staff-field details-section-hidden" data-mid-stay-clean-row>
-                                Clean date
-                                <input type="text" name="mid_stay_clean_date" class="staff-input staff-date-input" value="{{ extra.mid_stay_clean_date|date:'Y-m-d' }}" autocomplete="off">
-                            </label>
-                        </div>
                     </form>
                 </section>
 
-                {% if turnover_planner or mid_stay_planner %}
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Cleaning</h2>
                     <div class="staff-form">
-                        {% if turnover_planner %}
-                        {% include 'staff/_clean_planner_fields.html' with task=turnover_planner.task field_prefix='turnover_' standalone=False label='Turnover clean' assignable_users=cleaning_assignable_users assigned_ids=turnover_planner.assigned_ids min_date=turnover_planner.min_date max_date=turnover_planner.max_date %}
-                        {% endif %}
                         {% if mid_stay_planner %}
                         {% include 'staff/_clean_planner_fields.html' with task=mid_stay_planner.task field_prefix='mid_stay_' standalone=False label='Mid-stay clean' assignable_users=cleaning_assignable_users assigned_ids=mid_stay_planner.assigned_ids min_date=mid_stay_planner.min_date max_date=mid_stay_planner.max_date %}
+                        <div class="staff-cleaning-cut" aria-hidden="true"></div>
+                        {% endif %}
+
+                        {% if turnover_planner %}
+                        {% include 'staff/_clean_planner_fields.html' with task=turnover_planner.task field_prefix='turnover_' standalone=False label='End-of-stay clean' assignable_users=cleaning_assignable_users assigned_ids=turnover_planner.assigned_ids min_date=turnover_planner.min_date max_date=turnover_planner.max_date %}
+                        {% else %}
+                        <p class="staff-empty">No end-of-stay clean scheduled yet.</p>
                         {% endif %}
                     </div>
                 </section>
-                {% endif %}
 
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Guest info</h2>

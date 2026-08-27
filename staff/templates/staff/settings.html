@@ -670,6 +670,64 @@
                                                 <label class="staff-field">Phone<input type="text" name="finance_phone" form="management-company-form-{{ company.pk }}" value="{{ company.finance_phone }}" class="staff-input"></label>
                                             </div>
                                         </div>
+                                        <div class="staff-manager-operational-settings">
+                                            <h4 class="staff-manager-contact-title">Operational settings</h4>
+                                            <p class="staff-settings-hint">Defaults this company applies to its properties - leave any of these as "Not specified" if it doesn't apply or isn't tracked for this company.</p>
+                                            <div class="staff-manager-operational-fields">
+                                                <label class="staff-field">Towels per guest<input type="number" name="towels_per_guest" min="0" form="management-company-form-{{ company.pk }}" value="{{ company.towels_per_guest|default_if_none:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Includes beach towels
+                                                    <select name="includes_beach_towels" form="management-company-form-{{ company.pk }}" class="staff-input">
+                                                        <option value="" {% if company.includes_beach_towels is None %}selected{% endif %}>Not specified</option>
+                                                        <option value="true" {% if company.includes_beach_towels == True %}selected{% endif %}>Yes</option>
+                                                        <option value="false" {% if company.includes_beach_towels == False %}selected{% endif %}>No</option>
+                                                    </select>
+                                                </label>
+                                                <label class="staff-field">Linen provided
+                                                    <select name="linen_provided" form="management-company-form-{{ company.pk }}" class="staff-input">
+                                                        <option value="" {% if company.linen_provided is None %}selected{% endif %}>Not specified</option>
+                                                        <option value="true" {% if company.linen_provided == True %}selected{% endif %}>Yes</option>
+                                                        <option value="false" {% if company.linen_provided == False %}selected{% endif %}>No</option>
+                                                    </select>
+                                                </label>
+                                                <label class="staff-field">Standard meet &amp; greet fee<input type="text" name="standard_meet_and_greet_fee" form="management-company-form-{{ company.pk }}" value="{{ company.standard_meet_and_greet_fee|default_if_none:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Check-in method
+                                                    <select name="check_in_method" form="management-company-form-{{ company.pk }}" class="staff-input">
+                                                        <option value="" {% if not company.check_in_method %}selected{% endif %}>Not specified</option>
+                                                        {% for value, label in check_in_method_choices %}
+                                                        <option value="{{ value }}" {% if company.check_in_method == value %}selected{% endif %}>{{ label }}</option>
+                                                        {% endfor %}
+                                                    </select>
+                                                </label>
+                                                <label class="staff-field">Self check-in after (if mixed)<input type="time" name="self_check_in_after" form="management-company-form-{{ company.pk }}" value="{{ company.self_check_in_after|time:'H:i'|default:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Freshen after (days since last clean)<input type="number" name="freshen_after_days" min="0" form="management-company-form-{{ company.pk }}" value="{{ company.freshen_after_days|default_if_none:'' }}" class="staff-input"></label>
+                                            </div>
+                                            <div class="staff-washing-materials">
+                                                <h5 class="staff-manager-contact-title">Washing materials</h5>
+                                                <ul class="staff-list staff-washing-materials-list">
+                                                    {% for material in company.washing_materials.all %}
+                                                    <li>
+                                                        <span>{{ material.title }} &times;{{ material.quantity }}</span>
+                                                        <form method="post" class="staff-inline-delete">
+                                                            {% csrf_token %}
+                                                            <input type="hidden" name="action" value="delete_washing_material">
+                                                            <input type="hidden" name="washing_material_id" value="{{ material.pk }}">
+                                                            <button type="submit" class="staff-button staff-button-small staff-button-danger">Remove</button>
+                                                        </form>
+                                                    </li>
+                                                    {% empty %}
+                                                    <li class="staff-empty">None specified.</li>
+                                                    {% endfor %}
+                                                </ul>
+                                                <form method="post" class="staff-inline-form">
+                                                    {% csrf_token %}
+                                                    <input type="hidden" name="action" value="add_washing_material">
+                                                    <input type="hidden" name="management_company_id" value="{{ company.pk }}">
+                                                    <input type="text" name="title" placeholder="Title" class="staff-input staff-input-flex">
+                                                    <input type="number" name="quantity" min="1" value="1" placeholder="Qty" class="staff-input staff-input-small">
+                                                    <button type="submit" class="staff-button staff-button-small">+ Add</button>
+                                                </form>
+                                            </div>
+                                        </div>
                                     </td>
                                 </tr>
                                 {% empty %}
@@ -713,6 +771,39 @@
                                                 <label class="staff-field">Email<input type="email" name="finance_email" form="management-company-form-new" class="staff-input"></label>
                                                 <label class="staff-field">Phone<input type="text" name="finance_phone" form="management-company-form-new" class="staff-input"></label>
                                             </div>
+                                        </div>
+                                        <div class="staff-manager-operational-settings">
+                                            <h4 class="staff-manager-contact-title">Operational settings</h4>
+                                            <p class="staff-settings-hint">Defaults this company applies to its properties - leave any of these as "Not specified" if it doesn't apply or isn't tracked for this company.</p>
+                                            <div class="staff-manager-operational-fields">
+                                                <label class="staff-field">Towels per guest<input type="number" name="towels_per_guest" min="0" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Includes beach towels
+                                                    <select name="includes_beach_towels" form="management-company-form-new" class="staff-input">
+                                                        <option value="" selected>Not specified</option>
+                                                        <option value="true">Yes</option>
+                                                        <option value="false">No</option>
+                                                    </select>
+                                                </label>
+                                                <label class="staff-field">Linen provided
+                                                    <select name="linen_provided" form="management-company-form-new" class="staff-input">
+                                                        <option value="" selected>Not specified</option>
+                                                        <option value="true">Yes</option>
+                                                        <option value="false">No</option>
+                                                    </select>
+                                                </label>
+                                                <label class="staff-field">Standard meet &amp; greet fee<input type="text" name="standard_meet_and_greet_fee" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Check-in method
+                                                    <select name="check_in_method" form="management-company-form-new" class="staff-input">
+                                                        <option value="" selected>Not specified</option>
+                                                        {% for value, label in check_in_method_choices %}
+                                                        <option value="{{ value }}">{{ label }}</option>
+                                                        {% endfor %}
+                                                    </select>
+                                                </label>
+                                                <label class="staff-field">Self check-in after (if mixed)<input type="time" name="self_check_in_after" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Freshen after (days since last clean)<input type="number" name="freshen_after_days" min="0" form="management-company-form-new" class="staff-input"></label>
+                                            </div>
+                                            <p class="staff-settings-hint">Save this company first to add its washing materials list.</p>
                                         </div>
                                     </td>
                                 </tr>

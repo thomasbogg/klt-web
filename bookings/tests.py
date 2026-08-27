@@ -22,7 +22,8 @@ from bookings.utils import (
 from bookings.templatetags.bookings_extras import linkify
 from guests.models import Guest
 from properties.models import (
-    Amenity, Location, LocationRules, ManagementCompany, Owner, Price, Property, PropertySpec, iCalLink,
+    Amenity, Location, LocationRules, ManagementCompany, Owner, Price, Property, PropertySpec,
+    WashingMaterial, iCalLink,
 )
 
 
@@ -729,6 +730,18 @@ class CreateBookingTests(TestCase):
         self.assertFalse(hasattr(booking, 'balance_payment'))
         self.assertEqual(booking.charges.due_at_balance, Decimal('0'))
 
+    def test_creates_a_departure_row_defaulting_to_wanting_an_end_of_stay_clean(self):
+        # 2026-08-27, per Thomas: created eagerly so the default takes effect without staff
+        # needing to visit this booking first - see Departure's own docstring.
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+        )
+        self.assertTrue(hasattr(booking, 'departure'))
+        self.assertTrue(booking.departure.clean)
+
     def test_charge_splits_basic_rental_discount_and_extra_guest(self):
         start = date.today() + timedelta(days=200)
         end = start + timedelta(days=5)
@@ -1023,23 +1036,34 @@ class BookingDetailsViewTests(TestCase):
         self.assertTrue(response.context['late_checkout_error'])
         self.assertEqual(self.booking.party.count(), 0)
 
-    def test_post_persists_mid_stay_clean_with_bedroom_priced_charge(self):
+    def test_post_persists_mid_stay_clean_at_the_default_date_with_bedroom_priced_charge(self):
         # self.property's PropertySpec has no bedrooms set, defaulting to 1 - see setUp.
+        # self.booking is a 7-night stay (setUp) - default mid-stay date is arrival + 7 // 2 = +3.
         settings = ExtrasSettings.load()
         settings.mid_stay_clean_price_one_bedroom = Decimal('45.00')
         settings.mid_stay_clean_price_multi_bedroom = Decimal('65.00')
         settings.save()
         self._set_session()
-        target = self.start + timedelta(days=3)
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
         data['mid_stay_clean'] = 'on'
-        data['mid_stay_clean_date'] = target.isoformat()
         response = self.client.post(self.url, data)
         self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
         self.booking.refresh_from_db()
         self.assertTrue(self.booking.extras.mid_stay_clean)
-        self.assertEqual(self.booking.extras.mid_stay_clean_date, target)
+        self.assertEqual(self.booking.extras.mid_stay_clean_date, self.start + timedelta(days=3))
         self.assertEqual(self.booking.extras.mid_stay_clean_charge, Decimal('45.00'))
+
+    def test_post_mid_stay_clean_ignores_a_posted_date_and_always_saves_the_default(self):
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['mid_stay_clean'] = 'on'
+        # No date field exists in the guest-facing form any more (see _extras_form.html) - this
+        # simulates a stale/tampered submission to prove the server never trusts one anyway.
+        data['mid_stay_clean_date'] = (self.start + timedelta(days=1)).isoformat()
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.extras.mid_stay_clean_date, self.start + timedelta(days=3))
 
     def test_post_mid_stay_clean_prices_multi_bedroom_property_differently(self):
         self.property.specs.bedrooms = 3
@@ -1051,7 +1075,6 @@ class BookingDetailsViewTests(TestCase):
         self._set_session()
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
         data['mid_stay_clean'] = 'on'
-        data['mid_stay_clean_date'] = (self.start + timedelta(days=3)).isoformat()
         response = self.client.post(self.url, data)
         self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
         self.booking.refresh_from_db()
@@ -1066,25 +1089,6 @@ class BookingDetailsViewTests(TestCase):
         self.assertFalse(self.booking.extras.mid_stay_clean)
         self.assertIsNone(self.booking.extras.mid_stay_clean_date)
         self.assertIsNone(self.booking.extras.mid_stay_clean_charge)
-
-    def test_post_mid_stay_clean_without_a_date_is_rejected(self):
-        self._set_session()
-        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
-        data['mid_stay_clean'] = 'on'
-        response = self.client.post(self.url, data)
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.context['mid_stay_clean_error'])
-        self.assertEqual(self.booking.party.count(), 0)
-
-    def test_post_mid_stay_clean_on_arrival_day_is_rejected(self):
-        self._set_session()
-        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
-        data['mid_stay_clean'] = 'on'
-        data['mid_stay_clean_date'] = self.start.isoformat()
-        response = self.client.post(self.url, data)
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.context['mid_stay_clean_error'])
-        self.assertEqual(self.booking.party.count(), 0)
 
     def test_get_hides_mid_stay_clean_section_for_a_one_night_stay(self):
         short_booking = Booking.objects.create(
@@ -1116,11 +1120,17 @@ class BookingDetailsViewTests(TestCase):
         self._set_session()
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
         data['mid_stay_clean'] = 'on'
-        data['mid_stay_clean_date'] = (self.start + timedelta(days=3)).isoformat()
         response = self.client.post(self.url, data)
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context['mid_stay_clean_error'])
         self.assertEqual(self.booking.party.count(), 0)
+
+    def test_get_shows_mid_stay_clean_as_an_estimate_not_a_specific_date(self):
+        # 2026-08-27, per Thomas: it's not up to the guest to decide, so the page shouldn't even
+        # display a specific date any more, just that it'll land around the middle of the stay.
+        response = self.client.get(self.url)
+        self.assertContains(response, 'around the middle of your stay')
+        self.assertNotIn('mid_stay_clean_date', response.context)
 
     def test_post_with_zero_quantity_does_not_create_a_requested_extra(self):
         extra_bed = RequestType.objects.create(name='Extra bed', default_price=Decimal('15.00'))
@@ -1736,14 +1746,15 @@ class ExtrasSummaryTests(TestCase):
         summary = extras_summary(self.booking)
         self.assertEqual(summary['items'], [{'label': 'Cot', 'price': Decimal('20.00')}])
 
-    def test_mid_stay_clean_included_with_date(self):
+    def test_mid_stay_clean_included_without_a_date_in_the_label(self):
+        # No date in the label (2026-08-27) - it's an estimate, not a guest-chosen commitment.
         target = self.booking.arrival_date + timedelta(days=2)
         Extra.objects.create(
             booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=target,
             mid_stay_clean_charge=Decimal('45.00'),
         )
         summary = extras_summary(self.booking)
-        self.assertEqual(summary['items'], [{'label': f'Mid-stay Clean ({target})', 'price': Decimal('45.00')}])
+        self.assertEqual(summary['items'], [{'label': 'Mid-stay Clean', 'price': Decimal('45.00')}])
 
 
 class BookingDateAdjustmentTests(TestCase):
@@ -2696,9 +2707,11 @@ class DepartureTests(TestCase):
         departure = Departure.objects.create(booking=self.booking)
         self.assertIn('2026-09-08', str(departure))
 
-    def test_clean_defaults_to_false(self):
+    def test_clean_defaults_to_true(self):
+        # 2026-08-27, per Thomas: an end-of-stay clean is the normal case for every booking, not
+        # something staff opt into - see Departure's own docstring.
         departure = Departure.objects.create(booking=self.booking)
-        self.assertFalse(departure.clean)
+        self.assertTrue(departure.clean)
 
 
 class BookingManageArrivalDepartureViewTests(TestCase):
@@ -2747,7 +2760,9 @@ class BookingManageArrivalDepartureViewTests(TestCase):
         self.assertTrue(self.booking.arrival.hiring_car)
         self.assertEqual(self.booking.departure.method, 'flight_faro')
         self.assertEqual(self.booking.departure.flight_number, 'TP456')
-        self.assertFalse(self.booking.departure.clean)
+        # 2026-08-27, per Thomas: an end-of-stay clean is the normal case for every booking now,
+        # not something the guest's own save ever opts into or out of either way.
+        self.assertTrue(self.booking.departure.clean)
 
     def test_self_check_in_defaults_to_false_on_first_save(self):
         # Real bug: this used to default to True, which is wrong - self-check-in is a real
@@ -3147,6 +3162,52 @@ class BookingManageAmenitiesViewTests(TestCase):
     def test_active_section_is_amenities(self):
         response = self.client.get(self.url)
         self.assertEqual(response.context['active_section'], 'amenities')
+
+    def test_towels_section_is_titled_towels_and_linen(self):
+        Amenity.objects.create(property=self.property, beach_towels_per_guest=0)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Towels and Linen')
+
+    def test_linen_line_shown_when_cleaning_company_provides_it(self):
+        company = ManagementCompany.objects.create(name='Linen Co', linen_provided=True)
+        self.property.cleaning_company = company
+        self.property.save(update_fields=['cleaning_company'])
+        response = self.client.get(self.url)
+        self.assertContains(response, 'All beds dressed in linen appropriate to the season')
+
+    def test_linen_line_hidden_with_no_cleaning_company(self):
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'All beds dressed in linen appropriate to the season')
+
+    def test_linen_line_hidden_when_cleaning_company_does_not_provide_it(self):
+        company = ManagementCompany.objects.create(name='No Linen Co', linen_provided=False)
+        self.property.cleaning_company = company
+        self.property.save(update_fields=['cleaning_company'])
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'All beds dressed in linen appropriate to the season')
+
+    def test_towels_and_linen_section_shows_for_linen_alone_with_no_towel_items(self):
+        # No Amenity row at all (so towel_items is empty) - the section should still appear for
+        # the linen line on its own.
+        company = ManagementCompany.objects.create(name='Linen Only Co', linen_provided=True)
+        self.property.cleaning_company = company
+        self.property.save(update_fields=['cleaning_company'])
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Towels and Linen')
+
+    def test_also_included_shows_cleaning_companys_washing_materials(self):
+        company = ManagementCompany.objects.create(name='Supplies Co')
+        WashingMaterial.objects.create(company=company, title='Washing up liquid', quantity=1)
+        WashingMaterial.objects.create(company=company, title='Dishwasher tablets', quantity=2)
+        self.property.cleaning_company = company
+        self.property.save(update_fields=['cleaning_company'])
+        response = self.client.get(self.url)
+        self.assertContains(response, '<li>Washing up liquid</li>', html=True)
+        self.assertContains(response, '<li>2 Dishwasher tablets</li>', html=True)
+
+    def test_also_included_hidden_with_no_washing_materials(self):
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Also included with every stay')
 
 
 class LinkifyFilterTests(TestCase):

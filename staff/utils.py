@@ -268,15 +268,20 @@ def _sync_task_date(task, computed_date):
 def cleaning_task_valid_range(task):
     """(min_date, max_date_or_None) this task's date may occupy, both ends inclusive - a turnover
     clean can land on the same day the next guest arrives (a normal same-day turnover: guest
-    leaves in the morning, cleaners come, next guest checks in later that day), and a mid-stay
-    clean can land on the stay's own last day."""
+    leaves in the morning, cleaners come, next guest checks in later that day). A mid-stay clean
+    is confined to the same ±1-day window around the middle of the stay the guest was shown as
+    their estimate (bookings.utils.mid_stay_clean_window) - not the full stay - so a drag on the
+    calendar can only ever nudge it a day either way, matching that it's a fixed estimate, not an
+    open-ended reschedule."""
     from bookings.models import Booking
+    from bookings.utils import mid_stay_clean_window
 
     booking = task.booking
     if task.task_type == 'turnover':
         min_date = booking.departure_date
         return min_date, Booking.objects.next_confirmed_arrival_after(booking.property, min_date)
-    return booking.arrival_date, booking.departure_date
+    _, min_date, max_date = mid_stay_clean_window(booking)
+    return min_date, max_date
 
 
 def apply_manual_task_date(task, new_date):

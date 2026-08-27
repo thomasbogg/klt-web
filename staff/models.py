@@ -127,9 +127,12 @@ class StaffProfile(models.Model):
 class CleaningTask(models.Model):
     """A rota-visible clean for one booking - either the turnover clean tied to its departure
     (Departure.clean/Booking.departure_date) or its optional mid-stay clean (Extra.mid_stay_clean/
-    mid_stay_clean_date). Departure.clean/Extra.mid_stay_clean stay the source of truth (edited
-    from the booking detail page's Booking Info panel, same as always) - this row is kept in sync
-    via post_save signals on Departure/Extra/Booking (staff/signals.py, connected from
+    mid_stay_clean_date). Departure.clean/Extra.mid_stay_clean stay the source of truth -
+    Departure.clean from the booking detail page's Booking Info panel same as always, but
+    Extra.mid_stay_clean is guest-selected only (BookingFormMixin._save_extras/
+    _parse_mid_stay_clean; 2026-08-27, a duplicate staff-side checkbox for it on Booking Info was
+    removed after it was found silently overwriting the guest's real choice) - this row is kept in
+    sync via post_save signals on Departure/Extra/Booking (staff/signals.py, connected from
     StaffConfig.ready() - this app's first use of Django signals), not a call embedded in one view
     method, since bookings/admin.py's ExtraInline/DepartureInline/BookingDateAdjustmentInline are a
     second, admin-side write path that would otherwise silently desync a call-site-based approach.

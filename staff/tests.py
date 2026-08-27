@@ -16,7 +16,7 @@ from bookings.models import (
 from guests.models import Guest
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
-    Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail,
+    Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail, WashingMaterial,
     iCalLink,
 )
 from staff.models import CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
@@ -496,6 +496,75 @@ class StaffBookingDetailViewTests(TestCase):
         self.client.post(self.url, {'action': 'update_booking', 'enquiry_status': 'Booking confirmed'})
         self.assertEqual(TaskHistoryEntry.objects.filter(booking=self.booking).count(), 0)
 
+    def test_update_booking_logs_task_history_for_a_date_change(self):
+        new_arrival = self.start + timedelta(days=1)
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'arrival_date': new_arrival.isoformat(),
+            'departure_date': self.end.isoformat(),
+        })
+        self.assertRedirects(response, self.url)
+        entry = TaskHistoryEntry.objects.get(booking=self.booking)
+        self.assertEqual(entry.description, 'Booking dates updated')
+        self.assertEqual(entry.created_by, self.staff_user)
+        self.assertIn(f"Arrival {self.start} → {new_arrival}", entry.detail)
+
+    def test_update_booking_no_date_history_entry_when_dates_unchanged(self):
+        self.client.post(self.url, {
+            'action': 'update_booking', 'arrival_date': self.start.isoformat(),
+            'departure_date': self.end.isoformat(),
+        })
+        self.assertEqual(TaskHistoryEntry.objects.filter(booking=self.booking).count(), 0)
+
+    def test_update_booking_on_a_non_owner_booking_never_touches_clean_or_meet_greet(self):
+        # Confirmed live 2026-08-27: saving any other field (here, just the departure date) on a
+        # normal booking was silently resetting Departure.clean to False and vanishing its
+        # CleaningTask from the cleaning calendar. Cause: arrival_departure.js disables every
+        # field inside the Owner-booking-conditional row while it's collapsed, so a disabled
+        # checkbox is omitted from the POST body entirely (HTML form spec) - post.get('clean')
+        # then reads as absent/unchecked regardless of the real value. _update_booking() must only
+        # write these two fields when is_owner is actually set in this exact submission.
+        Departure.objects.create(booking=self.booking, clean=True)
+        Arrival.objects.create(booking=self.booking, meet_greet=True)
+        new_departure = self.end + timedelta(days=1)
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'arrival_date': self.start.isoformat(),
+            'departure_date': new_departure.isoformat(),
+        })
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.departure.clean)
+        self.assertTrue(self.booking.arrival.meet_greet)
+
+    def test_update_booking_on_an_owner_booking_does_set_clean_and_meet_greet(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'is_owner': 'on', 'meet_greet': 'on', 'clean': 'off',
+        })
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.arrival.meet_greet)
+        self.assertFalse(self.booking.departure.clean)
+
+    def test_update_booking_moving_departure_date_does_not_false_positive_on_the_stale_turnover_date(self):
+        # Confirmed live 2026-08-27: changing just the departure date raised "That date is outside
+        # this task's valid window." - booking.save()'s post_save signal auto-advances the
+        # (non-manually-scheduled) turnover task's date to match the new departure_date before
+        # _update_cleaning_tasks() runs, so the *old* date still sitting in the posted
+        # turnover_date field (nobody touched it - the booking's own dates changed instead) looked
+        # like a deliberate edit back to a now-invalid date. See _update_cleaning_tasks's docstring.
+        Departure.objects.create(booking=self.booking, clean=True)
+        stale_turnover_date = self.booking.cleaning_tasks.get(task_type='turnover').date
+        new_departure = self.end + timedelta(days=3)
+        response = self.client.post(self.url, {
+            'action': 'update_booking', 'departure_date': new_departure.isoformat(),
+            'turnover_date': stale_turnover_date.isoformat(),
+        }, follow=True)
+        messages = [str(m) for m in response.context['messages']]
+        self.assertFalse(any("outside this task's valid window" in m for m in messages))
+        task = self.booking.cleaning_tasks.get(task_type='turnover')
+        self.assertEqual(task.date, new_departure)
+        self.assertFalse(task.manually_scheduled)
+
     def test_add_deduction(self):
         response = self.client.post(self.url, {
             'action': 'add_deduction', 'description': 'Broken glass', 'amount': '25.00',
@@ -669,7 +738,7 @@ class StaffBookingDetailArrivalDepartureTests(TestCase):
         self.assertFalse(hasattr(self.booking, 'arrival'))
         self.assertFalse(hasattr(self.booking, 'departure'))
         response = self.client.post(self.url, {
-            'action': 'update_booking',
+            'action': 'update_booking', 'is_owner': 'on',
             'arrival_method': 'flight_lisbon', 'arrival_flight_number': 'TP1234',
             'arrival_time': '14:00', 'arrival_details': 'Renting a car', 'arrival_hiring_car': 'on',
             'departure_method': 'driving', 'departure_travelling_from': 'Lisbon',
@@ -696,6 +765,10 @@ class StaffBookingDetailArrivalDepartureTests(TestCase):
         entry = TaskHistoryEntry.objects.get(booking=self.booking)
         self.assertEqual(entry.description, "Arrival/Departure updated")
         self.assertEqual(entry.created_by, self.staff_user)
+        # 2026-08-27, per Thomas: this entry used to have no detail at all, reading as unexplained
+        # "mixed" noise next to Booking dates updated's clear before/after - see _field_changes.
+        self.assertIn("Flight number", entry.detail)
+        self.assertIn("to 'TP1234'", entry.detail)
 
     def test_update_history_row_shows_stub_with_hover_tooltip(self):
         TaskHistoryEntry.objects.create(
@@ -732,9 +805,14 @@ class StaffBookingDetailArrivalDepartureTests(TestCase):
         self.assertFalse(self.booking.arrival.self_check_in)
 
     def test_update_booking_unchecked_boxes_are_false_not_untouched(self):
+        # self_check_in isn't gated behind the Owner-booking row, so it always reflects the
+        # checkbox's real state, including "omitted means unchecked". meet_greet/clean live inside
+        # that row instead, disabled (and so omitted from POST entirely) whenever is_owner isn't
+        # also set in this submission - see test_update_booking_on_a_non_owner_booking_never_
+        # touches_clean_or_meet_greet for why they must NOT be reset to False in that case.
         Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=True)
         Departure.objects.create(booking=self.booking, clean=True)
-        response = self.client.post(self.url, {'action': 'update_booking'})
+        response = self.client.post(self.url, {'action': 'update_booking', 'is_owner': 'on'})
         self.assertRedirects(response, self.url)
         self.booking.refresh_from_db()
         self.assertFalse(self.booking.arrival.self_check_in)
@@ -761,32 +839,60 @@ class StaffBookingDetailArrivalDepartureTests(TestCase):
         self.assertEqual(self.booking.departure.method, 'bus')
         self.assertEqual(self.booking.departure.time, time(10, 30))
 
-    def test_meet_greet_and_clean_row_present_in_markup_regardless_of_owner_status(self):
+    def test_meet_greet_row_present_in_markup_regardless_of_owner_status(self):
         # Visibility is a client-side JS toggle (see arrival_departure.js) - the row is always
         # server-rendered so it works with JS disabled and so the checked state survives a
         # validation-error re-render; this only confirms the server side of that contract.
         response = self.client.get(self.url)
         self.assertContains(response, 'data-owner-row')
         self.assertContains(response, 'Meet &amp; greet')
+
+    def test_cleaning_panel_shows_end_of_stay_clean_fields_once_scheduled(self):
+        # 2026-08-27, per Thomas: separate from the "Clean on departure" checkbox itself, which is
+        # back where it always lived, alongside Meet & Greet (see the test below) - this is the
+        # panel that actually shows the resulting CleaningTask's date/staff/team once one exists.
+        Departure.objects.create(booking=self.booking, clean=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'End-of-stay clean')
+
+    def test_cleaning_panel_shows_a_placeholder_with_no_end_of_stay_clean_yet(self):
+        # This booking's setUp never creates a Departure row, so there's no CleaningTask for the
+        # panel to show - it should say so plainly rather than rendering an empty section.
+        response = self.client.get(self.url)
+        self.assertContains(response, 'staff-panel-title">Cleaning<')
+        self.assertContains(response, 'No end-of-stay clean scheduled yet.')
+
+    def test_clean_on_departure_checkbox_lives_with_meet_and_greet(self):
+        # 2026-08-27, per Thomas: restored to its original spot after briefly living in the
+        # Cleaning panel - it's the one remaining way to turn off the new default-True end-of-stay
+        # clean for a booking that shouldn't get one (e.g. an owner cleaning it themselves).
+        response = self.client.get(self.url)
+        self.assertContains(response, 'data-owner-row')
+        self.assertContains(response, 'Meet &amp; greet')
         self.assertContains(response, 'Clean on departure')
 
-    def test_mid_stay_clean_date_outside_stay_is_rejected(self):
-        response = self.client.post(self.url, {
-            'action': 'update_booking',
-            'mid_stay_clean': 'on', 'mid_stay_clean_date': (self.end + timedelta(days=1)).isoformat(),
-        })
-        self.assertRedirects(response, self.url)
-        self.assertFalse(hasattr(self.booking, 'extras'))
+    def test_booking_info_has_no_mid_stay_clean_checkbox(self):
+        # 2026-08-27, per Thomas: this was a duplicate on/off control for a guest-selected Extra
+        # (see BookingFormMixin._save_extras/_parse_mid_stay_clean) that could silently stomp the
+        # guest's real choice with whatever this page happened to last render - see the test below.
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'staff-mid-stay-clean')
+        self.assertNotContains(response, 'name="mid_stay_clean"')
 
-    def test_mid_stay_clean_saved_within_stay(self):
-        target = self.start + timedelta(days=2)
+    def test_update_booking_never_touches_mid_stay_clean(self):
+        Extra.objects.create(
+            booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=self.start + timedelta(days=2),
+        )
+        # A stray/replayed mid_stay_clean(_date) field in the POST body must be ignored - it's no
+        # longer this form's field to write, precisely so a stale page load can't clobber a newer
+        # guest-side change with an unrelated save (e.g. editing the guest's phone number).
         response = self.client.post(self.url, {
-            'action': 'update_booking', 'mid_stay_clean': 'on', 'mid_stay_clean_date': target.isoformat(),
+            'action': 'update_booking', 'mid_stay_clean': 'off', 'mid_stay_clean_date': '',
         })
         self.assertRedirects(response, self.url)
         self.booking.refresh_from_db()
         self.assertTrue(self.booking.extras.mid_stay_clean)
-        self.assertEqual(self.booking.extras.mid_stay_clean_date, target)
+        self.assertEqual(self.booking.extras.mid_stay_clean_date, self.start + timedelta(days=2))
 
 
 class CleaningTaskSyncTests(TestCase):
@@ -2008,6 +2114,109 @@ class StaffSettingsViewTests(TestCase):
         self.client.post(self.url, {'action': 'add_management_company', 'name': ''})
         self.assertEqual(ManagementCompany.objects.count(), before)
 
+    def test_add_management_company_with_no_operational_settings_leaves_them_null(self):
+        # All genuinely optional (2026-08-27, per Thomas) - a company that doesn't specify any of
+        # these shouldn't get a default value that looks like a real, deliberate answer.
+        self.client.post(self.url, {'action': 'add_management_company', 'name': 'No Settings Co'})
+        company = ManagementCompany.objects.get(name='No Settings Co')
+        self.assertIsNone(company.towels_per_guest)
+        self.assertIsNone(company.includes_beach_towels)
+        self.assertIsNone(company.linen_provided)
+        self.assertIsNone(company.standard_meet_and_greet_fee)
+        self.assertIsNone(company.check_in_method)
+        self.assertIsNone(company.self_check_in_after)
+        self.assertIsNone(company.freshen_after_days)
+
+    def test_add_management_company_with_operational_settings_saves_them(self):
+        self.client.post(self.url, {
+            'action': 'add_management_company', 'name': 'Full Settings Co',
+            'towels_per_guest': '2', 'includes_beach_towels': 'true', 'linen_provided': 'true',
+            'standard_meet_and_greet_fee': '25.00', 'check_in_method': 'mixed',
+            'self_check_in_after': '16:00', 'freshen_after_days': '14',
+        })
+        company = ManagementCompany.objects.get(name='Full Settings Co')
+        self.assertEqual(company.towels_per_guest, 2)
+        self.assertTrue(company.includes_beach_towels)
+        self.assertTrue(company.linen_provided)
+        self.assertEqual(company.standard_meet_and_greet_fee, Decimal('25.00'))
+        self.assertEqual(company.check_in_method, 'mixed')
+        self.assertEqual(company.self_check_in_after, time(16, 0))
+        self.assertEqual(company.freshen_after_days, 14)
+
+    def test_add_management_company_rejects_an_unrecognised_check_in_method(self):
+        # A stray/tampered value falls back to None rather than a 500 or a silently-wrong choice.
+        self.client.post(self.url, {
+            'action': 'add_management_company', 'name': 'Bad Check-in Co', 'check_in_method': 'not-a-real-choice',
+        })
+        company = ManagementCompany.objects.get(name='Bad Check-in Co')
+        self.assertIsNone(company.check_in_method)
+
+    def test_update_management_company_round_trips_operational_settings(self):
+        company = make_management_company()
+        self.client.post(self.url, {
+            'action': 'update_management_company', 'management_company_id': company.pk,
+            'name': company.name, 'towels_per_guest': '3', 'includes_beach_towels': 'false',
+            'linen_provided': 'true', 'standard_meet_and_greet_fee': '30.50',
+            'check_in_method': 'self_check_in', 'freshen_after_days': '10',
+        })
+        company.refresh_from_db()
+        self.assertEqual(company.towels_per_guest, 3)
+        self.assertFalse(company.includes_beach_towels)
+        self.assertTrue(company.linen_provided)
+        self.assertEqual(company.standard_meet_and_greet_fee, Decimal('30.50'))
+        self.assertEqual(company.check_in_method, 'self_check_in')
+        self.assertEqual(company.freshen_after_days, 10)
+        # Clearing it back out (blank/omitted fields posted) should genuinely clear it to "not
+        # specified" (None), same as the maintenance-contact round trip above - not leave stale
+        # values stuck, and not silently coerce "not specified" into False for the boolean field.
+        self.client.post(self.url, {
+            'action': 'update_management_company', 'management_company_id': company.pk, 'name': company.name,
+        })
+        company.refresh_from_db()
+        self.assertIsNone(company.towels_per_guest)
+        self.assertIsNone(company.includes_beach_towels)
+        self.assertIsNone(company.linen_provided)
+        self.assertIsNone(company.standard_meet_and_greet_fee)
+        self.assertIsNone(company.check_in_method)
+        self.assertIsNone(company.freshen_after_days)
+
+    def test_add_washing_material_creates_row(self):
+        company = make_management_company()
+        self.client.post(self.url, {
+            'action': 'add_washing_material', 'management_company_id': company.pk,
+            'title': 'Dish tabs', 'quantity': '20',
+        })
+        material = WashingMaterial.objects.get(company=company)
+        self.assertEqual(material.title, 'Dish tabs')
+        self.assertEqual(material.quantity, 20)
+
+    def test_add_washing_material_requires_a_title(self):
+        company = make_management_company()
+        self.client.post(self.url, {
+            'action': 'add_washing_material', 'management_company_id': company.pk, 'title': '',
+        })
+        self.assertFalse(WashingMaterial.objects.filter(company=company).exists())
+
+    def test_add_washing_material_defaults_quantity_to_one(self):
+        company = make_management_company()
+        self.client.post(self.url, {
+            'action': 'add_washing_material', 'management_company_id': company.pk, 'title': 'Fabric softener',
+        })
+        material = WashingMaterial.objects.get(company=company)
+        self.assertEqual(material.quantity, 1)
+
+    def test_delete_washing_material_removes_it(self):
+        company = make_management_company()
+        material = WashingMaterial.objects.create(company=company, title='Soap', quantity=5)
+        self.client.post(self.url, {'action': 'delete_washing_material', 'washing_material_id': material.pk})
+        self.assertFalse(WashingMaterial.objects.filter(pk=material.pk).exists())
+
+    def test_delete_management_company_also_deletes_its_washing_materials(self):
+        company = make_management_company()
+        WashingMaterial.objects.create(company=company, title='Soap', quantity=5)
+        self.client.post(self.url, {'action': 'delete_management_company', 'management_company_id': company.pk})
+        self.assertFalse(WashingMaterial.objects.exists())
+
     def test_update_management_company_saves_fields(self):
         company = make_management_company(name='Original Co')
         response = self.client.post(self.url, {
@@ -2201,14 +2410,15 @@ class CleaningTaskValidRangeTests(TestCase):
         min_date, max_date = cleaning_task_valid_range(self.task)
         self.assertEqual(max_date, next_arrival)
 
-    def test_mid_stay_range_is_the_booking_own_stay(self):
+    def test_mid_stay_range_is_a_day_either_side_of_the_stays_middle(self):
+        # self.booking is a 10-night stay (setUp) - middle day is arrival + 10 // 2 = +5.
         extra = Extra.objects.create(
-            booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=self.start + timedelta(days=3),
+            booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=self.start + timedelta(days=5),
         )
         mid_task = CleaningTask.objects.get(booking=self.booking, task_type='mid_stay')
         min_date, max_date = cleaning_task_valid_range(mid_task)
-        self.assertEqual(min_date, self.start)
-        self.assertEqual(max_date, self.end)
+        self.assertEqual(min_date, self.start + timedelta(days=4))
+        self.assertEqual(max_date, self.start + timedelta(days=6))
 
 
 class ApplyManualTaskDateTests(TestCase):

@@ -399,6 +399,27 @@ body {
     margin: 0 0 12px;
 }
 
+/* Separates the Cleaning panel's mid-stay and end-of-stay sections - a dashed "cut here" line
+   (with a small scissor mark, since that's literally the metaphor) rather than a plain rule,
+   since these are two independently-sourced cleans (guest-selected vs staff-toggled) stacked in
+   one panel, not a single continuous list. */
+.staff-cleaning-cut {
+    position: relative;
+    border-top: 1px dashed #ccc;
+    margin: 4px 0 10px;
+}
+
+.staff-cleaning-cut::after {
+    content: "✂";
+    position: absolute;
+    top: -0.7em;
+    left: 16px;
+    background: #fff;
+    padding: 0 6px;
+    color: #aaa;
+    font-size: 0.85rem;
+}
+
 .staff-payments-subtotal {
     font-size: 0.85rem;
     color: #555;

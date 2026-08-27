@@ -43,4 +43,3 @@ function wireOwnerCheckbox(checkboxId, groupSelector) {
 wireMethodSelect('staff-arrival-method');
 wireMethodSelect('staff-departure-method');
 wireOwnerCheckbox('staff-is-owner', '[data-owner-row]');
-wireOwnerCheckbox('staff-mid-stay-clean', '[data-mid-stay-clean-row]');

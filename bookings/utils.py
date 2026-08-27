@@ -76,7 +76,7 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
     Raises django.core.exceptions.ValidationError (from Booking.full_clean()) if the dates are no
     longer available. Returns the created Booking.
     """
-    from bookings.models import BalancePayment, Booking, BookingSettings, Charge, Payment
+    from bookings.models import BalancePayment, Booking, BookingSettings, Charge, Departure, Payment
     from guests.models import Guest
     from properties.utils import get_stay_total_price
 
@@ -145,6 +145,11 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
 
         if costs['due_at_balance'] > 0:
             BalancePayment.objects.create(booking=booking, provider=provider)
+
+        # Created eagerly (clean defaults to True) so an end-of-stay clean is scheduled for every
+        # booking from the moment it's made, not only once staff happen to open its Booking Info
+        # panel - see Departure's own docstring.
+        Departure.objects.create(booking=booking)
 
     return booking
 
@@ -314,8 +319,10 @@ def extras_summary(booking):
         items.append({'label': f"Late Checkout{time_label}", 'price': extra.late_checkout_charge or 0})
 
     if extra and extra.mid_stay_clean:
-        date_label = f" ({extra.mid_stay_clean_date})" if extra.mid_stay_clean_date else ''
-        items.append({'label': f"Mid-stay Clean{date_label}", 'price': extra.mid_stay_clean_charge or 0})
+        # No date in the label (2026-08-27) - it's no longer guest-chosen (see
+        # bookings.utils.mid_stay_clean_window), so surfacing one here read as more of a
+        # commitment than the "estimate" it actually is.
+        items.append({'label': "Mid-stay Clean", 'price': extra.mid_stay_clean_charge or 0})
 
     for transfer in booking.airport_transfers.all():
         detail = transfer.flight_number or (transfer.time.strftime('%H:%M') if transfer.time else '')
@@ -330,6 +337,25 @@ def extras_summary(booking):
         })
 
     return {'items': items, 'total': sum((item['price'] for item in items), start=Decimal('0'))}
+
+
+def mid_stay_clean_window(booking):
+    """(default_date, min_date, max_date) for a mid-stay clean on this booking - the default
+    lands as close to the middle of the stay as an integer day allows (rounding toward the
+    earlier half on an even split), and min/max are one day either side of it, clamped so neither
+    ever reaches the arrival/departure day itself (those are the checkout/check-in cleans, not a
+    mid-stay one). Not guest-editable (see BookingFormMixin._mid_stay_clean_default_date, which
+    just wraps this) - a date this small cleaning team can't reliably staff around is a fixed
+    estimate, not a guest negotiation. The min/max window still matters for staff: it's what
+    staff/utils.py::cleaning_task_valid_range lets a mid-stay CleaningTask be dragged within on
+    the cleaning calendar, one day either side of the estimate the guest was shown. The clamp only
+    bites for a stay right at ExtrasSettings.mid_stay_clean_minimum_nights, where the default sits
+    on (or one day from) a boundary day and the ±1 window would otherwise spill onto it."""
+    nights = (booking.departure_date - booking.arrival_date).days
+    default_date = booking.arrival_date + timedelta(days=nights // 2)
+    min_date = max(default_date - timedelta(days=1), booking.arrival_date + timedelta(days=1))
+    max_date = min(default_date + timedelta(days=1), booking.departure_date - timedelta(days=1))
+    return default_date, min_date, max_date
 
 
 def has_completed_previous_stay(guest, exclude_booking_id=None):

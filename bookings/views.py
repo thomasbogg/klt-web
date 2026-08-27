@@ -20,7 +20,7 @@ from bookings.models import (
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, booking_confirmation_context, cancel_booking_hold, extras_summary,
-    guest_counts_by_age, parsed_arrival_departure_time, parsed_travel_method,
+    guest_counts_by_age, mid_stay_clean_window, parsed_arrival_departure_time, parsed_travel_method,
     recalculate_balance_for_party, recalculate_costs_for_party, reservation_retry_url,
     valid_flight_number,
 )
@@ -172,7 +172,6 @@ class BookingFormMixin:
             late_checkout = post_data.get('late_checkout') == 'on'
             late_checkout_time = post_data.get('late_checkout_time', '').strip()
             mid_stay_clean = post_data.get('mid_stay_clean') == 'on'
-            mid_stay_clean_date = post_data.get('mid_stay_clean_date', '').strip()
             quantities = {t.id: post_data.get(f'request_qty_{t.id}', '0').strip() or '0' for t in active_types}
             notes = {t.id: post_data.get(f'request_note_{t.id}', '').strip() for t in active_types}
         else:
@@ -190,9 +189,6 @@ class BookingFormMixin:
                 extra.late_checkout_time.strftime('%H:%M') if extra and extra.late_checkout_time else ''
             )
             mid_stay_clean = bool(extra and extra.mid_stay_clean)
-            mid_stay_clean_date = (
-                extra.mid_stay_clean_date.isoformat() if extra and extra.mid_stay_clean_date else ''
-            )
             existing = {r.request_type_id: r for r in booking.requested_extras.all()}
             quantities = {t.id: str(existing[t.id].quantity) if t.id in existing else '0' for t in active_types}
             notes = {t.id: existing[t.id].note if t.id in existing else '' for t in active_types}
@@ -221,15 +217,12 @@ class BookingFormMixin:
             'late_checkout_time': late_checkout_time,
             'late_checkout_price': settings.late_checkout_price,
             'mid_stay_clean': mid_stay_clean,
-            'mid_stay_clean_date': mid_stay_clean_date,
             'mid_stay_clean_price': settings.compute_mid_stay_clean_price(booking.property),
             # ExtrasSettings.mid_stay_clean_minimum_nights (staff-configurable, floor of 2 - a
             # 1-night stay has no day strictly between its own arrival/departure at all) - see
             # _parse_mid_stay_clean's docstring for the same rule enforced server-side on save,
             # not just this display gate.
             'show_mid_stay_clean': nights >= settings.mid_stay_clean_minimum_nights,
-            'mid_stay_clean_min_date': (booking.arrival_date + timedelta(days=1)).isoformat(),
-            'mid_stay_clean_max_date': (booking.departure_date - timedelta(days=1)).isoformat(),
             'request_rows': [
                 {'request_type': t, 'quantity': quantities[t.id], 'note': notes[t.id]}
                 for t in active_types
@@ -381,30 +374,30 @@ class BookingFormMixin:
         except ValueError:
             return True, None, "Enter a valid checkout time."
 
+    def _mid_stay_clean_default_date(self, booking):
+        """The one date shown to the guest for a mid-stay clean - not guest-editable (an earlier
+        version let the guest pick, then nudge ±1 day from this default, but a date this small
+        cleaning team can't reliably staff around is better presented as a fixed estimate than a
+        negotiation - see _parse_mid_stay_clean, which no longer reads a date from the guest at
+        all). See bookings.utils.mid_stay_clean_window for where this actually comes from, and for
+        the ±1-day min/max staff can still nudge it within on the cleaning calendar."""
+        return mid_stay_clean_window(booking)[0]
+
     def _parse_mid_stay_clean(self, booking, post_data):
-        """Same optional-field-behind-a-checkbox shape as _parse_late_checkout above. The date must
-        fall strictly between arrival and departure (not on either boundary day - those are the
-        checkout/check-in cleans, not a mid-stay one), and the stay must meet
-        ExtrasSettings.mid_stay_clean_minimum_nights - _extras_form.html only offers this section
-        when both are already satisfied (see _extras_context's show_mid_stay_clean), but both are
+        """Same optional-field-behind-a-checkbox shape as _parse_late_checkout above. The date
+        itself is never read from post_data - it's always _mid_stay_clean_default_date(booking) -
+        so the only thing left to validate is the stay meeting
+        ExtrasSettings.mid_stay_clean_minimum_nights; _extras_form.html only offers this section
+        when that's already satisfied (see _extras_context's show_mid_stay_clean), but it's
         re-checked here too since the display gate is just a convenience, not the real guard."""
         mid_stay_clean = post_data.get('mid_stay_clean') == 'on'
-        date_raw = post_data.get('mid_stay_clean_date', '').strip()
         if not mid_stay_clean:
             return False, None, None
 
         nights = (booking.departure_date - booking.arrival_date).days
         if nights < ExtrasSettings.load().mid_stay_clean_minimum_nights:
             return True, None, "A mid-stay clean isn't available for a stay this short."
-        if not date_raw:
-            return True, None, "Choose a date for your mid-stay clean."
-        try:
-            parsed = date.fromisoformat(date_raw)
-        except ValueError:
-            return True, None, "Enter a valid date for your mid-stay clean."
-        if not (booking.arrival_date < parsed < booking.departure_date):
-            return True, None, "That date isn't during your stay."
-        return True, parsed, None
+        return True, self._mid_stay_clean_default_date(booking), None
 
     def _any_infant_age(self, rows, child_min_age):
         """Whether any current guest-list row is age'd as an infant (below child_min_age) - the
@@ -1259,7 +1252,7 @@ def _save_arrival(booking, data):
 
 
 def _save_departure(booking, data):
-    departure, _ = Departure.objects.get_or_create(booking=booking, defaults={'clean': False})
+    departure, _ = Departure.objects.get_or_create(booking=booking, defaults={'clean': True})
     departure.method = data['method']
     departure.flight_number = data['flight_number']
     departure.travelling_from = data['travelling_from']
@@ -1711,7 +1704,12 @@ class BookingManageAmenitiesView(View):
     property page's own feature grid uses. Read-only: no get_or_create() side effect on a bare GET
     of a public bearer link - a property with no Amenity row yet just shows an empty list rather
     than silently creating one, unlike the staff detail page's own lazy-create (that page is
-    staff-authenticated and editing-oriented; this one is neither)."""
+    staff-authenticated and editing-oriented; this one is neither).
+
+    linen_provided/washing_materials (2026-08-27) come from Property.cleaning_company instead -
+    per-property towel counts live on Amenity (how many/which types this specific property has),
+    but whether beds get dressed in linen at all and what's stocked for the guest are standard
+    practice for whichever company actually cleans the property, not a per-property fact."""
     template_name = 'bookings/manage_amenities.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -1722,11 +1720,14 @@ class BookingManageAmenitiesView(View):
             return redirect('bookings:details', reference=reference)
 
         amenities = getattr(booking.property, 'amenities', None)
+        cleaning_company = booking.property.cleaning_company
         context = _manage_nav_context(booking, 'amenities')
         context.update({
             'booking': booking,
             'amenities': amenities,
             'towel_items': amenities.towel_line_items(booking.total_guests()) if amenities else [],
+            'linen_provided': bool(cleaning_company and cleaning_company.linen_provided),
+            'washing_materials': cleaning_company.washing_materials.all() if cleaning_company else [],
         })
         return render(request, self.template_name, context)
 

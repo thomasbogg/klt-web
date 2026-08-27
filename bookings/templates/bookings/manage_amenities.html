@@ -34,32 +34,32 @@
                     {% endfor %}
                 </ul>
             </div>
+            {% endif %}
 
-            {% if towel_items %}
+            {% if towel_items or linen_provided %}
             <div class="details-section">
-                <h2 class="details-section-title">Towels</h2>
+                <h2 class="details-section-title">Towels and Linen</h2>
                 <ul class="details-list">
                     {% for count, label in towel_items %}
                     <li>{{ count }} {{ label }}</li>
                     {% endfor %}
+                    {% if linen_provided %}
+                    <li>All beds dressed in linen appropriate to the season</li>
+                    {% endif %}
                 </ul>
             </div>
             {% endif %}
-            {% endif %}
 
+            {% if washing_materials %}
             <div class="details-section">
                 <h2 class="details-section-title">Also included with every stay</h2>
                 <ul class="details-list">
-                    <li>Washing up liquid</li>
-                    <li>2 dishwasher tablets</li>
-                    <li>2 laundry tablets</li>
-                    <li>A cleaning cloth</li>
-                    <li>A scourer</li>
-                    <li>A tea towel</li>
-                    <li>1 toilet roll</li>
-                    <li>All beds dressed in linen appropriate to the season</li>
+                    {% for material in washing_materials %}
+                    <li>{% if material.quantity > 1 %}{{ material.quantity }} {% endif %}{{ material.title }}</li>
+                    {% endfor %}
                 </ul>
             </div>
+            {% endif %}
         </div>
     </div>
 

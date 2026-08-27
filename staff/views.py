@@ -19,7 +19,7 @@ import env_settings
 from availability.utils import get_property_calendar
 from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Arrival, Booking, BookingCondition,
-    BookingSettings, Departure, Extra, ExtrasSettings, FAQ, PaymentSettings, RequestType,
+    BookingSettings, Departure, ExtrasSettings, FAQ, PaymentSettings, RequestType,
     TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
@@ -31,7 +31,7 @@ from guests.models import Guest
 from libraries.utils import logerror
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
-    Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail,
+    Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail, WashingMaterial,
     iCalLink,
 )
 from staff.models import CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
@@ -234,6 +234,14 @@ def _flash_validation_error(request, error):
     """ValidationError.messages repeats a message once per field it's attached to (e.g. an
     overlap error raised against both start_date and end_date), so dedupe before joining."""
     messages.error(request, '; '.join(dict.fromkeys(error.messages)))
+
+
+def _field_changes(field_labels, before, after):
+    """"Label 'old' to 'new'" fragments for every field whose value actually differs between two
+    same-shaped, positionally-matched value tuples - same phrasing as the Status changed/Booking
+    dates updated history entries, used to give the (otherwise blank) Arrival/Departure updated
+    entry the same level of detail."""
+    return [f"{label} '{b}' to '{a}'" for label, b, a in zip(field_labels, before, after) if b != a]
 
 
 def _conflict_query(queryset):
@@ -523,6 +531,8 @@ class StaffSettingsView(View):
         'add_management_company': 'people',
         'update_management_company': 'people',
         'delete_management_company': 'people',
+        'add_washing_material': 'people',
+        'delete_washing_material': 'people',
         'update_payment_settings': 'payments',
     }
 
@@ -574,6 +584,8 @@ class StaffSettingsView(View):
             'add_management_company': self._add_management_company,
             'update_management_company': self._update_management_company,
             'delete_management_company': self._delete_management_company,
+            'add_washing_material': self._add_washing_material,
+            'delete_washing_material': self._delete_washing_material,
             'update_payment_settings': self._update_payment_settings,
         }.get(action)
         if handler is not None:
@@ -606,6 +618,7 @@ class StaffSettingsView(View):
             'owners': Owner.objects.annotate(property_count=Count('property')).order_by('name'),
             'accountants': Accountant.objects.annotate(property_count=Count('property')).order_by('company'),
             'management_companies': self._management_companies_with_property_count(),
+            'check_in_method_choices': ManagementCompany.CheckInMethod.choices,
             'owner_boolean_fields': OWNER_BOOLEAN_FIELDS,
         }
 
@@ -616,7 +629,7 @@ class StaffSettingsView(View):
         # would double-count that property. Computed in Python per company (cheap at this app's
         # scale) rather than one annotated queryset, since a single Count() can't express "distinct
         # properties across either of two separate reverse FKs" without a subquery.
-        companies = list(ManagementCompany.objects.order_by('name'))
+        companies = list(ManagementCompany.objects.order_by('name').prefetch_related('washing_materials'))
         for company in companies:
             company.property_count = Property.objects.filter(
                 Q(booking_company=company) | Q(cleaning_company=company)
@@ -1005,6 +1018,27 @@ class StaffSettingsView(View):
     # fields" toggle (see staff-management-company-details-row in settings.html / settings.js).
     MANAGEMENT_COMPANY_CONTACT_ROLES = ('head', 'maintenance', 'liaison', 'cleaning', 'finance')
 
+    def _parsed_management_company_operational_fields(self, post):
+        """towels_per_guest/includes_beach_towels/linen_provided/standard_meet_and_greet_fee/
+        check_in_method/self_check_in_after/freshen_after_days - all genuinely optional per-company
+        operational defaults (see ManagementCompany's own docstring), so anything missing or
+        unrecognised parses to None rather than a default value - there's no sensible fallback for
+        "this company didn't say" that isn't itself a real, distinct answer (e.g. 0 towels, or
+        check-in always in person). Washing materials are a separate list, handled by
+        _add_washing_material/_delete_washing_material instead - not part of this dict."""
+        beach_towels_raw = post.get('includes_beach_towels', '')
+        linen_raw = post.get('linen_provided', '')
+        check_in_method = post.get('check_in_method', '').strip()
+        return {
+            'towels_per_guest': _parsed_int(post.get('towels_per_guest')),
+            'includes_beach_towels': {'true': True, 'false': False}.get(beach_towels_raw),
+            'linen_provided': {'true': True, 'false': False}.get(linen_raw),
+            'standard_meet_and_greet_fee': _parsed_decimal(post.get('standard_meet_and_greet_fee')),
+            'check_in_method': check_in_method if check_in_method in ManagementCompany.CheckInMethod.values else None,
+            'self_check_in_after': _parsed_time(post.get('self_check_in_after')),
+            'freshen_after_days': _parsed_int(post.get('freshen_after_days')),
+        }
+
     def _add_management_company(self, request):
         post = request.POST
         fields = {'name': post.get('name', '').strip()}
@@ -1012,6 +1046,7 @@ class StaffSettingsView(View):
             fields[f'{role}_name'] = post.get(f'{role}_name', '').strip()
             fields[f'{role}_email'] = post.get(f'{role}_email', '').strip()
             fields[f'{role}_phone'] = post.get(f'{role}_phone', '').strip()
+        fields.update(self._parsed_management_company_operational_fields(post))
         company = ManagementCompany(**fields)
         try:
             company.full_clean()
@@ -1032,6 +1067,8 @@ class StaffSettingsView(View):
             setattr(company, f'{role}_name', post.get(f'{role}_name', '').strip())
             setattr(company, f'{role}_email', post.get(f'{role}_email', '').strip())
             setattr(company, f'{role}_phone', post.get(f'{role}_phone', '').strip())
+        for field, value in self._parsed_management_company_operational_fields(post).items():
+            setattr(company, field, value)
         try:
             company.full_clean()
         except ValidationError as error:
@@ -1047,6 +1084,28 @@ class StaffSettingsView(View):
             return
         company.delete()
         messages.success(request, "Management company deleted.")
+
+    def _add_washing_material(self, request):
+        post = request.POST
+        company = ManagementCompany.objects.filter(pk=post.get('management_company_id')).first()
+        if company is None:
+            messages.error(request, "That management company no longer exists.")
+            return
+        title = post.get('title', '').strip()
+        if not title:
+            messages.error(request, "A washing material needs a title.")
+            return
+        quantity = _parsed_int(post.get('quantity')) or 1
+        WashingMaterial.objects.create(company=company, title=title, quantity=quantity)
+        messages.success(request, "Washing material added.")
+
+    def _delete_washing_material(self, request):
+        material = WashingMaterial.objects.filter(pk=request.POST.get('washing_material_id')).first()
+        if material is None:
+            messages.error(request, "That washing material no longer exists.")
+            return
+        material.delete()
+        messages.success(request, "Washing material removed.")
 
     # --- Payments ---
 
@@ -1621,7 +1680,6 @@ class StaffBookingDetailView(View):
             'split_mismatch': split_mismatch,
             'arrival': getattr(booking, 'arrival', None),
             'departure': getattr(booking, 'departure', None),
-            'extra': getattr(booking, 'extras', None),
             'arrival_travel_methods': TravelMethod.choices,
             'departure_travel_methods': TravelMethod.departure_choices(),
             'properties': Property.objects.all(),
@@ -1666,20 +1724,34 @@ class StaffBookingDetailView(View):
         the guest-facing flow never touches past row creation - are edited here from Booking info's
         checkboxes, not from the Arrival/Departure panels themselves (2026-08-25, per Thomas: even
         an owner booking can need a Meet & Greet or a scheduled clean, so those panels stay useful
-        regardless of is_owner - only the checkboxes' one edit location consolidates)."""
+        regardless of is_owner - only the checkboxes' one edit location consolidates).
+        Departure.clean now defaults to True at booking creation (2026-08-27 - see Departure's own
+        docstring, an end-of-stay clean is the normal case, not an opt-in extra), so this checkbox
+        mainly matters for the rare booking that should NOT get one; Extra.mid_stay_clean, by
+        contrast, is genuinely never touched by this form at all - it's guest-selected only (see
+        BookingFormMixin._save_extras/_parse_mid_stay_clean)."""
         post = request.POST
+
+        # Snapshotted before anything below saves, for _update_cleaning_tasks() to compare each
+        # planner date field against - see that method's docstring for why comparing against the
+        # live task instead produces a false "That date is outside this task's valid window."
+        # error whenever this same submission also changes the booking's own arrival/departure
+        # dates (confirmed live 2026-08-27).
+        task_dates_before = dict(booking.cleaning_tasks.values_list('task_type', 'date'))
 
         property_id = post.get('property')
         if property_id:
             booking.property_id = property_id
         booking.is_owner = post.get('is_owner') == 'on'
 
+        dates_before = (booking.arrival_date, booking.departure_date)
         arrival_date = _parsed_date(post.get('arrival_date'))
         departure_date = _parsed_date(post.get('departure_date'))
         if arrival_date:
             booking.arrival_date = arrival_date
         if departure_date:
             booking.departure_date = departure_date
+        dates_changed = (booking.arrival_date, booking.departure_date) != dates_before
 
         for field in ('adults', 'children', 'babies'):
             raw = post.get(field, '').strip()
@@ -1709,15 +1781,6 @@ class StaffBookingDetailView(View):
             return
         if not valid_flight_number(departure_method, departure_flight_number):
             messages.error(request, f"Departure: {FLIGHT_NUMBER_HINT}")
-            return
-
-        mid_stay_clean = post.get('mid_stay_clean') == 'on'
-        mid_stay_clean_date = _parsed_date(post.get('mid_stay_clean_date')) if mid_stay_clean else None
-        if mid_stay_clean_date and not (booking.arrival_date <= mid_stay_clean_date <= booking.departure_date):
-            messages.error(
-                request,
-                f"Mid-stay clean date must fall within the stay ({booking.arrival_date} to {booking.departure_date}).",
-            )
             return
 
         charge = getattr(booking, 'charges', None)
@@ -1766,6 +1829,13 @@ class StaffBookingDetailView(View):
         with transaction.atomic():
             booking.save()
             guest.save()
+            if dates_changed:
+                TaskHistoryEntry.objects.create(
+                    booking=booking, description="Booking dates updated",
+                    detail=f"Arrival {dates_before[0]} → {booking.arrival_date}, "
+                           f"Departure {dates_before[1]} → {booking.departure_date}",
+                    created_by=request.user,
+                )
 
             arrival, _ = Arrival.objects.get_or_create(
                 booking=booking, defaults={'self_check_in': False, 'meet_greet': False},
@@ -1784,14 +1854,28 @@ class StaffBookingDetailView(View):
             arrival.time = parsed_arrival_departure_time(post.get('arrival_time'))
             arrival.details = post.get('arrival_details', '').strip()[:140]
             arrival.self_check_in = post.get('self_check_in') == 'on'
-            arrival.meet_greet = post.get('meet_greet') == 'on'
+            # Only touched when the Owner-booking row was actually enabled for this submission -
+            # arrival_departure.js disables (not just hides) every field in that row while it's
+            # collapsed, so a disabled checkbox is omitted from the POST body entirely per the
+            # HTML form spec. Without this guard, saving any other field on a normal (non-owner)
+            # booking would silently read that absence as "unchecked" and reset meet_greet to
+            # False every time - same class of bug as departure.clean below.
+            if booking.is_owner:
+                arrival.meet_greet = post.get('meet_greet') == 'on'
             arrival.save()
-            arrival_changed = arrival_before != (
+            arrival_after = (
                 arrival.method, arrival.flight_number, arrival.travelling_from, arrival.hiring_car,
                 arrival.time, arrival.details, arrival.self_check_in, arrival.meet_greet,
             )
+            arrival_changed = arrival_before != arrival_after
 
-            departure, _ = Departure.objects.get_or_create(booking=booking, defaults={'clean': False})
+            # defaults={'clean': True} matters for a booking that predates create_booking()
+            # eagerly creating this row - clean itself defaults on for every booking now (see
+            # Departure's own docstring), but stays staff-editable here via the Owner-booking-
+            # conditional checkbox (2026-08-27, per Thomas: back where it always was, alongside
+            # Meet & Greet - the rare booking that shouldn't get one, e.g. an owner cleaning it
+            # themselves, needed some way to say so, and this was already the simplest one).
+            departure, _ = Departure.objects.get_or_create(booking=booking, defaults={'clean': True})
             departure_before = (
                 departure.method, departure.flight_number or '', departure.travelling_from, departure.time,
                 departure.details or '', departure.clean,
@@ -1801,35 +1885,46 @@ class StaffBookingDetailView(View):
             departure.travelling_from = post.get('departure_travelling_from', '').strip()
             departure.time = parsed_arrival_departure_time(post.get('departure_time'))
             departure.details = post.get('departure_details', '').strip()[:140]
-            departure.clean = post.get('clean') == 'on'
+            # Same "only touched when the row was actually enabled" guard as meet_greet above -
+            # without it, saving any other field on a normal booking would silently wipe the new
+            # default-True clean flag to False every time (confirmed live: changing just the
+            # booking dates made its CleaningTask vanish from the cleaning calendar).
+            if booking.is_owner:
+                departure.clean = post.get('clean') == 'on'
             departure.save()
-            departure_changed = departure_before != (
+            departure_after = (
                 departure.method, departure.flight_number, departure.travelling_from, departure.time,
                 departure.details, departure.clean,
             )
+            departure_changed = departure_before != departure_after
 
-            extra, _ = Extra.objects.get_or_create(booking=booking)
-            # bool(...) matters here - mid_stay_clean is nullable and a freshly created/untouched
-            # Extra row has None, but the posted value is always a real True/False (post.get(...)
-            # == 'on'), so comparing raw values against an unchecked box's False would always read
-            # as "changed" on first save - same None-vs-'' normalisation issue already handled for
-            # arrival/departure's flight_number/details above.
-            extra_before = (bool(extra.mid_stay_clean), extra.mid_stay_clean_date)
-            extra.mid_stay_clean = mid_stay_clean
-            extra.mid_stay_clean_date = mid_stay_clean_date
-            extra.save()
-            extra_changed = extra_before != (extra.mid_stay_clean, extra.mid_stay_clean_date)
+            # Runs after departure is saved above (its post_save signal - staff/signals.py - has
+            # by now created/updated the booking's turnover CleaningTask row), so there's
+            # something for the turnover planner fields to apply to. Mid-stay clean itself is no
+            # longer settable here at all (2026-08-27, per Thomas: it's a guest-selected Extra,
+            # see BookingFormMixin._save_extras/_parse_mid_stay_clean - a duplicate on/off control
+            # on this page could silently stomp the guest's real choice with whatever this page
+            # happened to last render, which is exactly what was happening). The mid-stay
+            # CleaningTask row itself, and its planner fields below, still exist and sync
+            # normally whenever the guest (or staff, via Manage Extras) actually requests one -
+            # this only removes the second, redundant place that could set the flag itself. A
+            # validation failure here only skips that one task (see _update_cleaning_tasks) - it
+            # never rolls back the core booking fields already validated and about to be saved
+            # above.
+            self._update_cleaning_tasks(request, booking, task_dates_before)
 
-            # Runs after departure/extra are saved above (their post_save signals - staff/
-            # signals.py - have by now created/updated this booking's CleaningTask rows), so
-            # there's something for the planner fields to apply to. A validation failure here
-            # only skips that one task (see _update_cleaning_tasks) - it never rolls back the
-            # core booking fields already validated and about to be saved above.
-            self._update_cleaning_tasks(request, booking)
-
-            if arrival_changed or departure_changed or extra_changed:
+            if arrival_changed or departure_changed:
+                changes = _field_changes(
+                    ('Method', 'Flight number', 'Travelling from', 'Hiring a car', 'Time', 'Details',
+                     'Self check-in', 'Meet & greet'),
+                    arrival_before, arrival_after,
+                ) + _field_changes(
+                    ('Method', 'Flight number', 'Travelling from', 'Time', 'Details', 'Clean on departure'),
+                    departure_before, departure_after,
+                )
                 TaskHistoryEntry.objects.create(
-                    booking=booking, description="Arrival/Departure updated", created_by=request.user,
+                    booking=booking, description="Arrival/Departure updated",
+                    detail='; '.join(changes), created_by=request.user,
                 )
 
             if charge is not None:
@@ -1852,18 +1947,29 @@ class StaffBookingDetailView(View):
 
         messages.success(request, "Booking updated.")
 
-    def _update_cleaning_tasks(self, request, booking):
+    def _update_cleaning_tasks(self, request, booking, task_dates_before):
         """Applies the embedded clean-planner fields (staff/_clean_planner_fields.html) for
         whichever of this booking's turnover/mid-stay CleaningTask rows currently exist - a date
         change goes through apply_manual_task_date() (same validation/override logic as a
         calendar drag or the popup's save), so it can never silently write an out-of-window date;
-        assignees are always set regardless, since a checkbox change carries no such risk."""
+        assignees are always set regardless, since a checkbox change carries no such risk.
+
+        task_dates_before (task_type -> date, snapshotted in _update_booking() before any saves)
+        is what the posted date field is compared against, not the task's current .date - by the
+        time this runs, saving the booking/departure above has already re-synced a non-manually-
+        scheduled task's date to match a freshly-changed departure_date/mid_stay_clean_date (see
+        staff/utils.py::_sync_task_date). Comparing against that already-updated value would make
+        the *old*, no-longer-current value still sitting in the posted form (nobody touched this
+        field, the booking's own dates changed instead) look like a deliberate edit away from the
+        correct new one - confirmed live 2026-08-27: changing just the departure date raised "That
+        date is outside this task's valid window." trying to move the task (already correctly
+        auto-advanced) back to the stale date the page had loaded with."""
         for task_type, prefix in (('turnover', 'turnover_'), ('mid_stay', 'mid_stay_')):
             task = booking.cleaning_tasks.filter(task_type=task_type).first()
             if task is None:
                 continue
             new_date = _parsed_date(request.POST.get(f'{prefix}date'))
-            if new_date and new_date != task.date:
+            if new_date and new_date != task_dates_before.get(task_type):
                 error = apply_manual_task_date(task, new_date)
                 if error:
                     messages.error(request, error)

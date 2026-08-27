@@ -185,11 +185,8 @@ for the one substring that differs per caller ("the amount due now" / "your bala
         </label>
 
         <div class="welcome-pack-picker" id="mid-stay-clean-picker">
-            <div class="welcome-pack-field">
-                <label for="mid_stay_clean_date">Preferred date</label>
-                <input type="date" name="mid_stay_clean_date" id="mid_stay_clean_date" class="reserve-input" value="{{ mid_stay_clean_date }}" min="{{ mid_stay_clean_min_date }}" max="{{ mid_stay_clean_max_date }}">
-                {% if mid_stay_clean_error %}<p class="reserve-form-error">{{ mid_stay_clean_error }}</p>{% endif %}
-            </div>
+            <p class="details-note">We'll schedule this around the middle of your stay and confirm the exact day closer to arrival.</p>
+            {% if mid_stay_clean_error %}<p class="reserve-form-error">{{ mid_stay_clean_error }}</p>{% endif %}
             <p class="cot-high-chair-price">Flat fee: &euro;{{ mid_stay_clean_price|floatformat:2 }}</p>
         </div>
     </div>
