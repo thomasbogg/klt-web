@@ -31,9 +31,9 @@
         {% endif %}
 
         <div class="staff-cleaning-date-nav">
-            <a href="?date={{ prev_date|date:'Y-m-d' }}" class="staff-button staff-button-small">&larr; Previous day</a>
+            <a href="?date={{ prev_date|date:'Y-m-d' }}" class="staff-button staff-button-small">&larr; Back 3 days</a>
             <span class="staff-cleaning-date-label">{{ window_start|date:'l j F' }} &ndash; {{ window_end|date:'l j F Y' }}</span>
-            <a href="?date={{ next_date|date:'Y-m-d' }}" class="staff-button staff-button-small">Next day &rarr;</a>
+            <a href="?date={{ next_date|date:'Y-m-d' }}" class="staff-button staff-button-small">Forward 3 days &rarr;</a>
         </div>
 
         <div class="staff-cleaning-days">

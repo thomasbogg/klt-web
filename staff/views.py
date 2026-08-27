@@ -2012,8 +2012,10 @@ class StaffCleaningRotaView(View):
     def _context(self, request, target_date):
         # Yesterday, today, and the next 3 days - a 5-day rolling window centred just behind
         # `target_date` (2026-08-26, per Thomas: wants to see what's just happened alongside
-        # what's coming). Previous/Next day still shift by a single day, sliding the whole window
-        # rather than paging through non-overlapping blocks.
+        # what's coming). Previous/Next page the window by 3 days rather than the full 5 - same
+        # overlapping-window principle as the cleaning calendar's FullCalendar week view
+        # (dateIncrement 3 over a 7-day duration), so consecutive pages still share a couple of
+        # days instead of jumping to a disjoint block.
         window_dates = [target_date + timedelta(days=offset) for offset in range(-1, 4)]
 
         if request.user.is_superuser:
@@ -2038,8 +2040,8 @@ class StaffCleaningRotaView(View):
             'target_date': target_date,
             'window_start': window_dates[0],
             'window_end': window_dates[-1],
-            'prev_date': target_date - timedelta(days=1),
-            'next_date': target_date + timedelta(days=1),
+            'prev_date': target_date - timedelta(days=3),
+            'next_date': target_date + timedelta(days=3),
             'days': days,
             'is_superuser': request.user.is_superuser,
         }
