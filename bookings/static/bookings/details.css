@@ -580,6 +580,15 @@
     gap: 4px;
 }
 
+/* Security Deposit's bank-detail fields stack one per row (not side-by-side like .transfer-grid,
+   which supplies its own 12px gap between columns) - without an explicit gap here, consecutive
+   .transfer-field divs have nothing between one field's input and the next field's label. */
+.deposit-bank-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
 .transfer-field label {
     font-family: var(--secondary-font);
     font-size: 0.72rem;

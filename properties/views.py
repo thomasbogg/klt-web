@@ -166,6 +166,7 @@ class ReserveView(generic.DetailView):
                         'last_name': form.cleaned_data['last_name'],
                         'email': form.cleaned_data['email'],
                         'phone': form.cleaned_data['phone'],
+                        'country': form.cleaned_data['country'],
                     },
                     form.cleaned_data['start'],
                     form.cleaned_data['end'],

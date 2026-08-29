@@ -280,6 +280,18 @@ body {
     opacity: 0.85;
 }
 
+/* Same gold already used for the Finance area's own active-tab/panel-title accent (see
+   finance.css/.staff-finance-subnav-link-active) - ties a deliberate, Finance-specific committing
+   action (e.g. Send on a Memo card) to that section's own colour rather than reusing success/
+   danger, which already mean something else (positive outcome / destructive). */
+.staff-button-accent {
+    background: var(--secondary-color);
+}
+
+.staff-button-accent:hover {
+    opacity: 0.85;
+}
+
 /* Grid rather than flex here specifically so every button - the "Update booking" button itself,
    and the Cancel/Uncancel ones a level deeper inside their own <form> - shares one column track
    sized to the widest of them (grid items justify-stretch to their track by default), then

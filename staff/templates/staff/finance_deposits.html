@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Payouts | Finance | Staff</title>
+    <title>Deposits | Finance | Staff</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
     <link rel="stylesheet" href="{% static 'staff/cleaning_rota.css' %}">
@@ -44,23 +44,38 @@
                     <h3 class="staff-panel-title">{{ row.booking.property }}</h3>
                     <p class="staff-cleaning-meta">
                         <a href="{% url 'staff:booking_detail' reference=row.booking.reference %}">{{ row.booking.guest }}</a>
-                        &middot; {{ row.booking.property.owner }}
                     </p>
-                    <p class="staff-finance-total">Owner balance &euro;{{ row.payout.owner_balance }}</p>
+                    <p class="staff-finance-total">Deposit &euro;{{ deposit_amount }}</p>
+
+                    {% with bank=row.booking.deposit_bank_details %}
+                    {% if bank and not bank.is_blank %}
+                    <ul class="staff-list staff-list-informational">
+                        {% if bank.bank_name %}<li>{{ bank.bank_name }}</li>{% endif %}
+                        {% if bank.account_name %}<li>{{ bank.account_name }}</li>{% endif %}
+                        {% if bank.account_number %}<li>Acc no. {{ bank.account_number }}</li>{% endif %}
+                        {% if bank.sort_code %}<li>Sort code {{ bank.sort_code }}</li>{% endif %}
+                        {% if bank.iban %}<li>IBAN {{ bank.iban }}</li>{% endif %}
+                        {% if bank.swift_code %}<li>Swift {{ bank.swift_code }}</li>{% endif %}
+                        {% if bank.bank_address %}<li>{{ bank.bank_address }}</li>{% endif %}
+                    </ul>
+                    {% else %}
+                    <p class="staff-empty">No bank details provided yet.</p>
+                    {% endif %}
+                    {% endwith %}
 
                     {% if row.record %}
-                    <p class="staff-finance-sent-note">Paid {{ row.record.paid_at|date:'j M Y H:i' }}{% if row.record.paid_by %} by {{ row.record.paid_by }}{% endif %} (&euro;{{ row.record.amount }})</p>
+                    <p class="staff-finance-sent-note">Returned {{ row.record.returned_at|date:'j M Y H:i' }}{% if row.record.returned_by %} by {{ row.record.returned_by }}{% endif %} (&euro;{{ row.record.amount }})</p>
                     {% else %}
-                    <form method="post" action="{% url 'staff:finance_payout_mark_paid' reference=row.booking.reference %}">
+                    <form method="post" action="{% url 'staff:finance_deposit_mark_returned' reference=row.booking.reference %}">
                         {% csrf_token %}
                         <input type="hidden" name="date" value="{{ target_date|date:'Y-m-d' }}">
-                        <button type="submit" class="staff-button staff-button-small">Mark as paid</button>
+                        <button type="submit" class="staff-button staff-button-small">Mark as returned</button>
                     </form>
                     {% endif %}
                 </div>
                 {% endfor %}
                 {% else %}
-                <p class="staff-empty">No payouts due.</p>
+                <p class="staff-empty">No deposits due.</p>
                 {% endif %}
             </div>
             {% endfor %}

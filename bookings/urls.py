@@ -23,6 +23,7 @@ urlpatterns = [
         '<str:reference>/manage/guest-registrations/',
         views.BookingManageGuestRegistrationsView.as_view(), name='manage_guest_registrations',
     ),
+    path('<str:reference>/manage/deposit/', views.BookingManageDepositView.as_view(), name='manage_deposit'),
     path('<str:reference>/manage/cancel/', views.BookingCancelView.as_view(), name='manage_cancel'),
     path('<str:reference>/manage/amenities/', views.BookingManageAmenitiesView.as_view(), name='manage_amenities'),
     path('<str:reference>/manage/location/', views.BookingManageLocationView.as_view(), name='manage_location'),

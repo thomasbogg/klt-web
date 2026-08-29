@@ -134,3 +134,31 @@ class PayoutRecord(models.Model):
 
     def __str__(self):
         return f"{self.booking} paid {self.amount} on {self.paid_at:%Y-%m-%d}"
+
+
+class DepositReturn(models.Model):
+    """The only place 'has this booking's cash security deposit actually been returned' is
+    recorded - same role as PayoutRecord above, one row per booking, created only when staff click
+    "Mark as returned" on the Deposits tab (staff/views.py::
+    StaffFinanceDepositReturnMarkReturnedView). A booking with no row here simply hasn't had its
+    deposit returned yet - no separate "not returned" state to manage.
+
+    amount snapshots BookingSettings.security_deposit_amount at the moment of marking returned,
+    rather than being re-derived live, since that setting could change later - what was actually
+    handed back must stay fixed for audit purposes even if the live setting differs afterward.
+    booking is CASCADE, matching PayoutRecord."""
+    booking = models.OneToOneField('bookings.Booking', on_delete=models.CASCADE, related_name='deposit_return')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    returned_at = models.DateTimeField(auto_now_add=True)
+    returned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+
+    class Meta:
+        db_table = 'finance_deposit_returns'
+        verbose_name = 'Deposit Return'
+        verbose_name_plural = 'Deposit Returns'
+        ordering = ('-returned_at',)
+
+    def __str__(self):
+        return f"{self.booking} deposit returned {self.amount} on {self.returned_at:%Y-%m-%d}"

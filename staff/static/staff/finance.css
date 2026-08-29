@@ -48,23 +48,61 @@
 }
 
 .staff-finance-service-row {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
     border-bottom: 1px solid #eee;
     padding: 10px 0;
 }
 
+/* Description grows to fill the line; amount, Edit and delete are direct flex items alongside it
+   (not a separate row below), so every control sits on the same line as the service it belongs
+   to. flex-wrap lets a narrow viewport drop them to their own line instead of overflowing. */
 .staff-finance-service-row-main {
     display: flex;
-    justify-content: space-between;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: 12px;
+    gap: 8px 12px;
 }
 
-.staff-finance-service-actions {
+.staff-finance-service-desc {
+    flex: 1;
+    min-width: 220px;
+}
+
+.staff-finance-service-row-main > .staff-inline-delete {
+    flex-shrink: 0;
+}
+
+.staff-finance-service-edit {
+    flex-shrink: 0;
+}
+
+/* Being a direct flex item of the wide row-main (not a narrow actions sub-box) means 100% here
+   is the row's own full width - opened Edit gets a proper full-width line for its field form
+   instead of squeezing into whatever space was left beside the amount/delete button. Delete hides
+   while editing rather than getting pushed onto its own orphaned line after the wrap - it comes
+   back once Edit is closed (saved or collapsed). */
+.staff-finance-service-edit[open] {
+    flex-basis: 100%;
+}
+
+.staff-finance-service-edit[open] ~ .staff-inline-delete {
+    display: none;
+}
+
+/* The "Edit" summary is the only native toggle for this <details>, so hiding it while open means
+   the field form below (or a fresh Save/reload) is now the only way out - matches what Thomas
+   asked for (no floating "Edit" button sitting between the service line and its field row). */
+.staff-finance-service-edit[open] > summary {
+    display: none;
+}
+
+.staff-finance-services-filter {
+    margin-bottom: 24px;
+}
+
+.staff-finance-memo-send-form {
     display: flex;
-    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 24px;
 }
 
 .staff-finance-statement-form {
@@ -73,6 +111,23 @@
     gap: 16px;
     align-items: flex-end;
     margin-bottom: 24px;
+}
+
+/* .staff-button defaults to align-self: flex-start (booking_detail.css) - fine when it's stacked
+   in a vertical .staff-form, but here it sits beside labeled fields, so that default pins it to
+   the row's top edge instead of level with the inputs. Override to flex-end, same fix already
+   used elsewhere (home.css, settings.css) for a button beside a field. Covers the Statement page's
+   "Generate" and the Ad-hoc Services page's "Refresh" (filter row) and "Save" (inline edit row). */
+.staff-finance-statement-form > .staff-button,
+.staff-field-row > .staff-button {
+    align-self: flex-end;
+}
+
+/* Add-ad-hoc-service form: right-align the submit button under the stacked fields, with more
+   breathing room above it than the form's own field-to-field gap. */
+.staff-finance-add-form .staff-button {
+    align-self: flex-end;
+    margin-top: 14px;
 }
 
 .staff-finance-statement-section {

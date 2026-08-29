@@ -22,6 +22,10 @@ client-side tab switch), just grouped visually - see bookings.css's .manage-hub-
        href="{% url 'bookings:manage_extras' reference=booking.reference %}">Optional Extras</a>
     <a class="manage-hub-nav-link{% if active_section == 'guest_registrations' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_guest_registrations' reference=booking.reference %}">Guest Registrations</a>
+    {% if show_security_deposit %}
+    <a class="manage-hub-nav-link{% if active_section == 'deposit' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'bookings:manage_deposit' reference=booking.reference %}">Security Deposit</a>
+    {% endif %}
     {% if show_pay_balance %}
     <a class="manage-hub-nav-link manage-hub-nav-link-cta"
        href="{% url 'bookings:balance_details' reference=booking.reference %}">Pay Balance</a>

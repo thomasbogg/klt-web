@@ -3622,6 +3622,33 @@ class CheckinCalendarEndpointTests(TestCase):
         html = response.json()['popup_html']
         self.assertIn('due', html)
 
+    def test_detail_view_hides_deposit_for_a_guest_outside_uk_eu(self):
+        self.guest.country = 'US'
+        self.guest.save(update_fields=['country'])
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
+        html = response.json()['popup_html']
+        self.assertIn('outside the UK/EU', html)
+        self.assertNotIn('due', html)
+
+    def test_detail_view_shows_deposit_for_a_guest_inside_uk_eu(self):
+        self.guest.country = 'FR'
+        self.guest.save(update_fields=['country'])
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
+        html = response.json()['popup_html']
+        self.assertIn('due', html)
+
+    def test_detail_view_shows_deposit_for_a_guest_with_no_country_on_record(self):
+        # Unknown isn't the same as confirmed-international - see compute_deposit_waiver's own
+        # docstring. self.guest.country defaults to unset in setUp, so this is really just
+        # confirming the baseline case stays unwaived.
+        self.assertFalse(self.guest.country)
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
+        html = response.json()['popup_html']
+        self.assertIn('due', html)
+
     def test_detail_view_shows_key_box_popup_content(self):
         arrival = self.booking.arrival
         arrival.self_check_in = True

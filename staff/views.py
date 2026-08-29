@@ -23,12 +23,13 @@ from bookings.models import (
     TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
-from finance.models import AdHocService, Memo, PayoutRecord
+from finance.models import AdHocService, DepositReturn, Memo, PayoutRecord
 from finance.services import (
-    open_memo_for_property, owner_balance_in_range, payouts_due_in_range, sweep_unattached_ad_hoc_services,
+    backfill_memos_for_company, deposits_due_in_range, open_memo_for_property, owner_balance_in_range,
+    payouts_due_in_range, sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
-    FLIGHT_NUMBER_HINT, extras_summary, has_completed_previous_stay,
+    FLIGHT_NUMBER_HINT, compute_deposit_waiver, extras_summary,
     parsed_arrival_departure_time, parsed_travel_method, sync_ical_link, valid_flight_number,
 )
 from guests.models import Guest
@@ -223,6 +224,11 @@ def _parsed_date(raw):
         return datetime.strptime(raw, '%Y-%m-%d').date()
     except ValueError:
         return None
+
+
+def _last_day_of_month(day):
+    next_month = day.replace(day=28) + timedelta(days=4)
+    return next_month - timedelta(days=next_month.day)
 
 
 def _parsed_team(raw):
@@ -1191,6 +1197,7 @@ class StaffSettingsView(View):
             messages.error(request, "That management company no longer exists.")
             return
         post = request.POST
+        was_finances_managed_internally = company.finances_managed_internally
         company.name = post.get('name', '').strip()
         for role in self.MANAGEMENT_COMPANY_CONTACT_ROLES:
             setattr(company, f'{role}_name', post.get(f'{role}_name', '').strip())
@@ -1208,6 +1215,16 @@ class StaffSettingsView(View):
             _flash_validation_error(request, error)
             return
         company.save()
+
+        if company.finances_managed_internally and not was_finances_managed_internally:
+            # Newly opted in - backfill Memo rows for turnover cleans already scheduled from today
+            # onward (see finance/services.py::backfill_memos_for_company), so Finance doesn't stay
+            # empty for cleans that were set up before this was switched on.
+            synced = backfill_memos_for_company(company)
+            if synced:
+                messages.success(request, f"Management company updated. Synced {synced} upcoming turnover clean(s) to Finance.")
+                return
+
         messages.success(request, "Management company updated.")
 
     def _delete_management_company(self, request):
@@ -1828,6 +1845,7 @@ class StaffBookingDetailView(View):
             'extras': extras_summary(booking),
             'next_step': next_step_hint(booking, charge, balance_payment),
             'deductions': booking.deductions.all(),
+            'memo': Memo.objects.filter(cleaning_task__booking=booking).prefetch_related('ad_hoc_services').first(),
             'owner_payout': compute_owner_payout(booking),
             'task_history': booking.task_history.all(),
             'currency_choices': CURRENCY_CHOICES,
@@ -1977,7 +1995,7 @@ class StaffBookingDetailView(View):
                 )
 
             arrival, _ = Arrival.objects.get_or_create(
-                booking=booking, defaults={'self_check_in': False, 'meet_greet': False},
+                booking=booking, defaults={'self_check_in': False, 'meet_greet': True},
             )
             # flight_number/details are nullable (a fresh row has None), but a save always writes a
             # string (possibly '') - normalise here so an unset field doesn't look "changed" just
@@ -2687,21 +2705,18 @@ class StaffCheckinDetailView(View):
         booking = checkin.booking
         context = {'checkin': checkin, 'booking': booking}
         if checkin.task_type == 'arrival':
-            # Two independent waivers, either is enough to zero the deposit: a returning guest
-            # (has_completed_previous_stay), or a platform whose own terms mean we don't take one
-            # directly (Platform.take_security_deposits=False, matched by booking.enquiry_source -
-            # 2026-08-28, per Thomas). Computed live on every popup open, not stored anywhere, so
-            # this applies to every booking - past or future - the moment the platform's flag is
-            # set, with nothing to backfill.
-            platform = Platform.objects.filter(name=booking.enquiry_source).first()
-            platform_waives_deposit = platform is not None and not platform.take_security_deposits
-            returning_guest = has_completed_previous_stay(booking.guest, exclude_booking_id=booking.pk)
-            deposit_waived = returning_guest or platform_waives_deposit
+            # Three independent waivers, any one is enough to zero the deposit - see
+            # bookings/utils.py::compute_deposit_waiver's own docstring for what each one means
+            # and why an unknown guest country never silently waives a deposit. Computed live on
+            # every popup open, not stored anywhere, so this applies to every booking - past or
+            # future - the moment any of these flags/fields changes, with nothing to backfill.
+            deposit_waiver = compute_deposit_waiver(booking)
             context.update({
                 'arrival': getattr(booking, 'arrival', None),
                 'extras': extras_summary(booking),
-                'deposit_amount': None if deposit_waived else BookingSettings.load().security_deposit_amount,
-                'deposit_waived_by_platform': platform_waives_deposit and not returning_guest,
+                'deposit_amount': None if deposit_waiver['waived'] else BookingSettings.load().security_deposit_amount,
+                'deposit_waived_by_platform': deposit_waiver['by_platform'],
+                'deposit_waived_by_country': deposit_waiver['by_country'],
             })
         popup_html = render_to_string('staff/_checkin_popup.html', context)
         return JsonResponse({'popup_html': popup_html})
@@ -2750,18 +2765,19 @@ class StaffCheckinSaveView(View):
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinanceMemosView(View):
     """The Memos tab - one row per finance.models.Memo, grouped by its turnover CleaningTask's
-    date, a 7-day window starting at ?date= (default today) - same server-rendered day-column/
-    empty-day-shown shape as StaffCleaningRotaView, but a 7-day-from-today window paged by 7 (not
-    that view's -1..+3 window paged by 3), per the Finance area's own spec. Each row shows its
-    computed total (Memo.total()) and three actions: View memo (its own detail page), Add service
-    (deep-links to the Ad-hoc Services page with this property pre-selected), Send
-    (StaffFinanceMemoSendView). No POST here - every action routes through its own small view,
-    matching StaffCleaningTaskDismissView's one-view-per-action convention."""
+    date, a 5-day window starting the day before ?date= (default today) and paged by 3 - same
+    -1..+3-window/3-day-paging convention as StaffCleaningRotaView (2026-09, per Thomas: wants
+    yesterday visible alongside what's still coming, and the whole window to fit the viewport
+    without scrolling). Each row shows its computed total (Memo.total()) and three actions: View
+    memo (its own detail page), Add service (deep-links to the Ad-hoc Services page with this
+    property pre-selected), Send (StaffFinanceMemoSendView). No POST here - every action routes
+    through its own small view, matching StaffCleaningTaskDismissView's one-view-per-action
+    convention."""
     template_name = 'staff/finance_memos.html'
 
     def get(self, request, *args, **kwargs):
         target_date = _parsed_date(request.GET.get('date')) or timezone.now().date()
-        window_dates = [target_date + timedelta(days=offset) for offset in range(0, 7)]
+        window_dates = [target_date + timedelta(days=offset) for offset in range(-1, 4)]
 
         memos = Memo.objects.filter(
             cleaning_task__date__range=(window_dates[0], window_dates[-1]),
@@ -2779,8 +2795,8 @@ class StaffFinanceMemosView(View):
             'target_date': target_date,
             'window_start': window_dates[0],
             'window_end': window_dates[-1],
-            'prev_date': target_date - timedelta(days=7),
-            'next_date': target_date + timedelta(days=7),
+            'prev_date': target_date - timedelta(days=3),
+            'next_date': target_date + timedelta(days=3),
             'active_tab': 'memos',
         })
 
@@ -2875,6 +2891,7 @@ class StaffFinanceAdHocServiceListView(View):
             'selected_property': selected_property,
             'services': services[:30],
             'active_tab': 'services',
+            'today': timezone.now().date(),
         }
 
     def _create(self, request):
@@ -2932,15 +2949,16 @@ class StaffFinanceAdHocServiceListView(View):
 class StaffFinancePayoutsView(View):
     """The Payouts tab - only owners paid on a regular schedule (Owner.is_paid_regularly=True) on
     properties whose booking_company has finances_managed_internally=True, grouped by due_date
-    (bookings/payouts.py::compute_owner_payout's own due_date figure), same 7-day-from-today
-    window/empty-day-shown shape as StaffFinanceMemosView. Rows that already have a PayoutRecord
-    stay visible showing who paid it and when, rather than disappearing - matching the cleaning
-    rota's own completed-rows-stay-visible convention, so the week list stays a complete record."""
+    (bookings/payouts.py::compute_owner_payout's own due_date figure), same -1..+3-window/3-day-
+    paging shape as StaffFinanceMemosView/StaffCleaningRotaView. Rows that already have a
+    PayoutRecord stay visible showing who paid it and when, rather than disappearing - matching
+    the cleaning rota's own completed-rows-stay-visible convention, so the list stays a complete
+    record."""
     template_name = 'staff/finance_payouts.html'
 
     def get(self, request, *args, **kwargs):
         target_date = _parsed_date(request.GET.get('date')) or timezone.now().date()
-        window_dates = [target_date + timedelta(days=offset) for offset in range(0, 7)]
+        window_dates = [target_date + timedelta(days=offset) for offset in range(-1, 4)]
 
         due = payouts_due_in_range(window_dates[0], window_dates[-1])
         paid_records = {
@@ -2964,8 +2982,8 @@ class StaffFinancePayoutsView(View):
             'target_date': target_date,
             'window_start': window_dates[0],
             'window_end': window_dates[-1],
-            'prev_date': target_date - timedelta(days=7),
-            'next_date': target_date + timedelta(days=7),
+            'prev_date': target_date - timedelta(days=3),
+            'next_date': target_date + timedelta(days=3),
             'active_tab': 'payouts',
         })
 
@@ -3000,6 +3018,74 @@ class StaffFinancePayoutMarkPaidView(View):
 
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceDepositsView(View):
+    """The Deposits tab - bookings whose cash security deposit is due for return: taken at
+    check-in (Checkin.deposit_collected) and the end-of-stay clean now marked done, grouped by the
+    clean's completion date, same -1..+3-window/3-day-paging shape as StaffFinanceMemosView/
+    StaffFinancePayoutsView. Rows that already have a DepositReturn stay visible showing who
+    returned it and when, rather than disappearing - same completed-rows-stay-visible convention
+    as Payouts."""
+    template_name = 'staff/finance_deposits.html'
+
+    def get(self, request, *args, **kwargs):
+        target_date = _parsed_date(request.GET.get('date')) or timezone.now().date()
+        window_dates = [target_date + timedelta(days=offset) for offset in range(-1, 4)]
+
+        due = deposits_due_in_range(window_dates[0], window_dates[-1])
+        returned_records = {
+            record.booking_id: record
+            for record in DepositReturn.objects.filter(booking__in=[b for b, _ in due]).select_related('returned_by')
+        }
+
+        rows_by_date = {}
+        for booking, completed_date in due:
+            rows_by_date.setdefault(completed_date, []).append({
+                'booking': booking,
+                'record': returned_records.get(booking.pk),
+            })
+        for rows in rows_by_date.values():
+            rows.sort(key=lambda row: row['booking'].property.title)
+        days = [{'date': day, 'rows': rows_by_date.get(day, [])} for day in window_dates]
+
+        return render(request, self.template_name, {
+            'days': days,
+            'target_date': target_date,
+            'window_start': window_dates[0],
+            'window_end': window_dates[-1],
+            'prev_date': target_date - timedelta(days=3),
+            'next_date': target_date + timedelta(days=3),
+            'deposit_amount': BookingSettings.load().security_deposit_amount,
+            'active_tab': 'deposits',
+        })
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceDepositReturnMarkReturnedView(View):
+    """Snapshots BookingSettings.security_deposit_amount into a new DepositReturn - see that
+    model's own docstring for why the amount is frozen at mark-returned time rather than
+    re-derived live."""
+
+    def post(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            messages.error(request, "That booking no longer exists.")
+            return redirect('staff:finance_deposits')
+        if DepositReturn.objects.filter(booking=booking).exists():
+            messages.error(request, "That deposit has already been marked as returned.")
+            return redirect('staff:finance_deposits')
+
+        amount = BookingSettings.load().security_deposit_amount
+        DepositReturn.objects.create(booking=booking, amount=amount, returned_by=request.user)
+        messages.success(request, "Deposit marked as returned.")
+
+        redirect_date = request.POST.get('date', '').strip()
+        redirect_url = reverse('staff:finance_deposits')
+        if redirect_date:
+            redirect_url = f"{redirect_url}?date={redirect_date}"
+        return redirect(redirect_url)
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinanceStatementView(View):
     """Generates a printable Statement for one Owner or one Property over a date range - the
     Memo section and the payout section are gated independently per property (confirmed with
@@ -3015,8 +3101,9 @@ class StaffFinanceStatementView(View):
 
     def get(self, request, *args, **kwargs):
         scope = request.GET.get('scope', '').strip()
-        start = _parsed_date(request.GET.get('start'))
-        end = _parsed_date(request.GET.get('end'))
+        today = timezone.now().date()
+        start = _parsed_date(request.GET.get('start')) or today.replace(day=1)
+        end = _parsed_date(request.GET.get('end')) or _last_day_of_month(today)
         owner = None
         property = None
         if scope == 'owner' and request.GET.get('owner_id', '').isdigit():

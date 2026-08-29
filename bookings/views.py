@@ -14,15 +14,15 @@ import env_settings
 from bookings.forms import BookingLookupForm
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
-    Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, Departure, Extra,
-    ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, RequestType, TravelMethod,
-    WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
+    Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, DepositBankDetails,
+    Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, RequestType,
+    TravelMethod, WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
-    FLIGHT_NUMBER_HINT, booking_confirmation_context, cancel_booking_hold, extras_summary,
-    guest_counts_by_age, mid_stay_clean_window, parsed_arrival_departure_time, parsed_travel_method,
-    recalculate_balance_for_party, recalculate_costs_for_party, reservation_retry_url,
-    valid_flight_number,
+    FLIGHT_NUMBER_HINT, booking_confirmation_context, cancel_booking_hold, compute_deposit_waiver,
+    extras_summary, guest_counts_by_age, mid_stay_clean_window, parsed_arrival_departure_time,
+    parsed_travel_method, recalculate_balance_for_party, recalculate_costs_for_party,
+    reservation_retry_url, valid_flight_number,
 )
 from libraries.banking.revolut import Revolut
 
@@ -1022,6 +1022,9 @@ def _manage_nav_context(booking, active_section):
             and booking.enquiry_source not in env_settings.PLATFORMS
             and booking.arrival_date > timezone.now().date()
         ),
+        # Only shown for a booking that actually needs one - see compute_deposit_waiver's own
+        # docstring for the three independent reasons a deposit might not apply.
+        'show_security_deposit': not cancelled and not compute_deposit_waiver(booking)['waived'],
         'cancelled': cancelled,
         'stage': 'fully_paid' if is_fully_paid(booking) else 'pre_balance',
     }
@@ -1238,7 +1241,7 @@ def _arrival_departure_flight_number_errors(arrival_data, departure_data):
 
 def _save_arrival(booking, data):
     arrival, _ = Arrival.objects.get_or_create(booking=booking, defaults={
-        'self_check_in': False, 'meet_greet': False,
+        'self_check_in': False, 'meet_greet': True,
     })
     arrival.method = data['method']
     arrival.flight_number = data['flight_number']
@@ -1644,6 +1647,60 @@ class BookingManageGuestRegistrationsView(View):
         return redirect(
             f"{reverse('bookings:manage_guest_registrations', args=[booking.reference])}?registrations_saved=1"
         )
+
+
+class BookingManageDepositView(View):
+    """Security Deposit section of the Manage Booking hub - captures the guest's own bank account
+    details for the cash-deposit refund by bank transfer, replicating the legacy
+    klt-management-software 'Account details' popup's fields per Thomas's reference screenshot
+    (2026-08-29). Reachable as soon as the deposit is paid (same is_paid() gate as Guest
+    Registrations/Arrival & Departure) and only for a booking whose deposit isn't waived
+    (bookings/utils.py::compute_deposit_waiver) - _manage_nav_context()'s show_security_deposit
+    hides the sidebar link too, this is the server-side backstop for someone hitting the URL
+    directly. No edit cutoff - a guest can come back and correct these any time before departure,
+    same reasoning as Arrival & Departure/Guest Registrations."""
+    template_name = 'bookings/manage_deposit.html'
+
+    def _get_gated_booking(self, reference):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking) or compute_deposit_waiver(booking)['waived']:
+            return booking, redirect('bookings:details', reference=reference)
+        return booking, None
+
+    def _context(self, booking, details):
+        context = _manage_nav_context(booking, 'deposit')
+        context.update({
+            'booking': booking, 'details': details,
+            'security_deposit_amount': BookingSettings.load().security_deposit_amount,
+        })
+        return context
+
+    def get(self, request, reference, *args, **kwargs):
+        booking, redirect_response = self._get_gated_booking(reference)
+        if redirect_response is not None:
+            return redirect_response
+        details, _ = DepositBankDetails.objects.get_or_create(booking=booking)
+        return render(request, self.template_name, self._context(booking, details))
+
+    def post(self, request, reference, *args, **kwargs):
+        booking, redirect_response = self._get_gated_booking(reference)
+        if redirect_response is not None:
+            return redirect_response
+
+        details, _ = DepositBankDetails.objects.get_or_create(booking=booking)
+        post = request.POST
+        details.bank_name = post.get('bank_name', '').strip()
+        details.account_name = post.get('account_name', '').strip()
+        details.account_number = post.get('account_number', '').strip()
+        details.sort_code = post.get('sort_code', '').strip()
+        details.iban = post.get('iban', '').strip()
+        details.swift_code = post.get('swift_code', '').strip()
+        details.bank_address = post.get('bank_address', '').strip()
+        details.save()
+
+        return redirect(f"{reverse('bookings:manage_deposit', args=[booking.reference])}?saved=1")
 
 
 class BookingCancelView(View):

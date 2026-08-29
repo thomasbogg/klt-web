@@ -1,4 +1,5 @@
 from django import forms
+from django_countries import countries
 
 from availability.utils import date_string_to_date, guests_string_to_dict
 from bookings.models import CURRENCY_CHOICES
@@ -21,6 +22,14 @@ class ReservationForm(forms.Form):
     phone = forms.CharField(
         max_length=50, required=False,
         widget=forms.TextInput(attrs={'class': 'reserve-input'}),
+    )
+    # Required (2026-08-29, per Thomas) - drives the security-deposit country gating (see
+    # env_settings.UK_EU_COUNTRY_CODES / StaffCheckinDetailView), which needs an answer for every
+    # new booking rather than an ambiguous "unknown". Guest.country itself stays nullable at the
+    # model level for pre-existing guests created before this field existed.
+    country = forms.ChoiceField(
+        choices=[('', 'Select a country…')] + list(countries),
+        widget=forms.Select(attrs={'class': 'reserve-input'}),
     )
     start = forms.CharField(widget=forms.HiddenInput)
     end = forms.CharField(widget=forms.HiddenInput)

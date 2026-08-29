@@ -62,9 +62,9 @@
         </div>
 
         {% if not memo.sent_at %}
-        <form method="post" action="{% url 'staff:finance_memo_send' pk=memo.pk %}">
+        <form method="post" action="{% url 'staff:finance_memo_send' pk=memo.pk %}" class="staff-finance-memo-send-form">
             {% csrf_token %}
-            <button type="submit" class="staff-button">Send</button>
+            <button type="submit" class="staff-button staff-button-accent">Send</button>
         </form>
         {% endif %}
     </div>

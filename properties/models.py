@@ -217,9 +217,13 @@ class ManagementCompany(models.Model):
     # appears on the Payouts tab / in a Statement. A property with neither company set, or the
     # flag off on the relevant one, is excluded entirely - deliberately opt-in (default False),
     # unlike cleans_on_calendar/checkins_on_calendar's opt-out default: an untracked property
-    # shouldn't silently start appearing in real financial documents. Toggling this on doesn't
-    # retroactively backfill Memo rows for cleans already scheduled - run the
-    # sync_finance_memos management command to reconcile, same convention as cleans_on_calendar.
+    # shouldn't silently start appearing in real financial documents. Toggling this on from False
+    # to True auto-backfills Memo rows for this company's turnover cleans dated today-or-later
+    # (staff/views.py::StaffSettingsView._update_management_company, via finance/services.py::
+    # backfill_memos_for_company) - never anything already in the past, so a clean that was never
+    # billed contemporaneously doesn't retroactively appear. The sync_finance_memos management
+    # command still exists for a manual/global re-reconcile (e.g. after a direct DB edit that
+    # bypasses the save() path above).
     finances_managed_internally = models.BooleanField(default=False)
 
     class Meta:

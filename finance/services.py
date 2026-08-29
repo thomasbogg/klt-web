@@ -71,6 +71,29 @@ def sync_memo_for_turnover_task(booking):
     sweep_unattached_ad_hoc_services(property)
 
 
+def backfill_memos_for_company(company, start=None):
+    """Syncs Memo rows for this company's properties' turnover CleaningTasks dated on/after
+    `start` (default: today) - the retroactive half of turning finances_managed_internally on for
+    a company after tasks already exist (properties.models.ManagementCompany.
+    finances_managed_internally's own docstring: that toggle doesn't backfill on its own). Called
+    from StaffSettingsView._update_management_company right after a save that flips the flag from
+    False to True. Bounded to `start`-or-later, same "no value memo-izing an already-past clean
+    that was never billed contemporaneously" reasoning as finance/management/commands/
+    sync_finance_memos.py (which stays in place for a manual/global re-reconcile - this is the
+    narrower, automatic, per-company version of the same idea). Returns the count synced."""
+    if start is None:
+        start = timezone.now().date()
+    tasks = CleaningTask.objects.filter(
+        task_type='turnover', date__gte=start, booking__property__cleaning_company=company,
+    ).select_related('booking')
+
+    count = 0
+    for task in tasks:
+        sync_memo_for_turnover_task(task.booking)
+        count += 1
+    return count
+
+
 def recompute_unsent_memo_fees_for_settings_change():
     """Called from staff/signals.py on PaymentSettings' own post_save - mirrors
     staff/utils.py::resync_checkin_times_for_settings_change() exactly: a changed
@@ -129,6 +152,21 @@ def payouts_due_in_range(start, end):
         property__owner__is_paid_regularly=True,
         property__booking_company__finances_managed_internally=True,
     ), start, end)
+
+
+def deposits_due_in_range(start, end):
+    """Bookings whose cash security deposit is due for return: the arrival Checkin was marked
+    deposit_collected, and the turnover CleaningTask has since been completed (both conditions
+    per Thomas, 2026-08-29) - grouped by the clean's own completed_at date (when the booking
+    actually became eligible), same [start, end] window convention as payouts_due_in_range. There
+    is no computed amount here beyond the flat BookingSettings.security_deposit_amount figure
+    (applied by the caller/mark-returned view), unlike a payout - so this returns plain
+    (booking, completed_date) tuples rather than a payout-dict pair."""
+    tasks = CleaningTask.objects.filter(
+        task_type='turnover', status='done', completed_at__date__range=(start, end),
+        booking__checkins__task_type='arrival', booking__checkins__deposit_collected=True,
+    ).select_related('booking__property__owner').distinct()
+    return [(task.booking, task.completed_at.date()) for task in tasks]
 
 
 def owner_balance_in_range(property, start, end):

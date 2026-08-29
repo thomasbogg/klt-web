@@ -56,6 +56,8 @@
         <span>Security deposit (cash at check-in, always in EUR)</span>
         {% if returning_guest %}
         <span>Not required for a returning guest</span>
+        {% elif deposit_waived_by_country %}
+        <span>Not required outside the UK/EU</span>
         {% else %}
         <span>&euro;{{ charge.security|floatformat:2 }}</span>
         {% endif %}

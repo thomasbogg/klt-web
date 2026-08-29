@@ -70,5 +70,10 @@ urlpatterns = [
         'finance/payouts/<str:reference>/mark-paid/',
         views.StaffFinancePayoutMarkPaidView.as_view(), name='finance_payout_mark_paid',
     ),
+    path('finance/deposits/', views.StaffFinanceDepositsView.as_view(), name='finance_deposits'),
+    path(
+        'finance/deposits/<str:reference>/mark-returned/',
+        views.StaffFinanceDepositReturnMarkReturnedView.as_view(), name='finance_deposit_mark_returned',
+    ),
     path('finance/statement/', views.StaffFinanceStatementView.as_view(), name='finance_statement'),
 ]

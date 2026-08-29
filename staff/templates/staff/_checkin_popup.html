@@ -49,7 +49,7 @@
             Deposit collected
         </label>
         {% else %}
-        <p class="staff-empty">{% if deposit_waived_by_platform %}Not required - this platform doesn't take security deposits.{% else %}Not required for a returning guest.{% endif %}</p>
+        <p class="staff-empty">{% if deposit_waived_by_platform %}Not required - this platform doesn't take security deposits.{% elif deposit_waived_by_country %}Not required - guest's country of residence is outside the UK/EU.{% else %}Not required for a returning guest.{% endif %}</p>
         {% endif %}
     </fieldset>
     {% else %}

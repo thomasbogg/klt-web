@@ -1,0 +1,83 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Deposit {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Security Deposit</h1>
+
+            <div class="confirmation-reference">
+                <span class="confirmation-reference-label">Booking Reference</span>
+                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+            </div>
+
+            {% if request.GET.saved %}
+            <p class="details-note">Your bank details have been saved.</p>
+            {% endif %}
+
+            <p class="details-note">
+                Your &euro;{{ security_deposit_amount }} security deposit is taken in cash at check-in and
+                returned by bank transfer after checkout - please provide the account it should be sent to.
+            </p>
+
+            <form method="post" class="details-form">
+                {% csrf_token %}
+
+                <section class="details-section deposit-bank-fields">
+                    <div class="transfer-field">
+                        <label for="bank_name">Bank name</label>
+                        <input type="text" name="bank_name" id="bank_name" class="reserve-input" value="{{ details.bank_name }}">
+                    </div>
+                    <div class="transfer-field">
+                        <label for="account_name">Account name</label>
+                        <input type="text" name="account_name" id="account_name" class="reserve-input" value="{{ details.account_name }}">
+                    </div>
+                    <div class="transfer-field">
+                        <label for="account_number">Account number</label>
+                        <input type="text" name="account_number" id="account_number" class="reserve-input" value="{{ details.account_number }}">
+                    </div>
+                    <div class="transfer-field">
+                        <label for="sort_code">Sort code</label>
+                        <input type="text" name="sort_code" id="sort_code" class="reserve-input" value="{{ details.sort_code }}">
+                    </div>
+                    <div class="transfer-field">
+                        <label for="iban">IBAN</label>
+                        <input type="text" name="iban" id="iban" class="reserve-input" value="{{ details.iban }}">
+                    </div>
+                    <div class="transfer-field">
+                        <label for="swift_code">Swift code</label>
+                        <input type="text" name="swift_code" id="swift_code" class="reserve-input" value="{{ details.swift_code }}">
+                    </div>
+                    <div class="transfer-field">
+                        <label for="bank_address">Bank address</label>
+                        <textarea name="bank_address" id="bank_address" class="reserve-input" rows="3">{{ details.bank_address }}</textarea>
+                    </div>
+                </section>
+
+                <button type="submit" class="reserve-form-submit">Save Bank Details</button>
+            </form>
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

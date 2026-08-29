@@ -115,6 +115,17 @@ PLATFORMS: tuple[str, ...] = (
 # Currency conversion rate
 GBP_EUR_EXCHANGE_RATE: float = 1.1111
 
+# ISO 3166-1 alpha-2 codes (matching Guest.country/django_countries) for the UK + the 27 EU member
+# states - guests outside this list don't get asked for the cash security deposit (2026-08-29, per
+# Thomas: the bank-transfer return has extra cost/hassle outside the UK/EU, on top of the existing
+# returning-guest waiver - see staff/views.py::StaffCheckinDetailView and bookings/utils.py::
+# booking_confirmation_context).
+UK_EU_COUNTRY_CODES: tuple[str, ...] = (
+    'GB',  # United Kingdom
+    'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT',
+    'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE',
+)
+
 
 #######################################################
 # PLATFORM CREDENTIALS

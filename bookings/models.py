@@ -393,6 +393,45 @@ class GuestRegistration(models.Model):
         )
 
 
+class DepositBankDetails(models.Model):
+    """Guest-supplied bank account details for the security-deposit refund - the cash deposit is
+    taken at check-in and returned by bank transfer, so this is where that account information
+    comes from. One per Booking, captured guest-facing via the Manage Booking hub's Security
+    Deposit section (bookings/views.py::BookingManageDepositView, added 2026-08-29 per Thomas's
+    reference screenshot of the legacy klt-management-software 'Account details' popup). Only
+    reachable for a booking whose deposit isn't waived (bookings/utils.py::
+    compute_deposit_waiver) - see that section's own docstring. get_or_create'd the first time the
+    guest visits, same lazy-creation pattern as GuestRegistration above; every field starts blank
+    rather than defaulting to anything guessed, since a wrong bank detail is worse than an
+    obviously-incomplete one. No validation beyond max_length - deliberately accepts whatever
+    format the guest's own bank uses (IBAN-only for most EU accounts, sort code + account number
+    for UK, SWIFT/bank address for anything needing an international wire), same reasoning as
+    Departure.details being a free-text note rather than a structured field."""
+    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='deposit_bank_details')
+    bank_name = models.CharField(max_length=200, blank=True)
+    account_name = models.CharField(max_length=200, blank=True)
+    account_number = models.CharField(max_length=100, blank=True)
+    sort_code = models.CharField(max_length=50, blank=True)
+    iban = models.CharField(max_length=50, blank=True)
+    swift_code = models.CharField(max_length=50, blank=True)
+    bank_address = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'booking_deposit_bank_details'
+        verbose_name = 'Deposit Bank Details'
+        verbose_name_plural = 'Deposit Bank Details'
+
+    def __str__(self):
+        return f"{self.booking} - Deposit bank details"
+
+    def is_blank(self):
+        return not any([
+            self.bank_name, self.account_name, self.account_number,
+            self.sort_code, self.iban, self.swift_code, self.bank_address,
+        ])
+
+
 class BookingCondition(models.Model):
     """A single bullet point shown on the public Booking Conditions page. Order is admin-editable."""
     text = models.TextField()
@@ -477,7 +516,12 @@ class Arrival(models.Model):
     time = models.TimeField(blank=True, null=True)
     details = models.TextField(blank=True, null=True)
     self_check_in = models.BooleanField(blank=True, null=True)
-    meet_greet = models.BooleanField()
+    # Defaults to True (2026-08-29, per Thomas), same reasoning and same "normal case, not an
+    # opt-in extra" wording as Departure.clean below: a meet & greet happens for every non-owner
+    # booking unless staff say otherwise. Only meaningful to toggle off for an owner booking (see
+    # the Owner-booking-conditional row on the staff booking detail page) - a non-owner booking's
+    # row stays hidden/disabled there, so this default is effectively permanent for guests.
+    meet_greet = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'booking_arrivals'

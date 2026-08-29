@@ -8,6 +8,9 @@
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
     <link rel="stylesheet" href="{% static 'staff/finance.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
+    <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
+    <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
 </head>
 <body>
     <div class="staff-page">
@@ -50,12 +53,14 @@
                     {% endfor %}
                 </select>
             </label>
-            <label class="staff-field">From
-                <input type="date" name="start" class="staff-input" value="{{ start|date:'Y-m-d' }}">
-            </label>
-            <label class="staff-field">To
-                <input type="date" name="end" class="staff-input" value="{{ end|date:'Y-m-d' }}">
-            </label>
+            <div class="staff-field-row">
+                <label class="staff-field">From
+                    <input type="text" name="start" class="staff-input staff-date-input staff-date-start" autocomplete="off" value="{{ start|date:'Y-m-d' }}">
+                </label>
+                <label class="staff-field">To
+                    <input type="text" name="end" class="staff-input staff-date-input staff-date-end" autocomplete="off" value="{{ end|date:'Y-m-d' }}">
+                </label>
+            </div>
             <button type="submit" class="staff-button">Generate</button>
         </form>
 

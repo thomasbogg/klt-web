@@ -6,16 +6,16 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from bookings.models import Arrival, Booking, Charge, Departure, PaymentSettings
+from bookings.models import Arrival, Booking, BookingSettings, Charge, Departure, PaymentSettings
 from bookings.payouts import clean_fee, meet_greet_fee
-from finance.models import AdHocService, Memo, PayoutRecord
+from finance.models import AdHocService, DepositReturn, Memo, PayoutRecord
 from finance.services import (
-    open_memo_for_property, owner_balance_in_range, recompute_unsent_memo_fees_for_settings_change,
-    sweep_unattached_ad_hoc_services,
+    deposits_due_in_range, open_memo_for_property, owner_balance_in_range,
+    recompute_unsent_memo_fees_for_settings_change, sweep_unattached_ad_hoc_services,
 )
 from guests.models import Guest
 from properties.models import ManagementCompany, Owner, Property, PropertySpec
-from staff.models import CleaningTask
+from staff.models import Checkin, CleaningTask
 
 
 class FinanceTestCase(TestCase):
@@ -87,6 +87,69 @@ class SyncMemoForTurnoverTaskTests(FinanceTestCase):
         self.assertEqual(memo.meet_greet_fee, meet_greet_fee(self.settings, booking))
         self.assertGreater(memo.meet_greet_fee, Decimal('0'))
         arrival.delete()
+
+
+class BackfillMemosForCompanyTests(FinanceTestCase):
+    """Toggling finances_managed_internally on for a company via StaffSettingsView must backfill
+    Memo rows for that company's own upcoming turnover cleans, but never one already in the past -
+    see properties.models.ManagementCompany.finances_managed_internally's own docstring and
+    finance/services.py::backfill_memos_for_company."""
+
+    def setUp(self):
+        super().setUp()
+        self.company.finances_managed_internally = False
+        self.company.save()
+        User.objects.create_user(username='settingsviewer', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='settingsviewer', password='pw')
+
+    def _post_finances_toggle(self, on):
+        post = {
+            'action': 'update_management_company', 'management_company_id': self.company.pk,
+            'name': self.company.name, 'cleans_on_calendar': 'on', 'checkins_on_calendar': 'on',
+        }
+        if on:
+            post['finances_managed_internally'] = 'on'
+        return self.client.post(reverse('staff:settings'), post)
+
+    def test_turning_on_backfills_future_turnover_memo(self):
+        booking = self._make_booking(10, 14)
+        self.assertFalse(Memo.objects.filter(property=self.property).exists())
+
+        response = self._post_finances_toggle(on=True)
+        self.assertEqual(response.status_code, 302)
+        self.company.refresh_from_db()
+        self.assertTrue(self.company.finances_managed_internally)
+
+        memo = Memo.objects.get(property=self.property)
+        self.assertEqual(memo.cleaning_task, CleaningTask.objects.get(booking=booking, task_type='turnover'))
+
+    def test_turning_on_does_not_backfill_a_past_turnover_task(self):
+        booking = self._make_booking(10, 14)
+        task = CleaningTask.objects.get(booking=booking, task_type='turnover')
+        task.date = self.today - timedelta(days=1)
+        task.save(update_fields=['date'])
+
+        self._post_finances_toggle(on=True)
+        self.assertFalse(Memo.objects.filter(property=self.property).exists())
+
+    def test_saving_without_toggling_does_not_backfill(self):
+        self._make_booking(10, 14)
+        self._post_finances_toggle(on=False)
+        self.assertFalse(Memo.objects.filter(property=self.property).exists())
+
+    def test_already_on_save_does_not_resync(self):
+        """Only a False->True transition triggers the backfill - re-saving with it already on
+        must not re-run sync_memo_for_turnover_task (which would be harmless here, but the whole
+        point is this only fires on the actual toggle, not on every unrelated edit)."""
+        self.company.finances_managed_internally = True
+        self.company.save()
+        booking = self._make_booking(10, 14)
+        memo = Memo.objects.get(property=self.property)
+        memo.sent_at = timezone.now()
+        memo.save(update_fields=['sent_at'])
+
+        self._post_finances_toggle(on=True)
+        self.assertEqual(Memo.objects.filter(property=self.property).count(), 1)
 
 
 class OpenMemoForPropertyTests(FinanceTestCase):
@@ -240,6 +303,70 @@ class PayoutRecordTests(FinanceTestCase):
 
         response = self.client.post(url)
         self.assertEqual(PayoutRecord.objects.filter(booking=booking).count(), 1)
+
+
+class DepositReturnTests(FinanceTestCase):
+    """The Deposits tab - see finance/services.py::deposits_due_in_range's own docstring for the
+    two independent conditions a booking must meet (deposit collected at check-in, end-of-stay
+    clean marked done) before it's eligible to appear."""
+
+    def setUp(self):
+        super().setUp()
+        User.objects.create_user(username='depositsuper', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='depositsuper', password='pw')
+
+    def _eligible_booking(self):
+        booking = self._make_booking(10, 14)
+        task = CleaningTask.objects.get(booking=booking, task_type='turnover')
+        task.status = 'done'
+        task.completed_at = timezone.now()
+        task.save(update_fields=['status', 'completed_at'])
+        checkin, _ = Checkin.objects.get_or_create(
+            booking=booking, task_type='arrival', defaults={'date': self.today},
+        )
+        checkin.deposit_collected = True
+        checkin.save(update_fields=['deposit_collected'])
+        return booking, task
+
+    def test_not_due_without_deposit_collected(self):
+        booking = self._make_booking(10, 14)
+        task = CleaningTask.objects.get(booking=booking, task_type='turnover')
+        task.status = 'done'
+        task.completed_at = timezone.now()
+        task.save(update_fields=['status', 'completed_at'])
+        due = deposits_due_in_range(self.today - timedelta(days=1), self.today + timedelta(days=1))
+        self.assertEqual(due, [])
+
+    def test_not_due_before_clean_is_done(self):
+        booking = self._make_booking(10, 14)
+        checkin, _ = Checkin.objects.get_or_create(
+            booking=booking, task_type='arrival', defaults={'date': self.today},
+        )
+        checkin.deposit_collected = True
+        checkin.save(update_fields=['deposit_collected'])
+        due = deposits_due_in_range(self.today - timedelta(days=1), self.today + timedelta(days=1))
+        self.assertEqual(due, [])
+
+    def test_due_once_both_conditions_are_met(self):
+        booking, task = self._eligible_booking()
+        due = deposits_due_in_range(self.today - timedelta(days=1), self.today + timedelta(days=1))
+        self.assertEqual(due, [(booking, task.completed_at.date())])
+
+    def test_deposits_tab_renders_and_mark_as_returned_is_idempotent(self):
+        booking, _ = self._eligible_booking()
+        response = self.client.get(reverse('staff:finance_deposits'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Mark as returned')
+
+        url = reverse('staff:finance_deposit_mark_returned', kwargs={'reference': booking.reference})
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(DepositReturn.objects.filter(booking=booking).count(), 1)
+        record = DepositReturn.objects.get(booking=booking)
+        self.assertEqual(record.amount, BookingSettings.load().security_deposit_amount)
+
+        response = self.client.post(url)
+        self.assertEqual(DepositReturn.objects.filter(booking=booking).count(), 1)
 
 
 class FinanceViewSmokeTests(FinanceTestCase):

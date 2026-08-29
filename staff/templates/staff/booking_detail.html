@@ -7,6 +7,8 @@
     <title>Booking {{ booking.reference }} | Staff</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/cleaning_rota.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/finance.css' %}">
     <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
     <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
     <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
@@ -426,21 +428,31 @@
                 </section>
 
                 <section class="staff-panel">
-                    <h2 class="staff-panel-title">Deductions</h2>
-                    <ul class="staff-list">
-                        {% for deduction in deductions %}
-                        <li>{{ deduction.date }} - {{ deduction.description }} <span class="staff-list-amount">&euro;{{ deduction.amount|floatformat:2 }}</span></li>
-                        {% empty %}
-                        <li class="staff-empty">No deductions recorded for this booking.</li>
-                        {% endfor %}
-                    </ul>
-                    <form method="post" class="staff-inline-form">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="add_deduction">
-                        <input type="text" name="description" placeholder="Description" class="staff-input">
-                        <input type="text" name="amount" placeholder="Amount" class="staff-input staff-input-small">
-                        <button type="submit" class="staff-button staff-button-small">+ New deduction</button>
-                    </form>
+                    <h2 class="staff-panel-title">Memo</h2>
+                    {% if memo %}
+                    <p class="staff-cleaning-meta">
+                        Clean &euro;{{ memo.clean_fee }}
+                        {% if memo.meet_greet_fee %}&middot; Meet &amp; Greet &euro;{{ memo.meet_greet_fee }}{% endif %}
+                        {% with ad_hoc=memo.ad_hoc_services.all %}
+                        {% if ad_hoc %}&middot; {{ ad_hoc|length }} ad-hoc service{{ ad_hoc|length|pluralize }}{% endif %}
+                        {% endwith %}
+                    </p>
+                    <p class="staff-finance-total">Total &euro;{{ memo.total }}</p>
+                    {% if memo.sent_at %}
+                    <p class="staff-finance-sent-note">Sent {{ memo.sent_at|date:'j M Y H:i' }}{% if memo.sent_by %} by {{ memo.sent_by }}{% endif %}</p>
+                    {% else %}
+                    <p class="staff-finance-sent-note">Not yet sent.</p>
+                    {% endif %}
+                    <div class="staff-finance-card-actions">
+                        <a href="{% url 'staff:finance_memo_detail' pk=memo.pk %}" class="staff-button staff-button-small staff-button-success">View</a>
+                        <a href="{% url 'staff:finance_ad_hoc_services' %}?property={{ booking.property_id }}" class="staff-button staff-button-small">Add service</a>
+                    </div>
+                    {% else %}
+                    <p class="staff-empty">No memo for this booking.</p>
+                    <div class="staff-finance-card-actions">
+                        <a href="{% url 'staff:finance_ad_hoc_services' %}?property={{ booking.property_id }}" class="staff-button staff-button-small">Add service</a>
+                    </div>
+                    {% endif %}
                 </section>
 
                 <section class="staff-panel">

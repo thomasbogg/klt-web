@@ -132,6 +132,11 @@
                 <label for="{{ form.phone.id_for_label }}">Phone</label>
                 {{ form.phone }}
             </div>
+            <div class="reserve-form-row">
+                <label for="{{ form.country.id_for_label }}">Country of residence</label>
+                {{ form.country }}
+                {% for error in form.country.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
 
             <button type="submit" class="reserve-form-submit">Proceed to Reservation</button>
         </form>

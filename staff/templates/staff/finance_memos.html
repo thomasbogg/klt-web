@@ -29,9 +29,9 @@
         {% endif %}
 
         <div class="staff-cleaning-date-nav">
-            <a href="?date={{ prev_date|date:'Y-m-d' }}" class="staff-button staff-button-small">&larr; Back 7 days</a>
+            <a href="?date={{ prev_date|date:'Y-m-d' }}" class="staff-button staff-button-small">&larr; Back 3 days</a>
             <span class="staff-cleaning-date-label">{{ window_start|date:'l j F' }} &ndash; {{ window_end|date:'l j F Y' }}</span>
-            <a href="?date={{ next_date|date:'Y-m-d' }}" class="staff-button staff-button-small">Forward 7 days &rarr;</a>
+            <a href="?date={{ next_date|date:'Y-m-d' }}" class="staff-button staff-button-small">Forward 3 days &rarr;</a>
         </div>
 
         <div class="staff-cleaning-days">
@@ -55,13 +55,13 @@
                     {% endif %}
 
                     <div class="staff-finance-card-actions">
-                        <a href="{% url 'staff:finance_memo_detail' pk=memo.pk %}" class="staff-button staff-button-small">View memo</a>
+                        <a href="{% url 'staff:finance_memo_detail' pk=memo.pk %}" class="staff-button staff-button-small staff-button-success">View</a>
                         <a href="{% url 'staff:finance_ad_hoc_services' %}?property={{ memo.property_id }}" class="staff-button staff-button-small">Add service</a>
                         {% if not memo.sent_at %}
                         <form method="post" action="{% url 'staff:finance_memo_send' pk=memo.pk %}">
                             {% csrf_token %}
                             <input type="hidden" name="date" value="{{ target_date|date:'Y-m-d' }}">
-                            <button type="submit" class="staff-button staff-button-small">Send</button>
+                            <button type="submit" class="staff-button staff-button-small staff-button-accent">Send</button>
                         </form>
                         {% endif %}
                     </div>

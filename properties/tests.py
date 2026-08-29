@@ -58,6 +58,7 @@ class ReserveOwnPendingBookingTests(TestCase):
         return self.client.post(self.reserve_url, {
             **self.query, 'currency': currency,
             'first_name': 'Test', 'last_name': 'Guest', 'email': 'retrytest@example.com', 'phone': '',
+            'country': 'GB',
         })
 
     def test_full_wrong_currency_recovery_flow(self):

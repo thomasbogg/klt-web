@@ -9,15 +9,15 @@ from django.utils import timezone
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge,
-    Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, Payment,
-    PaymentSettings, PlatformPayout, RequestType, WelcomePackItem,
+    Departure, DepositBankDetails, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration,
+    Payment, PaymentSettings, PlatformPayout, RequestType, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
 from staff.models import OwnerPayment
 from bookings.utils import (
-    add_business_days, create_booking, determine_payment_provider, expire_stale_holds, extras_summary,
-    guest_counts_by_age, has_completed_previous_stay, payment_clearing_expiry, recalculate_balance_for_party,
-    recalculate_costs_for_party, sync_ical_link,
+    add_business_days, compute_deposit_waiver, create_booking, determine_payment_provider,
+    expire_stale_holds, extras_summary, guest_counts_by_age, has_completed_previous_stay,
+    payment_clearing_expiry, recalculate_balance_for_party, recalculate_costs_for_party, sync_ical_link,
 )
 from bookings.templatetags.bookings_extras import linkify
 from guests.models import Guest
@@ -2500,6 +2500,108 @@ class BookingManageGuestRegistrationsViewTests(TestCase):
         response = self.client.get(self.url)
         rows_by_guest = {row['guest'].pk: row for row in response.context['rows']}
         self.assertFalse(rows_by_guest[self.lead.pk]['registration'].has_nif)
+
+
+class ComputeDepositWaiverTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property CDW', short_title='TESTCDW')
+        self.guest = Guest.objects.create(last_name='Guest', email='cdw@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_not_waived_by_default(self):
+        result = compute_deposit_waiver(self.booking)
+        self.assertEqual(result, {
+            'waived': False, 'by_platform': False, 'by_country': False, 'by_returning_guest': False,
+        })
+
+    def test_waived_for_a_guest_outside_uk_eu(self):
+        self.guest.country = 'US'
+        self.guest.save(update_fields=['country'])
+        result = compute_deposit_waiver(self.booking)
+        self.assertTrue(result['waived'])
+        self.assertTrue(result['by_country'])
+
+    def test_not_waived_for_a_guest_with_no_country_on_record(self):
+        self.assertFalse(self.guest.country)
+        result = compute_deposit_waiver(self.booking)
+        self.assertFalse(result['waived'])
+
+    def test_platform_waiver_takes_priority_over_country_waiver(self):
+        Platform.objects.filter(name='Airbnb').update(take_security_deposits=False)
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        self.guest.country = 'US'
+        self.guest.save(update_fields=['country'])
+        result = compute_deposit_waiver(self.booking)
+        self.assertTrue(result['waived'])
+        self.assertTrue(result['by_platform'])
+        self.assertFalse(result['by_country'])
+
+
+class BookingManageDepositViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property MD', short_title='TESTMD')
+        self.guest = Guest.objects.create(last_name='Guest', email='md@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        Charge.objects.create(
+            booking=self.booking, basic_rental=Decimal('300.00'), admin=Decimal('16.50'),
+            due_at_booking=Decimal('79.13'), due_at_balance=Decimal('237.37'), currency='EUR',
+        )
+        self.url = reverse('bookings:manage_deposit', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+        self.manage_hub_url = reverse('bookings:manage_hub', kwargs={'reference': self.booking.reference})
+
+    def test_get_redirects_to_details_when_not_paid(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_get_redirects_to_details_when_deposit_is_waived(self):
+        self.guest.country = 'US'
+        self.guest.save(update_fields=['country'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_get_creates_a_blank_details_row(self):
+        self.assertFalse(DepositBankDetails.objects.filter(booking=self.booking).exists())
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(DepositBankDetails.objects.get(booking=self.booking).is_blank())
+
+    def test_post_saves_bank_details(self):
+        response = self.client.post(self.url, {
+            'bank_name': 'Barclays', 'account_name': 'Test Guest', 'account_number': '',
+            'sort_code': '', 'iban': 'GB29NWBK60161331926819', 'swift_code': '', 'bank_address': '',
+        })
+        self.assertRedirects(response, f"{self.url}?saved=1", fetch_redirect_response=False)
+        details = DepositBankDetails.objects.get(booking=self.booking)
+        self.assertEqual(details.bank_name, 'Barclays')
+        self.assertEqual(details.iban, 'GB29NWBK60161331926819')
+        self.assertFalse(details.is_blank())
+
+    def test_sidebar_link_hidden_when_deposit_waived(self):
+        self.guest.country = 'US'
+        self.guest.save(update_fields=['country'])
+        response = self.client.get(self.manage_hub_url)
+        self.assertNotContains(response, 'Security Deposit')
+
+    def test_sidebar_link_shown_when_deposit_required(self):
+        response = self.client.get(self.manage_hub_url)
+        self.assertContains(response, 'Security Deposit')
 
 
 class GuestListAdjustmentTests(TestCase):
