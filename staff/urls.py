@@ -58,4 +58,17 @@ urlpatterns = [
         views.StaffCheckinToggleDoneView.as_view(), name='checkin_toggle_done',
     ),
     path('checkins/<int:pk>/save/', views.StaffCheckinSaveView.as_view(), name='checkin_save'),
+    path('finance/memos/', views.StaffFinanceMemosView.as_view(), name='finance_memos'),
+    path('finance/memos/<int:pk>/', views.StaffFinanceMemoDetailView.as_view(), name='finance_memo_detail'),
+    path('finance/memos/<int:pk>/send/', views.StaffFinanceMemoSendView.as_view(), name='finance_memo_send'),
+    path(
+        'finance/services/',
+        views.StaffFinanceAdHocServiceListView.as_view(), name='finance_ad_hoc_services',
+    ),
+    path('finance/payouts/', views.StaffFinancePayoutsView.as_view(), name='finance_payouts'),
+    path(
+        'finance/payouts/<str:reference>/mark-paid/',
+        views.StaffFinancePayoutMarkPaidView.as_view(), name='finance_payout_mark_paid',
+    ),
+    path('finance/statement/', views.StaffFinanceStatementView.as_view(), name='finance_statement'),
 ]

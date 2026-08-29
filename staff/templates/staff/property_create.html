@@ -168,15 +168,11 @@
                     <p class="staff-quick-add-error"></p>
                     <button type="button" class="staff-button staff-button-small staff-quick-add-submit">Add management company</button>
                 </div>
-                <label class="staff-field">Booking.com ID
-                    <input type="text" name="booking_com_id" class="staff-input">
+                {% for platform in platforms %}
+                <label class="staff-field">{{ platform.name }} ID
+                    <input type="text" name="platform_listing_{{ platform.pk }}" class="staff-input">
                 </label>
-                <label class="staff-field">Airbnb ID
-                    <input type="text" name="airbnb_id" class="staff-input">
-                </label>
-                <label class="staff-field">Vrbo ID
-                    <input type="text" name="vrbo_id" class="staff-input">
-                </label>
+                {% endfor %}
                 <label class="staff-field">Standard cleaning fee
                     <input type="text" name="standard_cleaning_fee" class="staff-input">
                 </label>

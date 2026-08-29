@@ -4,14 +4,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ link.get_ical_source_display|default:"iCal" }} sync - {{ property.title }}</title>
+    <title>{{ link.platform.name|default:"iCal" }} sync - {{ property.title }}</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
     <link rel="stylesheet" href="{% static 'staff/ical_sync.css' %}">
 </head>
 <body>
     <div class="staff-page staff-sync-page">
-        <h1 class="staff-page-title">{{ link.get_ical_source_display|default:"Unknown source" }} sync</h1>
+        <h1 class="staff-page-title">{{ link.platform.name|default:"Unknown source" }} sync</h1>
         <p class="staff-sync-subtitle">{{ property.title }}</p>
 
         {% if fetch_error %}

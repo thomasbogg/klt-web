@@ -1,0 +1,70 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payouts | Finance | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/cleaning_rota.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/finance.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Finance</h1>
+        </header>
+
+        {% include 'staff/_finance_nav.html' %}
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="staff-cleaning-date-nav">
+            <a href="?date={{ prev_date|date:'Y-m-d' }}" class="staff-button staff-button-small">&larr; Back 7 days</a>
+            <span class="staff-cleaning-date-label">{{ window_start|date:'l j F' }} &ndash; {{ window_end|date:'l j F Y' }}</span>
+            <a href="?date={{ next_date|date:'Y-m-d' }}" class="staff-button staff-button-small">Forward 7 days &rarr;</a>
+        </div>
+
+        <div class="staff-cleaning-days">
+            {% for day in days %}
+            <div class="staff-cleaning-day-column{% if day.date == target_date %} staff-cleaning-day-column-today{% endif %}">
+                <h2 class="staff-cleaning-day-heading">{{ day.date|date:'D, j M' }}</h2>
+                {% if day.rows %}
+                {% for row in day.rows %}
+                <div class="staff-panel staff-cleaning-card{% if row.record %} staff-cleaning-card-done{% endif %}">
+                    <h3 class="staff-panel-title">{{ row.booking.property }}</h3>
+                    <p class="staff-cleaning-meta">
+                        <a href="{% url 'staff:booking_detail' reference=row.booking.reference %}">{{ row.booking.guest }}</a>
+                        &middot; {{ row.booking.property.owner }}
+                    </p>
+                    <p class="staff-finance-total">Owner balance &euro;{{ row.payout.owner_balance }}</p>
+
+                    {% if row.record %}
+                    <p class="staff-finance-sent-note">Paid {{ row.record.paid_at|date:'j M Y H:i' }}{% if row.record.paid_by %} by {{ row.record.paid_by }}{% endif %} (&euro;{{ row.record.amount }})</p>
+                    {% else %}
+                    <form method="post" action="{% url 'staff:finance_payout_mark_paid' reference=row.booking.reference %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="date" value="{{ target_date|date:'Y-m-d' }}">
+                        <button type="submit" class="staff-button staff-button-small">Mark as paid</button>
+                    </form>
+                    {% endif %}
+                </div>
+                {% endfor %}
+                {% else %}
+                <p class="staff-empty">No payouts due.</p>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>

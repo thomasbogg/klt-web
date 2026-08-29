@@ -1,5 +1,5 @@
 import secrets
-from datetime import timedelta
+from datetime import time, timedelta
 
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
@@ -189,6 +189,38 @@ class ManagementCompany(models.Model):
     # vacant stretch between bookings that would otherwise go uncleaned until the next guest's own
     # turnover. See staff/utils.py::sync_cleaning_tasks_for_booking for how it's actually applied.
     freshen_after_days = models.PositiveSmallIntegerField(null=True, blank=True)
+    # Unlike the operational fields above, these two always have a real value rather than "not
+    # specified" - the check-ins calendar (staff/utils.py::compute_arrival_eta) falls back to
+    # standard_checkin_time to place an arrival with no real ETA at a sensible clock time instead
+    # of the all-day band, so a null here would just push the ambiguity somewhere else.
+    # standard_checkout_time has no consumer yet (no departure-side calendar exists), added ahead
+    # of that per Thomas, 2026-08-28.
+    standard_checkin_time = models.TimeField(default=time(14, 0))
+    standard_checkout_time = models.TimeField(default=time(10, 0))
+    # Per-company on/off switch for whether a property under this company's cleaning/booking
+    # management generates CleaningTask/Checkin rows at all (staff/utils.py::
+    # sync_cleaning_tasks_for_booking, sync_freshen_tasks_for_property, sync_checkins_for_booking)
+    # - lets a company that manages its own cleaning/check-ins separately (2026-08-28, per Thomas)
+    # stay off those calendars entirely, rather than cluttering them with tasks nobody here acts
+    # on. Default True preserves today's behaviour (every property currently appears) for every
+    # existing company. Only consulted when a company is actually set (Property.cleaning_company/
+    # booking_company is nullable) - an untracked property is unaffected either way, same as every
+    # other operational field above. Toggling this doesn't retroactively clean up or backfill
+    # already-existing task rows - re-run the sync_cleaning_tasks/sync_checkins management commands
+    # to reconcile, same as any other operational-setting change here.
+    cleans_on_calendar = models.BooleanField(default=True)
+    checkins_on_calendar = models.BooleanField(default=True)
+    # Gates the new Finance area (finance app: Memo/AdHocService/PayoutRecord) - checked against
+    # two different Property FKs for two different purposes: as a property's cleaning_company, it
+    # gates whether Memo/AdHocService rows exist for it at all (see finance/services.py::
+    # sync_memo_for_turnover_task); as a property's booking_company, it gates whether its owner
+    # appears on the Payouts tab / in a Statement. A property with neither company set, or the
+    # flag off on the relevant one, is excluded entirely - deliberately opt-in (default False),
+    # unlike cleans_on_calendar/checkins_on_calendar's opt-out default: an untracked property
+    # shouldn't silently start appearing in real financial documents. Toggling this on doesn't
+    # retroactively backfill Memo rows for cleans already scheduled - run the
+    # sync_finance_memos management command to reconcile, same convention as cleans_on_calendar.
+    finances_managed_internally = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'management_companies'
@@ -278,9 +310,6 @@ class Property(models.Model):
     cleaning_company = models.ForeignKey(
         ManagementCompany, on_delete=models.SET_NULL, null=True, blank=True, related_name='cleaned_properties'
     )
-    booking_com_id = models.CharField(max_length=200, blank=True, null=True)
-    airbnb_id = models.CharField(max_length=200, blank=True, null=True)
-    vrbo_id = models.CharField(max_length=200, blank=True, null=True)
     standard_cleaning_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     # Opaque bearer token for this property's exported .ics feed (see
@@ -742,16 +771,67 @@ class SEFDetail(models.Model):
         return f"{self.property.title} - SEF"
 
 
+class Platform(models.Model):
+    """Admin-editable catalog of booking platforms an iCalLink can be sourced from (Airbnb,
+    Booking.com, Vrbo, ...) - replaces iCalLink's previously-hardcoded Source choices so Thomas can
+    add a new platform from Settings without a code deploy (2026-08-28).
+
+    take_security_deposits (default False) is a per-platform flag for whether that platform's own
+    booking terms already cover damage/security deposits - not read anywhere yet, added ahead of a
+    consumer per Thomas.
+
+    NOTE: env_settings.PLATFORMS still separately hardcodes 'Airbnb'/'Booking.com'/'Vrbo' for
+    platform-payout and direct-guest-exclusion logic (bookings/payouts.py, staff/views.py,
+    properties/views.py) - a Platform added here beyond those three won't automatically be
+    recognised as a platform booking by that logic. Flagged, not migrated, in this pass."""
+    name = models.CharField(max_length=100, unique=True)
+    take_security_deposits = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = 'platforms'
+        verbose_name = 'Platform'
+        verbose_name_plural = 'Platforms'
+        ordering = ('name',)
+
+    def __str__(self):
+        return self.name
+
+
+class PropertyPlatformID(models.Model):
+    """One property's own listing ID/reference on one Platform (e.g. its Airbnb listing number) -
+    replaces Property's previously-hardcoded booking_com_id/airbnb_id/vrbo_id fields with an
+    open-ended per-Platform list, so a new Platform automatically gets its own listing-ID field on
+    the property form (2026-08-28, per Thomas). Purely a staff-facing reference value, same as
+    those three fields were - not read by any sync/matching logic (iCalLink.platform is what
+    actually drives feed syncing).
+
+    platform is PROTECT, same as iCalLink.platform - a live incident during this same build
+    (deleting/re-adding the seeded Vrbo row from Settings silently cascade-deleted A02's real,
+    migrated Vrbo listing ID) showed CASCADE treats "just a reference value" as lower-stakes than
+    it actually is for real historical data. Deleting a Platform that still has a listing ID
+    attached now has to go through StaffSettingsView._delete_platform's explicit ProtectedError
+    handling instead."""
+    property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='platform_ids')
+    platform = models.ForeignKey(Platform, on_delete=models.PROTECT, related_name='property_ids')
+    listing_id = models.CharField(max_length=200)
+
+    class Meta:
+        db_table = 'property_platform_ids'
+        verbose_name = 'Property Platform ID'
+        verbose_name_plural = 'Property Platform IDs'
+        unique_together = ('property', 'platform')
+
+    def __str__(self):
+        return f"{self.property} - {self.platform}: {self.listing_id}"
+
+
 class iCalLink(models.Model):
     """Property iCal links for calendar synchronization."""
 
-    class Source(models.TextChoices):
-        AIRBNB = 'airbnb', 'Airbnb'
-        BOOKING_COM = 'booking.com', 'Booking.com'
-        VRBO = 'vrbo', 'Vrbo'
-
     property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='ical_links')
-    ical_source = models.CharField(max_length=20, choices=Source.choices, blank=True, null=True)
+    platform = models.ForeignKey(
+        Platform, on_delete=models.PROTECT, null=True, blank=True, related_name='ical_links',
+    )
     ical_url = models.URLField(blank=True, null=True)
     last_synced = models.DateTimeField(blank=True, null=True)
 

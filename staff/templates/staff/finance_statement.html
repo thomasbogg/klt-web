@@ -1,0 +1,113 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Statement | Finance | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/finance.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Finance</h1>
+        </header>
+
+        {% include 'staff/_finance_nav.html' %}
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <form method="get" class="staff-finance-statement-form">
+            <label class="staff-field">Scope
+                <select name="scope" class="staff-input">
+                    <option value="owner" {% if scope == 'owner' %}selected{% endif %}>Owner</option>
+                    <option value="property" {% if scope == 'property' %}selected{% endif %}>Property</option>
+                </select>
+            </label>
+            <label class="staff-field">Owner
+                <select name="owner_id" class="staff-input">
+                    <option value="">Select an owner&hellip;</option>
+                    {% for o in owners %}
+                    <option value="{{ o.pk }}" {% if owner.pk == o.pk %}selected{% endif %}>{{ o }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="staff-field">Property
+                <select name="property_id" class="staff-input">
+                    <option value="">Select a property&hellip;</option>
+                    {% for p in properties %}
+                    <option value="{{ p.pk }}" {% if property.pk == p.pk %}selected{% endif %}>{{ p }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label class="staff-field">From
+                <input type="date" name="start" class="staff-input" value="{{ start|date:'Y-m-d' }}">
+            </label>
+            <label class="staff-field">To
+                <input type="date" name="end" class="staff-input" value="{{ end|date:'Y-m-d' }}">
+            </label>
+            <button type="submit" class="staff-button">Generate</button>
+        </form>
+
+        {% if sections is not None %}
+        {% if not sections %}
+        <p class="staff-empty">Nothing to show for this scope and date range.</p>
+        {% endif %}
+        {% for section in sections %}
+        <div class="staff-panel staff-finance-statement-section">
+            <h3 class="staff-panel-title">{{ section.property }}</h3>
+
+            {% if section.memo_section %}
+            <h4>Memos sent {{ start|date:'j M Y' }} &ndash; {{ end|date:'j M Y' }}</h4>
+            {% for memo in section.memo_section.memos %}
+            <div class="staff-finance-statement-line">
+                <span>{{ memo.cleaning_task.date|default:memo.created_at|date:'j M Y' }} clean (&euro;{{ memo.clean_fee }}{% if memo.meet_greet_fee %} + &euro;{{ memo.meet_greet_fee }} meet &amp; greet{% endif %})</span>
+                <span>&euro;{{ memo.total }}</span>
+            </div>
+            {% endfor %}
+            <div class="staff-finance-statement-total">
+                <span>Total memos</span>
+                <span>&euro;{{ section.memo_section.total }}</span>
+            </div>
+            {% if section.payout_section %}
+            <p class="staff-finance-statement-note">Clean/meet &amp; greet costs above are already reflected in the payout figure below - only ad-hoc service costs are deducted separately.</p>
+            {% endif %}
+            {% endif %}
+
+            {% if section.payout_section %}
+            <h4>Owner payout {{ start|date:'j M Y' }} &ndash; {{ end|date:'j M Y' }}</h4>
+            {% for booking, payout in section.payout_section.bookings %}
+            <div class="staff-finance-statement-line">
+                <span><a href="{% url 'staff:booking_detail' reference=booking.reference %}">{{ booking.guest }}</a> ({{ booking.arrival_date|date:'j M Y' }})</span>
+                <span>&euro;{{ payout.owner_balance }}</span>
+            </div>
+            {% endfor %}
+            <div class="staff-finance-statement-line">
+                <span>Gross owner balance</span>
+                <span>&euro;{{ section.payout_section.gross }}</span>
+            </div>
+            <div class="staff-finance-statement-line">
+                <span>Ad-hoc services</span>
+                <span>&minus;&euro;{{ section.payout_section.ad_hoc_total }}</span>
+            </div>
+            <div class="staff-finance-statement-total">
+                <span>Net owed to owner</span>
+                <span>&euro;{{ section.payout_section.net }}</span>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+        {% endif %}
+    </div>
+</body>
+</html>

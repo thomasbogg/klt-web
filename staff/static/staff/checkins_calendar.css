@@ -13,6 +13,22 @@
     border-radius: 4px;
 }
 
+/* defaultTimedEventDuration (checkins_calendar.js) is deliberately kept short so unrelated
+   arrivals a bit apart never falsely overlap - this just gives the resulting thin block a taller
+   minimum render height so it reads clearly instead of as a sliver. */
+#checkins-calendar .fc-timegrid-event {
+    min-height: 26px;
+}
+
+/* Task-type marker on key_box/welcome_visit tiles - see TASK_TYPE_ICON in checkins_calendar.js.
+   Arrival tiles get no icon, so this only ever appears on the two non-arrival types. */
+#checkins-calendar .staff-checkin-task-icon {
+    width: 12px;
+    height: 12px;
+    vertical-align: -1px;
+    margin-right: 3px;
+}
+
 /* Visual drag hinting - see shadeOtherDays()/clearShadedDays() in checkins_calendar.js. A
    check-in's date is never draggable, only its time-of-day within that same date; the actual
    rejection is enforced authoritatively in eventDrop, this is only the mid-drag aid. */

@@ -22,8 +22,8 @@ from bookings.utils import (
 from bookings.templatetags.bookings_extras import linkify
 from guests.models import Guest
 from properties.models import (
-    Amenity, Location, LocationRules, ManagementCompany, Owner, Price, Property, PropertySpec,
-    WashingMaterial, iCalLink,
+    Amenity, Location, LocationRules, ManagementCompany, Owner, Platform, Price, Property,
+    PropertySpec, WashingMaterial, iCalLink,
 )
 
 
@@ -513,6 +513,23 @@ class ComputeOwnerPayoutTests(TestCase):
         Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
         result = compute_owner_payout(booking, self.settings)
         self.assertEqual(result['management_fee'], Decimal('0'))
+
+    def test_clean_fee_and_meet_greet_fee_sum_to_management_fee(self):
+        """bookings/payouts.py::_management_fee was split into public clean_fee()/meet_greet_fee()
+        functions so finance/services.py can show them as separate Memo line items - this guards
+        that the split preserves the combined figure exactly, for every scenario the tests above
+        already cover."""
+        self.property.cleaning_company = self.management_company
+        self.property.standard_cleaning_fee = Decimal('80.00')
+        self.property.save()
+        booking = self._make_booking(date(2026, 2, 16), date(2026, 2, 20), adults=5)
+        Charge.objects.create(booking=booking, basic_rental=Decimal('284.00'))
+        Departure.objects.create(booking=booking, clean=True)
+        Arrival.objects.create(booking=booking, meet_greet=True)
+        result = compute_owner_payout(booking, self.settings)
+        self.assertEqual(result['clean_fee'], Decimal('110.00'))  # 80 + 15 (multi-bedroom) + 15 (high occupancy)
+        self.assertEqual(result['meet_greet_fee'], Decimal('28.00'))
+        self.assertEqual(result['clean_fee'] + result['meet_greet_fee'], result['management_fee'])
 
     # --- Ad-hoc payments ---
 
@@ -3382,8 +3399,9 @@ def _ics_feed(events):
 class SyncIcalLinkTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Sync Test Property', short_title='SYNCTEST')
+        self.platform = Platform.objects.get_or_create(name='Airbnb')[0]
         self.link = iCalLink.objects.create(
-            property=self.property, ical_source='airbnb', ical_url='https://example.com/feed.ics',
+            property=self.property, platform=self.platform, ical_url='https://example.com/feed.ics',
         )
         self.start = date.today() + timedelta(days=100)
         self.end = self.start + timedelta(days=7)
@@ -3522,9 +3540,9 @@ class SyncIcalLinkTests(TestCase):
         manual_booking.refresh_from_db()
         self.assertEqual(manual_booking.enquiry_status, 'Booking confirmed')
 
-    def test_unrecognised_ical_source_is_a_noop(self):
-        self.link.ical_source = None
-        self.link.save(update_fields=['ical_source'])
+    def test_no_platform_set_is_a_noop(self):
+        self.link.platform = None
+        self.link.save(update_fields=['platform'])
         summary = sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)]))
         self.assertEqual(summary, {
             'created': 0, 'updated': 0, 'resurrected': 0, 'cancelled': 0, 'conflicts': [],

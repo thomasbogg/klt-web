@@ -134,6 +134,7 @@ STAFF_PAGE_PERMISSION_FIELDS = (
     ('can_view_settings', 'Settings'),
     ('can_view_cleaning_rota', 'Cleaning rota'),
     ('can_view_checkins_calendar', 'Check-ins calendar'),
+    ('can_view_finance', 'Finance'),
 )
 
 
@@ -226,10 +227,20 @@ def sync_cleaning_tasks_for_booking(booking):
     reviving via _uncancel_booking() re-triggers this same signal-driven sync and the Freshen
     property sweep (staff/signals.py), which recreate whatever's still actually due from scratch,
     so there's nothing to preserve for an explicit undo the way a gap-closed Freshen dismissal
-    needs one."""
+    needs one.
+
+    Same blanket-pending-delete treatment when the property's cleaning_company has
+    cleans_on_calendar=False (2026-08-28, per Thomas) - a company managing its own cleaning
+    separately shouldn't have its properties' tasks cluttering this calendar. Only when a company
+    is actually set: an untracked property (cleaning_company=None) is unaffected."""
     from staff.models import CleaningTask
 
     if booking.enquiry_status in CLOSED_STATUSES:
+        CleaningTask.objects.filter(booking=booking, status='pending').delete()
+        return
+
+    cleaning_company = booking.property.cleaning_company
+    if cleaning_company is not None and not cleaning_company.cleans_on_calendar:
         CleaningTask.objects.filter(booking=booking, status='pending').delete()
         return
 
@@ -315,7 +326,7 @@ def sync_freshen_tasks_for_property(property):
     from staff.models import CleaningTask
 
     cleaning_company = property.cleaning_company
-    if cleaning_company is None or cleaning_company.freshen_after_days is None:
+    if cleaning_company is None or not cleaning_company.cleans_on_calendar or cleaning_company.freshen_after_days is None:
         return
     freshen_after_days = cleaning_company.freshen_after_days
 
@@ -441,21 +452,33 @@ def apply_manual_task_date(task, new_date):
     return None
 
 
+def _standard_checkin_time(booking):
+    """The fallback clock time for an arrival with no real ETA to compute from - the booking
+    property's booking_company's standard_checkin_time, or the same 14:00 that field itself
+    defaults to when no company is tracked for this property at all (Property.booking_company is
+    nullable - see ManagementCompany's own docstring)."""
+    from datetime import time as time_cls
+    company = booking.property.booking_company
+    return company.standard_checkin_time if company else time_cls(14, 0)
+
+
 def compute_arrival_eta(booking):
-    """(time_or_None, is_all_day) - the calendar-displayed clock time for this booking's arrival.
+    """(time, is_all_day) - the calendar-displayed clock time for this booking's arrival.
     Arrival.time means something different per travel method, per the guest-facing form
     (bookings/templates/bookings/_arrival_departure_form.html): a flight's *landing* time, a bus/
     train's own "expected time in Albufeira" (already an at-property estimate, just needing a
     last-mile buffer), or - for driving - the guest's own estimated arrival time at the property
     itself, used as-is with no buffer (explicit choice, not an oversight). method='other' never
     gets a time field on that form at all, so there's nothing to compute - same as time simply
-    not having been filled in yet. is_all_day=True in both of those cases means "render as an
-    all-day event", not "assume midnight"."""
+    not having been filled in yet. Either case now falls back to _standard_checkin_time() rather
+    than rendering as an all-day event (2026-08-28, per Thomas - a guessed-but-labelled placeholder
+    time is more useful on a glance-and-go calendar than a blank all-day slot), so is_all_day is
+    always False; kept as part of the return shape since callers already destructure it."""
     from bookings.models import CheckinSettings, TravelMethod
 
     arrival = getattr(booking, 'arrival', None)
     if arrival is None or arrival.time is None:
-        return None, True
+        return _standard_checkin_time(booking), False
 
     if arrival.method == TravelMethod.FLIGHT_FARO:
         buffer_minutes = CheckinSettings.load().faro_buffer_minutes
@@ -466,7 +489,7 @@ def compute_arrival_eta(booking):
     elif arrival.method == TravelMethod.DRIVING:
         buffer_minutes = 0
     else:
-        return None, True
+        return _standard_checkin_time(booking), False
 
     computed = (datetime.combine(date.today(), arrival.time) + timedelta(minutes=buffer_minutes)).time()
     return computed, False
@@ -537,10 +560,17 @@ def sync_checkins_for_booking(booking):
     sync_cleaning_tasks_for_booking() already applies to turnover/mid-stay above. A cancelled
     booking (CLOSED_STATUSES) gets no check-in tasks at all - one blanket pending-delete across
     every task_type, matching that function's own cancellation branch exactly (not three separate
-    per-type branches - a cancelled booking needs none of them, full stop)."""
+    per-type branches - a cancelled booking needs none of them, full stop). Same blanket-delete
+    when the property's booking_company has checkins_on_calendar=False (2026-08-28, per Thomas) -
+    only when a company is actually set, an untracked property is unaffected."""
     from staff.models import Checkin
 
     if booking.enquiry_status in CLOSED_STATUSES:
+        Checkin.objects.filter(booking=booking, status='pending').delete()
+        return
+
+    booking_company = booking.property.booking_company
+    if booking_company is not None and not booking_company.checkins_on_calendar:
         Checkin.objects.filter(booking=booking, status='pending').delete()
         return
 

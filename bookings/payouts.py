@@ -31,24 +31,49 @@ def _round(amount):
     return Decimal(amount).quantize(TWO_PLACES)
 
 
-def _management_fee(payment_settings, booking):
+def clean_fee(payment_settings, booking):
+    """The turnover clean's own cost - standard_cleaning_fee plus bedroom-count/occupancy
+    surcharges. Only meaningful (and only ever non-zero) when the property has a cleaning_company
+    set at all - same pre-existing gate _management_fee itself used before this function was
+    split out of it. Also the source of finance.models.Memo's clean_fee line (see
+    finance/services.py::sync_memo_for_turnover_task) - always call this rather than duplicating
+    the formula, so a Memo's amount can never drift from what compute_owner_payout() deducts."""
     if booking.property.cleaning_company_id is None:
         return ZERO
-    total = ZERO
     departure = getattr(booking, 'departure', None)
-    if departure is not None and departure.clean:
-        specs = booking.property.specs
-        total += booking.property.standard_cleaning_fee
-        if specs.bedrooms == 1:
-            total += payment_settings.cleaning_surcharge_one_bedroom
-        else:
-            total += payment_settings.cleaning_surcharge_multi_bedroom
-        if specs.bedrooms and booking.total_guests() / specs.bedrooms > 2:
-            total += payment_settings.cleaning_high_occupancy_surcharge
-    arrival = getattr(booking, 'arrival', None)
-    if arrival is not None and arrival.meet_greet:
-        total += payment_settings.meet_greet_fee
+    if departure is None or not departure.clean:
+        return ZERO
+    specs = booking.property.specs
+    total = booking.property.standard_cleaning_fee
+    if specs.bedrooms == 1:
+        total += payment_settings.cleaning_surcharge_one_bedroom
+    else:
+        total += payment_settings.cleaning_surcharge_multi_bedroom
+    if specs.bedrooms and booking.total_guests() / specs.bedrooms > 2:
+        total += payment_settings.cleaning_high_occupancy_surcharge
     return total
+
+
+def meet_greet_fee(payment_settings, booking):
+    """The arrival meet & greet fee - gated behind cleaning_company being set, same pre-existing
+    behaviour as clean_fee above (preserved unchanged by this split). Also the source of
+    finance.models.Memo's meet_greet_fee line - see clean_fee's docstring."""
+    if booking.property.cleaning_company_id is None:
+        return ZERO
+    arrival = getattr(booking, 'arrival', None)
+    if arrival is None or not arrival.meet_greet:
+        return ZERO
+    return payment_settings.meet_greet_fee
+
+
+def _management_fee(payment_settings, booking):
+    """Thin sum of clean_fee()/meet_greet_fee() above, kept for compute_owner_payout's single
+    management_fee deduction. The two are public (no leading underscore) and independently
+    callable so finance/services.py can show them as separate Memo line items using the exact
+    same numbers, without going through the full owner-payout calculation (which can be
+    "unavailable" - no PlatformPayout yet, no owner assigned - in cases where the clean still
+    genuinely happened and must still be billed)."""
+    return clean_fee(payment_settings, booking) + meet_greet_fee(payment_settings, booking)
 
 
 def _due_date(payment_settings, owner, arrival_date):
@@ -68,6 +93,8 @@ def _unavailable(reason):
         'commission_vat': None,
         'platform_fee': None,
         'platform_fee_vat': None,
+        'clean_fee': None,
+        'meet_greet_fee': None,
         'management_fee': None,
         'ad_hoc_payments': [],
         'owner_balance': None,
@@ -120,7 +147,9 @@ def compute_owner_payout(booking, payment_settings=None):
 
     platform_fee_vat = _round(platform_fee * payment_settings.vat_rate_percent / Decimal('100')) if is_platform else ZERO
 
-    management_fee = _round(_management_fee(payment_settings, booking))
+    clean_fee_amount = _round(clean_fee(payment_settings, booking))
+    meet_greet_fee_amount = _round(meet_greet_fee(payment_settings, booking))
+    management_fee = clean_fee_amount + meet_greet_fee_amount
 
     ad_hoc_payments = list(booking.owner_payments.all())
     ad_hoc_total = sum((p.amount for p in ad_hoc_payments), ZERO)
@@ -148,6 +177,8 @@ def compute_owner_payout(booking, payment_settings=None):
         'commission_vat': commission_vat,
         'platform_fee': platform_fee,
         'platform_fee_vat': platform_fee_vat,
+        'clean_fee': clean_fee_amount,
+        'meet_greet_fee': meet_greet_fee_amount,
         'management_fee': management_fee,
         'ad_hoc_payments': ad_hoc_payment_rows,
         'owner_balance': owner_balance,

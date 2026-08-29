@@ -135,6 +135,53 @@
                     </div>
 
                     <div class="staff-panel">
+                        <h2 class="staff-panel-title">Platforms</h2>
+                        <p class="staff-settings-hint">The booking platforms available to choose from when adding a property's iCal link or listing ID.</p>
+                        <table class="staff-price-table staff-extras-aligned-table">
+                            <thead>
+                                <tr><th>Name</th><th>Takes security deposits</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                {% for platform in platforms %}
+                                <tr>
+                                    <td><input type="text" name="name" form="platform-form-{{ platform.pk }}" value="{{ platform.name }}" class="staff-input"></td>
+                                    <td><input type="checkbox" name="take_security_deposits" form="platform-form-{{ platform.pk }}" {% if platform.take_security_deposits %}checked{% endif %}></td>
+                                    <td class="staff-price-row-actions">
+                                        <button type="submit" form="platform-form-{{ platform.pk }}" class="staff-button staff-button-small">Save</button>
+                                        <form method="post" class="staff-inline-delete">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="delete_platform">
+                                            <input type="hidden" name="platform_id" value="{{ platform.pk }}">
+                                            <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="3" class="staff-empty">No platforms yet.</td></tr>
+                                {% endfor %}
+                                <tr class="staff-price-row-new">
+                                    <td><input type="text" name="name" form="platform-form-new" class="staff-input"></td>
+                                    <td><input type="checkbox" name="take_security_deposits" form="platform-form-new"></td>
+                                    <td class="staff-price-row-actions">
+                                        <button type="submit" form="platform-form-new" class="staff-button staff-button-small">Add</button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        {% for platform in platforms %}
+                        <form method="post" id="platform-form-{{ platform.pk }}">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_platform">
+                            <input type="hidden" name="platform_id" value="{{ platform.pk }}">
+                        </form>
+                        {% endfor %}
+                        <form method="post" id="platform-form-new">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="add_platform">
+                        </form>
+                    </div>
+
+                    <div class="staff-panel">
                         <h2 class="staff-panel-title">Booking Conditions</h2>
                         <p class="staff-settings-hint">Shown to guests, in order, on the public Booking Conditions page.</p>
                         <table class="staff-price-table staff-extras-aligned-table staff-booking-conditions-table">
@@ -727,7 +774,14 @@
                                                 </label>
                                                 <label class="staff-field">Self check-in after (if mixed)<input type="time" name="self_check_in_after" form="management-company-form-{{ company.pk }}" value="{{ company.self_check_in_after|time:'H:i'|default:'' }}" class="staff-input"></label>
                                                 <label class="staff-field">Freshen after (days since last clean)<input type="number" name="freshen_after_days" min="0" form="management-company-form-{{ company.pk }}" value="{{ company.freshen_after_days|default_if_none:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Standard check-in time<input type="time" name="standard_checkin_time" form="management-company-form-{{ company.pk }}" value="{{ company.standard_checkin_time|time:'H:i' }}" class="staff-input"></label>
+                                                <label class="staff-field">Standard check-out time<input type="time" name="standard_checkout_time" form="management-company-form-{{ company.pk }}" value="{{ company.standard_checkout_time|time:'H:i' }}" class="staff-input"></label>
                                             </div>
+                                            <p class="staff-settings-hint">Whether this company's properties appear on the cleaning/check-ins calendars at all - turn off for a company that manages its own cleaning or check-ins separately.</p>
+                                            <label class="staff-checkbox-label"><input type="checkbox" name="cleans_on_calendar" form="management-company-form-{{ company.pk }}" {% if company.cleans_on_calendar %}checked{% endif %}> Cleans appear on calendar</label>
+                                            <label class="staff-checkbox-label"><input type="checkbox" name="checkins_on_calendar" form="management-company-form-{{ company.pk }}" {% if company.checkins_on_calendar %}checked{% endif %}> Check-ins appear on calendar</label>
+                                            <p class="staff-settings-hint">Whether this company's properties are tracked in the Finance area - as a cleaning company, gates Memos/Ad-hoc Services; as a booking company, gates the Payouts tab/Statements.</p>
+                                            <label class="staff-checkbox-label"><input type="checkbox" name="finances_managed_internally" form="management-company-form-{{ company.pk }}" {% if company.finances_managed_internally %}checked{% endif %}> Finances managed internally</label>
                                             <div class="staff-washing-materials">
                                                 <h5 class="staff-manager-contact-title">Washing materials</h5>
                                                 <ul class="staff-list staff-washing-materials-list">
@@ -829,7 +883,12 @@
                                                 </label>
                                                 <label class="staff-field">Self check-in after (if mixed)<input type="time" name="self_check_in_after" form="management-company-form-new" class="staff-input"></label>
                                                 <label class="staff-field">Freshen after (days since last clean)<input type="number" name="freshen_after_days" min="0" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Standard check-in time (default 14:00)<input type="time" name="standard_checkin_time" form="management-company-form-new" class="staff-input"></label>
+                                                <label class="staff-field">Standard check-out time (default 10:00)<input type="time" name="standard_checkout_time" form="management-company-form-new" class="staff-input"></label>
                                             </div>
+                                            <label class="staff-checkbox-label"><input type="checkbox" name="cleans_on_calendar" form="management-company-form-new" checked> Cleans appear on calendar</label>
+                                            <label class="staff-checkbox-label"><input type="checkbox" name="checkins_on_calendar" form="management-company-form-new" checked> Check-ins appear on calendar</label>
+                                            <label class="staff-checkbox-label"><input type="checkbox" name="finances_managed_internally" form="management-company-form-new"> Finances managed internally</label>
                                             <p class="staff-settings-hint">Save this company first to add its washing materials list.</p>
                                         </div>
                                     </td>

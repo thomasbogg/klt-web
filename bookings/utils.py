@@ -18,15 +18,6 @@ REFERENCE_GROUPS = 2
 
 WISE_MONTHS = {11, 12, 1, 2, 3}  # Nov-Mar arrivals
 
-# iCalLink.ical_source (Source.choices) -> the exact-cased env_settings.PLATFORMS string a
-# platform-synced Booking.enquiry_source gets. Keep in sync with both.
-PLATFORM_NAMES_BY_ICAL_SOURCE = {
-    'airbnb': 'Airbnb',
-    'booking.com': 'Booking.com',
-    'vrbo': 'Vrbo',
-}
-
-
 def generate_reference_candidate():
     """One random booking-reference string, e.g. 'K7QX-3H9M'. Not guaranteed unique - the caller checks."""
     groups = [
@@ -442,10 +433,9 @@ def sync_ical_link(link, ics_text):
         'events': [], 'cancelled_bookings': [],
     }
 
-    platform_name = PLATFORM_NAMES_BY_ICAL_SOURCE.get(link.ical_source)
+    platform_name = link.platform.name if link.platform_id else None
     if platform_name is None:
-        logerror(f"iCal link {link.pk} for {link.property} has an unrecognised ical_source "
-                 f"({link.ical_source!r}) - skipped.")
+        logerror(f"iCal link {link.pk} for {link.property} has no platform set - skipped.")
         return summary
 
     def as_date(value):

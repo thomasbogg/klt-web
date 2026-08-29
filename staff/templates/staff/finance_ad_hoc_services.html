@@ -1,0 +1,128 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ad-hoc Services | Finance | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/finance.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Finance</h1>
+        </header>
+
+        {% include 'staff/_finance_nav.html' %}
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="staff-finance-columns">
+            <div class="staff-panel">
+                <h3 class="staff-panel-title">Add ad-hoc service</h3>
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="create">
+                    {% if selected_property %}<input type="hidden" name="redirect_property" value="{{ selected_property.pk }}">{% endif %}
+                    <label class="staff-field">Property
+                        <select name="property" class="staff-input" required>
+                            <option value="">Select a property&hellip;</option>
+                            {% for property in properties %}
+                            <option value="{{ property.pk }}" {% if selected_property.pk == property.pk %}selected{% endif %}>{{ property }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <label class="staff-field">Description
+                        <input type="text" name="description" class="staff-input" required>
+                    </label>
+                    <label class="staff-field">Cost (&euro;)
+                        <input type="number" step="0.01" min="0" name="cost" class="staff-input" required>
+                    </label>
+                    <label class="staff-field">Date
+                        <input type="date" name="date" class="staff-input">
+                    </label>
+                    <button type="submit" class="staff-button">Add</button>
+                </form>
+            </div>
+
+            <div class="staff-panel">
+                <h3 class="staff-panel-title">Last 30 services</h3>
+                <form method="get" class="staff-field-row">
+                    <label class="staff-field">Filter by property
+                        <select name="property" class="staff-input" onchange="this.form.submit()">
+                            <option value="">All properties</option>
+                            {% for property in properties %}
+                            <option value="{{ property.pk }}" {% if selected_property.pk == property.pk %}selected{% endif %}>{{ property }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <button type="submit" class="staff-button staff-button-small">Refresh</button>
+                </form>
+
+                {% if services %}
+                <div class="staff-list">
+                    {% for service in services %}
+                    <div class="staff-finance-service-row">
+                        <div class="staff-finance-service-row-main">
+                            <span>
+                                <strong>{{ service.property }}</strong> &mdash; {{ service.description }}
+                                <span class="staff-cleaning-meta">({{ service.date|date:'j M Y' }}{% if service.memo_id %}, on {{ service.memo.property }}'s memo{% else %}, unattached{% endif %})</span>
+                            </span>
+                            <span class="staff-list-amount">&euro;{{ service.cost }}</span>
+                        </div>
+                        <div class="staff-finance-service-actions">
+                            <details>
+                                <summary class="staff-button staff-button-small">Edit</summary>
+                                <form method="post" class="staff-field-row">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="update">
+                                    <input type="hidden" name="service_id" value="{{ service.pk }}">
+                                    {% if selected_property %}<input type="hidden" name="redirect_property" value="{{ selected_property.pk }}">{% endif %}
+                                    <label class="staff-field">Property
+                                        <select name="property" class="staff-input" required>
+                                            {% for property in properties %}
+                                            <option value="{{ property.pk }}" {% if service.property_id == property.pk %}selected{% endif %}>{{ property }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </label>
+                                    <label class="staff-field">Description
+                                        <input type="text" name="description" class="staff-input" value="{{ service.description }}" required>
+                                    </label>
+                                    <label class="staff-field">Cost (&euro;)
+                                        <input type="number" step="0.01" min="0" name="cost" class="staff-input" value="{{ service.cost }}" required>
+                                    </label>
+                                    <label class="staff-field">Date
+                                        <input type="date" name="date" class="staff-input" value="{{ service.date|date:'Y-m-d' }}">
+                                    </label>
+                                    <button type="submit" class="staff-button staff-button-small">Save</button>
+                                </form>
+                            </details>
+                            <form method="post" class="staff-inline-delete">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="delete">
+                                <input type="hidden" name="service_id" value="{{ service.pk }}">
+                                {% if selected_property %}<input type="hidden" name="redirect_property" value="{{ selected_property.pk }}">{% endif %}
+                                <button type="submit" class="staff-list-delete-button" onclick="return confirm('Delete this service?')">&times;</button>
+                            </form>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="staff-empty">No ad-hoc services yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'bookings.apps.BookingsConfig',
     'guests.apps.GuestsConfig',
     'staff.apps.StaffConfig',
+    'finance.apps.FinanceConfig',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',

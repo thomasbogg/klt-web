@@ -5,6 +5,12 @@
         '#4C6EF5', '#12B886', '#F76707', '#BE4BDB', '#1098AD', '#E64980', '#F59F00', '#495057',
     ];
     var NO_MEET_GREET_COLOR = '#c7c7c7';
+    // Only key_box/welcome_visit get a tile icon - arrival is the default, most-common task type
+    // and already reads clearly as "guest name, time" on its own.
+    var TASK_TYPE_ICON = {
+        key_box: '/static/staff/icons/checkin-key.svg',
+        welcome_visit: '/static/staff/icons/checkin-welcome.svg',
+    };
 
     function getCookie(name) {
         var match = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
@@ -41,7 +47,7 @@
         dialogBody.addEventListener('change', function (event) {
             if (currentCheckinId == null) return;
             var id = event.target.id;
-            if (id === 'checkin-extras-collected' || id === 'checkin-deposit-collected' || id === 'checkin-deposit-returned') {
+            if (id === 'checkin-extras-collected' || id === 'checkin-deposit-collected') {
                 saveCheckboxes(currentCheckinId);
             }
         });
@@ -79,12 +85,20 @@
             editable: true,
             eventStartEditable: true,
             eventDurationEditable: false,
+            // The title already carries the real time (StaffCheckinEventsView's title string) -
+            // FullCalendar's own default time prefix reads as if it were the event's position on
+            // the hour axis, which for a staggered/collision-nudged event (see
+            // defaultTimedEventDuration below) it deliberately isn't.
+            displayEventTime: false,
             // A short, consistent block height for every event (rather than the 1-hour default
-            // an end-less event would otherwise get) - prevents unrelated arrivals 20-40 minutes
-            // apart from falsely reading as overlapping and being split side-by-side by
-            // FullCalendar's own layout engine. Genuine same-minute collisions are pre-staggered
-            // server-side (StaffCheckinEventsView) so they stack as a simple list instead.
-            defaultTimedEventDuration: '00:15',
+            // an end-less event would otherwise get) - prevents unrelated arrivals apart from
+            // falsely reading as overlapping and being split side-by-side by FullCalendar's own
+            // layout engine. Close-together checkins are pre-staggered server-side
+            // (StaffCheckinEventsView.EVENT_BLOCK_MINUTES, currently 30) into back-to-back slots -
+            // deliberately 1 minute short of that same 30 here, not equal to it, so adjacent
+            // blocks render with a real visual gap instead of sitting flush against each other
+            // (which still reads as one touching/overlapping mass - 2026-08-28, per Thomas).
+            defaultTimedEventDuration: '00:29',
             allDaySlot: true,
             events: eventsUrl,
 
@@ -98,6 +112,18 @@
                 info.el.style.borderColor = color;
                 if (props.status === 'done') {
                     info.el.style.opacity = '0.55';
+                }
+
+                var iconSrc = TASK_TYPE_ICON[props.task_type];
+                if (iconSrc) {
+                    var titleEl = info.el.querySelector('.fc-event-title');
+                    if (titleEl) {
+                        var icon = document.createElement('img');
+                        icon.src = iconSrc;
+                        icon.alt = props.task_type;
+                        icon.className = 'staff-checkin-task-icon';
+                        titleEl.prepend(icon);
+                    }
                 }
             },
 
@@ -198,10 +224,8 @@
             var params = new URLSearchParams();
             var extras = dialogBody.querySelector('#checkin-extras-collected');
             var depositCollected = dialogBody.querySelector('#checkin-deposit-collected');
-            var depositReturned = dialogBody.querySelector('#checkin-deposit-returned');
             params.set('extras_collected', extras && extras.checked ? 'true' : 'false');
             params.set('deposit_collected', depositCollected && depositCollected.checked ? 'true' : 'false');
-            params.set('deposit_returned', depositReturned && depositReturned.checked ? 'true' : 'false');
 
             fetch(url, {
                 method: 'POST',

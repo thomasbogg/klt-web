@@ -6,7 +6,7 @@ from django.contrib import messages
 from django.contrib.auth.models import User
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
-from django.db.models import Count, ProtectedError, Q
+from django.db.models import Count, ProtectedError, Q, Sum
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.template.loader import render_to_string
@@ -23,16 +23,20 @@ from bookings.models import (
     TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
+from finance.models import AdHocService, Memo, PayoutRecord
+from finance.services import (
+    open_memo_for_property, owner_balance_in_range, payouts_due_in_range, sweep_unattached_ad_hoc_services,
+)
 from bookings.utils import (
-    FLIGHT_NUMBER_HINT, PLATFORM_NAMES_BY_ICAL_SOURCE, extras_summary, has_completed_previous_stay,
+    FLIGHT_NUMBER_HINT, extras_summary, has_completed_previous_stay,
     parsed_arrival_departure_time, parsed_travel_method, sync_ical_link, valid_flight_number,
 )
 from guests.models import Guest
 from libraries.utils import logerror
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
-    Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail, WashingMaterial,
-    iCalLink,
+    Owner, Platform, Price, Property, PropertyImage, PropertyOwnership, PropertyPlatformID,
+    PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.permissions import staff_page_required, superuser_required
@@ -324,7 +328,23 @@ def _property_form_context():
         'accountants': Accountant.objects.order_by('company'),
         'management_companies': ManagementCompany.objects.order_by('name'),
         'owner_boolean_fields': OWNER_BOOLEAN_FIELDS,
+        'platforms': Platform.objects.all(),
     }
+
+
+def _save_platform_ids(request, property):
+    """Upserts one PropertyPlatformID per Platform from POST fields named
+    'platform_listing_<platform.pk>' - a blank value deletes any existing row for that platform.
+    Shared by StaffPropertyCreateView and StaffPropertyDetailView._update_property_info so both
+    forms behave identically."""
+    for platform in Platform.objects.all():
+        value = request.POST.get(f'platform_listing_{platform.pk}', '').strip()
+        if value:
+            PropertyPlatformID.objects.update_or_create(
+                property=property, platform=platform, defaults={'listing_id': value},
+            )
+        else:
+            PropertyPlatformID.objects.filter(property=property, platform=platform).delete()
 
 
 @method_decorator(staff_page_required('can_view_properties'), name='dispatch')
@@ -349,9 +369,6 @@ class StaffPropertyCreateView(View):
             al_number=_parsed_int(post.get('al_number')),
             booking_company_id=post.get('booking_company') or None,
             cleaning_company_id=post.get('cleaning_company') or None,
-            booking_com_id=post.get('booking_com_id', '').strip(),
-            airbnb_id=post.get('airbnb_id', '').strip(),
-            vrbo_id=post.get('vrbo_id', '').strip(),
             standard_cleaning_fee=_parsed_decimal(post.get('standard_cleaning_fee')) or 0,
         )
         try:
@@ -360,6 +377,7 @@ class StaffPropertyCreateView(View):
             _flash_validation_error(request, error)
             return render(request, self.template_name, _property_form_context())
         property.save()
+        _save_platform_ids(request, property)
         if property.owner_id:
             PropertyOwnership.record_initial_ownership(property, property.owner)
         messages.success(request, "Property created.")
@@ -512,6 +530,9 @@ class StaffSettingsView(View):
         'add_faq': 'bookings',
         'update_faq': 'bookings',
         'delete_faq': 'bookings',
+        'add_platform': 'bookings',
+        'update_platform': 'bookings',
+        'delete_platform': 'bookings',
         'update_extras_settings': 'extras',
         'add_welcome_pack_item': 'extras',
         'update_welcome_pack_item': 'extras',
@@ -566,6 +587,9 @@ class StaffSettingsView(View):
             'add_faq': self._add_faq,
             'update_faq': self._update_faq,
             'delete_faq': self._delete_faq,
+            'add_platform': self._add_platform,
+            'update_platform': self._update_platform,
+            'delete_platform': self._delete_platform,
             'update_extras_settings': self._update_extras_settings,
             'add_welcome_pack_item': self._add_welcome_pack_item,
             'update_welcome_pack_item': self._update_welcome_pack_item,
@@ -610,6 +634,7 @@ class StaffSettingsView(View):
             'welcome_pack_items': WelcomePackItem.objects.all(),
             'welcome_pack_categories': WelcomePackItem.Category.choices,
             'request_types': RequestType.objects.all(),
+            'platforms': Platform.objects.all(),
             # select_related across the reverse OneToOne (staff_profile) plus its role avoids an
             # N+1 when the Staff tab's role <select> renders each user's current role.
             'staff_users': User.objects.select_related('staff_profile__role').order_by('username'),
@@ -754,6 +779,57 @@ class StaffSettingsView(View):
     def _delete_faq(self, request):
         FAQ.objects.filter(pk=request.POST.get('faq_id')).delete()
         messages.success(request, "FAQ deleted.")
+
+    def _add_platform(self, request):
+        name = request.POST.get('name', '').strip()
+        if not name:
+            messages.error(request, "A platform needs a name.")
+            return
+        platform = Platform(
+            name=name, take_security_deposits=request.POST.get('take_security_deposits') == 'on',
+        )
+        try:
+            platform.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        platform.save()
+        messages.success(request, "Platform added.")
+
+    def _update_platform(self, request):
+        platform = Platform.objects.filter(pk=request.POST.get('platform_id')).first()
+        if platform is None:
+            messages.error(request, "That platform no longer exists.")
+            return
+        name = request.POST.get('name', '').strip()
+        if not name:
+            messages.error(request, "A platform needs a name.")
+            return
+        platform.name = name
+        platform.take_security_deposits = request.POST.get('take_security_deposits') == 'on'
+        try:
+            platform.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        platform.save()
+        messages.success(request, "Platform updated.")
+
+    def _delete_platform(self, request):
+        platform = Platform.objects.filter(pk=request.POST.get('platform_id')).first()
+        if platform is None:
+            messages.error(request, "That platform no longer exists.")
+            return
+        try:
+            platform.delete()
+        except ProtectedError:
+            messages.error(
+                request,
+                "Can't delete this platform - it's still set on at least one property's iCal "
+                "link or listing ID. Change or delete those first.",
+            )
+            return
+        messages.success(request, "Platform deleted.")
 
     # --- Extras ---
 
@@ -1062,6 +1138,34 @@ class StaffSettingsView(View):
             'freshen_after_days': _parsed_int(post.get('freshen_after_days')),
         }
 
+    def _parsed_standard_checkin_checkout(self, post):
+        """standard_checkin_time/standard_checkout_time always have a real value (unlike the other
+        operational fields above, which use None for "not specified") - a blank submission means
+        "leave it as it is" on an update, or "use the model's own 14:00/10:00 default" on an add,
+        not "set it to nothing" (the field itself isn't nullable). Only includes a key when the
+        post actually parsed to a real time, so callers can rely on an absent key meaning
+        "unchanged"."""
+        result = {}
+        checkin = _parsed_time(post.get('standard_checkin_time'))
+        checkout = _parsed_time(post.get('standard_checkout_time'))
+        if checkin is not None:
+            result['standard_checkin_time'] = checkin
+        if checkout is not None:
+            result['standard_checkout_time'] = checkout
+        return result
+
+    def _parsed_calendar_visibility_fields(self, post):
+        """cleans_on_calendar/checkins_on_calendar/finances_managed_internally - plain checkboxes,
+        unlike every field above: the whole management-company form always submits together (see
+        management-company-form-{{ company.pk }} in settings.html), so an absent key unambiguously
+        means "left unchecked" for this submission, not "not specified" - no None/leave-unchanged
+        case to thread through the way the two fields above need."""
+        return {
+            'cleans_on_calendar': post.get('cleans_on_calendar') == 'on',
+            'checkins_on_calendar': post.get('checkins_on_calendar') == 'on',
+            'finances_managed_internally': post.get('finances_managed_internally') == 'on',
+        }
+
     def _add_management_company(self, request):
         post = request.POST
         fields = {'name': post.get('name', '').strip()}
@@ -1070,6 +1174,8 @@ class StaffSettingsView(View):
             fields[f'{role}_email'] = post.get(f'{role}_email', '').strip()
             fields[f'{role}_phone'] = post.get(f'{role}_phone', '').strip()
         fields.update(self._parsed_management_company_operational_fields(post))
+        fields.update(self._parsed_standard_checkin_checkout(post))
+        fields.update(self._parsed_calendar_visibility_fields(post))
         company = ManagementCompany(**fields)
         try:
             company.full_clean()
@@ -1091,6 +1197,10 @@ class StaffSettingsView(View):
             setattr(company, f'{role}_email', post.get(f'{role}_email', '').strip())
             setattr(company, f'{role}_phone', post.get(f'{role}_phone', '').strip())
         for field, value in self._parsed_management_company_operational_fields(post).items():
+            setattr(company, field, value)
+        for field, value in self._parsed_standard_checkin_checkout(post).items():
+            setattr(company, field, value)
+        for field, value in self._parsed_calendar_visibility_fields(post).items():
             setattr(company, field, value)
         try:
             company.full_clean()
@@ -1243,6 +1353,7 @@ class StaffPropertyDetailView(View):
         specs, _ = PropertySpec.objects.get_or_create(property=property)
         amenities, _ = Amenity.objects.get_or_create(property=property)
         sef_details, _ = SEFDetail.objects.get_or_create(property=property)
+        existing_listing_ids = {p.platform_id: p.listing_id for p in property.platform_ids.all()}
         context = {
             'property': property,
             'active_panel': active_panel,
@@ -1251,7 +1362,10 @@ class StaffPropertyDetailView(View):
             'amenity_fields': AMENITY_BOOLEAN_FIELDS,
             'sef_details': sef_details,
             'ical_links': property.ical_links.all(),
-            'ical_sources': iCalLink.Source.choices,
+            'platform_id_rows': [
+                (platform, existing_listing_ids.get(platform.pk, ''))
+                for platform in Platform.objects.all()
+            ],
             'images': property.images.all(),
             'prices': property.prices.order_by('start_date'),
             'ownership_history': property.ownership_history.all(),
@@ -1272,9 +1386,6 @@ class StaffPropertyDetailView(View):
         property.al_number = _parsed_int(post.get('al_number'))
         property.booking_company_id = post.get('booking_company') or None
         property.cleaning_company_id = post.get('cleaning_company') or None
-        property.booking_com_id = post.get('booking_com_id', '').strip()
-        property.airbnb_id = post.get('airbnb_id', '').strip()
-        property.vrbo_id = post.get('vrbo_id', '').strip()
         fee = _parsed_decimal(post.get('standard_cleaning_fee'))
         if fee is not None:
             property.standard_cleaning_fee = fee
@@ -1284,6 +1395,7 @@ class StaffPropertyDetailView(View):
             _flash_validation_error(request, error)
             return
         property.save()
+        _save_platform_ids(request, property)
         messages.success(request, "Property info updated.")
 
     def _update_specification(self, request, property):
@@ -1394,13 +1506,14 @@ class StaffPropertyDetailView(View):
 
     def _add_ical_link(self, request, property):
         post = request.POST
-        source = post.get('ical_source', '').strip()
+        platform_id = post.get('platform', '').strip()
+        platform = Platform.objects.filter(pk=platform_id).first() if platform_id else None
         url = post.get('ical_url', '').strip()
         if not url:
             messages.error(request, "An iCal link needs a URL.")
             return
         iCalLink.objects.create(
-            property=property, ical_source=source or None, ical_url=url,
+            property=property, platform=platform, ical_url=url,
         )
         messages.success(request, "iCal link added.")
 
@@ -1481,10 +1594,10 @@ class StaffIcalSyncView(View):
 
         if not link.ical_url:
             context['fetch_error'] = "This link has no URL configured."
-        elif link.ical_source not in PLATFORM_NAMES_BY_ICAL_SOURCE:
-            context['fetch_error'] = "This link has no recognised source (Airbnb/Booking.com/Vrbo) set."
+        elif link.platform_id is None:
+            context['fetch_error'] = "This link has no platform set."
         else:
-            label = f"{property} ({link.get_ical_source_display()})"
+            label = f"{property} ({link.platform.name})"
             try:
                 response = requests.get(link.ical_url, timeout=30)
                 response.raise_for_status()
@@ -2461,11 +2574,26 @@ class StaffCheckinCalendarView(View):
 @method_decorator(staff_page_required('can_view_checkins_calendar'), name='dispatch')
 class StaffCheckinEventsView(View):
     """JSON event feed for StaffCheckinCalendarView's FullCalendar timeGrid instance - one object
-    per Checkin whose date falls in the requested [start, end) range. Exact-same-minute
-    collisions are staggered by a minute per collision so FullCalendar's timeGrid never sees two
-    identical start times (which would otherwise trigger its side-by-side column-split layout,
-    not the stacked-list look this calendar wants) - only the *rendered* start moves, the stored
-    Checkin.time and the label text both keep showing the real time."""
+    per Checkin whose date falls in the requested [start, end) range. Any two checkins on the same
+    date whose real times fall within EVENT_BLOCK_MINUTES of each other are pushed apart into a
+    simple back-to-back sequence, one EVENT_BLOCK_MINUTES-wide slot each with a real visual gap
+    between them (2026-08-28, per Thomas: legible sequential placement matters more
+    here than perfect fidelity to the calculated ETA) - this is broader than just an exact-same-
+    minute collision, since two genuinely close-but-different ETAs (e.g. 14:00 and 14:01) would
+    otherwise still overlap and trigger FullCalendar's side-by-side column-split layout, not the
+    stacked-list look this calendar wants. Only the *rendered* start moves, the stored Checkin.time
+    and the title's own time label both keep showing the real time - and since the render nudge can
+    now legitimately diverge from that real time, the calendar tile itself no longer displays a
+    clock time at all (checkins_calendar.js's displayEventTime: false) to avoid it reading as
+    authoritative."""
+
+    # The push-out step between consecutive blocks. Deliberately NOT the same as
+    # checkins_calendar.js's defaultTimedEventDuration ('00:29') - a block rendered for the full
+    # 30 minutes would be flush against the next one with no visual gap, which still reads as one
+    # touching/overlapping mass even though FullCalendar's own collision math would call it fine
+    # (2026-08-28, per Thomas, echoing the same thing in Google Calendar). One minute of empty
+    # space between blocks is enough to read as clearly separate.
+    EVENT_BLOCK_MINUTES = 30
 
     def get(self, request, *args, **kwargs):
         start_date = _parsed_date((request.GET.get('start') or '').split('T')[0])
@@ -2476,7 +2604,7 @@ class StaffCheckinEventsView(View):
         if end_date:
             checkins = checkins.filter(date__lt=end_date)
 
-        seen = {}
+        next_free_by_date = {}
         events = []
         for checkin in checkins.order_by('date', 'time', 'pk'):
             booking = checkin.booking
@@ -2490,10 +2618,13 @@ class StaffCheckinEventsView(View):
             if all_day:
                 start = checkin.date.isoformat()
             else:
-                key = (checkin.date, checkin.time)
-                offset = seen.get(key, 0)
-                seen[key] = offset + 1
-                render_time = (datetime.combine(checkin.date, checkin.time) + timedelta(minutes=offset)).time()
+                render_time = checkin.time
+                next_free = next_free_by_date.get(checkin.date)
+                if next_free is not None and render_time < next_free:
+                    render_time = next_free
+                next_free_by_date[checkin.date] = (
+                    datetime.combine(checkin.date, render_time) + timedelta(minutes=self.EVENT_BLOCK_MINUTES)
+                ).time()
                 start = f"{checkin.date.isoformat()}T{render_time.strftime('%H:%M:%S')}"
 
             events.append({
@@ -2556,11 +2687,21 @@ class StaffCheckinDetailView(View):
         booking = checkin.booking
         context = {'checkin': checkin, 'booking': booking}
         if checkin.task_type == 'arrival':
-            deposit_waived = has_completed_previous_stay(booking.guest, exclude_booking_id=booking.pk)
+            # Two independent waivers, either is enough to zero the deposit: a returning guest
+            # (has_completed_previous_stay), or a platform whose own terms mean we don't take one
+            # directly (Platform.take_security_deposits=False, matched by booking.enquiry_source -
+            # 2026-08-28, per Thomas). Computed live on every popup open, not stored anywhere, so
+            # this applies to every booking - past or future - the moment the platform's flag is
+            # set, with nothing to backfill.
+            platform = Platform.objects.filter(name=booking.enquiry_source).first()
+            platform_waives_deposit = platform is not None and not platform.take_security_deposits
+            returning_guest = has_completed_previous_stay(booking.guest, exclude_booking_id=booking.pk)
+            deposit_waived = returning_guest or platform_waives_deposit
             context.update({
                 'arrival': getattr(booking, 'arrival', None),
                 'extras': extras_summary(booking),
                 'deposit_amount': None if deposit_waived else BookingSettings.load().security_deposit_amount,
+                'deposit_waived_by_platform': platform_waives_deposit and not returning_guest,
             })
         popup_html = render_to_string('staff/_checkin_popup.html', context)
         return JsonResponse({'popup_html': popup_html})
@@ -2590,8 +2731,8 @@ class StaffCheckinToggleDoneView(View):
 
 @method_decorator(staff_page_required('can_view_checkins_calendar'), name='dispatch')
 class StaffCheckinSaveView(View):
-    """Saves the popup's extras-collected/deposit-collected/deposit-returned checkboxes - only
-    meaningful for task_type='arrival', matching Checkin's own docstring on those fields."""
+    """Saves the popup's extras-collected/deposit-collected checkboxes - only meaningful for
+    task_type='arrival', matching Checkin's own docstring on those fields."""
 
     def post(self, request, *args, **kwargs):
         checkin = Checkin.objects.filter(pk=kwargs['pk']).first()
@@ -2602,6 +2743,340 @@ class StaffCheckinSaveView(View):
 
         checkin.extras_collected = request.POST.get('extras_collected') == 'true'
         checkin.deposit_collected = request.POST.get('deposit_collected') == 'true'
-        checkin.deposit_returned = request.POST.get('deposit_returned') == 'true'
-        checkin.save(update_fields=['extras_collected', 'deposit_collected', 'deposit_returned'])
+        checkin.save(update_fields=['extras_collected', 'deposit_collected'])
         return JsonResponse({'ok': True})
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceMemosView(View):
+    """The Memos tab - one row per finance.models.Memo, grouped by its turnover CleaningTask's
+    date, a 7-day window starting at ?date= (default today) - same server-rendered day-column/
+    empty-day-shown shape as StaffCleaningRotaView, but a 7-day-from-today window paged by 7 (not
+    that view's -1..+3 window paged by 3), per the Finance area's own spec. Each row shows its
+    computed total (Memo.total()) and three actions: View memo (its own detail page), Add service
+    (deep-links to the Ad-hoc Services page with this property pre-selected), Send
+    (StaffFinanceMemoSendView). No POST here - every action routes through its own small view,
+    matching StaffCleaningTaskDismissView's one-view-per-action convention."""
+    template_name = 'staff/finance_memos.html'
+
+    def get(self, request, *args, **kwargs):
+        target_date = _parsed_date(request.GET.get('date')) or timezone.now().date()
+        window_dates = [target_date + timedelta(days=offset) for offset in range(0, 7)]
+
+        memos = Memo.objects.filter(
+            cleaning_task__date__range=(window_dates[0], window_dates[-1]),
+        ).select_related('property', 'cleaning_task').prefetch_related('ad_hoc_services')
+
+        rows_by_date = {}
+        for memo in memos:
+            rows_by_date.setdefault(memo.cleaning_task.date, []).append(memo)
+        for rows in rows_by_date.values():
+            rows.sort(key=lambda memo: memo.property.title)
+        days = [{'date': day, 'rows': rows_by_date.get(day, [])} for day in window_dates]
+
+        return render(request, self.template_name, {
+            'days': days,
+            'target_date': target_date,
+            'window_start': window_dates[0],
+            'window_end': window_dates[-1],
+            'prev_date': target_date - timedelta(days=7),
+            'next_date': target_date + timedelta(days=7),
+            'active_tab': 'memos',
+        })
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceMemoDetailView(View):
+    """The memo document itself - property, clean date, Clean/Meet & Greet/Ad-hoc lines, total,
+    sent status - as its own printable-feeling page with a back-link to the Memos tab."""
+    template_name = 'staff/finance_memo_detail.html'
+
+    def get(self, request, pk, *args, **kwargs):
+        memo = Memo.objects.select_related('property', 'cleaning_task', 'sent_by').filter(pk=pk).first()
+        if memo is None:
+            raise Http404("No memo found.")
+        return render(request, self.template_name, {
+            'memo': memo,
+            'ad_hoc_services': memo.ad_hoc_services.order_by('date'),
+        })
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceMemoSendView(View):
+    """Marks a Memo sent - freezes its clean_fee/meet_greet_fee permanently (see Memo's own
+    docstring) and immediately sweeps any unattached AdHocService for the property onto whatever
+    memo is now open next (finance/services.py::sweep_unattached_ad_hoc_services), satisfying "any
+    new ad-hoc service rolls onto the next memo from this moment". Emailing the memo to the
+    owner is explicitly out of scope/stubbed - this project has no outbound email yet - so Send
+    here just records who/when."""
+
+    def post(self, request, pk, *args, **kwargs):
+        memo = Memo.objects.select_related('property').filter(pk=pk).first()
+        if memo is None:
+            messages.error(request, "That memo no longer exists.")
+            return redirect('staff:finance_memos')
+        if memo.sent_at is not None:
+            messages.error(request, "That memo has already been sent.")
+            return redirect('staff:finance_memos')
+
+        memo.sent_at = timezone.now()
+        memo.sent_by = request.user
+        memo.save(update_fields=['sent_at', 'sent_by'])
+        sweep_unattached_ad_hoc_services(memo.property)
+        messages.success(request, "Memo marked as sent.")
+
+        redirect_date = request.POST.get('date', '').strip()
+        redirect_url = reverse('staff:finance_memos')
+        if redirect_date:
+            redirect_url = f"{redirect_url}?date={redirect_date}"
+        return redirect(redirect_url)
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceAdHocServiceListView(View):
+    """The Ad-hoc Services CRUD page - a create form (property/description/cost) on the left, and
+    a searchable last-30 list with inline edit/delete on the right, following
+    StaffSettingsView's action-dispatch POST convention. Deliberately its own page rather than
+    only reachable from within a Memo, since a service can be logged any time - between bookings,
+    before a clean is even scheduled (finance.models.AdHocService.save() leaves it unattached
+    until a matching Memo exists, see that model's own docstring)."""
+    template_name = 'staff/finance_ad_hoc_services.html'
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name, self._context(request))
+
+    def post(self, request, *args, **kwargs):
+        action = request.POST.get('action')
+        handler = {
+            'create': self._create,
+            'update': self._update,
+            'delete': self._delete,
+        }.get(action)
+        if handler is not None:
+            handler(request)
+        redirect_url = reverse('staff:finance_ad_hoc_services')
+        selected_property = request.POST.get('redirect_property', '').strip()
+        if selected_property:
+            redirect_url = f"{redirect_url}?property={selected_property}"
+        return redirect(redirect_url)
+
+    def _context(self, request):
+        selected_property = None
+        property_id = request.GET.get('property', '').strip()
+        if property_id.isdigit():
+            selected_property = Property.objects.filter(pk=property_id).first()
+
+        services = AdHocService.objects.select_related('property', 'memo').order_by('-created_at')
+        if selected_property:
+            services = services.filter(property=selected_property)
+
+        return {
+            'properties': Property.objects.order_by('title'),
+            'selected_property': selected_property,
+            'services': services[:30],
+            'active_tab': 'services',
+        }
+
+    def _create(self, request):
+        post = request.POST
+        service = AdHocService(
+            property_id=post.get('property') or None,
+            description=post.get('description', '').strip(),
+            cost=_parsed_decimal(post.get('cost')),
+            date=_parsed_date(post.get('date')) or timezone.now().date(),
+        )
+        try:
+            service.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        service.save()
+        messages.success(request, "Ad-hoc service added.")
+
+    def _update(self, request):
+        post = request.POST
+        service = AdHocService.objects.filter(pk=post.get('service_id')).first()
+        if service is None:
+            messages.error(request, "That ad-hoc service no longer exists.")
+            return
+        new_property_id = post.get('property') or None
+        property_changed = str(service.property_id) != str(new_property_id)
+        service.property_id = new_property_id
+        service.description = post.get('description', '').strip()
+        service.cost = _parsed_decimal(post.get('cost'))
+        service.date = _parsed_date(post.get('date')) or service.date
+        if property_changed:
+            # A service now belongs to a different property than the memo it's currently attached
+            # to (if any) - re-run the same "attach to the current open memo, or leave unattached"
+            # logic a brand-new service goes through, rather than leaving it pointed at a memo for
+            # the wrong property.
+            service.memo = open_memo_for_property(service.property) if new_property_id else None
+        try:
+            service.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        service.save()
+        messages.success(request, "Ad-hoc service updated.")
+
+    def _delete(self, request):
+        service = AdHocService.objects.filter(pk=request.POST.get('service_id')).first()
+        if service is None:
+            messages.error(request, "That ad-hoc service no longer exists.")
+            return
+        service.delete()
+        messages.success(request, "Ad-hoc service deleted.")
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinancePayoutsView(View):
+    """The Payouts tab - only owners paid on a regular schedule (Owner.is_paid_regularly=True) on
+    properties whose booking_company has finances_managed_internally=True, grouped by due_date
+    (bookings/payouts.py::compute_owner_payout's own due_date figure), same 7-day-from-today
+    window/empty-day-shown shape as StaffFinanceMemosView. Rows that already have a PayoutRecord
+    stay visible showing who paid it and when, rather than disappearing - matching the cleaning
+    rota's own completed-rows-stay-visible convention, so the week list stays a complete record."""
+    template_name = 'staff/finance_payouts.html'
+
+    def get(self, request, *args, **kwargs):
+        target_date = _parsed_date(request.GET.get('date')) or timezone.now().date()
+        window_dates = [target_date + timedelta(days=offset) for offset in range(0, 7)]
+
+        due = payouts_due_in_range(window_dates[0], window_dates[-1])
+        paid_records = {
+            record.booking_id: record
+            for record in PayoutRecord.objects.filter(booking__in=[b for b, _ in due]).select_related('paid_by')
+        }
+
+        rows_by_date = {}
+        for booking, payout in due:
+            rows_by_date.setdefault(payout['due_date'], []).append({
+                'booking': booking,
+                'payout': payout,
+                'record': paid_records.get(booking.pk),
+            })
+        for rows in rows_by_date.values():
+            rows.sort(key=lambda row: row['booking'].property.title)
+        days = [{'date': day, 'rows': rows_by_date.get(day, [])} for day in window_dates]
+
+        return render(request, self.template_name, {
+            'days': days,
+            'target_date': target_date,
+            'window_start': window_dates[0],
+            'window_end': window_dates[-1],
+            'prev_date': target_date - timedelta(days=7),
+            'next_date': target_date + timedelta(days=7),
+            'active_tab': 'payouts',
+        })
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinancePayoutMarkPaidView(View):
+    """Snapshots the booking's current owner_balance into a new PayoutRecord - see that model's
+    own docstring for why the amount is frozen at mark-paid time rather than re-derived live."""
+
+    def post(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            messages.error(request, "That booking no longer exists.")
+            return redirect('staff:finance_payouts')
+        if PayoutRecord.objects.filter(booking=booking).exists():
+            messages.error(request, "That payout has already been marked as paid.")
+            return redirect('staff:finance_payouts')
+
+        payout = compute_owner_payout(booking)
+        if not payout['available']:
+            messages.error(request, "That booking's payout can't be computed right now.")
+            return redirect('staff:finance_payouts')
+
+        PayoutRecord.objects.create(booking=booking, amount=payout['owner_balance'], paid_by=request.user)
+        messages.success(request, "Payout marked as paid.")
+
+        redirect_date = request.POST.get('date', '').strip()
+        redirect_url = reverse('staff:finance_payouts')
+        if redirect_date:
+            redirect_url = f"{redirect_url}?date={redirect_date}"
+        return redirect(redirect_url)
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceStatementView(View):
+    """Generates a printable Statement for one Owner or one Property over a date range - the
+    Memo section and the payout section are gated independently per property (confirmed with
+    Thomas): a property's sent Memos show whenever its cleaning_company has
+    finances_managed_internally=True, regardless of its booking_company; its net payout figure
+    shows whenever its booking_company has finances_managed_internally=True AND its owner has
+    is_paid_regularly=False, regardless of its cleaning_company. A property with both shows both
+    sections together - the combined case where bookings/payouts.py::compute_owner_payout's
+    already-net owner_balance (it already deducts clean_fee/meet_greet_fee once) must not be
+    reduced by the Memo's fee lines a second time - only by the AdHocService total, per the plan
+    this was built from."""
+    template_name = 'staff/finance_statement.html'
+
+    def get(self, request, *args, **kwargs):
+        scope = request.GET.get('scope', '').strip()
+        start = _parsed_date(request.GET.get('start'))
+        end = _parsed_date(request.GET.get('end'))
+        owner = None
+        property = None
+        if scope == 'owner' and request.GET.get('owner_id', '').isdigit():
+            owner = Owner.objects.filter(pk=request.GET['owner_id']).first()
+        elif scope == 'property' and request.GET.get('property_id', '').isdigit():
+            property = Property.objects.select_related(
+                'owner', 'booking_company', 'cleaning_company',
+            ).filter(pk=request.GET['property_id']).first()
+
+        context = {
+            'owners': Owner.objects.order_by('name'),
+            'properties': Property.objects.order_by('title'),
+            'scope': scope,
+            'owner': owner,
+            'property': property,
+            'start': start,
+            'end': end,
+            'sections': None,
+            'active_tab': 'statement',
+        }
+        if (owner or property) and start and end:
+            context['sections'] = self._sections(owner, property, start, end)
+        return render(request, self.template_name, context)
+
+    def _sections(self, owner, property, start, end):
+        if property:
+            properties = [property]
+        else:
+            properties = list(Property.objects.filter(owner=owner).select_related(
+                'owner', 'booking_company', 'cleaning_company',
+            ))
+        sections = []
+        for prop in properties:
+            memo_section = None
+            if prop.cleaning_company_id and prop.cleaning_company.finances_managed_internally:
+                memos = list(Memo.objects.filter(
+                    property=prop, sent_at__date__range=(start, end),
+                ).prefetch_related('ad_hoc_services').order_by('sent_at'))
+                memo_section = {
+                    'memos': memos,
+                    'total': sum((memo.total() for memo in memos), Decimal('0')),
+                }
+
+            payout_section = None
+            if (
+                prop.owner_id and not prop.owner.is_paid_regularly
+                and prop.booking_company_id and prop.booking_company.finances_managed_internally
+            ):
+                property_due = owner_balance_in_range(prop, start, end)
+                gross = sum((p['owner_balance'] for _, p in property_due), Decimal('0'))
+                ad_hoc_total = AdHocService.objects.filter(
+                    property=prop, memo__sent_at__date__range=(start, end),
+                ).aggregate(total=Sum('cost'))['total'] or Decimal('0')
+                payout_section = {
+                    'bookings': property_due,
+                    'gross': gross,
+                    'ad_hoc_total': ad_hoc_total,
+                    'net': gross - ad_hoc_total,
+                }
+
+            if memo_section or payout_section:
+                sections.append({'property': prop, 'memo_section': memo_section, 'payout_section': payout_section})
+        return sections

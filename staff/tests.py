@@ -16,8 +16,8 @@ from bookings.models import (
 from guests.models import Guest
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
-    Owner, Price, Property, PropertyImage, PropertyOwnership, PropertySpec, SEFDetail, WashingMaterial,
-    iCalLink,
+    Owner, Platform, Price, Property, PropertyImage, PropertyOwnership, PropertyPlatformID,
+    PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.utils import (
@@ -1043,6 +1043,46 @@ class CleaningTaskSyncTests(TestCase):
         self.assertEqual(task.date, self.end)
         self.assertEqual(task.status, 'pending')
 
+    def test_cleans_on_calendar_false_creates_no_task(self):
+        company = make_management_company(name='No Calendar Co', cleans_on_calendar=False)
+        self.property.cleaning_company = company
+        self.property.save()
+        Departure.objects.create(booking=self.booking, clean=True)
+        self.assertFalse(CleaningTask.objects.filter(booking=self.booking).exists())
+
+    def test_turning_cleans_on_calendar_off_removes_pending_tasks_on_next_sync(self):
+        company = make_management_company(name='No Calendar Co 2', cleans_on_calendar=True)
+        self.property.cleaning_company = company
+        self.property.save()
+        Departure.objects.create(booking=self.booking, clean=True)
+        self.assertTrue(CleaningTask.objects.filter(booking=self.booking).exists())
+
+        company.cleans_on_calendar = False
+        company.save()
+        self.booking.save()  # re-trigger the signal-driven sync, same as any other unrelated save
+        self.assertFalse(CleaningTask.objects.filter(booking=self.booking, status='pending').exists())
+
+    def test_cleans_on_calendar_false_does_not_remove_a_done_task(self):
+        company = make_management_company(name='No Calendar Co 3', cleans_on_calendar=True)
+        self.property.cleaning_company = company
+        self.property.save()
+        Departure.objects.create(booking=self.booking, clean=True)
+        task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        task.status = 'done'
+        task.save()
+
+        company.cleans_on_calendar = False
+        company.save()
+        self.booking.save()
+        task.refresh_from_db()
+        self.assertEqual(task.status, 'done')
+
+    def test_no_cleaning_company_is_unaffected_by_cleans_on_calendar(self):
+        # Property.cleaning_company is None here (never set) - the flag only applies when a
+        # company is actually tracked.
+        Departure.objects.create(booking=self.booking, clean=True)
+        self.assertTrue(CleaningTask.objects.filter(booking=self.booking, task_type='turnover').exists())
+
 
 class FreshenTaskSyncTests(TestCase):
     """staff/utils.py::sync_freshen_tasks_for_property() - the auto-insert/auto-dismiss cascade
@@ -1075,6 +1115,16 @@ class FreshenTaskSyncTests(TestCase):
     def test_no_prior_clean_creates_no_freshen_task(self):
         # Nothing to measure a gap against yet - see sync_freshen_tasks_for_property()'s docstring.
         later = self._make_booking(self.baseline, self.baseline + timedelta(days=7))
+        self.assertFalse(CleaningTask.objects.filter(booking=later, task_type='freshen').exists())
+
+    def test_cleans_on_calendar_false_creates_no_freshen_task(self):
+        self.company.cleans_on_calendar = False
+        self.company.save()
+        # Manually seed a 'last clean' baseline (bypassing the turnover gate, which
+        # cleans_on_calendar also suppresses) so this test isolates the freshen sweep's own gate.
+        earlier = self._make_booking(self.baseline - timedelta(days=10), self.baseline)
+        CleaningTask.objects.create(booking=earlier, task_type='turnover', date=self.baseline)
+        later = self._make_booking(self.baseline + timedelta(days=10), self.baseline + timedelta(days=17))
         self.assertFalse(CleaningTask.objects.filter(booking=later, task_type='freshen').exists())
 
     def test_gap_meeting_threshold_creates_pending_freshen_task(self):
@@ -1835,7 +1885,7 @@ class StaffPropertyDetailViewTests(TestCase):
             'action': 'update_property_info', 'title': 'Detail Property', 'short_title': 'DETAILPROP',
             'door_number': '12B',
             'location': self.location.pk, 'accountant': self.accountant.pk, 'al_number': '9999',
-            'booking_company': self.management_company.pk, 'booking_com_id': 'BDC123',
+            'booking_company': self.management_company.pk,
             'standard_cleaning_fee': '90.00',
         })
         self.assertRedirects(response, f'{self.url}?panel=main')
@@ -1845,6 +1895,28 @@ class StaffPropertyDetailViewTests(TestCase):
         self.assertEqual(self.property.booking_company_id, self.management_company.pk)
         self.assertIsNone(self.property.cleaning_company_id)
         self.assertEqual(self.property.standard_cleaning_fee, Decimal('90.00'))
+
+    def test_update_property_info_saves_platform_listing_ids(self):
+        airbnb = Platform.objects.get_or_create(name='Airbnb')[0]
+        self.client.post(self.url, {
+            'action': 'update_property_info', 'title': 'Detail Property', 'short_title': 'DETAILPROP',
+            'location': self.location.pk,
+            f'platform_listing_{airbnb.pk}': 'ABNB-123',
+        })
+        self.assertEqual(
+            PropertyPlatformID.objects.get(property=self.property, platform=airbnb).listing_id,
+            'ABNB-123',
+        )
+
+    def test_update_property_info_blank_listing_id_deletes_existing_row(self):
+        airbnb = Platform.objects.get_or_create(name='Airbnb')[0]
+        PropertyPlatformID.objects.create(property=self.property, platform=airbnb, listing_id='ABNB-123')
+        self.client.post(self.url, {
+            'action': 'update_property_info', 'title': 'Detail Property', 'short_title': 'DETAILPROP',
+            'location': self.location.pk,
+            f'platform_listing_{airbnb.pk}': '',
+        })
+        self.assertFalse(PropertyPlatformID.objects.filter(property=self.property, platform=airbnb).exists())
 
     def test_update_property_info_no_longer_accepts_an_owner_field(self):
         # Regression guard: Property.owner must only ever change via PropertyOwnership.
@@ -1976,20 +2048,23 @@ class StaffPropertyDetailViewTests(TestCase):
         self.assertFalse(Price.objects.filter(pk=price.pk).exists())
 
     def test_add_ical_link(self):
+        airbnb = Platform.objects.get_or_create(name='Airbnb')[0]
         self.client.post(self.url, {
-            'action': 'add_ical_link', 'ical_source': 'airbnb', 'ical_url': 'https://airbnb.com/feed.ics',
+            'action': 'add_ical_link', 'platform': airbnb.pk, 'ical_url': 'https://airbnb.com/feed.ics',
         })
         link = iCalLink.objects.get(property=self.property)
-        self.assertEqual(link.ical_source, 'airbnb')
+        self.assertEqual(link.platform_id, airbnb.pk)
         self.assertEqual(link.ical_url, 'https://airbnb.com/feed.ics')
 
     def test_add_ical_link_requires_url(self):
-        self.client.post(self.url, {'action': 'add_ical_link', 'ical_source': 'airbnb', 'ical_url': ''})
+        airbnb = Platform.objects.get_or_create(name='Airbnb')[0]
+        self.client.post(self.url, {'action': 'add_ical_link', 'platform': airbnb.pk, 'ical_url': ''})
         self.assertFalse(iCalLink.objects.filter(property=self.property).exists())
 
     def test_update_ical_link_saves_new_url(self):
+        booking_com = Platform.objects.get_or_create(name='Booking.com')[0]
         link = iCalLink.objects.create(
-            property=self.property, ical_source='booking.com', ical_url='https://old.example.com/feed.ics',
+            property=self.property, platform=booking_com, ical_url='https://old.example.com/feed.ics',
         )
         response = self.client.post(self.url, {
             'action': 'update_ical_link', 'link_id': link.pk, 'ical_url': 'https://new.example.com/feed.ics',
@@ -1997,7 +2072,7 @@ class StaffPropertyDetailViewTests(TestCase):
         self.assertRedirects(response, f'{self.url}?panel=ical')
         link.refresh_from_db()
         self.assertEqual(link.ical_url, 'https://new.example.com/feed.ics')
-        self.assertEqual(link.ical_source, 'booking.com')  # untouched by this action
+        self.assertEqual(link.platform_id, booking_com.pk)  # untouched by this action
 
     def test_update_ical_link_requires_url(self):
         link = iCalLink.objects.create(property=self.property, ical_url='https://old.example.com/feed.ics')
@@ -2139,8 +2214,9 @@ class StaffIcalSyncViewTests(TestCase):
         User.objects.create_user(username='ical_sync_staffer', password='pw', is_staff=True, is_superuser=True)
         self.client.login(username='ical_sync_staffer', password='pw')
         self.property = Property.objects.create(title='Sync View Property', short_title='SYNCVIEWPROP')
+        self.platform = Platform.objects.get_or_create(name='Airbnb')[0]
         self.link = iCalLink.objects.create(
-            property=self.property, ical_source='airbnb', ical_url='https://example.com/feed.ics',
+            property=self.property, platform=self.platform, ical_url='https://example.com/feed.ics',
         )
         self.url = reverse('staff:ical_sync', kwargs={'pk': self.property.pk, 'link_id': self.link.pk})
         self.start = date.today() + timedelta(days=100)
@@ -2163,13 +2239,13 @@ class StaffIcalSyncViewTests(TestCase):
         mocked_get.assert_not_called()
         self.assertIn('URL', response.context['fetch_error'])
 
-    def test_link_with_unrecognised_source_shows_an_error_without_fetching(self):
-        self.link.ical_source = None
-        self.link.save(update_fields=['ical_source'])
+    def test_link_with_no_platform_shows_an_error_without_fetching(self):
+        self.link.platform = None
+        self.link.save(update_fields=['platform'])
         with patch('staff.views.requests.get') as mocked_get:
             response = self.client.post(self.url)
         mocked_get.assert_not_called()
-        self.assertIn('recognised source', response.context['fetch_error'])
+        self.assertIn('no platform set', response.context['fetch_error'])
 
     def test_fetch_failure_shows_an_error(self):
         with patch('staff.views.requests.get', side_effect=requests.ConnectionError('boom')):
@@ -2360,6 +2436,56 @@ class StaffSettingsViewTests(TestCase):
         messages = [str(m) for m in response.context['messages']]
         self.assertTrue(any('ownership history' in m for m in messages))
 
+    def test_add_platform(self):
+        self.client.post(self.url, {'action': 'add_platform', 'name': 'Direct'})
+        platform = Platform.objects.get(name='Direct')
+        self.assertFalse(platform.take_security_deposits)
+
+    def test_add_platform_with_take_security_deposits_checked(self):
+        self.client.post(self.url, {
+            'action': 'add_platform', 'name': 'Direct', 'take_security_deposits': 'on',
+        })
+        self.assertTrue(Platform.objects.get(name='Direct').take_security_deposits)
+
+    def test_update_platform(self):
+        platform = Platform.objects.create(name='Old Name')
+        self.client.post(self.url, {
+            'action': 'update_platform', 'platform_id': platform.pk, 'name': 'New Name',
+            'take_security_deposits': 'on',
+        })
+        platform.refresh_from_db()
+        self.assertEqual(platform.name, 'New Name')
+        self.assertTrue(platform.take_security_deposits)
+
+    def test_delete_platform(self):
+        platform = Platform.objects.create(name='Unused Platform')
+        self.client.post(self.url, {'action': 'delete_platform', 'platform_id': platform.pk})
+        self.assertFalse(Platform.objects.filter(pk=platform.pk).exists())
+
+    def test_delete_platform_used_by_an_ical_link_is_blocked_with_friendly_message(self):
+        # A live incident during this feature's own build (deleting a Platform still referenced by
+        # a property's PropertyPlatformID silently cascade-deleted real, migrated listing-ID data)
+        # is why both iCalLink.platform and PropertyPlatformID.platform are PROTECT, not CASCADE -
+        # this and the next test guard that the resulting ProtectedError is caught and flashed
+        # rather than silently destroying data or bubbling up as a 500.
+        platform = Platform.objects.create(name='In Use Platform')
+        property = Property.objects.create(title='Platform Delete Property', short_title='PLATFORMDEL')
+        iCalLink.objects.create(property=property, platform=platform, ical_url='https://example.com/feed.ics')
+        response = self.client.post(self.url, {
+            'action': 'delete_platform', 'platform_id': platform.pk,
+        }, follow=True)
+        self.assertTrue(Platform.objects.filter(pk=platform.pk).exists())
+        messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('iCal link or listing ID' in m for m in messages))
+
+    def test_delete_platform_used_by_a_property_listing_id_is_blocked(self):
+        platform = Platform.objects.create(name='In Use Platform')
+        property = Property.objects.create(title='Platform Delete Property 2', short_title='PLATFORMDEL2')
+        PropertyPlatformID.objects.create(property=property, platform=platform, listing_id='XYZ')
+        self.client.post(self.url, {'action': 'delete_platform', 'platform_id': platform.pk})
+        self.assertTrue(Platform.objects.filter(pk=platform.pk).exists())
+        self.assertTrue(PropertyPlatformID.objects.filter(property=property, platform=platform).exists())
+
     def test_add_management_company_with_no_contacts_set_succeeds(self):
         # Every contact role is genuinely optional - a company can be added with just a name.
         self.client.post(self.url, {'action': 'add_management_company', 'name': 'New Management Co'})
@@ -2448,6 +2574,34 @@ class StaffSettingsViewTests(TestCase):
         self.assertIsNone(company.standard_meet_and_greet_fee)
         self.assertIsNone(company.check_in_method)
         self.assertIsNone(company.freshen_after_days)
+
+    def test_add_management_company_calendar_visibility_flags_default_false_when_unchecked(self):
+        # Unlike the "not specified" operational fields above, these two plain checkboxes always
+        # resolve to a real boolean - an omitted key (box left unchecked) means False here, not
+        # "leave the model's own True default alone". The settings.html "new company" row ships
+        # both boxes pre-checked so an admin who doesn't touch them still gets True in practice.
+        self.client.post(self.url, {'action': 'add_management_company', 'name': 'No Flags Co'})
+        company = ManagementCompany.objects.get(name='No Flags Co')
+        self.assertFalse(company.cleans_on_calendar)
+        self.assertFalse(company.checkins_on_calendar)
+
+    def test_add_management_company_calendar_visibility_flags_when_checked(self):
+        self.client.post(self.url, {
+            'action': 'add_management_company', 'name': 'Flags Co',
+            'cleans_on_calendar': 'on', 'checkins_on_calendar': 'on',
+        })
+        company = ManagementCompany.objects.get(name='Flags Co')
+        self.assertTrue(company.cleans_on_calendar)
+        self.assertTrue(company.checkins_on_calendar)
+
+    def test_update_management_company_can_turn_calendar_visibility_flags_off(self):
+        company = make_management_company(cleans_on_calendar=True, checkins_on_calendar=True)
+        self.client.post(self.url, {
+            'action': 'update_management_company', 'management_company_id': company.pk, 'name': company.name,
+        })
+        company.refresh_from_db()
+        self.assertFalse(company.cleans_on_calendar)
+        self.assertFalse(company.checkins_on_calendar)
 
     def test_add_washing_material_creates_row(self):
         company = make_management_company()
@@ -3045,22 +3199,30 @@ class ComputeArrivalEtaTests(TestCase):
         self.assertFalse(is_all_day)
         self.assertEqual(computed, time(16, 0))
 
-    def test_other_method_has_no_computed_time(self):
+    def test_other_method_falls_back_to_standard_checkin_time(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.OTHER, time=None, meet_greet=True)
         computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertIsNone(computed)
-        self.assertTrue(is_all_day)
+        self.assertFalse(is_all_day)
+        self.assertEqual(computed, time(14, 0))
 
-    def test_no_time_given_has_no_computed_time(self):
+    def test_no_time_given_falls_back_to_standard_checkin_time(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=None, meet_greet=True)
         computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertIsNone(computed)
-        self.assertTrue(is_all_day)
+        self.assertFalse(is_all_day)
+        self.assertEqual(computed, time(14, 0))
 
-    def test_no_arrival_row_has_no_computed_time(self):
+    def test_no_arrival_row_falls_back_to_standard_checkin_time(self):
         computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertIsNone(computed)
-        self.assertTrue(is_all_day)
+        self.assertFalse(is_all_day)
+        self.assertEqual(computed, time(14, 0))
+
+    def test_falls_back_to_property_company_standard_checkin_time_when_set(self):
+        company = ManagementCompany.objects.create(name='ETA Co', standard_checkin_time=time(16, 30))
+        self.property.booking_company = company
+        self.property.save()
+        computed, is_all_day = compute_arrival_eta(self.booking)
+        self.assertFalse(is_all_day)
+        self.assertEqual(computed, time(16, 30))
 
 
 class CheckinSyncTests(TestCase):
@@ -3161,6 +3323,46 @@ class CheckinSyncTests(TestCase):
 
         checkin.refresh_from_db()
         self.assertEqual(checkin.status, 'done')
+
+    def test_checkins_on_calendar_false_creates_no_checkin_rows(self):
+        company = make_management_company(name='No Checkin Calendar Co', checkins_on_calendar=False)
+        self.property.booking_company = company
+        self.property.save()
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        self.assertFalse(Checkin.objects.filter(booking=self.booking).exists())
+
+    def test_turning_checkins_on_calendar_off_removes_pending_rows_on_next_sync(self):
+        company = make_management_company(name='No Checkin Calendar Co 2', checkins_on_calendar=True)
+        self.property.booking_company = company
+        self.property.save()
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        self.assertTrue(Checkin.objects.filter(booking=self.booking).exists())
+
+        company.checkins_on_calendar = False
+        company.save()
+        self.booking.save()  # re-trigger the signal-driven sync, same as any other unrelated save
+        self.assertFalse(Checkin.objects.filter(booking=self.booking, status='pending').exists())
+
+    def test_checkins_on_calendar_false_does_not_remove_a_done_row(self):
+        company = make_management_company(name='No Checkin Calendar Co 3', checkins_on_calendar=True)
+        self.property.booking_company = company
+        self.property.save()
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
+        checkin.status = 'done'
+        checkin.save()
+
+        company.checkins_on_calendar = False
+        company.save()
+        self.booking.save()
+        checkin.refresh_from_db()
+        self.assertEqual(checkin.status, 'done')
+
+    def test_no_booking_company_is_unaffected_by_checkins_on_calendar(self):
+        # Property.booking_company is None here (never set) - the flag only applies when a
+        # company is actually tracked.
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        self.assertTrue(Checkin.objects.filter(booking=self.booking, task_type='arrival').exists())
 
     def test_dragging_a_time_survives_an_unrelated_resync(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
@@ -3274,7 +3476,7 @@ class CheckinCalendarEndpointTests(TestCase):
         event = next(e for e in response.json() if e['id'] == self.checkin.pk)
         self.assertFalse(event['extendedProps']['meet_greet'])
 
-    def test_events_feed_renders_no_time_given_as_all_day(self):
+    def test_events_feed_renders_no_eta_at_standard_checkin_time(self):
         arrival = self.booking.arrival
         arrival.method = TravelMethod.OTHER
         arrival.time = None
@@ -3284,8 +3486,74 @@ class CheckinCalendarEndpointTests(TestCase):
             'start': self.start.isoformat() + 'T00:00:00', 'end': (self.start + timedelta(days=1)).isoformat() + 'T00:00:00',
         })
         event = next(e for e in response.json() if e['id'] == self.checkin.pk)
-        self.assertTrue(event['allDay'])
-        self.assertIn('No time given', event['title'])
+        self.assertFalse(event['allDay'])
+        self.assertEqual(event['start'], f"{self.start.isoformat()}T14:00:00")
+        self.assertIn('14:00', event['title'])
+
+    def test_close_but_distinct_times_are_pushed_a_full_block_apart(self):
+        # Regression 2026-08-28: two checkins one minute apart still numerically overlap at the
+        # 29-minute event-block duration checkins_calendar.js renders every timed event at, so the
+        # old exact-same-minute-only stagger left them overlapping and FullCalendar split them
+        # side-by-side instead of stacking them. self.checkin's real computed time is 15:30 (Faro
+        # flight + 90min buffer, see setUp); a second checkin one minute later should render a full
+        # EVENT_BLOCK_MINUTES (30) after it, not one minute after it.
+        other_guest = Guest.objects.create(first_name='Second', last_name='Guest', email='second-checkin@example.com')
+        other_booking = Booking.objects.create(
+            property=self.property, guest=other_guest, arrival_date=self.start,
+            departure_date=self.start + timedelta(days=7), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=1, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Arrival.objects.create(booking=other_booking, method=TravelMethod.DRIVING, time=time(15, 31), meet_greet=True)
+        other_checkin = Checkin.objects.get(booking=other_booking, task_type='arrival')
+
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkins_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.start + timedelta(days=1)).isoformat() + 'T00:00:00',
+        })
+        payload = response.json()
+        first_event = next(e for e in payload if e['id'] == self.checkin.pk)
+        second_event = next(e for e in payload if e['id'] == other_checkin.pk)
+        self.assertEqual(first_event['start'], f"{self.start.isoformat()}T15:30:00")
+        self.assertEqual(second_event['start'], f"{self.start.isoformat()}T16:00:00")
+        # The stored/real time and the title's own label are untouched by the render nudge.
+        other_checkin.refresh_from_db()
+        self.assertEqual(other_checkin.time, time(15, 31))
+        self.assertIn('15:31', second_event['title'])
+
+    def test_three_close_times_stack_in_sequential_blocks(self):
+        other_guest_a = Guest.objects.create(first_name='Second', last_name='Guest', email='third-a@example.com')
+        booking_a = Booking.objects.create(
+            property=self.property, guest=other_guest_a, arrival_date=self.start,
+            departure_date=self.start + timedelta(days=7), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=1, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Arrival.objects.create(booking=booking_a, method=TravelMethod.DRIVING, time=time(15, 35), meet_greet=True)
+        other_guest_b = Guest.objects.create(first_name='Third', last_name='Guest', email='third-b@example.com')
+        booking_b = Booking.objects.create(
+            property=self.property, guest=other_guest_b, arrival_date=self.start,
+            departure_date=self.start + timedelta(days=7), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=1, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Arrival.objects.create(booking=booking_b, method=TravelMethod.DRIVING, time=time(15, 38), meet_greet=True)
+        checkin_a = Checkin.objects.get(booking=booking_a, task_type='arrival')
+        checkin_b = Checkin.objects.get(booking=booking_b, task_type='arrival')
+
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkins_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.start + timedelta(days=1)).isoformat() + 'T00:00:00',
+        })
+        payload = response.json()
+        starts = {
+            self.checkin.pk: f"{self.start.isoformat()}T15:30:00",
+            checkin_a.pk: f"{self.start.isoformat()}T16:00:00",
+            checkin_b.pk: f"{self.start.isoformat()}T16:30:00",
+        }
+        for checkin_id, expected_start in starts.items():
+            event = next(e for e in payload if e['id'] == checkin_id)
+            self.assertEqual(event['start'], expected_start)
 
     def test_move_view_accepts_a_same_day_time_change(self):
         self.client.login(username='checkinstaffer', password='pw')
@@ -3325,6 +3593,35 @@ class CheckinCalendarEndpointTests(TestCase):
         html = response.json()['popup_html']
         self.assertIn('Not required for a returning guest', html)
 
+    def test_detail_view_hides_deposit_when_platform_does_not_take_them(self):
+        Platform.objects.get_or_create(name='Airbnb', defaults={'take_security_deposits': False})
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
+        html = response.json()['popup_html']
+        self.assertIn("doesn't take security deposits", html)
+        self.assertNotIn('due', html)
+
+    def test_detail_view_shows_deposit_when_platform_does_take_them(self):
+        platform, _ = Platform.objects.get_or_create(name='Airbnb')
+        platform.take_security_deposits = True
+        platform.save()
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
+        html = response.json()['popup_html']
+        self.assertIn('due', html)
+
+    def test_detail_view_shows_deposit_for_an_unrecognised_source(self):
+        # enquiry_source 'Website' (a direct booking) never matches a Platform by name, so the
+        # platform waiver simply doesn't apply - same as today's behaviour before this feature.
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
+        html = response.json()['popup_html']
+        self.assertIn('due', html)
+
     def test_detail_view_shows_key_box_popup_content(self):
         arrival = self.booking.arrival
         arrival.self_check_in = True
@@ -3354,13 +3651,12 @@ class CheckinCalendarEndpointTests(TestCase):
     def test_save_view_sets_extras_and_deposit_flags(self):
         self.client.login(username='checkinstaffer', password='pw')
         response = self.client.post(reverse('staff:checkin_save', kwargs={'pk': self.checkin.pk}), {
-            'extras_collected': 'true', 'deposit_collected': 'true', 'deposit_returned': 'false',
+            'extras_collected': 'true', 'deposit_collected': 'true',
         })
         self.assertEqual(response.status_code, 200)
         self.checkin.refresh_from_db()
         self.assertTrue(self.checkin.extras_collected)
         self.assertTrue(self.checkin.deposit_collected)
-        self.assertFalse(self.checkin.deposit_returned)
 
     def test_save_view_rejects_non_arrival_checkin(self):
         arrival = self.booking.arrival

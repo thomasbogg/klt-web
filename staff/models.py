@@ -91,6 +91,11 @@ class StaffRole(models.Model):
     can_view_settings = models.BooleanField(default=False)
     can_view_cleaning_rota = models.BooleanField(default=False)
     can_view_checkins_calendar = models.BooleanField(default=False)
+    # Gates all four Finance sub-tabs (Memos/Ad-hoc Services/Payouts/Statement) behind one flag,
+    # not four - they're four views into the same trust boundary ("can see this business's
+    # money"), closer to how can_view_settings already bundles several unrelated sub-panels than
+    # to Cleaning rota vs. Check-ins calendar's genuinely-different staff audiences.
+    can_view_finance = models.BooleanField(default=False)
     # Assignability, not page visibility - deliberately excluded from STAFF_PAGE_PERMISSION_FIELDS
     # (staff/utils.py), which drives the generic per-page-flag loop in views.py's
     # _add_role/_update_role and the settings.html role table. This flag instead means "a user
@@ -229,12 +234,12 @@ class Checkin(models.Model):
     unrelated field on the same booking being saved) the same way a dragged clean date already
     does, without silently eating a real Arrival.time edit either.
 
-    extras_collected/deposit_collected/deposit_returned are only meaningful for task_type=
-    'arrival' - key_box/welcome_visit rows just use status/completed_by/completed_at for their own
-    done tracking, same "conditional meaning per task_type" shape as CleaningTask's own
-    dismissed_by/dismissed_at/dismissed_reason. deposit_returned genuinely belongs to a later,
-    post-departure moment, not arrival - kept on this same row anyway since there's no departure-
-    side calendar/task feature yet and building one solely to host one boolean isn't warranted."""
+    extras_collected/deposit_collected are only meaningful for task_type='arrival' - key_box/
+    welcome_visit rows just use status/completed_by/completed_at for their own done tracking, same
+    "conditional meaning per task_type" shape as CleaningTask's own dismissed_by/dismissed_at/
+    dismissed_reason. A deposit *return* is a later, post-departure event with no departure-side
+    calendar/task feature to host it yet (2026-08-28, per Thomas: it doesn't belong on this
+    arrival-side popup) - dropped rather than kept as a dead checkbox here."""
     TASK_TYPE_CHOICES = [('arrival', 'Arrival'), ('key_box', 'Key box'), ('welcome_visit', 'Welcome visit')]
     STATUS_CHOICES = [('pending', 'Pending'), ('done', 'Done')]
 
@@ -255,7 +260,6 @@ class Checkin(models.Model):
     auto_time = models.TimeField(blank=True, null=True)
     extras_collected = models.BooleanField(default=False)
     deposit_collected = models.BooleanField(default=False)
-    deposit_returned = models.BooleanField(default=False)
     notes = models.TextField(blank=True)
 
     class Meta:

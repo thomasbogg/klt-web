@@ -29,7 +29,7 @@ class Command(BaseCommand):
             return
 
         for link in links:
-            label = f"{link.property} ({link.get_ical_source_display()})"
+            label = f"{link.property} ({link.platform.name if link.platform_id else 'no platform set'})"
             try:
                 response = requests.get(link.ical_url, timeout=30)
                 response.raise_for_status()
