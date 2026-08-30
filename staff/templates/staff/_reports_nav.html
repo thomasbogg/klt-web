@@ -1,0 +1,5 @@
+<div class="staff-reports-subnav">
+    <a href="{% url 'staff:reports' %}" class="staff-reports-subnav-link{% if active_tab == 'bookings' %} staff-reports-subnav-link-active{% endif %}">Bookings</a>
+    <a href="{% url 'staff:reports_monthly' %}" class="staff-reports-subnav-link{% if active_tab == 'monthly' %} staff-reports-subnav-link-active{% endif %}">Revenue</a>
+    <a href="{% url 'staff:reports_stays' %}" class="staff-reports-subnav-link{% if active_tab == 'stays' %} staff-reports-subnav-link-active{% endif %}">Stays</a>
+</div>

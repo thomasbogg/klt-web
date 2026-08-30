@@ -1,3 +1,32 @@
+/* Same shape as staff/finance.css's .staff-finance-subnav - kept as its own scoped copy rather
+   than pulling in finance.css just for this, since reports.html doesn't otherwise load it. */
+.staff-reports-subnav {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #e0e0e0;
+    padding-bottom: 8px;
+}
+
+.staff-reports-subnav-link {
+    font-family: var(--secondary-font);
+    font-weight: 700;
+    font-size: 0.85rem;
+    padding: 6px 12px;
+    border-radius: 6px;
+    color: #666;
+    text-decoration: none;
+}
+
+.staff-reports-subnav-link:hover {
+    background: #f2f2f2;
+}
+
+.staff-reports-subnav-link-active {
+    color: var(--secondary-color);
+    background: var(--secondary-color-soft-dark, #f2f2f2);
+}
+
 .staff-reports-filter-panel {
     margin-bottom: 24px;
 }
@@ -33,4 +62,56 @@
 
 .staff-reports-totals-label {
     text-align: left;
+}
+
+/* Same rule as staff/settings.css's own .staff-table-scroll (the People tab's Owners table) -
+   kept as its own scoped copy here too rather than loading settings.css just for this, matching
+   the same reasoning as .staff-reports-subnav above. A horizontal-scroll wrapper keeps a wide
+   table contained within its own panel instead of the whole page scrolling sideways - both the
+   Bookings tab's own wide table and this Monthly tab's much wider one use this same class, and
+   neither had it defined anywhere actually loaded until now. */
+.staff-table-scroll {
+    overflow-x: auto;
+}
+
+.staff-trend-title {
+    margin-top: 32px;
+}
+
+.staff-trend-panel {
+    max-width: 900px;
+}
+
+.staff-monthly-note {
+    color: #666;
+    font-size: 0.85rem;
+    margin-bottom: 20px;
+}
+
+.staff-monthly-table th {
+    text-align: center;
+    white-space: nowrap;
+    padding: 6px 10px;
+}
+
+.staff-monthly-table td {
+    text-align: right;
+    white-space: nowrap;
+    padding: 6px 10px;
+}
+
+.staff-monthly-table td:first-child {
+    text-align: left;
+    font-weight: 700;
+}
+
+/* A negative year-over-year delta - red is enough on its own here (this table has no other
+   red/black "deduction vs income" convention the way Reports does), no minus-sign styling needed
+   since Decimal already renders its own "-" for a negative value. Needs .staff-monthly-table td
+   in the selector to out-specificity staff/home.css's own .staff-reservations-table td color
+   rule - the exact same CSS specificity trap documented in
+   feedback_klt_web_css_specificity_gotchas (memory), caught here before shipping rather than
+   after a live screenshot this time. */
+.staff-monthly-table td.staff-monthly-negative {
+    color: #963c33;
 }

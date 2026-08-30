@@ -40,6 +40,9 @@ from properties.models import (
     PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
+from staff.monthly_reports import (
+    REVENUE_GROUPS, monthly_revenue_rows, monthly_stays_rows, revenue_trend_rows, stays_trend_rows,
+)
 from staff.permissions import staff_page_required, superuser_required
 from staff.reports import REPORT_COLUMNS, booking_report_rows, report_totals
 from staff.utils import (
@@ -3195,4 +3198,78 @@ class StaffReportsView(View):
             'selected_columns': selected_columns,
             'rows': rows,
             'totals': report_totals(rows),
+            'active_tab': 'bookings',
+        })
+
+
+def _selected_revenue_groups(request):
+    """No groups param at all (a fresh visit) means "show everything" - same convention as the
+    Bookings tab's own selected_columns, so a bookmarked/shared URL with groups=... behaves the
+    same for everyone who opens it. Shared by every Monthly-tab view keyed off REVENUE_GROUPS
+    (Revenue, Guest Stays, ...) - Total is never one of the toggle options itself, it's the
+    reference point the % columns are computed against, not one of the four sources."""
+    if 'groups' in request.GET:
+        return set(request.GET.getlist('groups'))
+    return set(REVENUE_GROUPS)
+
+
+def _requested_year(request):
+    today = timezone.now().date()
+    year_param = request.GET.get('year', '').strip()
+    return int(year_param) if year_param.isdigit() else today.year
+
+
+@method_decorator(staff_page_required('can_view_reports'), name='dispatch')
+class StaffReportsMonthlyView(View):
+    """The Monthly tab's Revenue sub-view - Phase 2 of the reporting plan (see
+    [[project_klt_web_reporting]] in memory), a business-wide (not per-property) month-by-month
+    aggregate mirroring the reference "Monthly Business Report" workbook's own Revenue sheet:
+    Total plus a Direct/Airbnb/Booking.com/Vrbo breakdown, each with what guests paid, what
+    actually reached KLT after any platform commission, that group's % share of the month, and a
+    year-over-year delta - see staff/monthly_reports.py::monthly_revenue_rows() for the full
+    calculation. Also renders a "since records began" growth-over-time line chart
+    (revenue_trend_rows(), Chart.js) below the year-scoped table - the table stays the
+    month-vs-month comparison tool, the chart is the long-run trend view, per Thomas 2026-08-30.
+    Revenue and Stays are both built now (see StaffReportsStaysView below); the workbook's other
+    7 sheets (All Stays, Bookings, Accounts, Commissions, Management, Extras, Properties) are
+    still just the reference file, not yet implemented here."""
+    template_name = 'staff/reports_monthly.html'
+
+    def get(self, request, *args, **kwargs):
+        year = _requested_year(request)
+        selected_groups = _selected_revenue_groups(request)
+
+        return render(request, self.template_name, {
+            'year': year,
+            'revenue_groups': REVENUE_GROUPS,
+            'selected_groups': selected_groups,
+            'rows': monthly_revenue_rows(year),
+            'trend_rows': revenue_trend_rows(),
+            'active_tab': 'monthly',
+        })
+
+
+@method_decorator(staff_page_required('can_view_reports'), name='dispatch')
+class StaffReportsStaysView(View):
+    """The Monthly tab's Stays sub-view - same shape as StaffReportsMonthlyView above (Total plus
+    Direct/Airbnb/Booking.com/Vrbo, % share, year-over-year delta) but Arrivals/Nights counts
+    instead of money, plus an independent "Include owner stays" toggle - one merged sheet
+    covering both the reference workbook's Guest Stays and All Stays sheets, per Thomas
+    2026-08-30 (originally planned as two separate tabs). See staff/monthly_reports.py::
+    monthly_stays_rows() for why the owner toggle behaves differently from the platform ones."""
+    template_name = 'staff/reports_stays.html'
+
+    def get(self, request, *args, **kwargs):
+        year = _requested_year(request)
+        selected_groups = _selected_revenue_groups(request)
+        include_owner = request.GET.get('include_owner') == 'on'
+
+        return render(request, self.template_name, {
+            'year': year,
+            'revenue_groups': REVENUE_GROUPS,
+            'selected_groups': selected_groups,
+            'include_owner': include_owner,
+            'rows': monthly_stays_rows(year, include_owner=include_owner),
+            'trend_rows': stays_trend_rows(include_owner=include_owner),
+            'active_tab': 'stays',
         })

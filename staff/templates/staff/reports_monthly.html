@@ -1,0 +1,123 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Revenue | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/home.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/reports.css' %}">
+    <script src="{% static 'staff/vendor/chartjs/chart.umd.min.js' %}" defer></script>
+    <script src="{% static 'staff/monthly_trend_chart.js' %}" defer></script>
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Revenue</h1>
+        </header>
+
+        {% include 'staff/_reports_nav.html' %}
+
+        <div class="staff-panel staff-reports-filter-panel">
+            <form method="get" class="staff-reports-form">
+                <label class="staff-field">Year
+                    <input type="number" name="year" class="staff-input" value="{{ year }}" min="2000" max="2100">
+                </label>
+                <div class="staff-reports-columns">
+                    {% for group in revenue_groups %}
+                    <label class="staff-checkbox-label">
+                        <input type="checkbox" name="groups" value="{{ group }}" {% if group in selected_groups %}checked{% endif %}> {{ group }}
+                    </label>
+                    {% endfor %}
+                </div>
+                <button type="submit" class="staff-button">Update</button>
+            </form>
+        </div>
+
+        <p class="staff-monthly-note">
+            Revenue only, for now - what guests paid vs. what actually reached KLT after any
+            platform commission, by source. "Lst Yr" is the change vs. the same month {{ year|add:"-1" }}, not that month's raw figure.
+        </p>
+
+        <div class="staff-table-scroll">
+            <table class="staff-reservations-table staff-monthly-table">
+                <thead>
+                    <tr>
+                        <th rowspan="3">Month</th>
+                        <th colspan="6">Total</th>
+                        {% for group in revenue_groups %}
+                        {% if group in selected_groups %}
+                        <th colspan="6">{{ group }}</th>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <th colspan="3">Paid by Guest</th>
+                        <th colspan="3">Rcvd by KLT</th>
+                        {% for group in revenue_groups %}
+                        {% if group in selected_groups %}
+                        <th colspan="3">Paid by Guest</th>
+                        <th colspan="3">Rcvd by KLT</th>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <th>Tot</th>
+                        <th>%</th>
+                        <th>Lst Yr</th>
+                        <th>Tot</th>
+                        <th>%</th>
+                        <th>Lst Yr</th>
+                        {% for group in revenue_groups %}
+                        {% if group in selected_groups %}
+                        <th>Tot</th>
+                        <th>%</th>
+                        <th>Lst Yr</th>
+                        <th>Tot</th>
+                        <th>%</th>
+                        <th>Lst Yr</th>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    <tr>
+                        <td>{{ row.month|date:'F' }}</td>
+                        {% for group_name, group in row.groups.items %}
+                        {% if group_name == 'Total' or group_name in selected_groups %}
+                        <td>&euro;{{ group.paid_by_guest }}</td>
+                        <td>{{ group.paid_by_guest_pct }}%</td>
+                        <td{% if group.paid_by_guest_delta < 0 %} class="staff-monthly-negative"{% endif %}>&euro;{{ group.paid_by_guest_delta }}</td>
+                        <td>&euro;{{ group.rcvd_by_klt }}</td>
+                        <td>{{ group.rcvd_by_klt_pct }}%</td>
+                        <td{% if group.rcvd_by_klt_delta < 0 %} class="staff-monthly-negative"{% endif %}>&euro;{{ group.rcvd_by_klt_delta }}</td>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <h2 class="staff-panel-title staff-trend-title">Growth over time</h2>
+        <p class="staff-monthly-note">Every month on record, from the earliest booking to the latest, regardless of the Year filter above.</p>
+        <div class="staff-panel staff-trend-panel">
+            <canvas id="revenue-trend-chart"></canvas>
+        </div>
+        {{ trend_rows|json_script:"revenue-trend-data" }}
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                renderTrendChart('revenue-trend-chart', 'revenue-trend-data', [
+                    { key: 'paid_by_guest', label: 'Paid by Guest', color: '#9f6f00' },
+                    { key: 'rcvd_by_klt', label: 'Received by KLT', color: '#2c79b9' },
+                ]);
+            });
+        </script>
+    </div>
+</body>
+</html>
