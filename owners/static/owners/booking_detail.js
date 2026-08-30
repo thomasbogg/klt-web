@@ -1,17 +1,23 @@
 document.addEventListener('DOMContentLoaded', function () {
     var meetGreetToggle = document.getElementById('owner-meet-greet-toggle');
-    var guestPanel = document.getElementById('owner-guest-details-panel');
-    if (!meetGreetToggle || !guestPanel) return;
+    // Every block that only makes sense once Meet & Greet is actually requested - Guest Details
+    // plus the Owner is paying checkbox (2026-08-30) - share this one class so adding another
+    // later needs no JS change, just the class on the new element.
+    var dependentPanels = document.querySelectorAll('.owner-meet-greet-dependent');
+    if (!meetGreetToggle || !dependentPanels.length) return;
 
     function sync() {
         var required = meetGreetToggle.checked;
-        guestPanel.hidden = !required;
-        // Disabled (not just hidden) so an unticked Meet & Greet never silently submits stale
-        // guest details, and so the fields are correctly omitted from the POST body per the HTML
-        // form spec - matching the same "hide AND disable" convention the staff booking detail
-        // page's own arrival_departure.js already uses for its owner-booking-conditional row.
-        guestPanel.querySelectorAll('input').forEach(function (field) {
-            field.disabled = !required;
+        dependentPanels.forEach(function (panel) {
+            panel.hidden = !required;
+            // Disabled (not just hidden) so an unticked Meet & Greet never silently submits stale
+            // guest details or an owner-is-paying flag that no longer applies, and so the fields
+            // are correctly omitted from the POST body per the HTML form spec - matching the same
+            // "hide AND disable" convention the staff booking detail page's own
+            // arrival_departure.js already uses for its owner-booking-conditional row.
+            panel.querySelectorAll('input').forEach(function (field) {
+                field.disabled = !required;
+            });
         });
     }
 

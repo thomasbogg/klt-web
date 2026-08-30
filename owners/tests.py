@@ -6,7 +6,10 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from bookings.models import Arrival, Booking, Charge, Departure, PaymentSettings
+from bookings.models import (
+    Arrival, Booking, BookingRequestedExtra, Charge, Departure, Extra, ExtrasSettings, PaymentSettings,
+    RequestType,
+)
 from bookings.utils import create_owner_booking, guest_for_owner
 from guests.models import Guest
 from properties.models import ManagementCompany, Owner, Property, PropertySpec
@@ -394,6 +397,34 @@ class OwnerBookingsTests(TestCase):
         self.assertEqual(guest.first_name, 'Jane')
         self.assertEqual(guest.phone, '+351911111111')
 
+    def test_save_arrival_departure_saves_owner_is_paying_when_meet_greet_is_on(self):
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {
+                'action': 'save_arrival_departure', 'arrival_method': 'flight_faro', 'meet_greet': 'on',
+                'owner_is_paying': 'on',
+                'guest_first_name': 'Jane', 'guest_last_name': 'Doe', 'guest_phone': '+351911111111',
+            },
+        )
+        extra = Extra.objects.get(booking=self.upcoming_booking)
+        self.assertTrue(extra.owner_is_paying)
+
+    def test_save_arrival_departure_never_clobbers_owner_is_paying_when_meet_greet_is_off(self):
+        """Same hide-AND-disable guard as Guest Details (see
+        test_save_arrival_departure_never_clobbers_guest_details_when_meet_greet_is_off) - a
+        resubmit with Meet & Greet off must leave a previously-set Owner is paying flag alone."""
+        self.client.login(username='staysowner', password='pw')
+        url = reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference})
+        self.client.post(url, {
+            'action': 'save_arrival_departure', 'arrival_method': 'flight_faro', 'meet_greet': 'on',
+            'owner_is_paying': 'on',
+            'guest_first_name': 'Jane', 'guest_last_name': 'Doe', 'guest_phone': '+351911111111',
+        })
+        self.client.post(url, {'action': 'save_arrival_departure', 'arrival_method': 'flight_faro'})
+        extra = Extra.objects.get(booking=self.upcoming_booking)
+        self.assertTrue(extra.owner_is_paying)
+
     def test_cancel_sets_status_and_is_excluded_from_upcoming(self):
         self.client.login(username='staysowner', password='pw')
         self.client.post(
@@ -405,6 +436,90 @@ class OwnerBookingsTests(TestCase):
         response = self.client.get(reverse('owners:bookings'))
         upcoming = [row['booking'] for row in response.context['upcoming_rows']]
         self.assertNotIn(self.upcoming_booking, upcoming)
+
+    def test_extras_cot_high_chair_shown_only_when_booking_has_infants(self):
+        """Owner bookings have no BookingGuest party rows to check ages from (unlike the guest
+        Manage Booking hub's own Cot & High Chair gate) - Booking.babies is the only infant
+        signal that actually exists here, per Thomas 2026-08-30."""
+        self.client.login(username='staysowner', password='pw')
+        response = self.client.get(reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}))
+        self.assertFalse(response.context['show_cot_high_chair'])
+
+        self.upcoming_booking.babies = 1
+        self.upcoming_booking.save(update_fields=['babies'])
+        response = self.client.get(reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}))
+        self.assertTrue(response.context['show_cot_high_chair'])
+
+    def test_update_extras_saves_welcome_pack_cot_high_chair_and_late_checkout(self):
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {
+                'action': 'update_extras',
+                'welcome_pack': 'on', 'welcome_pack_food': 'vegan', 'welcome_pack_drinks': 'non_alcoholic',
+                'cot': 'on', 'high_chair': 'on',
+                'late_checkout': 'on', 'late_checkout_time': '13:00',
+            },
+        )
+        extra = Extra.objects.get(booking=self.upcoming_booking)
+        self.assertTrue(extra.welcome_pack)
+        self.assertEqual(extra.welcome_pack_food, 'vegan')
+        self.assertEqual(extra.welcome_pack_drinks, 'non_alcoholic')
+        self.assertTrue(extra.cot)
+        self.assertTrue(extra.high_chair)
+        self.assertIsNotNone(extra.cot_high_chair_charge)
+        self.assertTrue(extra.late_checkout)
+        self.assertEqual(extra.late_checkout_time.strftime('%H:%M'), '13:00')
+        self.assertEqual(extra.late_checkout_charge, ExtrasSettings.load().late_checkout_price)
+
+    def test_update_extras_saves_an_airport_transfer_row(self):
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {
+                'action': 'update_extras',
+                'transfer_direction[]': ['inbound'], 'transfer_airport[]': ['faro'],
+                'transfer_flight_number[]': ['TP1234'], 'transfer_time[]': ['14:00'],
+                'transfer_adults[]': ['2'], 'transfer_children[]': ['0'], 'transfer_infants[]': ['0'],
+                'transfer_child_seats[]': [''], 'transfer_excess_baggage[]': [''], 'transfer_notes[]': [''],
+            },
+        )
+        self.upcoming_booking.refresh_from_db()
+        transfer = self.upcoming_booking.airport_transfers.get()
+        self.assertEqual(transfer.direction, 'inbound')
+        self.assertEqual(transfer.flight_number, 'TP1234')
+
+    def test_update_extras_requires_a_time_when_late_checkout_is_checked(self):
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {'action': 'update_extras', 'late_checkout': 'on', 'late_checkout_time': ''},
+        )
+        self.assertFalse(Extra.objects.filter(booking=self.upcoming_booking, late_checkout=True).exists())
+
+    def test_update_extras_never_touches_mid_stay_clean_or_special_requests(self):
+        """This owner form deliberately doesn't present Mid-stay Clean or Special Requests (see
+        OwnerBookingDetailView._save_owner_extras()'s own docstring) - saving it must never wipe
+        out either, even though BookingFormMixin._save_extras() (the guest-facing equivalent)
+        would happily delete/rebuild both from a POST body that simply doesn't mention them."""
+        request_type = RequestType.objects.create(name='Extra pillows', default_price=Decimal('5.00'), active=True)
+        extra = Extra.objects.create(
+            booking=self.upcoming_booking, mid_stay_clean=True, mid_stay_clean_charge=Decimal('30.00'),
+        )
+        BookingRequestedExtra.objects.create(
+            booking=self.upcoming_booking, request_type=request_type, quantity=2, price_at_request=Decimal('5.00'),
+        )
+
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {'action': 'update_extras', 'welcome_pack': 'on', 'welcome_pack_food': 'standard', 'welcome_pack_drinks': 'alcoholic'},
+        )
+
+        extra.refresh_from_db()
+        self.assertTrue(extra.mid_stay_clean)
+        self.assertEqual(extra.mid_stay_clean_charge, Decimal('30.00'))
+        self.assertEqual(self.upcoming_booking.requested_extras.count(), 1)
 
 
 class OwnerCalendarTests(TestCase):

@@ -87,7 +87,13 @@ def booking_report_rows(start, end, properties=None):
             rental_to_owner = basic_rental - payout['commission']
             net_revenue = rental_to_owner - clean_cost - meet_greet_cost - maintenance_cost
         else:
-            basic_rental = platform_fee = platform_fee_vat = rental_to_owner = net_revenue = None
+            # No rental figure to build a waterfall from (owner stay, no owner assigned, or no
+            # Charge/PlatformPayout yet) - but clean/meet & greet/maintenance costs are real
+            # regardless (see this function's own docstring), so Net Revenue still comes out as a
+            # genuine negative number here rather than "unavailable" - a row with only deductions
+            # and no income is exactly what a negative Net Revenue is for.
+            basic_rental = platform_fee = platform_fee_vat = rental_to_owner = None
+            net_revenue = -(clean_cost + meet_greet_cost + maintenance_cost)
 
         rows.append({
             'booking': booking,

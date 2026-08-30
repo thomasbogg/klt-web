@@ -3780,9 +3780,11 @@ class StaffReportsTests(TestCase):
     def test_owner_stay_still_reports_a_real_clean_cost_with_no_payout(self):
         """compute_owner_payout always reports an owner stay as unavailable, but the clean still
         genuinely happens and must still show up as a real cost - see clean_fee()'s own
-        docstring. The money-column figures sourced from compute_owner_payout's own dict
-        (basic_rental/platform_fee/platform_fee_vat/net_revenue) go None together with
-        rental_to_owner; maintenance_cost doesn't, since it's independent of payout availability."""
+        docstring. The rental-derived figures (basic_rental/platform_fee/platform_fee_vat/
+        rental_to_owner) go None together, but net_revenue does NOT join them - with only
+        deductions and no rental income to report, it comes out as a genuine negative number
+        instead (per Thomas 2026-08-30, so an owner stay's real costs aren't hidden behind a
+        blank dash)."""
         self._make_booking(5, 9, is_owner=True)
         rows = booking_report_rows(self.today, self.today + timedelta(days=10))
         self.assertEqual(len(rows), 1)
@@ -3791,9 +3793,11 @@ class StaffReportsTests(TestCase):
         self.assertIsNone(row['basic_rental'])
         self.assertIsNone(row['platform_fee'])
         self.assertIsNone(row['platform_fee_vat'])
-        self.assertIsNone(row['net_revenue'])
         self.assertGreater(row['clean_cost'], Decimal('0'))
         self.assertEqual(row['maintenance_cost'], Decimal('0'))
+        expected_net = -(row['clean_cost'] + row['meet_greet_cost'] + row['maintenance_cost'])
+        self.assertEqual(row['net_revenue'], expected_net)
+        self.assertLess(row['net_revenue'], Decimal('0'))
 
     def test_maintenance_cost_and_net_revenue_reflect_the_bookings_memo(self):
         self._make_booking(5, 9)

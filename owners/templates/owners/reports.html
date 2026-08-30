@@ -82,10 +82,10 @@
                             <td>{{ row.nights }}</td>
                             <td>{{ row.booking.total_guests }}</td>
                             {% if 'platform_fee' in selected_columns %}
-                            <td>{% if row.platform_fee is not None %}&euro;{{ row.platform_fee }}{% else %}&mdash;{% endif %}</td>
+                            <td class="owner-table-deduction">{% if row.platform_fee is not None %}&euro;{{ row.platform_fee }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'platform_fee_vat' in selected_columns %}
-                            <td>{% if row.platform_fee_vat is not None %}&euro;{{ row.platform_fee_vat }}{% else %}&mdash;{% endif %}</td>
+                            <td class="owner-table-deduction">{% if row.platform_fee_vat is not None %}&euro;{{ row.platform_fee_vat }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'basic_rental' in selected_columns %}
                             <td>{% if row.basic_rental is not None %}&euro;{{ row.basic_rental }}{% else %}&mdash;{% endif %}</td>
@@ -94,16 +94,16 @@
                             <td>{% if row.rental_to_owner is not None %}&euro;{{ row.rental_to_owner }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'clean_cost' in selected_columns %}
-                            <td>&euro;{{ row.clean_cost }}</td>
+                            <td class="owner-table-deduction">&euro;{{ row.clean_cost }}</td>
                             {% endif %}
                             {% if 'meet_greet_cost' in selected_columns %}
-                            <td>&euro;{{ row.meet_greet_cost }}</td>
+                            <td class="owner-table-deduction">&euro;{{ row.meet_greet_cost }}</td>
                             {% endif %}
                             {% if 'maintenance_cost' in selected_columns %}
-                            <td>&euro;{{ row.maintenance_cost }}</td>
+                            <td class="owner-table-deduction">&euro;{{ row.maintenance_cost }}</td>
                             {% endif %}
                             {% if 'net_revenue' in selected_columns %}
-                            <td>{% if row.net_revenue is not None %}&euro;{{ row.net_revenue }}{% else %}&mdash;{% endif %}</td>
+                            <td>{% if row.net_revenue is not None %}{% if row.net_revenue < 0 %}-{% endif %}&euro;{{ row.net_revenue|cut:"-" }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                         </tr>
                         {% empty %}
@@ -115,10 +115,10 @@
                         <tr>
                             <td colspan="6" class="owner-table-totals-label">Totals</td>
                             {% if 'platform_fee' in selected_columns %}
-                            <td>{% if totals.platform_fee is not None %}&euro;{{ totals.platform_fee }}{% else %}&mdash;{% endif %}</td>
+                            <td class="owner-table-deduction">{% if totals.platform_fee is not None %}&euro;{{ totals.platform_fee }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'platform_fee_vat' in selected_columns %}
-                            <td>{% if totals.platform_fee_vat is not None %}&euro;{{ totals.platform_fee_vat }}{% else %}&mdash;{% endif %}</td>
+                            <td class="owner-table-deduction">{% if totals.platform_fee_vat is not None %}&euro;{{ totals.platform_fee_vat }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'basic_rental' in selected_columns %}
                             <td>{% if totals.basic_rental is not None %}&euro;{{ totals.basic_rental }}{% else %}&mdash;{% endif %}</td>
@@ -127,16 +127,16 @@
                             <td>{% if totals.rental_to_owner is not None %}&euro;{{ totals.rental_to_owner }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'clean_cost' in selected_columns %}
-                            <td>&euro;{{ totals.clean_cost }}</td>
+                            <td class="owner-table-deduction">&euro;{{ totals.clean_cost }}</td>
                             {% endif %}
                             {% if 'meet_greet_cost' in selected_columns %}
-                            <td>&euro;{{ totals.meet_greet_cost }}</td>
+                            <td class="owner-table-deduction">&euro;{{ totals.meet_greet_cost }}</td>
                             {% endif %}
                             {% if 'maintenance_cost' in selected_columns %}
-                            <td>&euro;{{ totals.maintenance_cost }}</td>
+                            <td class="owner-table-deduction">&euro;{{ totals.maintenance_cost }}</td>
                             {% endif %}
                             {% if 'net_revenue' in selected_columns %}
-                            <td>{% if totals.net_revenue is not None %}&euro;{{ totals.net_revenue }}{% else %}&mdash;{% endif %}</td>
+                            <td>{% if totals.net_revenue is not None %}{% if totals.net_revenue < 0 %}-{% endif %}&euro;{{ totals.net_revenue|cut:"-" }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                         </tr>
                     </tfoot>

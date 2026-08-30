@@ -1,6 +1,7 @@
 from django.contrib import messages
 from django.contrib.auth import views as auth_views
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse_lazy
 from django.utils import timezone
@@ -8,11 +9,15 @@ from django.utils.decorators import method_decorator
 from django.views import View
 
 from availability.utils import get_property_calendar
-from bookings.models import Arrival, Booking, Departure, TravelMethod
+from bookings.models import (
+    Arrival, Booking, Departure, Extra, ExtrasSettings, TravelMethod, WelcomePackDrinksChoice,
+    WelcomePackFoodChoice, WelcomePackItem,
+)
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, create_owner_booking, parsed_arrival_departure_time, parsed_travel_method,
     valid_flight_number,
 )
+from bookings.views import BookingFormMixin
 from owners.permissions import owner_login_required
 from properties.models import Property
 from staff.models import TaskHistoryEntry
@@ -273,13 +278,18 @@ def _positive_int(raw, default):
 
 
 @method_decorator(owner_login_required, name='dispatch')
-class OwnerBookingDetailView(View):
-    """A single owner-stay booking - dates, cancel, and Arrival & Departure (including the
-    clean/meet & greet toggles Thomas asked for) all on one page, each its own POST `action`,
-    mirroring StaffBookingDetailView's own per-panel-POST convention. Unlike the guest Manage
-    Booking hub, meet_greet/clean ARE owner-editable here (not staff/ops-only) - matches
+class OwnerBookingDetailView(BookingFormMixin, View):
+    """A single owner-stay booking - dates, cancel, Arrival & Departure (including the
+    clean/meet & greet toggles Thomas asked for), and Extras all on one page, each its own POST
+    `action`, mirroring StaffBookingDetailView's own per-panel-POST convention. Unlike the guest
+    Manage Booking hub, meet_greet/clean ARE owner-editable here (not staff/ops-only) - matches
     StaffBookingDetailView._update_booking's own existing `if booking.is_owner:` guard on those
-    same two fields, which already anticipated exactly this case."""
+    same two fields, which already anticipated exactly this case.
+
+    BookingFormMixin (bookings/views.py) supplies the Airport Transfers/Late Checkout parsing and
+    persistence used below - those are fully self-contained per concern, safe to reuse as-is. Its
+    _save_extras()/_extras_context() are NOT reused directly though - see _save_owner_extras()'s
+    own docstring for why."""
     template_name = 'owners/booking_detail.html'
 
     def _get_booking(self, request, reference):
@@ -298,6 +308,7 @@ class OwnerBookingDetailView(View):
         handler = {
             'update_dates': self._update_dates,
             'save_arrival_departure': self._save_arrival_departure,
+            'update_extras': self._update_extras,
             'cancel': self._cancel,
         }.get(request.POST.get('action'))
         if handler is not None:
@@ -307,7 +318,8 @@ class OwnerBookingDetailView(View):
     def _context(self, booking):
         arrival = getattr(booking, 'arrival', None)
         departure = getattr(booking, 'departure', None)
-        return {
+        extra = getattr(booking, 'extras', None)
+        context = {
             'owner': booking.property.owner,
             'booking': booking,
             'editable': _owner_booking_editable(booking),
@@ -315,10 +327,133 @@ class OwnerBookingDetailView(View):
             'departure': departure,
             'arrival_meet_greet': arrival.meet_greet if arrival else True,
             'departure_clean': departure.clean if departure else True,
+            'owner_is_paying': bool(extra and extra.owner_is_paying),
             'arrival_travel_methods': TravelMethod.choices,
             'departure_travel_methods': TravelMethod.departure_choices(),
             'active_section': 'bookings',
         }
+        context.update(self._owner_extras_context(booking))
+        context.update(self._transfer_context(booking))
+        return context
+
+    def _owner_extras_context(self, booking, post_data=None):
+        """Trimmed mirror of BookingFormMixin._extras_context() - Cot & High Chair, Welcome Pack
+        and Late Checkout only, the three Extra fields this page's form actually presents (per
+        Thomas 2026-08-30's explicit ask - alongside Airport Transfers, handled separately by
+        the mixin's own _transfer_context()). Deliberately excludes Mid-stay Clean and Special
+        Requests - see _save_owner_extras() for why those two are left alone entirely rather than
+        just hidden from this form."""
+        if post_data is not None:
+            welcome_pack = post_data.get('welcome_pack') == 'on'
+            welcome_pack_food = post_data.get('welcome_pack_food') or WelcomePackFoodChoice.STANDARD
+            welcome_pack_drinks = post_data.get('welcome_pack_drinks') or WelcomePackDrinksChoice.ALCOHOLIC
+            welcome_pack_note = post_data.get('welcome_pack_note', '').strip()
+            cot = post_data.get('cot') == 'on'
+            high_chair = post_data.get('high_chair') == 'on'
+            late_checkout = post_data.get('late_checkout') == 'on'
+            late_checkout_time = post_data.get('late_checkout_time', '').strip()
+        else:
+            extra = getattr(booking, 'extras', None)
+            welcome_pack = bool(extra and extra.welcome_pack)
+            welcome_pack_food = (extra.welcome_pack_food if extra and extra.welcome_pack_food
+                                  else WelcomePackFoodChoice.STANDARD)
+            welcome_pack_drinks = (extra.welcome_pack_drinks if extra and extra.welcome_pack_drinks
+                                    else WelcomePackDrinksChoice.ALCOHOLIC)
+            welcome_pack_note = extra.welcome_pack_note if extra and extra.welcome_pack_note else ''
+            cot = bool(extra and extra.cot)
+            high_chair = bool(extra and extra.high_chair)
+            late_checkout = bool(extra and extra.late_checkout)
+            late_checkout_time = (
+                extra.late_checkout_time.strftime('%H:%M') if extra and extra.late_checkout_time else ''
+            )
+
+        settings = ExtrasSettings.load()
+        nights = (booking.departure_date - booking.arrival_date).days
+        return {
+            'welcome_pack_items': WelcomePackItem.objects.filter(active=True),
+            'welcome_pack': welcome_pack,
+            'welcome_pack_food': welcome_pack_food,
+            'welcome_pack_drinks': welcome_pack_drinks,
+            'welcome_pack_note': welcome_pack_note,
+            'welcome_pack_price': settings.welcome_pack_price,
+            'cot': cot,
+            'high_chair': high_chair,
+            # Guest-side Cot & High Chair gates on a typed BookingGuest age (see
+            # BookingFormMixin._any_infant_age) - owner bookings have no guest-list party rows at
+            # all, so "if infants > 0" here means Booking.babies, the headcount the owner
+            # themselves set when reserving (or the original search picker, for an iCal-imported
+            # stay) - the only infant signal that actually exists on this kind of booking.
+            'show_cot_high_chair': booking.babies > 0,
+            'cot_high_chair_pricing_config': {
+                'nights': nights,
+                'cot_short': str(settings.cot_price_short_stay),
+                'cot_long': str(settings.cot_price_long_stay),
+                'high_chair_short': str(settings.high_chair_price_short_stay),
+                'high_chair_long': str(settings.high_chair_price_long_stay),
+                'combo_discount_percent': str(settings.cot_and_high_chair_combo_discount_percent),
+            },
+            'late_checkout': late_checkout,
+            'late_checkout_time': late_checkout_time,
+            'late_checkout_price': settings.late_checkout_price,
+        }
+
+    def _save_owner_extras(self, booking, post_data):
+        """Trimmed mirror of BookingFormMixin._save_extras() - only touches the three Extra
+        fields _owner_extras_context() above actually presents (welcome pack, cot/high chair,
+        late checkout). Deliberately does NOT delete/rebuild booking.requested_extras or touch
+        Extra.mid_stay_clean* the way the full _save_extras() does - Mid-stay Clean and Special
+        Requests live on a different form entirely (the guest-facing Manage Booking hub's own
+        Extras page), which this owner page doesn't show or know about. Reusing
+        BookingFormMixin._save_extras() as-is here would silently wipe both out on every owner
+        save (its unconditional requested_extras.all().delete() plus treating a missing
+        mid_stay_clean checkbox as "guest unticked it") - a real data-loss risk, not a
+        hypothetical one, so this stays a separate, narrower method instead."""
+        extra, _ = Extra.objects.get_or_create(booking=booking)
+        settings = ExtrasSettings.load()
+        extra.welcome_pack = post_data.get('welcome_pack') == 'on'
+        if extra.welcome_pack:
+            food = post_data.get('welcome_pack_food', '')
+            extra.welcome_pack_food = food if food in WelcomePackFoodChoice.values else WelcomePackFoodChoice.STANDARD
+            drinks = post_data.get('welcome_pack_drinks', '')
+            extra.welcome_pack_drinks = (
+                drinks if drinks in WelcomePackDrinksChoice.values else WelcomePackDrinksChoice.ALCOHOLIC
+            )
+            extra.welcome_pack_note = post_data.get('welcome_pack_note', '').strip()
+            extra.welcome_pack_charge = settings.welcome_pack_price
+        else:
+            extra.welcome_pack_food = None
+            extra.welcome_pack_drinks = None
+            extra.welcome_pack_note = ''
+            extra.welcome_pack_charge = None
+
+        extra.cot = post_data.get('cot') == 'on'
+        extra.high_chair = post_data.get('high_chair') == 'on'
+        nights = (booking.departure_date - booking.arrival_date).days
+        extra.cot_high_chair_charge = settings.compute_cot_high_chair_price(nights, extra.cot, extra.high_chair)
+
+        extra.late_checkout, extra.late_checkout_time, _ = self._parse_late_checkout(post_data)
+        extra.late_checkout_charge = settings.late_checkout_price if extra.late_checkout else None
+
+        extra.save(update_fields=[
+            'welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note', 'welcome_pack_charge',
+            'cot', 'high_chair', 'cot_high_chair_charge',
+            'late_checkout', 'late_checkout_time', 'late_checkout_charge',
+        ])
+
+    def _update_extras(self, request, booking):
+        transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
+        _, _, late_checkout_error = self._parse_late_checkout(request.POST)
+        if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
+            messages.error(request, transfer_non_field_error or "Please fix the airport transfer details below.")
+            return
+        if late_checkout_error:
+            messages.error(request, late_checkout_error)
+            return
+
+        with transaction.atomic():
+            self._save_owner_extras(booking, request.POST)
+            self._save_transfers(booking, transfer_rows)
+        messages.success(request, "Extras saved.")
 
     def _update_dates(self, request, booking):
         arrival_date = parsed_date(request.POST.get('arrival_date'))
@@ -400,6 +535,14 @@ class OwnerBookingDetailView(View):
             guest.phone = post.get('guest_phone', '').strip()
             guest.email = post.get('guest_email', '').strip()
             guest.save()
+
+            # Same hide-AND-disable guard as Guest Details just above - Owner is paying only
+            # exists as a concept while Meet & Greet is actually requested, so it's read from the
+            # form under the same condition (and left untouched, not reset to False, whenever
+            # Meet & Greet is off - see this method's own comment above).
+            extra, _ = Extra.objects.get_or_create(booking=booking)
+            extra.owner_is_paying = post.get('owner_is_paying') == 'on'
+            extra.save(update_fields=['owner_is_paying'])
 
         messages.success(request, "Arrival & departure details saved.")
 

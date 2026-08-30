@@ -147,6 +147,7 @@
 
 .owner-filter-columns label {
     display: flex;
+    flex: 1 1 160px;
     flex-direction: row;
     align-items: center;
     gap: 6px;
@@ -192,6 +193,14 @@
     text-align: left;
 }
 
+/* Platform fee/IVA, Clean, Meet & Greet, Maintenance are all deductions in the Reports
+   waterfall (see staff/reports.py's own docstring) - a muted dark red distinguishes them from
+   the running-total columns (Basic rental, Rental to Owner, Net Revenue) without reading as an
+   alert/error colour, per Thomas: "so they don't stand out too much but just enough". */
+.owner-table-deduction {
+    color: #963c33;
+}
+
 .owner-empty {
     color: #999;
     font-style: italic;
@@ -224,7 +233,7 @@
     align-items: flex-end;
     justify-content: space-between;
     gap: 20px;
-    margin-bottom: 24px;
+    margin-bottom: 40px;
 }
 
 .owner-page-header h1 {
@@ -307,8 +316,12 @@
     margin: 0 0 18px;
 }
 
-.owner-guest-details-panel[hidden] {
+.owner-meet-greet-dependent[hidden] {
     display: none;
+}
+
+#owner-meet-greet-payer-panel {
+    margin-bottom: 14px;
 }
 
 .owner-field-note {
