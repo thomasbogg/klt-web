@@ -30,7 +30,15 @@ body {
     padding: 0;
     background-color: white;
     font-family: var(--tertiary-font);
-
+    /* Sticky footer: every page includes templates/footer/footer.html's single shared
+       .site-footer, so pushing THAT to the bottom via margin-top:auto (rather than growing each
+       page's own differently-shaped main-content wrapper) works universally across every page
+       type - public pages, the guest Manage Booking hub, staff, and Owner Suite alike - without
+       needing a matching flex-grow rule added to each one individually. Confirmed with Thomas
+       2026-08-30 as a genuine sitewide layout change, not scoped to one area. */
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
 }
 
 /* =========================

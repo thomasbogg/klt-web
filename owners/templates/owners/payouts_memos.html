@@ -1,0 +1,59 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payouts &amp; Memos | Owner Suite | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'owners/owners.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'owners/_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content">
+            <h1>Payouts &amp; Memos</h1>
+            <p class="owner-payouts-memos-note">Every rental payout marked paid and every cleaning memo sent against your properties, most recent first.</p>
+
+            <div class="owner-table-scroll">
+                <table class="owner-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Property</th>
+                            <th>Reference</th>
+                            <th>Date</th>
+                            <th>Amount</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                        <tr>
+                            <td>{{ row.type }}</td>
+                            <td>{{ row.property }}</td>
+                            <td>{{ row.reference }}</td>
+                            <td>{{ row.date|date:'j M Y' }}</td>
+                            <td{% if row.is_charge %} class="owner-table-deduction"{% endif %}>&euro;{{ row.amount }}</td>
+                            <td><a href="{{ row.detail_url }}" class="owner-button">Details</a></td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="6" class="owner-empty">No payouts or memos yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% include 'footer/footer.html' %}
+</body>
+</html>

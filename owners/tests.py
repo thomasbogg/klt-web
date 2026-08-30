@@ -11,6 +11,7 @@ from bookings.models import (
     RequestType,
 )
 from bookings.utils import create_owner_booking, guest_for_owner
+from finance.models import Memo, PayoutRecord
 from guests.models import Guest
 from properties.models import ManagementCompany, Owner, Property, PropertySpec
 
@@ -347,6 +348,47 @@ class OwnerBookingsTests(TestCase):
         self.upcoming_booking.refresh_from_db()
         self.assertEqual(self.upcoming_booking.arrival_date, original_arrival)
 
+    def test_update_guests_changes_the_booking(self):
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {'action': 'update_guests', 'adults': '3', 'children': '2', 'babies': '1'},
+        )
+        self.upcoming_booking.refresh_from_db()
+        self.assertEqual(self.upcoming_booking.adults, 3)
+        self.assertEqual(self.upcoming_booking.children, 2)
+        self.assertEqual(self.upcoming_booking.babies, 1)
+
+    def test_update_guests_rejects_exceeding_the_propertys_max_guests(self):
+        """self.property's PropertySpec caps at 6 guests - see Booking.clean()'s own
+        adults+children+babies check, the same validation _update_dates() already relies on via
+        full_clean()."""
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {'action': 'update_guests', 'adults': '5', 'children': '2', 'babies': '0'},
+        )
+        self.upcoming_booking.refresh_from_db()
+        self.assertEqual(self.upcoming_booking.adults, 2)  # unchanged from setUp
+
+    def test_update_guests_rejects_zero_adults(self):
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {'action': 'update_guests', 'adults': '0', 'children': '0', 'babies': '0'},
+        )
+        self.upcoming_booking.refresh_from_db()
+        self.assertEqual(self.upcoming_booking.adults, 2)  # unchanged from setUp
+
+    def test_update_guests_cannot_be_changed_on_a_past_stay(self):
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.past_booking.reference}),
+            {'action': 'update_guests', 'adults': '4', 'children': '0', 'babies': '0'},
+        )
+        self.past_booking.refresh_from_db()
+        self.assertEqual(self.past_booking.adults, 2)  # unchanged from setUp
+
     def test_save_arrival_departure_sets_meet_greet_and_clean(self):
         """meet_greet/clean ARE owner-editable here (unlike the guest-facing Manage Booking hub) -
         see OwnerBookingDetailView's own docstring."""
@@ -397,34 +439,6 @@ class OwnerBookingsTests(TestCase):
         self.assertEqual(guest.first_name, 'Jane')
         self.assertEqual(guest.phone, '+351911111111')
 
-    def test_save_arrival_departure_saves_owner_is_paying_when_meet_greet_is_on(self):
-        self.client.login(username='staysowner', password='pw')
-        self.client.post(
-            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
-            {
-                'action': 'save_arrival_departure', 'arrival_method': 'flight_faro', 'meet_greet': 'on',
-                'owner_is_paying': 'on',
-                'guest_first_name': 'Jane', 'guest_last_name': 'Doe', 'guest_phone': '+351911111111',
-            },
-        )
-        extra = Extra.objects.get(booking=self.upcoming_booking)
-        self.assertTrue(extra.owner_is_paying)
-
-    def test_save_arrival_departure_never_clobbers_owner_is_paying_when_meet_greet_is_off(self):
-        """Same hide-AND-disable guard as Guest Details (see
-        test_save_arrival_departure_never_clobbers_guest_details_when_meet_greet_is_off) - a
-        resubmit with Meet & Greet off must leave a previously-set Owner is paying flag alone."""
-        self.client.login(username='staysowner', password='pw')
-        url = reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference})
-        self.client.post(url, {
-            'action': 'save_arrival_departure', 'arrival_method': 'flight_faro', 'meet_greet': 'on',
-            'owner_is_paying': 'on',
-            'guest_first_name': 'Jane', 'guest_last_name': 'Doe', 'guest_phone': '+351911111111',
-        })
-        self.client.post(url, {'action': 'save_arrival_departure', 'arrival_method': 'flight_faro'})
-        extra = Extra.objects.get(booking=self.upcoming_booking)
-        self.assertTrue(extra.owner_is_paying)
-
     def test_cancel_sets_status_and_is_excluded_from_upcoming(self):
         self.client.login(username='staysowner', password='pw')
         self.client.post(
@@ -471,6 +485,42 @@ class OwnerBookingsTests(TestCase):
         self.assertTrue(extra.late_checkout)
         self.assertEqual(extra.late_checkout_time.strftime('%H:%M'), '13:00')
         self.assertEqual(extra.late_checkout_charge, ExtrasSettings.load().late_checkout_price)
+
+    def test_extras_shows_owner_is_paying_only_when_meet_greet_is_required(self):
+        """create_owner_booking() defaults meet_greet=True, so self.upcoming_booking's Arrival
+        starts out requiring one - Owner is paying for extras only makes sense to show while
+        that's the case, per Thomas 2026-08-30."""
+        self.client.login(username='staysowner', password='pw')
+        response = self.client.get(reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}))
+        self.assertTrue(response.context['show_owner_is_paying'])
+
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {'action': 'save_arrival_departure', 'arrival_method': 'flight_faro'},  # meet_greet omitted = unchecked
+        )
+        response = self.client.get(reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}))
+        self.assertFalse(response.context['show_owner_is_paying'])
+
+    def test_update_extras_saves_owner_is_paying(self):
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {'action': 'update_extras', 'owner_is_paying': 'on'},
+        )
+        extra = Extra.objects.get(booking=self.upcoming_booking)
+        self.assertTrue(extra.owner_is_paying)
+
+    def test_update_extras_never_clobbers_owner_is_paying_when_meet_greet_is_off(self):
+        """Owner is paying for extras is hidden (and so never posted) once Meet & Greet is off -
+        a later Extras save with the checkbox absent from the form must not silently reset a
+        previously-set True back to False."""
+        self.client.login(username='staysowner', password='pw')
+        url = reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference})
+        self.client.post(url, {'action': 'update_extras', 'owner_is_paying': 'on'})
+        self.client.post(url, {'action': 'save_arrival_departure', 'arrival_method': 'flight_faro'})  # meet_greet off
+        self.client.post(url, {'action': 'update_extras'})  # owner_is_paying not posted - hidden
+        extra = Extra.objects.get(booking=self.upcoming_booking)
+        self.assertTrue(extra.owner_is_paying)
 
     def test_update_extras_saves_an_airport_transfer_row(self):
         self.client.login(username='staysowner', password='pw')
@@ -570,3 +620,138 @@ class OwnerCalendarTests(TestCase):
         # An unrecognised property_id falls back to the default rather than honouring it.
         self.assertEqual(response.context['property'], self.first_property)
         self.assertNotIn(other_property, response.context['properties'])
+
+
+class OwnerPayoutsMemosTests(TestCase):
+    """Payouts & Memos - a unified ledger of finance.models.PayoutRecord/Memo rows against this
+    owner's own properties, per Thomas 2026-08-30. PayoutRecord/Memo are created via the real
+    staff views (mirroring finance/tests.py::PayoutRecordTests's own convention), not
+    .objects.create() directly, so this exercises the exact same code path staff actually use."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Payouts Owner', email='payouts-owner@example.com', default_clean=False,
+            default_meet_greet=False, takes_euros=True, takes_pounds=False,
+            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+        )
+        self.owner_user = User.objects.create_user(username='payoutsowner', password='pw')
+        self.owner.user = self.owner_user
+        self.owner.save(update_fields=['user'])
+
+        self.other_owner = Owner.objects.create(
+            name='Other Payouts Owner', email='other-payouts-owner@example.com', default_clean=False,
+            default_meet_greet=False, takes_euros=True, takes_pounds=False,
+            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+        )
+        self.other_owner_user = User.objects.create_user(username='otherpayoutsowner', password='pw')
+        self.other_owner.user = self.other_owner_user
+        self.other_owner.save(update_fields=['user'])
+
+        self.company = ManagementCompany.objects.create(
+            name='Payouts Test Co', finances_managed_internally=True,
+        )
+        self.property = Property.objects.create(
+            title='Payouts Property', short_title='PAYOUTPROP', owner=self.owner,
+            cleaning_company=self.company, booking_company=self.company, standard_cleaning_fee=Decimal('80.00'),
+        )
+        PropertySpec.objects.create(property=self.property, bedrooms=2)
+        guest = Guest.objects.create(first_name='Pay', last_name='Out', email='payouts-guest@example.com')
+        self.today = timezone.now().date()
+        self.booking = Booking.objects.create(
+            property=self.property, guest=guest,
+            arrival_date=self.today + timedelta(days=10), departure_date=self.today + timedelta(days=14),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=self.booking, basic_rental=Decimal('300.00'))
+        Departure.objects.create(booking=self.booking, clean=True)  # auto-creates a Memo via signal
+
+        staffer = User.objects.create_user(username='payoutsstaff', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='payoutsstaff', password='pw')
+        self.client.post(reverse('staff:finance_payout_mark_paid', kwargs={'reference': self.booking.reference}))
+        self.memo = Memo.objects.get(property=self.property)
+        self.client.post(reverse('staff:finance_memo_send', kwargs={'pk': self.memo.pk}))
+        self.client.logout()
+        self.payout_record = PayoutRecord.objects.get(booking=self.booking)
+        self.memo.refresh_from_db()
+
+    def test_lists_both_a_payout_and_a_memo_row(self):
+        self.client.login(username='payoutsowner', password='pw')
+        response = self.client.get(reverse('owners:payouts_memos'))
+        rows_by_type = {row['type']: row for row in response.context['rows']}
+        self.assertEqual(set(rows_by_type), {'Payout', 'Memo'})
+        self.assertEqual(rows_by_type['Payout']['reference'], self.booking.reference)
+        self.assertEqual(rows_by_type['Payout']['amount'], self.payout_record.amount)
+        self.assertFalse(rows_by_type['Payout']['is_charge'])
+        self.assertEqual(rows_by_type['Memo']['reference'], self.booking.reference)
+        self.assertEqual(rows_by_type['Memo']['amount'], self.memo.total())
+        self.assertTrue(rows_by_type['Memo']['is_charge'])
+
+    def test_never_shows_another_owners_rows(self):
+        other_property = Property.objects.create(
+            title='Other Payouts Property', short_title='OTHPAYOUT', owner=self.other_owner,
+            cleaning_company=self.company, booking_company=self.company, standard_cleaning_fee=Decimal('80.00'),
+        )
+        PropertySpec.objects.create(property=other_property, bedrooms=2)
+        other_guest = Guest.objects.create(first_name='Other', last_name='Pay', email='other-payouts-guest@example.com')
+        other_booking = Booking.objects.create(
+            property=other_property, guest=other_guest,
+            arrival_date=self.today + timedelta(days=10), departure_date=self.today + timedelta(days=14),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=other_booking, basic_rental=Decimal('300.00'))
+        Departure.objects.create(booking=other_booking, clean=True)
+        self.client.login(username='payoutsstaff', password='pw')
+        self.client.post(reverse('staff:finance_payout_mark_paid', kwargs={'reference': other_booking.reference}))
+        other_memo = Memo.objects.get(property=other_property)
+        self.client.post(reverse('staff:finance_memo_send', kwargs={'pk': other_memo.pk}))
+        self.client.logout()
+
+        self.client.login(username='payoutsowner', password='pw')
+        response = self.client.get(reverse('owners:payouts_memos'))
+        references = {row['reference'] for row in response.context['rows']}
+        self.assertNotIn(other_booking.reference, references)
+
+    def test_payout_detail_url_scopes_to_the_single_booking_for_a_regularly_paid_owner(self):
+        self.owner.is_paid_regularly = True
+        self.owner.save(update_fields=['is_paid_regularly'])
+        self.client.login(username='payoutsowner', password='pw')
+        response = self.client.get(reverse('owners:payouts_memos'))
+        payout_row = next(row for row in response.context['rows'] if row['type'] == 'Payout')
+        self.assertIn(f"start={self.booking.arrival_date.isoformat()}", payout_row['detail_url'])
+        self.assertIn(f"end={self.booking.departure_date.isoformat()}", payout_row['detail_url'])
+
+    def test_payout_detail_url_scopes_to_the_arrival_month_for_a_non_regular_owner(self):
+        self.client.login(username='payoutsowner', password='pw')
+        response = self.client.get(reverse('owners:payouts_memos'))
+        payout_row = next(row for row in response.context['rows'] if row['type'] == 'Payout')
+        month_start = self.booking.arrival_date.replace(day=1)
+        self.assertIn(f"start={month_start.isoformat()}", payout_row['detail_url'])
+        self.assertNotIn(f"start={self.booking.arrival_date.isoformat()}", payout_row['detail_url'])
+
+    def test_memo_detail_shows_breakdown_and_total(self):
+        self.client.login(username='payoutsowner', password='pw')
+        response = self.client.get(reverse('owners:memo_detail', kwargs={'pk': self.memo.pk}))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['memo'], self.memo)
+
+    def test_memo_detail_404s_for_another_owners_memo(self):
+        self.client.login(username='otherpayoutsowner', password='pw')
+        response = self.client.get(reverse('owners:memo_detail', kwargs={'pk': self.memo.pk}))
+        self.assertEqual(response.status_code, 404)
+
+    def test_memo_detail_404s_for_an_unsent_memo(self):
+        unsent_booking = Booking.objects.create(
+            property=self.property, guest=self.booking.guest,
+            arrival_date=self.today + timedelta(days=20), departure_date=self.today + timedelta(days=24),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=unsent_booking, basic_rental=Decimal('300.00'))
+        Departure.objects.create(booking=unsent_booking, clean=True)
+        unsent_memo = Memo.objects.get(property=self.property, cleaning_task__booking=unsent_booking)
+
+        self.client.login(username='payoutsowner', password='pw')
+        response = self.client.get(reverse('owners:memo_detail', kwargs={'pk': unsent_memo.pk}))
+        self.assertEqual(response.status_code, 404)

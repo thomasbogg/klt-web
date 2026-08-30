@@ -69,6 +69,28 @@
             </div>
 
             <div class="owner-filter-panel">
+                <h2 class="owner-panel-title">Guests</h2>
+                <form method="post" class="owner-filter-form owner-guests-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_guests">
+                    <div class="staff-field-row">
+                        <label>Adults
+                            <input type="number" name="adults" min="1" value="{{ booking.adults }}" {% if not editable %}disabled{% endif %}>
+                        </label>
+                        <label>Children
+                            <input type="number" name="children" min="0" value="{{ booking.children }}" {% if not editable %}disabled{% endif %}>
+                        </label>
+                        <label>Babies
+                            <input type="number" name="babies" min="0" value="{{ booking.babies }}" {% if not editable %}disabled{% endif %}>
+                        </label>
+                    </div>
+                    {% if editable %}
+                    <button type="submit" class="owner-button">Update guests</button>
+                    {% endif %}
+                </form>
+            </div>
+
+            <div class="owner-filter-panel">
                 <h2 class="owner-panel-title">Arrival &amp; Departure</h2>
                 <form method="post" class="owner-filter-form owner-arrival-departure-form">
                     {% csrf_token %}
@@ -84,13 +106,7 @@
                             </label>
                         </div>
 
-                        <div id="owner-meet-greet-payer-panel" class="owner-meet-greet-dependent">
-                            <label class="owner-checkbox-label">
-                                <input type="checkbox" name="owner_is_paying" {% if owner_is_paying %}checked{% endif %}> Owner is paying for the meet &amp; greet
-                            </label>
-                        </div>
-
-                        <div id="owner-guest-details-panel" class="owner-guest-details-panel owner-meet-greet-dependent">
+                        <div id="owner-guest-details-panel" class="owner-guest-details-panel">
                             <h3>Guest Details</h3>
                             <div class="owner-form-row">
                                 <label>First name
@@ -170,22 +186,15 @@
                     <input type="hidden" name="action" value="update_extras">
                     <fieldset {% if not editable %}disabled{% endif %}>
 
-                        <section class="details-section{% if not show_cot_high_chair %} details-section-hidden{% endif %}" id="cot-high-chair-section">
-                            <h3 class="details-section-title">Cot &amp; High Chair</h3>
-                            <p class="details-note">Pricing depends on the length of the stay, and requesting both together gets a discount.</p>
-                            <div class="cot-high-chair-block">
-                                <label class="details-checkbox-label">
-                                    <input type="checkbox" name="cot" id="cot_checkbox" {% if cot %}checked{% endif %}>
-                                    Cot needed
-                                </label>
-                                <label class="details-checkbox-label">
-                                    <input type="checkbox" name="high_chair" id="high_chair_checkbox" {% if high_chair %}checked{% endif %}>
-                                    High chair needed
-                                </label>
-                                <p class="cot-high-chair-price">Estimated price: <span id="cot-high-chair-price-value">&ndash;</span></p>
-                            </div>
-                            {{ cot_high_chair_pricing_config|json_script:"cot-high-chair-pricing-config" }}
+                        {% if show_owner_is_paying %}
+                        <section class="details-section">
+                            <label class="details-checkbox-label">
+                                <input type="checkbox" name="owner_is_paying" {% if owner_is_paying %}checked{% endif %}>
+                                Owner is paying for extras
+                                <span class="owner-info-icon" title="Decides whether the guest is charged in cash at check-in, or the owner is billed at the end of the stay, for whichever optionals below are requested.">&#9432;</span>
+                            </label>
                         </section>
+                        {% endif %}
 
                         <section class="details-section">
                             <div class="welcome-pack-block">
@@ -236,7 +245,24 @@
                             </div>
                         </section>
 
-                        <section class="details-section">
+                        <section class="details-section owner-extras-divider{% if not show_cot_high_chair %} details-section-hidden{% endif %}" id="cot-high-chair-section">
+                            <h3 class="details-section-title">Cot &amp; High Chair</h3>
+                            <p class="details-note">Pricing depends on the length of the stay, and requesting both together gets a discount.</p>
+                            <div class="cot-high-chair-block">
+                                <label class="details-checkbox-label">
+                                    <input type="checkbox" name="cot" id="cot_checkbox" {% if cot %}checked{% endif %}>
+                                    Cot needed
+                                </label>
+                                <label class="details-checkbox-label">
+                                    <input type="checkbox" name="high_chair" id="high_chair_checkbox" {% if high_chair %}checked{% endif %}>
+                                    High chair needed
+                                </label>
+                                <p class="cot-high-chair-price">Estimated price: <span id="cot-high-chair-price-value">&ndash;</span></p>
+                            </div>
+                            {{ cot_high_chair_pricing_config|json_script:"cot-high-chair-pricing-config" }}
+                        </section>
+
+                        <section class="details-section owner-extras-divider{% if not show_airport_transfers %} details-section-hidden{% endif %}">
                             <h3 class="details-section-title">Airport Transfers (Faro Airport only)</h3>
                             <p class="details-note">Prices shown are estimates based on total headcount and pickup/drop-off time.</p>
 
@@ -366,7 +392,9 @@
                         </section>
 
                         {% if editable %}
-                        <button type="submit" class="owner-button">Save Extras</button>
+                        <div class="owner-extras-submit-row">
+                            <button type="submit" class="owner-button">Save Extras</button>
+                        </div>
                         {% endif %}
                     </fieldset>
                 </form>

@@ -195,9 +195,14 @@
 
 /* Platform fee/IVA, Clean, Meet & Greet, Maintenance are all deductions in the Reports
    waterfall (see staff/reports.py's own docstring) - a muted dark red distinguishes them from
-   the running-total columns (Basic rental, Rental to Owner, Net Revenue) without reading as an
-   alert/error colour, per Thomas: "so they don't stand out too much but just enough". */
-.owner-table-deduction {
+   the running-total columns (Basic rental, Rental to Owner, and a non-negative Net Revenue)
+   without reading as an alert/error colour, per Thomas: "so they don't stand out too much but
+   just enough". Also applied to Net Revenue itself when it comes out negative (see
+   staff/reports.py::booking_report_rows - an all-deductions, no-income row). Needs .owner-table
+   in the selector to out-specificity .owner-table td's own class+element color rule - a single
+   class alone (.owner-table-deduction) loses that fight, confirmed live 2026-08-30 (see
+   feedback_klt_web_css_specificity_gotchas in memory - the same trap, not a new one). */
+.owner-table td.owner-table-deduction {
     color: #963c33;
 }
 
@@ -205,6 +210,18 @@
     color: #999;
     font-style: italic;
     padding: 12px 0;
+}
+
+/* .manage-hub-content's own text-align:center otherwise centres this (bookings/details.css's
+   .details-note isn't loaded on this page, so its own left-aligning sibling class wasn't either)
+   - per Thomas 2026-08-30, this reads better left-aligned with a bit more breathing room above
+   and below than the page's other short intro notes get. */
+.owner-payouts-memos-note {
+    text-align: left;
+    color: rgb(110, 110, 110);
+    font-size: 0.88rem;
+    line-height: 1.6;
+    margin: 20px 0 28px;
 }
 
 .owner-flag {
@@ -316,18 +333,64 @@
     margin: 0 0 18px;
 }
 
-.owner-meet-greet-dependent[hidden] {
+.owner-guest-details-panel[hidden] {
     display: none;
-}
-
-#owner-meet-greet-payer-panel {
-    margin-bottom: 14px;
 }
 
 .owner-field-note {
     font-weight: 400;
     color: #999;
     font-size: 0.75rem;
+}
+
+/* Native title="" tooltip, same convention as the Action-needed flag on My Stays - no JS/custom
+   tooltip component needed for a single explanatory sentence. */
+.owner-info-icon {
+    color: #999;
+    font-size: 0.85rem;
+    cursor: help;
+}
+
+/* bookings/details.css's own .details-section + .details-section rule draws a divider line
+   between adjacent Extras sections (Cot & High Chair / Welcome Pack / Late Checkout / Airport
+   Transfers) - reads as an awkward hard rule inside this already-bordered owner-filter-panel
+   card, per Thomas 2026-08-30, so it's switched off by default here. Reintroduced selectively
+   via .owner-extras-divider below, just not between every adjacent pair. */
+.owner-extras-form .details-section + .details-section {
+    border-top: none;
+    padding-top: 0;
+}
+
+/* .details-section's own 40px vertical margin (plus .welcome-pack-block's own 24px
+   margin-bottom on top of that) reads as a lot of dead air stacked between Welcome Pack and
+   Late Checkout in this already-compact owner panel - per Thomas 2026-08-30. Tightened here
+   rather than in bookings/details.css, which is shared with the guest-facing Extras page where
+   the larger spacing is unchanged/still wanted. */
+.owner-extras-form .details-section {
+    margin: 16px 0;
+}
+
+.owner-extras-form .welcome-pack-block {
+    margin-bottom: 0;
+}
+
+/* Welcome Pack and Late Checkout (always shown first, per Thomas 2026-08-30) stay divider-free
+   and close together per the tightened spacing just above - but Cot & High Chair and Airport
+   Transfers are both conditional (infants on the booking / a Faro flight selected) and sit
+   further down the form, so a line reintroduces a clear break before whichever of them actually
+   shows, same as the rest of this app's Extras sections normally get. Applied directly to the
+   section rather than via the +-sibling rule above, so it holds regardless of which conditional
+   section(s) precede it in the DOM. */
+.owner-extras-form .details-section.owner-extras-divider {
+    border-top: 1px solid #ebebeb;
+    padding-top: 16px;
+}
+
+/* Keeps Save Extras clear of + Add transfer directly above it (both were sitting flush left,
+   easy to mis-click one for the other) - per Thomas 2026-08-30. */
+.owner-extras-submit-row {
+    text-align: right;
+    margin-top: 16px;
 }
 
 .owner-arrival-departure-form textarea {
@@ -360,8 +423,20 @@
     flex: 1 1 150px;
 }
 
-.owner-dates-form label {
+.owner-dates-form label,
+.owner-guests-form label {
     flex: 1;
+}
+
+/* A flex item's automatic min-width defaults to its content's min-content size, not 0 - for a
+   bare <input> that floor is the browser's own fairly wide default (~20 characters' worth), so
+   three growing number-field labels each carrying that floor didn't leave room for the Update
+   guests button on the same row and it wrapped (two date-field labels happened to still fit,
+   masking the same underlying issue on the Dates row). Unclamping it here is what actually lets
+   flex-grow shrink the labels to fit alongside the button, the standard fix for this flexbox
+   trap - confirmed live 2026-08-30. */
+.owner-guests-form label {
+    min-width: 0;
 }
 
 .owner-checkbox-label {

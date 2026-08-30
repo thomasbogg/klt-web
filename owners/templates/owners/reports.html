@@ -103,7 +103,7 @@
                             <td class="owner-table-deduction">&euro;{{ row.maintenance_cost }}</td>
                             {% endif %}
                             {% if 'net_revenue' in selected_columns %}
-                            <td>{% if row.net_revenue is not None %}{% if row.net_revenue < 0 %}-{% endif %}&euro;{{ row.net_revenue|cut:"-" }}{% else %}&mdash;{% endif %}</td>
+                            <td{% if row.net_revenue < 0 %} class="owner-table-deduction"{% endif %}>&euro;{{ row.net_revenue|cut:"-" }}</td>
                             {% endif %}
                         </tr>
                         {% empty %}
@@ -136,7 +136,7 @@
                             <td class="owner-table-deduction">&euro;{{ totals.maintenance_cost }}</td>
                             {% endif %}
                             {% if 'net_revenue' in selected_columns %}
-                            <td>{% if totals.net_revenue is not None %}{% if totals.net_revenue < 0 %}-{% endif %}&euro;{{ totals.net_revenue|cut:"-" }}{% else %}&mdash;{% endif %}</td>
+                            <td{% if totals.net_revenue < 0 %} class="owner-table-deduction"{% endif %}>&euro;{{ totals.net_revenue|cut:"-" }}</td>
                             {% endif %}
                         </tr>
                     </tfoot>

@@ -6,7 +6,11 @@
 	background: linear-gradient(135deg, #10344f 0%, #1f5f93 55%, #2c79b9 100%);
 	color: #f7fafc;
 	padding: 56px 24px 24px;
-	margin-top: 0;
+	/* Pushes the footer to the bottom of the viewport on a short page - see body's own
+	   display:flex/min-height:100vh in main/style.css, which is what makes this margin actually
+	   have somewhere to expand into. On a page tall enough to scroll already, this has no visible
+	   effect (there's no leftover space to fill), so it's a pure no-op there. */
+	margin-top: auto;
 }
 
 .site-footer__inner {

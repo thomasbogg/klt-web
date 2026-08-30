@@ -2,8 +2,9 @@ from django.contrib import messages
 from django.contrib.auth import views as auth_views
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse_lazy
+from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
@@ -18,6 +19,7 @@ from bookings.utils import (
     valid_flight_number,
 )
 from bookings.views import BookingFormMixin
+from finance.models import Memo, PayoutRecord
 from owners.permissions import owner_login_required
 from properties.models import Property
 from staff.models import TaskHistoryEntry
@@ -307,6 +309,7 @@ class OwnerBookingDetailView(BookingFormMixin, View):
             return redirect('owners:booking_detail', reference=booking.reference)
         handler = {
             'update_dates': self._update_dates,
+            'update_guests': self._update_guests,
             'save_arrival_departure': self._save_arrival_departure,
             'update_extras': self._update_extras,
             'cancel': self._cancel,
@@ -318,7 +321,6 @@ class OwnerBookingDetailView(BookingFormMixin, View):
     def _context(self, booking):
         arrival = getattr(booking, 'arrival', None)
         departure = getattr(booking, 'departure', None)
-        extra = getattr(booking, 'extras', None)
         context = {
             'owner': booking.property.owner,
             'booking': booking,
@@ -327,7 +329,13 @@ class OwnerBookingDetailView(BookingFormMixin, View):
             'departure': departure,
             'arrival_meet_greet': arrival.meet_greet if arrival else True,
             'departure_clean': departure.clean if departure else True,
-            'owner_is_paying': bool(extra and extra.owner_is_paying),
+            # Airport Transfers are Faro-only (see that section's own heading) - showing it at
+            # all only makes sense once a Faro flight has actually been selected for this stay,
+            # in either direction, per Thomas 2026-08-30.
+            'show_airport_transfers': (
+                (arrival is not None and arrival.method == TravelMethod.FLIGHT_FARO)
+                or (departure is not None and departure.method == TravelMethod.FLIGHT_FARO)
+            ),
             'arrival_travel_methods': TravelMethod.choices,
             'departure_travel_methods': TravelMethod.departure_choices(),
             'active_section': 'bookings',
@@ -352,6 +360,7 @@ class OwnerBookingDetailView(BookingFormMixin, View):
             high_chair = post_data.get('high_chair') == 'on'
             late_checkout = post_data.get('late_checkout') == 'on'
             late_checkout_time = post_data.get('late_checkout_time', '').strip()
+            owner_is_paying = post_data.get('owner_is_paying') == 'on'
         else:
             extra = getattr(booking, 'extras', None)
             welcome_pack = bool(extra and extra.welcome_pack)
@@ -366,10 +375,18 @@ class OwnerBookingDetailView(BookingFormMixin, View):
             late_checkout_time = (
                 extra.late_checkout_time.strftime('%H:%M') if extra and extra.late_checkout_time else ''
             )
+            owner_is_paying = bool(extra and extra.owner_is_paying)
 
+        arrival = getattr(booking, 'arrival', None)
         settings = ExtrasSettings.load()
         nights = (booking.departure_date - booking.arrival_date).days
         return {
+            'owner_is_paying': owner_is_paying,
+            # Extra.owner_is_paying is a whole-booking flag (see its own model docstring), but
+            # it's only ever meaningful to raise while a meet & greet is actually happening - per
+            # Thomas 2026-08-30, gated on the same Arrival.meet_greet the Arrival & Departure
+            # panel above already shows/saves.
+            'show_owner_is_paying': bool(arrival is None or arrival.meet_greet),
             'welcome_pack_items': WelcomePackItem.objects.filter(active=True),
             'welcome_pack': welcome_pack,
             'welcome_pack_food': welcome_pack_food,
@@ -398,18 +415,28 @@ class OwnerBookingDetailView(BookingFormMixin, View):
         }
 
     def _save_owner_extras(self, booking, post_data):
-        """Trimmed mirror of BookingFormMixin._save_extras() - only touches the three Extra
-        fields _owner_extras_context() above actually presents (welcome pack, cot/high chair,
-        late checkout). Deliberately does NOT delete/rebuild booking.requested_extras or touch
-        Extra.mid_stay_clean* the way the full _save_extras() does - Mid-stay Clean and Special
-        Requests live on a different form entirely (the guest-facing Manage Booking hub's own
-        Extras page), which this owner page doesn't show or know about. Reusing
+        """Trimmed mirror of BookingFormMixin._save_extras() - only touches the Extra fields
+        _owner_extras_context() above actually presents (welcome pack, cot/high chair, late
+        checkout, owner_is_paying). Deliberately does NOT delete/rebuild booking.requested_extras
+        or touch Extra.mid_stay_clean* the way the full _save_extras() does - Mid-stay Clean and
+        Special Requests live on a different form entirely (the guest-facing Manage Booking hub's
+        own Extras page), which this owner page doesn't show or know about. Reusing
         BookingFormMixin._save_extras() as-is here would silently wipe both out on every owner
         save (its unconditional requested_extras.all().delete() plus treating a missing
         mid_stay_clean checkbox as "guest unticked it") - a real data-loss risk, not a
         hypothetical one, so this stays a separate, narrower method instead."""
         extra, _ = Extra.objects.get_or_create(booking=booking)
         settings = ExtrasSettings.load()
+
+        # owner_is_paying only exists as a concept while a meet & greet is actually happening
+        # (see _owner_extras_context()'s show_owner_is_paying) - reading it here regardless would
+        # silently reset a previously-set True back to False on every Extras save made after
+        # meet & greet was later switched off elsewhere on the page, since the checkbox wouldn't
+        # even be rendered (and so never posted) at that point. Left untouched, not reset, when
+        # not applicable - same convention as every other conditionally-shown field on this page.
+        arrival = getattr(booking, 'arrival', None)
+        if arrival is None or arrival.meet_greet:
+            extra.owner_is_paying = post_data.get('owner_is_paying') == 'on'
         extra.welcome_pack = post_data.get('welcome_pack') == 'on'
         if extra.welcome_pack:
             food = post_data.get('welcome_pack_food', '')
@@ -438,6 +465,7 @@ class OwnerBookingDetailView(BookingFormMixin, View):
             'welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note', 'welcome_pack_charge',
             'cot', 'high_chair', 'cot_high_chair_charge',
             'late_checkout', 'late_checkout_time', 'late_checkout_charge',
+            'owner_is_paying',
         ])
 
     def _update_extras(self, request, booking):
@@ -485,6 +513,36 @@ class OwnerBookingDetailView(BookingFormMixin, View):
                 created_by=request.user,
             )
         messages.success(request, "Dates updated.")
+
+    def _update_guests(self, request, booking):
+        post = request.POST
+        try:
+            adults = int(post.get('adults', ''))
+            children = int(post.get('children', ''))
+            babies = int(post.get('babies', ''))
+        except (TypeError, ValueError):
+            messages.error(request, "Please enter valid guest numbers.")
+            return
+        if adults < 1 or children < 0 or babies < 0:
+            messages.error(request, "Please enter valid guest numbers.")
+            return
+
+        counts_before = (booking.adults, booking.children, booking.babies)
+        booking.adults = adults
+        booking.children = children
+        booking.babies = babies
+        try:
+            # Also catches exceeding the property's max_guests - see Booking.clean()'s own
+            # adults+children+babies check, same validation _update_dates() above relies on.
+            booking.full_clean()
+        except ValidationError as error:
+            booking.adults, booking.children, booking.babies = counts_before
+            messages.error(request, " ".join(error.messages) if hasattr(error, 'messages') else str(error))
+            return
+
+        booking.last_updated = timezone.now()
+        booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
+        messages.success(request, "Guest numbers updated.")
 
     def _save_arrival_departure(self, request, booking):
         post = request.POST
@@ -536,14 +594,6 @@ class OwnerBookingDetailView(BookingFormMixin, View):
             guest.email = post.get('guest_email', '').strip()
             guest.save()
 
-            # Same hide-AND-disable guard as Guest Details just above - Owner is paying only
-            # exists as a concept while Meet & Greet is actually requested, so it's read from the
-            # form under the same condition (and left untouched, not reset to False, whenever
-            # Meet & Greet is off - see this method's own comment above).
-            extra, _ = Extra.objects.get_or_create(booking=booking)
-            extra.owner_is_paying = post.get('owner_is_paying') == 'on'
-            extra.save(update_fields=['owner_is_paying'])
-
         messages.success(request, "Arrival & departure details saved.")
 
     def _cancel(self, request, booking):
@@ -555,3 +605,102 @@ class OwnerBookingDetailView(BookingFormMixin, View):
             detail=f"From '{old_status}' to 'Cancelled by owner'", created_by=request.user,
         )
         messages.success(request, "Stay cancelled.")
+
+
+@method_decorator(owner_login_required, name='dispatch')
+class OwnerPayoutsMemosView(View):
+    """Payouts & Memos - a unified, reverse-chronological ledger of every finance.models.
+    PayoutRecord (staff marked a booking's rental payout as paid, on the staff Payouts tab) and
+    Memo (staff clicked Send on a cleaning-fee memo, on the staff Memos tab) against this owner's
+    own properties, per Thomas 2026-08-30. Payouts are money coming TO the owner (black); Memos
+    are a charge deducted FROM the owner (the same dark red as Reports' deduction columns -
+    .owner-table-deduction, reused here).
+
+    Both models are strictly one row per booking (see PayoutRecord/Memo's own docstrings - there
+    is no batch/period payout entity anywhere in this codebase), so "view more" always resolves
+    to exactly one real booking either way. It differs by row type and, for Payouts, by
+    Owner.is_paid_regularly - see _payout_detail_url()'s own docstring for why."""
+    template_name = 'owners/payouts_memos.html'
+
+    def get(self, request, *args, **kwargs):
+        owner = request.user.owner_profile
+        payout_records = PayoutRecord.objects.filter(
+            booking__property__owner=owner,
+        ).select_related('booking', 'booking__property')
+        memos = Memo.objects.filter(
+            property__owner=owner, sent_at__isnull=False,
+        ).select_related('property', 'cleaning_task__booking')
+
+        rows = []
+        for record in payout_records:
+            rows.append({
+                'type': 'Payout',
+                'property': record.booking.property,
+                'reference': record.booking.reference,
+                'date': record.paid_at,
+                'amount': record.amount,
+                'is_charge': False,
+                'detail_url': self._payout_detail_url(owner, record.booking),
+            })
+        for memo in memos:
+            booking = memo.cleaning_task.booking if memo.cleaning_task else None
+            rows.append({
+                'type': 'Memo',
+                'property': memo.property,
+                'reference': booking.reference if booking else '—',
+                'date': memo.sent_at,
+                'amount': memo.total(),
+                'is_charge': True,
+                'detail_url': reverse('owners:memo_detail', kwargs={'pk': memo.pk}),
+            })
+        rows.sort(key=lambda row: row['date'], reverse=True)
+
+        return render(request, self.template_name, {
+            'owner': owner,
+            'rows': rows,
+            'active_section': 'payouts_memos',
+        })
+
+    def _payout_detail_url(self, owner, booking):
+        """Regularly-paid owners (Owner.is_paid_regularly) are paid individually per booking -
+        bookings/payouts.py::_due_date() gives each one its own due date (arrival + a fixed
+        number of days) with no natural grouping - so "view more" scopes Reports to just that
+        one booking's own dates. Every other owner is effectively settled in a monthly batch
+        instead (due date = last day of the arrival month, and staff's own Statement view
+        aggregates a non-regular owner's payout by calendar month - see
+        StaffFinanceStatementView._sections()'s payout_section) even though the underlying
+        PayoutRecord is still one row per booking - so "view more" scopes Reports to that whole
+        month instead, matching what the payout actually represents."""
+        if owner.is_paid_regularly:
+            start, end = booking.arrival_date, booking.departure_date
+        else:
+            start = booking.arrival_date.replace(day=1)
+            end = last_day_of_month(booking.arrival_date)
+        return (
+            f"{reverse('owners:reports')}?property_id={booking.property_id}"
+            f"&start={start.isoformat()}&end={end.isoformat()}"
+        )
+
+
+@method_decorator(owner_login_required, name='dispatch')
+class OwnerMemoDetailView(View):
+    """Trimmed, owner-facing mirror of staff/views.py::StaffFinanceMemoDetailView - same content
+    (Clean/Meet & Greet/Ad-hoc lines, total, sent status), scoped strictly to this owner's own
+    properties and to already-sent memos only (sent_at__isnull=False) - an owner has no business
+    seeing a still-editable, not-yet-final memo even by guessing a pk, and there's no Send button
+    here at all, since dispatching a memo is staff's own action."""
+    template_name = 'owners/memo_detail.html'
+
+    def get(self, request, pk, *args, **kwargs):
+        owner = request.user.owner_profile
+        memo = Memo.objects.select_related('property', 'cleaning_task__booking', 'sent_by').filter(
+            pk=pk, property__owner=owner, sent_at__isnull=False,
+        ).first()
+        if memo is None:
+            raise Http404("No memo found.")
+        return render(request, self.template_name, {
+            'owner': owner,
+            'memo': memo,
+            'ad_hoc_services': memo.ad_hoc_services.order_by('date'),
+            'active_section': 'payouts_memos',
+        })
