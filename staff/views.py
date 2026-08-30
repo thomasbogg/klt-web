@@ -42,8 +42,9 @@ from properties.models import (
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.monthly_reports import (
     EXTRAS_METRICS, REVENUE_GROUPS, bookings_trend_rows, commissions_trend_rows, extras_trend_rows,
-    monthly_bookings_rows, monthly_commissions_rows, monthly_extras_rows, monthly_revenue_rows,
-    monthly_stays_rows, revenue_trend_rows, stays_trend_rows,
+    location_groups, management_trend_rows, monthly_bookings_rows, monthly_commissions_rows,
+    monthly_extras_rows, monthly_management_rows, monthly_revenue_rows, monthly_stays_rows,
+    revenue_trend_rows, stays_trend_rows,
 )
 from staff.permissions import staff_page_required, superuser_required
 from staff.reports import REPORT_COLUMNS, booking_report_rows, report_totals
@@ -3343,4 +3344,33 @@ class StaffReportsCommissionsView(View):
             'rows': monthly_commissions_rows(year),
             'trend_rows': commissions_trend_rows(),
             'active_tab': 'commissions',
+        })
+
+
+@method_decorator(staff_page_required('can_view_reports'), name='dispatch')
+class StaffReportsManagementView(View):
+    """The Monthly tab's Management sub-view - same shape as StaffReportsMonthlyView above but
+    grouped by property Location rather than Direct/Airbnb/Booking.com/Vrbo (per Thomas
+    2026-08-30 - the reference workbook's own Management sheet is per-property instead, switched
+    here for a smaller, more stable column set as the property count grows), Cleans/Meet & Greets
+    counts. Groups are dynamic (fetched fresh per request via location_groups()), unlike
+    REVENUE_GROUPS's fixed tuple, since locations are admin-editable data. See
+    staff/monthly_reports.py::monthly_management_rows()/location_groups()."""
+    template_name = 'staff/reports_management.html'
+
+    def get(self, request, *args, **kwargs):
+        year = _requested_year(request)
+        groups = location_groups()
+        if 'locations' in request.GET:
+            selected_locations = set(request.GET.getlist('locations'))
+        else:
+            selected_locations = {key for key, _label in groups}
+
+        return render(request, self.template_name, {
+            'year': year,
+            'location_groups': groups,
+            'selected_locations': selected_locations,
+            'rows': monthly_management_rows(year, groups),
+            'trend_rows': management_trend_rows(groups),
+            'active_tab': 'management',
         })

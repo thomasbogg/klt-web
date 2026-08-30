@@ -17,16 +17,19 @@ REPORT_COLUMNS = (
     ('clean_cost', 'Clean'),
     ('meet_greet_cost', 'Meet & Greet'),
     ('maintenance_cost', 'Maintenance'),
-    ('net_revenue', 'Net Revenue'),
+    ('net_revenue', 'Owner Net Revenue'),
+    ('klt_net_revenue', 'KLT Net Revenue'),
 )
 
-# commission/klt_net_commission are KLT's own internal figures (the agency's Pre-IVA commission,
-# and what it actually nets after remitting VAT on that commission) - staff-only, per the same
-# "admin fee is the one figure Thomas doesn't want owners to see" principle already applied
-# elsewhere (see owners/views.py::OwnerReportView, which scopes its own COLUMNS to this set
-# rather than reusing REPORT_COLUMNS directly, now that the two aren't identical any more).
+# commission/klt_net_commission/klt_net_revenue are KLT's own internal figures (the agency's
+# Pre-IVA commission, what it actually nets after remitting VAT on that commission, and its own
+# total take from this booking) - staff-only, per the same "admin fee is the one figure Thomas
+# doesn't want owners to see" principle already applied elsewhere (see owners/views.py::
+# OwnerReportView, which scopes its own COLUMNS to this set rather than reusing REPORT_COLUMNS
+# directly, now that the two aren't identical any more).
 OWNER_SAFE_REPORT_COLUMNS = tuple(
-    (key, label) for key, label in REPORT_COLUMNS if key not in ('commission', 'klt_net_commission')
+    (key, label) for key, label in REPORT_COLUMNS
+    if key not in ('commission', 'klt_net_commission', 'klt_net_revenue')
 )
 
 
@@ -108,11 +111,20 @@ def booking_report_rows(start, end, properties=None):
         else:
             # No rental figure to build a waterfall from (owner stay, no owner assigned, or no
             # Charge/PlatformPayout yet) - but clean/meet & greet/maintenance costs are real
-            # regardless (see this function's own docstring), so Net Revenue still comes out as a
-            # genuine negative number here rather than "unavailable" - a row with only deductions
-            # and no income is exactly what a negative Net Revenue is for.
+            # regardless (see this function's own docstring), so Owner Net Revenue still comes out
+            # as a genuine negative number here rather than "unavailable" - a row with only
+            # deductions and no income is exactly what a negative Owner Net Revenue is for.
             basic_rental = platform_fee = platform_fee_vat = commission = klt_net_commission = rental_to_owner = None
             net_revenue = -(clean_cost + meet_greet_cost + maintenance_cost)
+
+        # KLT Net Revenue (2026-08-30, per Thomas) - KLT's OWN total take from this booking, a
+        # completely separate bottom line from Owner Net Revenue above: its net (Post-IVA)
+        # commission plus the Clean/Meet & Greet/Maintenance fees it charges/manages - unlike
+        # Owner Net Revenue, those three are real earnings TO KLT here, not deductions FROM
+        # anyone, so this is always a genuine figure (never None) even when there's no payout to
+        # report a commission from - klt_net_commission itself still shows "-" in that case (see
+        # its own column), but 0 is the correct contribution to this sum, not "unavailable".
+        klt_net_revenue = (klt_net_commission or ZERO) + clean_cost + meet_greet_cost + maintenance_cost
 
         rows.append({
             'booking': booking,
@@ -127,6 +139,7 @@ def booking_report_rows(start, end, properties=None):
             'meet_greet_cost': meet_greet_cost,
             'maintenance_cost': maintenance_cost,
             'net_revenue': net_revenue,
+            'klt_net_revenue': klt_net_revenue,
         })
     return rows
 

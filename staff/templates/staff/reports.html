@@ -110,6 +110,9 @@
                         {% if 'net_revenue' in selected_columns %}
                         <td>{% if row.net_revenue is not None %}{% if row.net_revenue < 0 %}-{% endif %}&euro;{{ row.net_revenue|cut:"-" }}{% else %}&mdash;{% endif %}</td>
                         {% endif %}
+                        {% if 'klt_net_revenue' in selected_columns %}
+                        <td>{% if row.klt_net_revenue < 0 %}-{% endif %}&euro;{{ row.klt_net_revenue|cut:"-" }}</td>
+                        {% endif %}
                     </tr>
                     {% empty %}
                     <tr><td colspan="7" class="staff-empty">No bookings in this range.</td></tr>
@@ -148,6 +151,9 @@
                         {% endif %}
                         {% if 'net_revenue' in selected_columns %}
                         <td>{% if totals.net_revenue is not None %}{% if totals.net_revenue < 0 %}-{% endif %}&euro;{{ totals.net_revenue|cut:"-" }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'klt_net_revenue' in selected_columns %}
+                        <td>{% if totals.klt_net_revenue is not None %}{% if totals.klt_net_revenue < 0 %}-{% endif %}&euro;{{ totals.klt_net_revenue|cut:"-" }}{% else %}&mdash;{% endif %}</td>
                         {% endif %}
                     </tr>
                 </tfoot>

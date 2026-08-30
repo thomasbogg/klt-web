@@ -7,6 +7,7 @@ import env_settings
 from bookings.models import AirportTransfer, Booking, Extra, PaymentSettings
 from bookings.payouts import compute_owner_payout
 from env_settings import VALID_BOOKING_STATUSES
+from properties.models import Location
 from staff.utils import last_day_of_month
 
 ZERO = Decimal('0')
@@ -477,5 +478,114 @@ def commissions_trend_rows():
             'month': date(year, month, 1),
             'pre_iva': sum((v['pre_iva'] for v in totals.values()), ZERO),
             'post_iva': sum((v['post_iva'] for v in totals.values()), ZERO),
+        })
+    return rows
+
+
+UNASSIGNED_LOCATION_KEY = 'unassigned'
+
+
+def location_groups():
+    """[(key, label), ...] - every real Location plus a trailing 'Unassigned' catch-all for
+    properties with no location set (properties.models.Property.location is nullable) - the
+    Management tab's own dynamic group list, built fresh per request rather than a fixed tuple
+    like REVENUE_GROUPS, since locations are admin-editable data, not a fixed code constant. Per
+    Thomas 2026-08-30: the reference workbook's own Management sheet is per-PROPERTY, switched to
+    per-LOCATION here instead - fewer, more stable columns as the property count grows. Keys are
+    always strings (str(pk), not the raw int) so they compare cleanly against request.GET's own
+    string values when used as a toggle, the same trap avoided elsewhere by keeping REVENUE_GROUPS
+    as plain strings throughout."""
+    groups = [(str(loc.pk), loc.title) for loc in Location.objects.order_by('title')]
+    groups.append((UNASSIGNED_LOCATION_KEY, 'Unassigned'))
+    return groups
+
+
+def _management_totals_for_month(year, month, groups):
+    """{group_key: {'cleans': int, 'meet_greets': int}} for every `groups` entry (see
+    location_groups()), counted across every confirmed booking (owner stays included - this is a
+    pure operational headcount of KLT's own workload, not a financial figure, so there's no
+    reason to exclude them the way Revenue/Stays/Bookings do) whose ARRIVAL falls in this month.
+    'cleans' = Departure.clean True; 'meet_greets' = Arrival.meet_greet True - counted regardless
+    of cleaning_company.finances_managed_internally, since this counts real work done/scheduled,
+    not billable fees (see clean_fee()/meet_greet_fee() for the financial version, used
+    elsewhere)."""
+    start = date(year, month, 1)
+    end = last_day_of_month(start)
+    bookings = Booking.objects.filter(
+        enquiry_status__in=VALID_BOOKING_STATUSES, arrival_date__range=(start, end),
+    ).select_related('property__location', 'departure', 'arrival')
+
+    totals = {key: {'cleans': 0, 'meet_greets': 0} for key, _label in groups}
+    for booking in bookings:
+        # location_groups() keys are strings (str(pk)) - location_id here is the raw int PK (or
+        # None), so it must be stringified before the lookup or it never matches a real location
+        # and every booking silently falls into Unassigned instead (caught live by a test
+        # assertion 2026-08-30, not assumed).
+        location_key = str(booking.property.location_id)
+        key = location_key if location_key in totals else UNASSIGNED_LOCATION_KEY
+        departure = getattr(booking, 'departure', None)
+        if departure is not None and departure.clean:
+            totals[key]['cleans'] += 1
+        arrival = getattr(booking, 'arrival', None)
+        if arrival is not None and arrival.meet_greet:
+            totals[key]['meet_greets'] += 1
+    return totals
+
+
+def monthly_management_rows(year, groups):
+    """One row per calendar month of `year` - Total plus each `groups` entry (see
+    location_groups()), each carrying Cleans/Meet & Greets counts, that group's % share of the
+    month's Total, and a year-over-year delta - same shape as monthly_revenue_rows()/
+    monthly_stays_rows() above, mirroring the reference workbook's Management sheet (grouped by
+    location rather than property - see location_groups()'s own docstring)."""
+    rows = []
+    for month in range(1, 13):
+        this_year = _management_totals_for_month(year, month, groups)
+        last_year = _management_totals_for_month(year - 1, month, groups)
+
+        this_year['Total'] = {
+            'cleans': sum(v['cleans'] for v in this_year.values()),
+            'meet_greets': sum(v['meet_greets'] for v in this_year.values()),
+        }
+        last_year['Total'] = {
+            'cleans': sum(v['cleans'] for v in last_year.values()),
+            'meet_greets': sum(v['meet_greets'] for v in last_year.values()),
+        }
+
+        total_cleans = this_year['Total']['cleans']
+        total_meet_greets = this_year['Total']['meet_greets']
+        row_groups = {}
+        for key, label in (('Total', 'Total'),) + tuple(groups):
+            cleans = this_year[key]['cleans']
+            meet_greets = this_year[key]['meet_greets']
+            row_groups[key] = {
+                'label': label,
+                'cleans': cleans,
+                'cleans_pct': _percent(cleans, total_cleans),
+                'cleans_delta': cleans - last_year[key]['cleans'],
+                'meet_greets': meet_greets,
+                'meet_greets_pct': _percent(meet_greets, total_meet_greets),
+                'meet_greets_delta': meet_greets - last_year[key]['meet_greets'],
+            }
+        rows.append({'month': date(year, month, 1), 'groups': row_groups})
+    return rows
+
+
+def management_trend_rows(groups):
+    """Same shape as revenue_trend_rows() above - Total Cleans/Meet & Greets only, one continuous
+    "since records began" series for the Management tab's own growth-over-time chart."""
+    bounds = Booking.objects.filter(enquiry_status__in=VALID_BOOKING_STATUSES).aggregate(
+        earliest=Min('arrival_date'), latest=Max('arrival_date'),
+    )
+    if bounds['earliest'] is None:
+        return []
+
+    rows = []
+    for year, month in _month_range(bounds['earliest'], bounds['latest']):
+        totals = _management_totals_for_month(year, month, groups)
+        rows.append({
+            'month': date(year, month, 1),
+            'cleans': sum(v['cleans'] for v in totals.values()),
+            'meet_greets': sum(v['meet_greets'] for v in totals.values()),
         })
     return rows

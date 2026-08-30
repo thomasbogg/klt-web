@@ -139,7 +139,9 @@ class OwnerSuiteTests(TestCase):
         })
         self.assertNotIn('commission', response.context['selected_columns'])
         self.assertNotIn('klt_net_commission', response.context['selected_columns'])
+        self.assertNotIn('klt_net_revenue', response.context['selected_columns'])
         self.assertNotContains(response, 'KLT Net Commission')
+        self.assertNotContains(response, 'KLT Net Revenue')
 
 
 class OwnerBookingsTests(TestCase):

@@ -82,4 +82,5 @@ urlpatterns = [
     path('reports/enquiries/', views.StaffReportsEnquiriesView.as_view(), name='reports_enquiries'),
     path('reports/extras/', views.StaffReportsExtrasView.as_view(), name='reports_extras'),
     path('reports/commissions/', views.StaffReportsCommissionsView.as_view(), name='reports_commissions'),
+    path('reports/management/', views.StaffReportsManagementView.as_view(), name='reports_management'),
 ]

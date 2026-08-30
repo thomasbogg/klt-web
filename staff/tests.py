@@ -23,9 +23,10 @@ from properties.models import (
 )
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.monthly_reports import (
-    bookings_trend_rows, commissions_trend_rows, extras_trend_rows, monthly_bookings_rows,
-    monthly_commissions_rows, monthly_extras_rows, monthly_revenue_rows, monthly_stays_rows,
-    revenue_trend_rows, stays_trend_rows,
+    bookings_trend_rows, commissions_trend_rows, extras_trend_rows, location_groups,
+    management_trend_rows, monthly_bookings_rows, monthly_commissions_rows, monthly_extras_rows,
+    monthly_management_rows, monthly_revenue_rows, monthly_stays_rows, revenue_trend_rows,
+    stays_trend_rows,
 )
 from staff.reports import booking_report_rows, report_totals
 from staff.utils import (
@@ -3790,6 +3791,13 @@ class StaffReportsTests(TestCase):
         self.assertEqual(row['rental_to_owner'], row['basic_rental'] - row['commission'])
         self.assertIsNotNone(row['klt_net_commission'])
         self.assertLessEqual(row['klt_net_commission'], row['commission'])
+        # klt_net_revenue (2026-08-30) - KLT's own separate bottom line, never confused with
+        # Owner Net Revenue above even though both are called "net revenue": commission-derived
+        # earnings TO klt plus the Clean/Meet & Greet/Maintenance fees it charges, not a deduction
+        # from anyone.
+        expected_klt_net_revenue = row['klt_net_commission'] + row['clean_cost'] + row['meet_greet_cost'] + row['maintenance_cost']
+        self.assertEqual(row['klt_net_revenue'], expected_klt_net_revenue)
+        self.assertNotEqual(row['klt_net_revenue'], row['net_revenue'])
 
     def test_owner_stay_still_reports_a_real_clean_cost_with_no_payout(self):
         """compute_owner_payout always reports an owner stay as unavailable, but the clean still
@@ -3812,6 +3820,14 @@ class StaffReportsTests(TestCase):
         expected_net = -(row['clean_cost'] + row['meet_greet_cost'] + row['maintenance_cost'])
         self.assertEqual(row['net_revenue'], expected_net)
         self.assertLess(row['net_revenue'], Decimal('0'))
+        # klt_net_revenue is the opposite sign story here on purpose - the same clean/meet & greet
+        # costs that make Owner Net Revenue negative are genuine earnings TO klt (it still
+        # performs and bills the clean regardless of whether there's a payout), so with
+        # klt_net_commission unavailable (None -> treated as 0) this comes out positive instead.
+        self.assertIsNone(row['klt_net_commission'])
+        expected_klt_net_revenue = row['clean_cost'] + row['meet_greet_cost'] + row['maintenance_cost']
+        self.assertEqual(row['klt_net_revenue'], expected_klt_net_revenue)
+        self.assertGreater(row['klt_net_revenue'], Decimal('0'))
 
     def test_maintenance_cost_and_net_revenue_reflect_the_bookings_memo(self):
         self._make_booking(5, 9)
@@ -3891,7 +3907,8 @@ class StaffReportsViewTests(TestCase):
         self.assertContains(response, 'Clean')
         self.assertContains(response, 'Meet &amp; Greet')
         self.assertContains(response, 'Maintenance')
-        self.assertContains(response, 'Net Revenue')
+        self.assertContains(response, 'Owner Net Revenue')
+        self.assertContains(response, 'KLT Net Revenue')
 
     def test_narrowing_columns_selects_only_the_requested_column(self):
         """Column labels always appear once as checkbox text regardless of selection, so this
@@ -4668,3 +4685,152 @@ class StaffReportsCommissionsViewTests(TestCase):
         response = self.client.get(reverse('staff:reports_commissions'), {'year': '2024'})
         self.assertContains(response, 'id="commissions-trend-chart"')
         self.assertContains(response, 'id="commissions-trend-data"')
+
+
+class LocationGroupsTests(TestCase):
+    """staff/monthly_reports.py::location_groups() - the Management tab's own dynamic group
+    list, built fresh from properties.models.Location rather than a fixed tuple."""
+
+    def test_includes_every_location_plus_a_trailing_unassigned(self):
+        make_location(title='Alpha Location')
+        make_location(title='Beta Location')
+
+        groups = location_groups()
+        labels = [label for _key, label in groups]
+        self.assertIn('Alpha Location', labels)
+        self.assertIn('Beta Location', labels)
+        self.assertEqual(labels[-1], 'Unassigned')
+
+    def test_ordered_alphabetically_by_title(self):
+        make_location(title='Zeta Location')
+        make_location(title='Alpha Location')
+
+        groups = location_groups()
+        labels = [label for _key, label in groups if label != 'Unassigned']
+        self.assertEqual(labels, sorted(labels))
+
+
+class MonthlyManagementRowsTests(TestCase):
+    """staff/monthly_reports.py::monthly_management_rows() - Cleans/Meet & Greets grouped by
+    property Location (not property, per Thomas 2026-08-30), mirroring the reference workbook's
+    Management sheet."""
+
+    def setUp(self):
+        self.owner = make_owner(is_paid_regularly=False)
+        self.location = make_location(title='Management Report Location')
+        self.property = Property.objects.create(
+            title='Management Report Property', short_title='MGMTPROP', owner=self.owner, location=self.location,
+        )
+        self.unassigned_property = Property.objects.create(
+            title='Unassigned Management Property', short_title='MGMTNOLOC', owner=self.owner,
+        )
+        self.guest = Guest.objects.create(first_name='Mgmt', last_name='Report', email='management-report@example.com')
+
+    def _make_booking(self, arrival, property=None, clean=True, meet_greet=True, is_owner=False):
+        booking = Booking.objects.create(
+            property=property or self.property, guest=self.guest, arrival_date=arrival,
+            departure_date=arrival + timedelta(days=4), is_owner=is_owner,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Departure.objects.create(booking=booking, clean=clean)
+        Arrival.objects.create(booking=booking, meet_greet=meet_greet)
+        return booking
+
+    def test_counts_a_clean_and_meet_greet_under_its_own_location(self):
+        self._make_booking(date(2024, 3, 5))
+
+        groups = location_groups()
+        rows = monthly_management_rows(2024, groups)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups'][str(self.location.pk)]['cleans'], 1)
+        self.assertEqual(march['groups'][str(self.location.pk)]['meet_greets'], 1)
+        self.assertEqual(march['groups']['Total']['cleans'], 1)
+
+    def test_property_with_no_location_counts_under_unassigned(self):
+        self._make_booking(date(2024, 3, 10), property=self.unassigned_property)
+
+        groups = location_groups()
+        rows = monthly_management_rows(2024, groups)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups']['unassigned']['cleans'], 1)
+
+    def test_owner_stay_is_included_unlike_revenue_and_stays(self):
+        """A pure operational headcount, not a financial figure, so owner stays count here -
+        unlike Revenue/Stays/Bookings, which exclude them entirely."""
+        self._make_booking(date(2024, 3, 15), is_owner=True)
+
+        groups = location_groups()
+        rows = monthly_management_rows(2024, groups)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups']['Total']['cleans'], 1)
+
+    def test_clean_false_is_not_counted(self):
+        self._make_booking(date(2024, 3, 20), clean=False, meet_greet=False)
+
+        groups = location_groups()
+        rows = monthly_management_rows(2024, groups)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups']['Total']['cleans'], 0)
+        self.assertEqual(march['groups']['Total']['meet_greets'], 0)
+
+    def test_a_month_with_no_bookings_has_zero_figures_and_raises_nothing(self):
+        groups = location_groups()
+        rows = monthly_management_rows(2024, groups)
+        july = next(r for r in rows if r['month'].month == 7)
+        self.assertEqual(july['groups']['Total']['cleans'], 0)
+        self.assertEqual(july['groups']['Total']['cleans_pct'], Decimal('0'))
+
+
+class ManagementTrendRowsTests(TestCase):
+    def setUp(self):
+        self.owner = make_owner(is_paid_regularly=False)
+        self.property = Property.objects.create(
+            title='Management Trend Property', short_title='MGMTTREND', owner=self.owner,
+        )
+        self.guest = Guest.objects.create(first_name='Trend', last_name='Mgmt', email='trend-mgmt@example.com')
+
+    def test_empty_when_no_confirmed_bookings_exist(self):
+        groups = location_groups()
+        self.assertEqual(management_trend_rows(groups), [])
+
+    def test_spans_from_earliest_to_latest_confirmed_booking(self):
+        booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=date(2020, 1, 10),
+            departure_date=date(2020, 1, 14), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Departure.objects.create(booking=booking, clean=True)
+
+        groups = location_groups()
+        rows = management_trend_rows(groups)
+        self.assertEqual(rows[0]['month'], date(2020, 1, 1))
+        self.assertEqual(rows[0]['cleans'], 1)
+
+
+class StaffReportsManagementViewTests(TestCase):
+    def setUp(self):
+        role = StaffRole.objects.create(name='Management Viewer', can_view_reports=True)
+        self.staffer = User.objects.create_user(username='managementstaffer', password='pw', is_staff=True)
+        StaffProfile.objects.create(user=self.staffer, role=role)
+        self.no_access_staffer = User.objects.create_user(username='noaccessmgmt', password='pw', is_staff=True)
+
+    def test_requires_permission(self):
+        self.client.login(username='noaccessmgmt', password='pw')
+        response = self.client.get(reverse('staff:reports_management'))
+        self.assertEqual(response.status_code, 403)
+
+    def test_page_renders_with_the_requested_year(self):
+        self.client.login(username='managementstaffer', password='pw')
+        response = self.client.get(reverse('staff:reports_management'), {'year': '2024'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['year'], 2024)
+        self.assertContains(response, 'Unassigned')
+        self.assertContains(response, 'Cleans')
+
+    def test_trend_chart_renders_on_the_page(self):
+        self.client.login(username='managementstaffer', password='pw')
+        response = self.client.get(reverse('staff:reports_management'), {'year': '2024'})
+        self.assertContains(response, 'id="management-trend-chart"')
+        self.assertContains(response, 'id="management-trend-data"')

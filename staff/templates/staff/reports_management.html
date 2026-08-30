@@ -1,0 +1,124 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Management | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/home.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/reports.css' %}">
+    <script src="{% static 'staff/vendor/chartjs/chart.umd.min.js' %}" defer></script>
+    <script src="{% static 'staff/monthly_trend_chart.js' %}" defer></script>
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Management</h1>
+        </header>
+
+        {% include 'staff/_reports_nav.html' %}
+
+        <div class="staff-panel staff-reports-filter-panel">
+            <form method="get" class="staff-reports-form">
+                <label class="staff-field">Year
+                    <input type="number" name="year" class="staff-input" value="{{ year }}" min="2000" max="2100">
+                </label>
+                <div class="staff-reports-columns">
+                    {% for key, label in location_groups %}
+                    <label class="staff-checkbox-label">
+                        <input type="checkbox" name="locations" value="{{ key }}" {% if key in selected_locations %}checked{% endif %}> {{ label }}
+                    </label>
+                    {% endfor %}
+                </div>
+                <button type="submit" class="staff-button">Update</button>
+            </form>
+        </div>
+
+        <p class="staff-monthly-note">
+            Cleans and Meet & Greets actually managed, by property location (grouped by location rather than property
+            - a smaller, more stable set of columns as the property count grows) - a workload count, not a financial
+            figure, so owner stays are included. "Lst Yr" is the change vs. the same month {{ year|add:"-1" }}, not that month's raw figure.
+        </p>
+
+        <div class="staff-table-scroll">
+            <table class="staff-reservations-table staff-monthly-table">
+                <thead>
+                    <tr>
+                        <th rowspan="3">Month</th>
+                        <th colspan="6">Total</th>
+                        {% for key, label in location_groups %}
+                        {% if key in selected_locations %}
+                        <th colspan="6">{{ label }}</th>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <th colspan="3">Cleans</th>
+                        <th colspan="3">Meet &amp; Greets</th>
+                        {% for key, label in location_groups %}
+                        {% if key in selected_locations %}
+                        <th colspan="3">Cleans</th>
+                        <th colspan="3">Meet &amp; Greets</th>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <th>Tot</th>
+                        <th>%</th>
+                        <th>Lst Yr</th>
+                        <th>Tot</th>
+                        <th>%</th>
+                        <th>Lst Yr</th>
+                        {% for key, label in location_groups %}
+                        {% if key in selected_locations %}
+                        <th>Tot</th>
+                        <th>%</th>
+                        <th>Lst Yr</th>
+                        <th>Tot</th>
+                        <th>%</th>
+                        <th>Lst Yr</th>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    <tr>
+                        <td>{{ row.month|date:'F' }}</td>
+                        {% for key, group in row.groups.items %}
+                        {% if key == 'Total' or key in selected_locations %}
+                        <td>{{ group.cleans }}</td>
+                        <td>{{ group.cleans_pct }}%</td>
+                        <td{% if group.cleans_delta < 0 %} class="staff-monthly-negative"{% endif %}>{{ group.cleans_delta }}</td>
+                        <td>{{ group.meet_greets }}</td>
+                        <td>{{ group.meet_greets_pct }}%</td>
+                        <td{% if group.meet_greets_delta < 0 %} class="staff-monthly-negative"{% endif %}>{{ group.meet_greets_delta }}</td>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <h2 class="staff-panel-title staff-trend-title">Growth over time</h2>
+        <p class="staff-monthly-note">Every month on record, from the earliest booking to the latest, regardless of the Year filter above.</p>
+        <div class="staff-panel staff-trend-panel">
+            <canvas id="management-trend-chart"></canvas>
+        </div>
+        {{ trend_rows|json_script:"management-trend-data" }}
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                renderTrendChart('management-trend-chart', 'management-trend-data', [
+                    { key: 'cleans', label: 'Cleans', color: '#9f6f00' },
+                    { key: 'meet_greets', label: 'Meet & Greets', color: '#2c79b9' },
+                ]);
+            });
+        </script>
+    </div>
+</body>
+</html>
