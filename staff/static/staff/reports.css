@@ -1,0 +1,36 @@
+.staff-reports-filter-panel {
+    margin-bottom: 24px;
+}
+
+.staff-reports-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 20px;
+}
+
+.staff-reports-form > .staff-button {
+    align-self: flex-end;
+}
+
+.staff-reports-columns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    flex-basis: 100%;
+}
+
+.staff-reservations-table td {
+    text-align: left;
+}
+
+.staff-reservations-table tfoot td {
+    padding: 8px;
+    border-top: 2px solid #ccc;
+    font-weight: 700;
+    color: #222;
+}
+
+.staff-reports-totals-label {
+    text-align: left;
+}

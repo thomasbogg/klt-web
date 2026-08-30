@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'guests.apps.GuestsConfig',
     'staff.apps.StaffConfig',
     'finance.apps.FinanceConfig',
+    'owners.apps.OwnersConfig',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',

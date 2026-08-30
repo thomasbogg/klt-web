@@ -1,0 +1,166 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ booking.reference }} | Owner Suite | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'owners/owners.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
+    <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
+    <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
+    <script src="{% static 'owners/booking_detail.js' %}" defer></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'owners/_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content">
+            <h1>{{ booking.property.short_title }} &ndash; {{ booking.reference }}</h1>
+
+            {% if messages %}
+            <div class="owner-messages">
+                {% for message in messages %}
+                <p class="owner-message owner-message-{{ message.tags }}">{{ message }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if not editable %}
+            <p class="owner-note">
+                {% if booking.enquiry_status == 'Cancelled by owner' %}This stay has been cancelled.
+                {% else %}This stay has already started or finished, so it can no longer be changed here.{% endif %}
+            </p>
+            {% endif %}
+
+            <div class="owner-filter-panel">
+                <h2 class="owner-panel-title">Dates</h2>
+                <form method="post" class="owner-filter-form owner-dates-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="update_dates">
+                    <div class="staff-field-row staff-date-future-only">
+                        <label>Arrival
+                            <input type="text" name="arrival_date" class="staff-date-input staff-date-start" autocomplete="off" value="{{ booking.arrival_date|date:'Y-m-d' }}" {% if not editable %}disabled{% endif %}>
+                        </label>
+                        <label>Departure
+                            <input type="text" name="departure_date" class="staff-date-input staff-date-end" autocomplete="off" value="{{ booking.departure_date|date:'Y-m-d' }}" {% if not editable %}disabled{% endif %}>
+                        </label>
+                    </div>
+                    {% if editable %}
+                    <button type="submit" class="owner-button">Update dates</button>
+                    {% endif %}
+                </form>
+            </div>
+
+            <div class="owner-filter-panel">
+                <h2 class="owner-panel-title">Arrival &amp; Departure</h2>
+                <form method="post" class="owner-filter-form owner-arrival-departure-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="save_arrival_departure">
+
+                    <fieldset {% if not editable %}disabled{% endif %}>
+                        <div class="owner-form-row">
+                            <label class="owner-checkbox-label">
+                                <input type="checkbox" name="clean" {% if departure_clean %}checked{% endif %}> Requires clean after departure
+                            </label>
+                            <label class="owner-checkbox-label">
+                                <input type="checkbox" name="meet_greet" id="owner-meet-greet-toggle" {% if arrival_meet_greet %}checked{% endif %}> Requires meet &amp; greet on arrival
+                            </label>
+                        </div>
+
+                        <div id="owner-guest-details-panel" class="owner-guest-details-panel">
+                            <h3>Guest Details</h3>
+                            <div class="owner-form-row">
+                                <label>First name
+                                    <input type="text" name="guest_first_name" value="{{ booking.guest.first_name|default:'' }}">
+                                </label>
+                                <label>Last name
+                                    <input type="text" name="guest_last_name" value="{{ booking.guest.last_name|default:'' }}">
+                                </label>
+                                <label>Phone
+                                    <input type="text" name="guest_phone" value="{{ booking.guest.phone|default:'' }}">
+                                </label>
+                                <label>Email <span class="owner-field-note">(optional)</span>
+                                    <input type="email" name="guest_email" value="{{ booking.guest.email|default:'' }}">
+                                </label>
+                            </div>
+                        </div>
+
+                        <h3>Arrival &ndash; {{ booking.arrival_date|date:'j M Y' }}</h3>
+                        <div class="owner-form-row" data-prefix="arrival">
+                            <label>How are they travelling?
+                                <select name="arrival_method" class="owner-travel-method-select" data-target-prefix="arrival">
+                                    {% for value, label in arrival_travel_methods %}
+                                    <option value="{{ value }}" {% if arrival.method == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <label data-methods="flight_faro flight_lisbon">Flight number
+                                <input type="text" name="arrival_flight_number" value="{{ arrival.flight_number|default:'' }}" placeholder="e.g. TP1234">
+                            </label>
+                            <label data-methods="flight_faro flight_lisbon bus train driving">Time
+                                <input type="time" name="arrival_time" value="{{ arrival.time|time:'H:i'|default:'' }}">
+                            </label>
+                            <label data-methods="driving">Travelling from
+                                <input type="text" name="arrival_travelling_from" value="{{ arrival.travelling_from|default:'' }}">
+                            </label>
+                            <label class="owner-checkbox-label" data-methods="flight_faro flight_lisbon">
+                                <input type="checkbox" name="arrival_hiring_car" {% if arrival.hiring_car %}checked{% endif %}> Hiring a car
+                            </label>
+                        </div>
+                        <label>Notes
+                            <textarea name="arrival_details" rows="2" maxlength="140">{{ arrival.details|default:'' }}</textarea>
+                        </label>
+
+                        <h3>Departure &ndash; {{ booking.departure_date|date:'j M Y' }}</h3>
+                        <div class="owner-form-row" data-prefix="departure">
+                            <label>How are they travelling?
+                                <select name="departure_method" class="owner-travel-method-select" data-target-prefix="departure">
+                                    {% for value, label in departure_travel_methods %}
+                                    <option value="{{ value }}" {% if departure.method == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <label data-methods="flight_faro flight_lisbon">Flight number
+                                <input type="text" name="departure_flight_number" value="{{ departure.flight_number|default:'' }}" placeholder="e.g. TP1234">
+                            </label>
+                            <label data-methods="flight_faro flight_lisbon bus train driving">Time
+                                <input type="time" name="departure_time" value="{{ departure.time|time:'H:i'|default:'' }}">
+                            </label>
+                            <label data-methods="driving">Travelling to
+                                <input type="text" name="departure_travelling_from" value="{{ departure.travelling_from|default:'' }}">
+                            </label>
+                        </div>
+                        <label>Notes
+                            <textarea name="departure_details" rows="2" maxlength="140">{{ departure.details|default:'' }}</textarea>
+                        </label>
+
+                        <button type="submit" class="owner-button">Save arrival &amp; departure</button>
+                    </fieldset>
+                </form>
+            </div>
+
+            {% if editable %}
+            <div class="owner-filter-panel">
+                <h2 class="owner-panel-title">Cancel this stay</h2>
+                <form method="post" onsubmit="return confirm('Cancel this stay? This can\'t be undone.');">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="cancel">
+                    <button type="submit" class="owner-button owner-button-danger">Cancel stay</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% include 'footer/footer.html' %}
+</body>
+</html>

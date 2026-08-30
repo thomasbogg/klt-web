@@ -13,6 +13,7 @@ from bookings.models import (
     Arrival, BalancePayment, Booking, BookingCondition, BookingSettings, Charge, CheckinSettings,
     Departure, Extra, FAQ, Payment, PaymentSettings, TravelMethod,
 )
+from finance.models import AdHocService
 from guests.models import Guest
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
@@ -20,6 +21,7 @@ from properties.models import (
     PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
+from staff.reports import booking_report_rows, report_totals
 from staff.utils import (
     apply_manual_checkin_time, apply_manual_task_date, booking_stage, checkin_valid_range,
     cleaning_task_valid_range, compute_arrival_eta, next_step_hint, status_bucket,
@@ -2061,6 +2063,30 @@ class StaffPropertyDetailViewTests(TestCase):
         self.client.post(self.url, {'action': 'add_ical_link', 'platform': airbnb.pk, 'ical_url': ''})
         self.assertFalse(iCalLink.objects.filter(property=self.property).exists())
 
+    def test_add_ical_link_as_an_owner_link(self):
+        airbnb = Platform.objects.get_or_create(name='Airbnb')[0]
+        self.client.post(self.url, {
+            'action': 'add_ical_link', 'platform': airbnb.pk, 'ical_url': 'https://airbnb.com/feed.ics',
+            'is_owner_link': 'on',
+        })
+        link = iCalLink.objects.get(property=self.property)
+        self.assertTrue(link.is_owner_link)
+
+    def test_update_ical_link_toggles_is_owner_link(self):
+        link = iCalLink.objects.create(property=self.property, ical_url='https://old.example.com/feed.ics')
+        self.client.post(self.url, {
+            'action': 'update_ical_link', 'link_id': link.pk, 'ical_url': link.ical_url,
+            'is_owner_link': 'on',
+        })
+        link.refresh_from_db()
+        self.assertTrue(link.is_owner_link)
+
+        self.client.post(self.url, {
+            'action': 'update_ical_link', 'link_id': link.pk, 'ical_url': link.ical_url,
+        })
+        link.refresh_from_db()
+        self.assertFalse(link.is_owner_link)
+
     def test_update_ical_link_saves_new_url(self):
         booking_com = Platform.objects.get_or_create(name='Booking.com')[0]
         link = iCalLink.objects.create(
@@ -3695,3 +3721,164 @@ class CheckinCalendarEndpointTests(TestCase):
             'extras_collected': 'true',
         })
         self.assertEqual(response.status_code, 400)
+
+
+class StaffReportsTests(TestCase):
+    """staff/reports.py::booking_report_rows and the Reports page it feeds - see
+    [[project_klt_web_reporting]] in memory for the phased plan this is step one of."""
+
+    def setUp(self):
+        self.owner = make_owner(is_paid_regularly=False)
+        self.company = make_management_company(finances_managed_internally=True)
+        self.property = Property.objects.create(
+            title='Reports Property', short_title='REPPROP', owner=self.owner,
+            cleaning_company=self.company, booking_company=self.company, standard_cleaning_fee=Decimal('80.00'),
+        )
+        PropertySpec.objects.create(property=self.property, bedrooms=2)
+        self.guest = Guest.objects.create(first_name='Rep', last_name='Orter', email='reports-guest@example.com')
+        self.settings = PaymentSettings.load()
+        self.settings.meet_greet_fee = Decimal('28.00')
+        self.settings.save()
+        self.today = timezone.now().date()
+
+    def _make_booking(self, arrival_offset, departure_offset, is_owner=False, property=None):
+        booking = Booking.objects.create(
+            property=property or self.property, guest=self.guest,
+            arrival_date=self.today + timedelta(days=arrival_offset),
+            departure_date=self.today + timedelta(days=departure_offset),
+            is_owner=is_owner, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        if not is_owner:
+            Charge.objects.create(booking=booking, basic_rental=Decimal('300.00'))
+        Departure.objects.create(booking=booking, clean=True)
+        Arrival.objects.create(booking=booking, meet_greet=True)
+        return booking
+
+    def test_row_includes_every_report_column_for_a_guest_booking(self):
+        booking = self._make_booking(5, 9)
+        rows = booking_report_rows(self.today, self.today + timedelta(days=10))
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row['booking'], booking)
+        self.assertEqual(row['nights'], 4)
+        self.assertIsNotNone(row['rental_to_owner'])
+        self.assertEqual(row['basic_rental'], Decimal('300.00'))
+        self.assertEqual(row['platform_fee'], Decimal('0'))
+        self.assertEqual(row['platform_fee_vat'], Decimal('0'))
+        self.assertGreater(row['clean_cost'], Decimal('0'))
+        self.assertEqual(row['meet_greet_cost'], Decimal('28.00'))
+        self.assertEqual(row['maintenance_cost'], Decimal('0'))
+        # net_revenue = rental_to_owner - clean - meet_greet - maintenance (the waterfall) -
+        # rental_to_owner itself has NOT already deducted clean/meet-greet the way the old
+        # owner_balance figure did, so this must differ from rental_to_owner whenever those are
+        # nonzero (they are here - a real cleaning_company is set).
+        expected_net = row['rental_to_owner'] - row['clean_cost'] - row['meet_greet_cost'] - row['maintenance_cost']
+        self.assertEqual(row['net_revenue'], expected_net)
+        self.assertNotEqual(row['net_revenue'], row['rental_to_owner'])
+
+    def test_owner_stay_still_reports_a_real_clean_cost_with_no_payout(self):
+        """compute_owner_payout always reports an owner stay as unavailable, but the clean still
+        genuinely happens and must still show up as a real cost - see clean_fee()'s own
+        docstring. The money-column figures sourced from compute_owner_payout's own dict
+        (basic_rental/platform_fee/platform_fee_vat/net_revenue) go None together with
+        rental_to_owner; maintenance_cost doesn't, since it's independent of payout availability."""
+        self._make_booking(5, 9, is_owner=True)
+        rows = booking_report_rows(self.today, self.today + timedelta(days=10))
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertIsNone(row['rental_to_owner'])
+        self.assertIsNone(row['basic_rental'])
+        self.assertIsNone(row['platform_fee'])
+        self.assertIsNone(row['platform_fee_vat'])
+        self.assertIsNone(row['net_revenue'])
+        self.assertGreater(row['clean_cost'], Decimal('0'))
+        self.assertEqual(row['maintenance_cost'], Decimal('0'))
+
+    def test_maintenance_cost_and_net_revenue_reflect_the_bookings_memo(self):
+        self._make_booking(5, 9)
+        AdHocService.objects.create(property=self.property, description='AC repair', cost=Decimal('50.00'))
+        rows = booking_report_rows(self.today, self.today + timedelta(days=10))
+        row = rows[0]
+        self.assertEqual(row['maintenance_cost'], Decimal('50.00'))
+        expected_net = row['rental_to_owner'] - row['clean_cost'] - row['meet_greet_cost'] - Decimal('50.00')
+        self.assertEqual(row['net_revenue'], expected_net)
+
+    def test_property_filter_excludes_other_properties(self):
+        other_property = Property.objects.create(
+            title='Other Reports Property', short_title='OTHREP', owner=self.owner,
+            cleaning_company=self.company, booking_company=self.company,
+        )
+        PropertySpec.objects.create(property=other_property, bedrooms=1)
+        self._make_booking(5, 9)
+        self._make_booking(6, 10, property=other_property)
+        rows = booking_report_rows(self.today, self.today + timedelta(days=10), properties=[self.property])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['booking'].property, self.property)
+
+    def test_report_totals_sums_and_excludes_unavailable_figures(self):
+        self._make_booking(5, 9)
+        self._make_booking(6, 10, is_owner=True)
+        rows = booking_report_rows(self.today, self.today + timedelta(days=10))
+        totals = report_totals(rows)
+        self.assertEqual(totals['basic_rental'], Decimal('300.00'))
+        self.assertGreater(totals['clean_cost'], Decimal('0'))
+
+
+class StaffReportsViewTests(TestCase):
+    def setUp(self):
+        role = StaffRole.objects.create(name='Reports Viewer', can_view_reports=True)
+        self.staffer = User.objects.create_user(username='reportsstaffer', password='pw', is_staff=True)
+        StaffProfile.objects.create(user=self.staffer, role=role)
+        self.no_access_staffer = User.objects.create_user(username='noaccessreports', password='pw', is_staff=True)
+
+        self.owner = make_owner(is_paid_regularly=False)
+        self.company = make_management_company(finances_managed_internally=True)
+        self.property = Property.objects.create(
+            title='Reports View Property', short_title='REPVIEW', owner=self.owner,
+            cleaning_company=self.company, booking_company=self.company, standard_cleaning_fee=Decimal('80.00'),
+        )
+        PropertySpec.objects.create(property=self.property, bedrooms=2)
+        guest = Guest.objects.create(first_name='View', last_name='Ing', email='reports-view@example.com')
+        self.today = timezone.now().date()
+        self.booking = Booking.objects.create(
+            property=self.property, guest=guest, arrival_date=self.today + timedelta(days=2),
+            departure_date=self.today + timedelta(days=6), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=self.booking, basic_rental=Decimal('300.00'))
+        Departure.objects.create(booking=self.booking, clean=True)
+        Arrival.objects.create(booking=self.booking, meet_greet=True)
+
+    def test_requires_permission(self):
+        self.client.login(username='noaccessreports', password='pw')
+        response = self.client.get(reverse('staff:reports'))
+        self.assertEqual(response.status_code, 403)
+
+    def test_page_renders_with_all_columns_by_default(self):
+        """Explicit start/end, not the view's own current-month default - the fixture booking
+        (today + 2 days) can fall in next month whenever this runs in the last couple of days of
+        a real month, which silently emptied the table and failed this assertion - caught live
+        2026-08-30."""
+        self.client.login(username='reportsstaffer', password='pw')
+        response = self.client.get(reverse('staff:reports'), {
+            'start': self.today.isoformat(), 'end': (self.today + timedelta(days=10)).isoformat(),
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.property.short_title)
+        self.assertContains(response, 'Rental to Owner')
+        self.assertContains(response, 'Basic rental')
+        self.assertContains(response, 'Platform fee')
+        self.assertContains(response, 'Clean')
+        self.assertContains(response, 'Meet &amp; Greet')
+        self.assertContains(response, 'Maintenance')
+        self.assertContains(response, 'Net Revenue')
+
+    def test_narrowing_columns_selects_only_the_requested_column(self):
+        """Column labels always appear once as checkbox text regardless of selection, so this
+        checks the table's actual selected_columns context rather than page text presence."""
+        self.client.login(username='reportsstaffer', password='pw')
+        response = self.client.get(reverse('staff:reports'), {'columns': 'clean_cost'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['selected_columns'], {'clean_cost'})

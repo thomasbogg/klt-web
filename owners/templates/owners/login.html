@@ -1,0 +1,36 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Owner Login | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'owners/owners.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+    <div class="owner-login-page">
+        <h1>Owner Login</h1>
+        {% if form.errors %}
+        <p class="owner-login-error">Incorrect username or password.</p>
+        {% endif %}
+        <form method="post" class="owner-login-form">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ next }}">
+            <label>Username
+                <input type="text" name="username" autocomplete="username" required>
+            </label>
+            <label>Password
+                <input type="password" name="password" autocomplete="current-password" required>
+            </label>
+            <button type="submit" class="owner-button">Log in</button>
+        </form>
+    </div>
+    {% include 'footer/footer.html' %}
+</body>
+</html>

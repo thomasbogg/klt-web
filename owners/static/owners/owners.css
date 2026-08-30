@@ -1,0 +1,376 @@
+.owner-login-page {
+    max-width: 380px;
+    margin: 80px auto var(--primary-margin-bottom);
+    padding: 0 20px;
+}
+
+.owner-login-page h1 {
+    margin-bottom: 24px;
+}
+
+.owner-login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.owner-login-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-family: var(--secondary-font);
+    font-size: 0.85rem;
+    color: #555;
+}
+
+.owner-login-form input {
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.95rem;
+}
+
+.owner-login-error {
+    color: var(--status-booked-color, #c1554f);
+    font-size: 0.85rem;
+    margin: 0;
+}
+
+.owner-button {
+    display: inline-block;
+    align-self: flex-start;
+    padding: 10px 20px;
+    background: var(--primary-color);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-family: var(--secondary-font);
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.owner-button:hover {
+    background: var(--primary-color-dark);
+}
+
+.owner-welcome {
+    color: #666;
+    margin-bottom: 24px;
+}
+
+/* .manage-hub-content (bookings.css, reused for layout) sets text-align:center for the guest
+   hub's own centered prose - harmless there, but it inherits straight through into every table/
+   form the owner pages put inside it unless stopped here. */
+.owner-filter-panel, .owner-table, .owner-welcome, .owner-panel-title, .owner-page-header,
+.owner-messages, .owner-note {
+    text-align: left;
+}
+
+.owner-filter-panel {
+    background: #fff;
+    border: 1px solid rgba(44, 121, 185, 0.14);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+}
+
+.owner-filter-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 20px;
+}
+
+.owner-filter-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: var(--secondary-font);
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.owner-filter-form input, .owner-filter-form select, .owner-filter-form textarea {
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.9rem;
+}
+
+.owner-filter-form input[disabled], .owner-filter-form fieldset[disabled] input,
+.owner-filter-form fieldset[disabled] select, .owner-filter-form fieldset[disabled] textarea {
+    background: #f4f4f4;
+    color: #888;
+}
+
+/* Wraps just the From/To pair so date_range_pair.js can find them via .closest('.staff-field-row')
+   - display:contents keeps it invisible to the flex layout above, so it doesn't need its own
+   flex/gap rules duplicated from .owner-filter-form. */
+.owner-filter-form .staff-field-row {
+    display: contents;
+}
+
+/* .owner-button's own align-self:flex-start (needed to keep it from stretching full-width in
+   .owner-login-form's column layout) otherwise pins it to the TOP of any row-direction form too,
+   ignoring that container's own align-items:flex-end - so a button next to a taller labeled
+   field (e.g. Update dates beside Arrival/Departure) floated above the field's bottom instead of
+   level with it. Confirmed live 2026-08-30 - the earlier h1/line-height fix only coincidentally
+   looked right on the page-header button, it didn't actually fix this. */
+.owner-filter-form .owner-button, .owner-page-header .owner-button {
+    align-self: flex-end;
+}
+
+/* New Reservation only (not Reports' filter panel or the Arrival & Departure form, which both
+   legitimately need differently-sized fields) - every text/select/number field the same width,
+   per Thomas 2026-08-30. */
+.owner-reservation-form label:not(.owner-checkbox-label) {
+    width: 200px;
+}
+
+.owner-reservation-form input:not([type="checkbox"]), .owner-reservation-form select {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.owner-filter-columns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    flex-basis: 100%;
+    font-size: 0.85rem;
+    color: #444;
+}
+
+.owner-filter-columns label {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    font-family: inherit;
+}
+
+.owner-table-scroll {
+    overflow-x: auto;
+}
+
+.owner-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.owner-table th {
+    text-align: left;
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #999;
+    padding: 0 8px 8px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.owner-table td {
+    padding: 8px;
+    border-bottom: 1px solid #f2f2f2;
+    color: #444;
+}
+
+.owner-table tfoot td {
+    padding: 8px;
+    border-top: 2px solid #ccc;
+    font-weight: 700;
+    color: #222;
+}
+
+.owner-table-totals-label {
+    text-align: left;
+}
+
+.owner-empty {
+    color: #999;
+    font-style: italic;
+    padding: 12px 0;
+}
+
+.owner-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--secondary-font);
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-decoration: none;
+    padding: 3px 8px;
+    border-radius: 4px;
+}
+
+.owner-flag-red {
+    background: rgba(193, 85, 79, 0.1);
+    color: var(--status-booked-color, #c1554f);
+}
+
+.owner-flag-red:hover {
+    background: rgba(193, 85, 79, 0.18);
+}
+
+.owner-page-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 24px;
+}
+
+.owner-page-header h1 {
+    margin: 0;
+    /* h1's normal (inherited) line-height leaves a lot of invisible space below the glyphs,
+       which flex-end (aligning box edges) and baseline (aligning at the baseline, above any
+       descender) both left a visible gap under - line-height:1 shrinks the box down to the
+       font's own natural metrics, close enough to the true visual bottom for flex-end to line up
+       against - confirmed against a live screenshot after two other attempts didn't (2026-08-30). */
+    line-height: 1;
+}
+
+.owner-panel-title {
+    font-family: var(--secondary-font);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--primary-color);
+    margin: 0 0 14px;
+}
+
+.owner-panel-title-spaced {
+    margin-top: 32px;
+}
+
+.owner-messages {
+    margin-bottom: 20px;
+}
+
+.owner-message {
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    margin: 0 0 8px;
+}
+
+.owner-message-success {
+    background: #e6f4ea;
+    color: #1e7a34;
+}
+
+.owner-message-error {
+    background: #fbe7e6;
+    color: #a13b34;
+}
+
+.owner-note {
+    background: #fbe7e6;
+    color: #a13b34;
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    margin-bottom: 20px;
+}
+
+.owner-arrival-departure-form fieldset {
+    border: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+}
+
+.owner-arrival-departure-form h3 {
+    font-size: 0.95rem;
+    color: var(--primary-color);
+    margin: 8px 0 0;
+}
+
+.owner-guest-details-panel {
+    background: var(--secondary-color-soft);
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+
+.owner-guest-details-panel h3 {
+    margin: 0 0 18px;
+}
+
+.owner-guest-details-panel[hidden] {
+    display: none;
+}
+
+.owner-field-note {
+    font-weight: 400;
+    color: #999;
+    font-size: 0.75rem;
+}
+
+.owner-arrival-departure-form textarea {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+}
+
+.owner-form-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: flex-end;
+}
+
+/* .owner-filter-form label's own display:flex otherwise wins over the [hidden] UA-stylesheet
+   default (a class+element selector beats a bare attribute selector), so a hidden travel-method
+   field would still show as an empty flex box - only actually needed for the conditional
+   Arrival/Departure fields, but harmless everywhere else since only booking_detail.js's method
+   toggle ever sets this attribute. */
+.owner-filter-form label[hidden] {
+    display: none;
+}
+
+/* Every non-checkbox field in the Arrival & Departure form (including Guest Details) shrinks to
+   a compact, consistent basis rather than each field's own intrinsic width, so as many as
+   currently apply pack onto one row instead of each claiming a full row's worth of space -
+   per Thomas: "fit as many ... fields on one row as possible". */
+.owner-arrival-departure-form .owner-form-row label:not(.owner-checkbox-label) {
+    flex: 1 1 150px;
+}
+
+.owner-dates-form label {
+    flex: 1;
+}
+
+.owner-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--secondary-font);
+    font-size: 0.85rem;
+    color: #444;
+}
+
+/* .owner-filter-form label's own flex-direction:column (higher specificity: class+element vs
+   this rule's class-only) was winning over this label's flex-direction:row, stacking the
+   checkbox above its text instead of beside it - confirmed live 2026-08-30, not assumed. */
+.owner-filter-form label.owner-checkbox-label {
+    flex-direction: row;
+}
+
+.owner-button-danger {
+    background: var(--status-booked-color, #c1554f);
+}
+
+.owner-button-danger:hover {
+    background: #a13b34;
+}

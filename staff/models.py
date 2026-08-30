@@ -96,6 +96,12 @@ class StaffRole(models.Model):
     # money"), closer to how can_view_settings already bundles several unrelated sub-panels than
     # to Cleaning rota vs. Check-ins calendar's genuinely-different staff audiences.
     can_view_finance = models.BooleanField(default=False)
+    # The booking-listing report (staff/reports.py) - kept as its own flag rather than folded into
+    # can_view_finance, since it's read-only cross-property number-crunching rather than a
+    # record-keeping action page, and is the same row-builder a future owner-facing portal will
+    # reuse (see [[project_klt_web_reporting]] in memory) - a distinct-enough audience/purpose to
+    # warrant its own toggle from day one.
+    can_view_reports = models.BooleanField(default=False)
     # Assignability, not page visibility - deliberately excluded from STAFF_PAGE_PERMISSION_FIELDS
     # (staff/utils.py), which drives the generic per-page-flag loop in views.py's
     # _add_role/_update_role and the settings.html role table. This flag instead means "a user

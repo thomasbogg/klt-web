@@ -1,6 +1,7 @@
 import secrets
 from datetime import time, timedelta
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models, transaction
@@ -267,6 +268,14 @@ class Owner(models.Model):
     cleans_are_invoiced = models.BooleanField()
     rental_commissions_are_invoiced = models.BooleanField()
     is_paid_regularly = models.BooleanField()
+    # Owner Suite login (owners app) - a superuser creates the User and sets its password
+    # directly in Django admin (no self-service signup/password-reset flow, same no-outbound-
+    # email constraint every other account in this project already lives with - see
+    # [[project_klt_web_automation_roadmap]]), then links it here. NULL means this owner has no
+    # portal access yet - the overwhelmingly common case until Thomas onboards someone.
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='owner_profile',
+    )
 
     class Meta:
         db_table = 'property_owners'
@@ -838,6 +847,15 @@ class iCalLink(models.Model):
     )
     ical_url = models.URLField(blank=True, null=True)
     last_synced = models.DateTimeField(blank=True, null=True)
+    # True for a feed that reflects a listing the OWNER runs and controls themselves (e.g. their
+    # own separate Booking.com listing for a property that's otherwise sold through our site) -
+    # as opposed to the normal case, a platform listing WE manage. The single source of truth
+    # bookings/utils.py::sync_ical_link() reads to decide whether an imported booking gets
+    # Booking.is_owner=True - see that function's own call site for why: those bookings are real
+    # guest stays we had no part in arranging, so they need the same Owner Suite visibility/
+    # payout-exempt treatment as the owner's own direct reservations, not the normal platform-
+    # booking treatment (2026-08-30, per Thomas).
+    is_owner_link = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'property_ical_links'

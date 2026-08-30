@@ -1,0 +1,17 @@
+{% comment %}
+Owner Suite sidebar - mirrors bookings/_manage_sidebar.html's shape (same manage-hub-nav classes,
+same "one group, plain links" mechanism) so the portal reads as the same family of page as the
+guest Manage Booking hub, per Thomas's own framing. Expects `active_section` and `owner`.
+{% endcomment %}
+<nav class="manage-hub-nav">
+    <span class="manage-hub-nav-group-label">Owner Suite</span>
+    <a class="manage-hub-nav-link{% if active_section == 'home' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'owners:home' %}">Home</a>
+    <a class="manage-hub-nav-link{% if active_section == 'bookings' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'owners:bookings' %}">My Stays</a>
+    <a class="manage-hub-nav-link{% if active_section == 'calendar' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'owners:calendar' %}">Calendar</a>
+    <a class="manage-hub-nav-link{% if active_section == 'reports' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'owners:reports' %}">Reports</a>
+    <a class="manage-hub-nav-link" href="{% url 'owners:logout' %}">Log out</a>
+</nav>

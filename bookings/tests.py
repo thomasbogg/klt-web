@@ -15,9 +15,10 @@ from bookings.models import (
 from bookings.payouts import compute_owner_payout
 from staff.models import OwnerPayment
 from bookings.utils import (
-    add_business_days, compute_deposit_waiver, create_booking, determine_payment_provider,
-    expire_stale_holds, extras_summary, guest_counts_by_age, has_completed_previous_stay,
-    payment_clearing_expiry, recalculate_balance_for_party, recalculate_costs_for_party, sync_ical_link,
+    add_business_days, compute_deposit_waiver, create_booking, create_owner_booking,
+    determine_payment_provider, expire_stale_holds, extras_summary, guest_counts_by_age,
+    guest_for_owner, has_completed_previous_stay, payment_clearing_expiry,
+    recalculate_balance_for_party, recalculate_costs_for_party, sync_ical_link,
 )
 from bookings.templatetags.bookings_extras import linkify
 from guests.models import Guest
@@ -772,6 +773,71 @@ class CreateBookingTests(TestCase):
         self.assertEqual(charge.discount_total, Decimal('0'))
         self.assertEqual(charge.extra_guest_total, Decimal('75.00'))
         self.assertEqual(charge.total_rental, Decimal('575.00'))
+
+
+class CreateOwnerBookingTests(TestCase):
+    """bookings/utils.py::guest_for_owner()/create_owner_booking() - the Owner Suite's own
+    reservation flow, see [[project_klt_web_reporting]] and owners/views.py::
+    OwnerBookingCreateView. Unlike create_booking(), no Charge/Payment - an owner stay is never
+    charged."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Owner Booking Test Owner', email='owner-booking-test@example.com',
+            default_clean=False, default_meet_greet=False, takes_euros=True, takes_pounds=False,
+            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+        )
+        self.other_owner = Owner.objects.create(
+            name='Other Owner Booking Test Owner', email='other-owner-booking-test@example.com',
+            default_clean=False, default_meet_greet=False, takes_euros=True, takes_pounds=False,
+            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+        )
+        self.property = Property.objects.create(
+            title='Owner Booking Test Property', short_title='OWNBOOK', owner=self.owner,
+        )
+        PropertySpec.objects.create(property=self.property, max_guests=6)
+
+    def test_guest_for_owner_creates_once_and_reuses_afterwards(self):
+        guest = guest_for_owner(self.owner)
+        self.assertEqual(guest.last_name, self.owner.name)
+        self.assertEqual(guest.email, self.owner.email)
+        self.assertEqual(guest_for_owner(self.owner).pk, guest.pk)
+
+    def test_creates_an_is_owner_booking_with_no_charge(self):
+        start = date.today() + timedelta(days=30)
+        end = start + timedelta(days=4)
+        booking = create_owner_booking(self.property, self.owner, start, end, adults=2, children=0, babies=0)
+        self.assertTrue(booking.is_owner)
+        self.assertEqual(booking.enquiry_status, 'Booking confirmed')
+        self.assertEqual(booking.enquiry_source, 'Owner Suite')
+        self.assertEqual(booking.guest, guest_for_owner(self.owner))
+        self.assertFalse(hasattr(booking, 'charges'))
+        self.assertTrue(hasattr(booking, 'departure'))
+        self.assertTrue(booking.departure.clean)
+
+    def test_rejects_overlapping_dates(self):
+        start = date.today() + timedelta(days=30)
+        end = start + timedelta(days=4)
+        create_owner_booking(self.property, self.owner, start, end, adults=2, children=0, babies=0)
+        with self.assertRaises(ValidationError):
+            create_owner_booking(
+                self.property, self.owner, start + timedelta(days=1), end + timedelta(days=1),
+                adults=2, children=0, babies=0,
+            )
+
+    def test_rejects_a_property_that_belongs_to_a_different_owner(self):
+        start = date.today() + timedelta(days=30)
+        end = start + timedelta(days=4)
+        with self.assertRaises(ValidationError):
+            create_owner_booking(self.property, self.other_owner, start, end, adults=2, children=0, babies=0)
+
+    def test_rejects_an_arrival_date_in_the_past(self):
+        """Server-side backstop for the same rule the guest-facing search picker already enforces
+        client-side - Thomas 2026-08-30."""
+        start = date.today() - timedelta(days=1)
+        end = date.today() + timedelta(days=4)
+        with self.assertRaises(ValidationError):
+            create_owner_booking(self.property, self.owner, start, end, adults=2, children=0, babies=0)
 
 
 class BookingDetailsViewTests(TestCase):
@@ -3529,6 +3595,16 @@ class SyncIcalLinkTests(TestCase):
         self.assertEqual(len(summary['events']), 1)
         self.assertEqual(summary['events'][0]['result'], 'created')
         self.assertEqual(summary['events'][0]['booking'], booking)
+        self.assertFalse(booking.is_owner)
+
+    def test_is_owner_link_marks_imported_bookings_as_owner_bookings(self):
+        """properties.models.iCalLink.is_owner_link is the source of truth for a feed the owner
+        runs themselves rather than one we manage - Thomas 2026-08-30."""
+        self.link.is_owner_link = True
+        self.link.save(update_fields=['is_owner_link'])
+        sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)]))
+        booking = Booking.objects.get(ical_uid='uid-1')
+        self.assertTrue(booking.is_owner)
 
     def test_unchanged_event_reports_that_result(self):
         existing = self._other_booking(self.start, self.end, enquiry_source='Airbnb')

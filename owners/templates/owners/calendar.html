@@ -1,0 +1,52 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendar | Owner Suite | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'owners/owners.css' %}">
+    <link rel="stylesheet" href="{% static 'availability/calendar.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'owners/_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content">
+            <h1>Calendar</h1>
+
+            {% if properties|length > 1 %}
+            <div class="owner-filter-panel">
+                <form method="get" class="owner-filter-form">
+                    <label>Property
+                        <select name="property_id" onchange="this.form.submit()">
+                            {% for p in properties %}
+                            <option value="{{ p.pk }}" {% if property.pk == p.pk %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <noscript><button type="submit" class="owner-button">Show</button></noscript>
+                </form>
+            </div>
+            {% endif %}
+
+            {% if property %}
+            <h2 class="owner-panel-title">{{ property.short_title }}</h2>
+            {% include 'availability/calendar.html' %}
+            {% else %}
+            <p class="owner-empty">No properties are currently linked to your account.</p>
+            {% endif %}
+        </div>
+    </div>
+    {% include 'footer/footer.html' %}
+</body>
+</html>

@@ -1,0 +1,145 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reports | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/home.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/reports.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
+    <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
+    <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Reports</h1>
+        </header>
+
+        <div class="staff-panel staff-reports-filter-panel">
+            <form method="get" class="staff-reports-form">
+                <label class="staff-field">Property
+                    <select name="property_id" class="staff-input">
+                        <option value="">All properties</option>
+                        {% for p in properties %}
+                        <option value="{{ p.pk }}" {% if property.pk == p.pk %}selected{% endif %}>{{ p }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <div class="staff-field-row">
+                    <label class="staff-field">From
+                        <input type="text" name="start" class="staff-input staff-date-input staff-date-start" autocomplete="off" value="{{ start|date:'Y-m-d' }}">
+                    </label>
+                    <label class="staff-field">To
+                        <input type="text" name="end" class="staff-input staff-date-input staff-date-end" autocomplete="off" value="{{ end|date:'Y-m-d' }}">
+                    </label>
+                </div>
+                <div class="staff-reports-columns">
+                    {% for key, label in columns %}
+                    <label class="staff-checkbox-label">
+                        <input type="checkbox" name="columns" value="{{ key }}" {% if key in selected_columns %}checked{% endif %}> {{ label }}
+                    </label>
+                    {% endfor %}
+                </div>
+                <button type="submit" class="staff-button">Update</button>
+            </form>
+        </div>
+
+        <div class="staff-table-scroll">
+            <table class="staff-reservations-table">
+                <thead>
+                    <tr>
+                        <th>Property</th>
+                        <th>Lead Guest</th>
+                        <th>Origin</th>
+                        <th>Arrival</th>
+                        <th>Departure</th>
+                        <th>Nights</th>
+                        <th>Guests</th>
+                        {% for key, label in columns %}
+                        {% if key in selected_columns %}
+                        <th>{{ label }}</th>
+                        {% endif %}
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    <tr>
+                        <td><a href="{% url 'staff:booking_detail' reference=row.booking.reference %}">{{ row.booking.property.short_title }}</a></td>
+                        <td>{{ row.booking.guest }}</td>
+                        <td>{{ row.booking.enquiry_source }}</td>
+                        <td>{{ row.booking.arrival_date|date:'j M Y' }}</td>
+                        <td>{{ row.booking.departure_date|date:'j M Y' }}</td>
+                        <td>{{ row.nights }}</td>
+                        <td>{{ row.booking.total_guests }}</td>
+                        {% if 'platform_fee' in selected_columns %}
+                        <td>{% if row.platform_fee is not None %}&euro;{{ row.platform_fee }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'platform_fee_vat' in selected_columns %}
+                        <td>{% if row.platform_fee_vat is not None %}&euro;{{ row.platform_fee_vat }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'basic_rental' in selected_columns %}
+                        <td>{% if row.basic_rental is not None %}&euro;{{ row.basic_rental }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'rental_to_owner' in selected_columns %}
+                        <td>{% if row.rental_to_owner is not None %}&euro;{{ row.rental_to_owner }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'clean_cost' in selected_columns %}
+                        <td>&euro;{{ row.clean_cost }}</td>
+                        {% endif %}
+                        {% if 'meet_greet_cost' in selected_columns %}
+                        <td>&euro;{{ row.meet_greet_cost }}</td>
+                        {% endif %}
+                        {% if 'maintenance_cost' in selected_columns %}
+                        <td>&euro;{{ row.maintenance_cost }}</td>
+                        {% endif %}
+                        {% if 'net_revenue' in selected_columns %}
+                        <td>{% if row.net_revenue is not None %}&euro;{{ row.net_revenue }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="7" class="staff-empty">No bookings in this range.</td></tr>
+                    {% endfor %}
+                </tbody>
+                {% if rows %}
+                <tfoot>
+                    <tr>
+                        <td colspan="7" class="staff-reports-totals-label">Totals</td>
+                        {% if 'platform_fee' in selected_columns %}
+                        <td>{% if totals.platform_fee is not None %}&euro;{{ totals.platform_fee }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'platform_fee_vat' in selected_columns %}
+                        <td>{% if totals.platform_fee_vat is not None %}&euro;{{ totals.platform_fee_vat }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'basic_rental' in selected_columns %}
+                        <td>{% if totals.basic_rental is not None %}&euro;{{ totals.basic_rental }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'rental_to_owner' in selected_columns %}
+                        <td>{% if totals.rental_to_owner is not None %}&euro;{{ totals.rental_to_owner }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'clean_cost' in selected_columns %}
+                        <td>&euro;{{ totals.clean_cost }}</td>
+                        {% endif %}
+                        {% if 'meet_greet_cost' in selected_columns %}
+                        <td>&euro;{{ totals.meet_greet_cost }}</td>
+                        {% endif %}
+                        {% if 'maintenance_cost' in selected_columns %}
+                        <td>&euro;{{ totals.maintenance_cost }}</td>
+                        {% endif %}
+                        {% if 'net_revenue' in selected_columns %}
+                        <td>{% if totals.net_revenue is not None %}&euro;{{ totals.net_revenue }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                    </tr>
+                </tfoot>
+                {% endif %}
+            </table>
+        </div>
+    </div>
+</body>
+</html>

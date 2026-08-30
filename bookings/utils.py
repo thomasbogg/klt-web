@@ -147,6 +147,62 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
     return booking
 
 
+def guest_for_owner(owner):
+    """The Guest row representing a properties.models.Owner's own identity for their self-booked
+    stays (Owner Suite) - get_or_create by email, the same dedup convention create_booking() uses
+    for a real guest, so an owner who books more than once always reuses the same Guest row.
+    Owner.name isn't reliably splittable into first/last (it can be a company-style name), so the
+    whole thing goes into last_name rather than guessing a split that could mangle it."""
+    from guests.models import Guest
+
+    email = owner.email.strip().lower()
+    guest = Guest.objects.filter(email__iexact=email).first()
+    if guest is None:
+        guest = Guest.objects.create(last_name=owner.name, email=email)
+    return guest
+
+
+def create_owner_booking(property, owner, start_date, end_date, adults, children, babies, clean=True, meet_greet=True):
+    """Creates a new is_owner=True Booking for `owner`'s own stay at their own `property` - the
+    Owner Suite's self-service reservation flow (owners/views.py::OwnerBookingCreateView).
+    Unlike create_booking(), there's no pricing/Charge/Payment at all - an owner stay is never
+    charged. Both Departure and Arrival are created eagerly (unlike create_booking(), which only
+    creates Departure up front) - the owner sets clean/meet_greet as part of this same reservation
+    form (2026-08-30, per Thomas), so there's a real initial value to give them from the start
+    rather than leaving Arrival to be lazily get_or_create'd on first edit. Raises ValidationError
+    (via Booking.full_clean(), same as create_booking()) if the dates overlap an existing booking,
+    if `start_date` is in the past (server-side backstop for the same "no past dates" rule the
+    guest-facing search picker already enforces client-side), or if `property` doesn't actually
+    belong to `owner` (a defense-in-depth check - the caller should already be constraining the
+    property choice to the owner's own properties)."""
+    from bookings.models import Arrival, Booking, Departure
+
+    if property.owner_id != owner.pk:
+        raise ValidationError("This property doesn't belong to this owner.")
+    if start_date < date.today():
+        raise ValidationError("Arrival date can't be in the past.")
+
+    booking = Booking(
+        property=property,
+        guest=guest_for_owner(owner),
+        arrival_date=start_date,
+        departure_date=end_date,
+        is_owner=True,
+        enquiry_status='Booking confirmed',
+        enquiry_date=date.today(),
+        enquiry_source='Owner Suite',
+        adults=adults,
+        children=children,
+        babies=babies,
+        last_updated=timezone.now(),
+    )
+    booking.full_clean()
+    booking.save()
+    Departure.objects.create(booking=booking, clean=clean)
+    Arrival.objects.create(booking=booking, meet_greet=meet_greet)
+    return booking
+
+
 def guest_counts_by_age(ages, booking_settings):
     """Ages are each guest's age AT ARRIVAL (the booking-details page makes this explicit to the
     guest - age is entered directly as of time of stay, no birthdate math needed). Buckets into the
@@ -522,7 +578,9 @@ def sync_ical_link(link, ics_text):
         booking = Booking.objects.create(
             property=link.property, guest=guest,
             arrival_date=start, departure_date=end,
-            is_owner=False, enquiry_status='Booking confirmed',
+            # is_owner_link (properties.models.iCalLink) is the source of truth for a feed the
+            # owner runs themselves rather than one we manage - see that field's own docstring.
+            is_owner=link.is_owner_link, enquiry_status='Booking confirmed',
             enquiry_date=date.today(), enquiry_source=platform_name,
             adults=1, children=0, babies=0,
             last_updated=timezone.now(), ical_uid=uid,

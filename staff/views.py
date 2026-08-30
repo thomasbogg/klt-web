@@ -41,6 +41,7 @@ from properties.models import (
 )
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.permissions import staff_page_required, superuser_required
+from staff.reports import REPORT_COLUMNS, booking_report_rows, report_totals
 from staff.utils import (
     AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, ENQUIRY_STATUS_GROUPS, ENQUIRY_STATUSES, GUEST_LETTERS,
     LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAFF_PAGE_PERMISSION_FIELDS,
@@ -48,6 +49,8 @@ from staff.utils import (
     checkin_valid_range, cleaning_task_valid_range, next_step_hint, property_last_clean_before,
     reservation_rows,
 )
+from staff.utils import last_day_of_month as _last_day_of_month
+from staff.utils import parsed_date as _parsed_date
 
 
 @method_decorator(staff_page_required('can_view_home'), name='dispatch')
@@ -214,21 +217,6 @@ class StaffGuestDetailView(View):
         guest.save()
         messages.success(request, "Guest info updated.")
         return redirect('staff:guest_detail', pk=guest.pk)
-
-
-def _parsed_date(raw):
-    raw = (raw or '').strip()
-    if not raw:
-        return None
-    try:
-        return datetime.strptime(raw, '%Y-%m-%d').date()
-    except ValueError:
-        return None
-
-
-def _last_day_of_month(day):
-    next_month = day.replace(day=28) + timedelta(days=4)
-    return next_month - timedelta(days=next_month.day)
 
 
 def _parsed_team(raw):
@@ -1531,6 +1519,7 @@ class StaffPropertyDetailView(View):
             return
         iCalLink.objects.create(
             property=property, platform=platform, ical_url=url,
+            is_owner_link=post.get('is_owner_link') == 'on',
         )
         messages.success(request, "iCal link added.")
 
@@ -1543,7 +1532,8 @@ class StaffPropertyDetailView(View):
             messages.error(request, "An iCal link needs a URL.")
             return
         link.ical_url = url
-        link.save(update_fields=['ical_url'])
+        link.is_owner_link = request.POST.get('is_owner_link') == 'on'
+        link.save(update_fields=['ical_url', 'is_owner_link'])
         messages.success(request, "iCal link updated.")
 
     def _delete_ical_link(self, request, property):
@@ -3167,3 +3157,42 @@ class StaffFinanceStatementView(View):
             if memo_section or payout_section:
                 sections.append({'property': prop, 'memo_section': memo_section, 'payout_section': payout_section})
         return sections
+
+
+@method_decorator(staff_page_required('can_view_reports'), name='dispatch')
+class StaffReportsView(View):
+    """The booking-listing report - a period + property filter over staff.reports.py::
+    booking_report_rows, with every REPORT_COLUMNS figure individually toggleable via GET params
+    so the URL itself captures a chosen view (shareable/bookmarkable). Same row-builder as the
+    owner-facing Reports tab (owners/views.py::OwnerReportView) - see [[project_klt_web_reporting]]
+    in memory for the phased plan this is step one of."""
+    template_name = 'staff/reports.html'
+    COLUMNS = REPORT_COLUMNS
+
+    def get(self, request, *args, **kwargs):
+        today = timezone.now().date()
+        start = _parsed_date(request.GET.get('start')) or today.replace(day=1)
+        end = _parsed_date(request.GET.get('end')) or _last_day_of_month(today)
+        property_id = request.GET.get('property_id', '')
+        property = Property.objects.filter(pk=property_id).first() if property_id.isdigit() else None
+
+        # No column params at all (a fresh visit) means "show everything" - only an explicit
+        # visit with some columns unchecked should narrow the set, so a bookmarked/shared URL
+        # with columns=... behaves the same for everyone who opens it.
+        if 'columns' in request.GET:
+            selected_columns = set(request.GET.getlist('columns'))
+        else:
+            selected_columns = {key for key, _label in self.COLUMNS}
+
+        rows = booking_report_rows(start, end, properties=[property] if property else None)
+
+        return render(request, self.template_name, {
+            'properties': Property.objects.order_by('title'),
+            'property': property,
+            'start': start,
+            'end': end,
+            'columns': self.COLUMNS,
+            'selected_columns': selected_columns,
+            'rows': rows,
+            'totals': report_totals(rows),
+        })

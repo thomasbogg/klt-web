@@ -1,0 +1,79 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Reservation | Owner Suite | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'owners/owners.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
+    <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
+    <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'owners/_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content">
+            <h1>New Reservation</h1>
+            <p class="owner-welcome">Block out dates for your own stay - no payment is needed for an owner reservation.</p>
+
+            {% if error %}
+            <p class="owner-message owner-message-error">{{ error }}</p>
+            {% endif %}
+
+            <div class="owner-filter-panel">
+                <form method="post" class="owner-filter-form owner-reservation-form">
+                    {% csrf_token %}
+                    <label>Property
+                        <select name="property_id">
+                            <option value="">Select a property&hellip;</option>
+                            {% for p in properties %}
+                            <option value="{{ p.pk }}" {% if selected_property_id == p.pk|stringformat:'s' %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <div class="staff-field-row staff-date-future-only">
+                        <label>Arrival
+                            <input type="text" name="arrival_date" class="staff-date-input staff-date-start" autocomplete="off" value="{{ arrival_date }}">
+                        </label>
+                        <label>Departure
+                            <input type="text" name="departure_date" class="staff-date-input staff-date-end" autocomplete="off" value="{{ departure_date }}">
+                        </label>
+                    </div>
+                    <div class="staff-field-row">
+                        <label>Adults
+                            <input type="number" name="adults" min="0" value="{{ adults }}">
+                        </label>
+                        <label>Children
+                            <input type="number" name="children" min="0" value="{{ children }}">
+                        </label>
+                        <label>Babies
+                            <input type="number" name="babies" min="0" value="{{ babies }}">
+                        </label>
+                    </div>
+                    <div class="owner-form-row">
+                        <label class="owner-checkbox-label">
+                            <input type="checkbox" name="clean" {% if clean_checked %}checked{% endif %}> Requires clean after departure
+                        </label>
+                        <label class="owner-checkbox-label">
+                            <input type="checkbox" name="meet_greet" {% if meet_greet_checked %}checked{% endif %}> Requires meet &amp; greet on arrival
+                        </label>
+                    </div>
+                    <button type="submit" class="owner-button">Reserve dates</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% include 'footer/footer.html' %}
+</body>
+</html>

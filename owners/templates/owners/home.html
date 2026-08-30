@@ -1,0 +1,51 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Owner Suite | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'owners/owners.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'owners/_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content">
+            <h1>Welcome, {{ owner.name }}</h1>
+            <p class="owner-welcome">Your properties are listed below. Use Reports in the sidebar to see bookings, payouts and costs for a chosen period.</p>
+
+            {% if properties %}
+            <table class="owner-table">
+                <thead>
+                    <tr>
+                        <th>Property</th>
+                        <th>Location</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for property in properties %}
+                    <tr>
+                        <td>{{ property }}</td>
+                        <td>{{ property.location|default:"" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="owner-empty">No properties are currently linked to your account.</p>
+            {% endif %}
+        </div>
+    </div>
+    {% include 'footer/footer.html' %}
+</body>
+</html>

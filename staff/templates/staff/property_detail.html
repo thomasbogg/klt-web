@@ -346,12 +346,15 @@
                                 {% for link in ical_links %}
                                 <li class="staff-ical-link-row">
                                     <div class="staff-ical-link-info">
-                                        <span class="staff-ical-link-source">{{ link.platform.name|default:"Unknown source" }}</span>
+                                        <span class="staff-ical-link-source">{{ link.platform.name|default:"Unknown source" }}{% if link.is_owner_link %} <span class="staff-ical-owner-badge">Owner link</span>{% endif %}</span>
                                         <form method="post" class="staff-ical-link-url-form">
                                             {% csrf_token %}
                                             <input type="hidden" name="action" value="update_ical_link">
                                             <input type="hidden" name="link_id" value="{{ link.pk }}">
                                             <input type="url" name="ical_url" class="staff-input staff-ical-link-url-input" value="{{ link.ical_url }}">
+                                            <label class="staff-checkbox-label" title="This is the owner's own listing, not one we manage - imported bookings will be marked as owner bookings and shown in their Owner Suite.">
+                                                <input type="checkbox" name="is_owner_link" {% if link.is_owner_link %}checked{% endif %}> Is owner link
+                                            </label>
                                             <button type="submit" class="staff-button staff-button-small">Save</button>
                                         </form>
                                     </div>
@@ -382,6 +385,9 @@
                                     {% endfor %}
                                 </select>
                                 <input type="url" name="ical_url" placeholder="https://..." class="staff-input">
+                                <label class="staff-checkbox-label" title="This is the owner's own listing, not one we manage - imported bookings will be marked as owner bookings and shown in their Owner Suite.">
+                                    <input type="checkbox" name="is_owner_link"> Is owner link
+                                </label>
                                 <button type="submit" class="staff-button staff-button-small">+ Add iCal link</button>
                             </form>
                         </div>

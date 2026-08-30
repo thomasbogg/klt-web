@@ -242,6 +242,19 @@
     white-space: nowrap;
 }
 
+.staff-ical-owner-badge {
+    display: inline-block;
+    background: var(--secondary-color-soft);
+    color: var(--secondary-color);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 10px;
+    vertical-align: middle;
+}
+
 .staff-ical-link-url-form {
     display: flex;
     align-items: center;

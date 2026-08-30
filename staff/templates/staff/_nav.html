@@ -11,6 +11,9 @@
     {% if staff_nav_permissions.can_view_finance %}
     <a href="{% url 'staff:finance_memos' %}" class="staff-nav-link">Finance</a>
     {% endif %}
+    {% if staff_nav_permissions.can_view_reports %}
+    <a href="{% url 'staff:reports' %}" class="staff-nav-link">Reports</a>
+    {% endif %}
     {% if staff_nav_permissions.can_view_guests %}
     <a href="{% url 'staff:guest_list' %}" class="staff-nav-link">Guests</a>
     {% endif %}

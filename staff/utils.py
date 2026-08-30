@@ -15,8 +15,8 @@ STAGE_TABS = (
 # Mirrors the "deliberately excluded from both status tuples" comment in env_settings.py -
 # every status that frees the calendar, i.e. a dead/cancelled booking.
 CLOSED_STATUSES = (
-    'Cancelled by guest', 'Cancelled by platform', 'Cancelled by staff', 'Payment failed',
-    'Hold expired', 'Payment received - needs review',
+    'Cancelled by guest', 'Cancelled by platform', 'Cancelled by staff', 'Cancelled by owner',
+    'Payment failed', 'Hold expired', 'Payment received - needs review',
 )
 
 # The subset of CLOSED_STATUSES a staffer can revive from the booking detail page's "Uncancel
@@ -24,7 +24,7 @@ CLOSED_STATUSES = (
 # truth there; reviving it here without the platform agreeing just means the next iCal sync
 # re-cancels it) and the payment-failure statuses (those aren't "cancelled" in the sense Thomas
 # asked about - a fresh booking attempt is the normal recovery path for those, not a revival).
-REVIVABLE_STATUSES = ('Cancelled by guest', 'Cancelled by staff')
+REVIVABLE_STATUSES = ('Cancelled by guest', 'Cancelled by staff', 'Cancelled by owner')
 
 # Every enquiry_status string the rest of the app actually gives meaning to, grouped for the
 # booking detail page's Outcome/status dropdown (previously free text - a typo there wouldn't
@@ -135,6 +135,7 @@ STAFF_PAGE_PERMISSION_FIELDS = (
     ('can_view_cleaning_rota', 'Cleaning rota'),
     ('can_view_checkins_calendar', 'Check-ins calendar'),
     ('can_view_finance', 'Finance'),
+    ('can_view_reports', 'Reports'),
 )
 
 
@@ -602,6 +603,23 @@ def sync_checkins_for_booking(booking):
         Checkin.objects.filter(
             booking=booking, task_type__in=['key_box', 'welcome_visit'], status='pending',
         ).delete()
+
+
+def parsed_date(raw):
+    """'YYYY-MM-DD' -> date, or None for anything missing/malformed - shared by every staff/owner
+    view that reads a date off a GET/POST param (date-range filters, mark-done forms)."""
+    raw = (raw or '').strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+
+def last_day_of_month(day):
+    next_month = day.replace(day=28) + timedelta(days=4)
+    return next_month - timedelta(days=next_month.day)
 
 
 def resync_checkin_times_for_settings_change():

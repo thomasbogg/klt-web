@@ -13,6 +13,13 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!startInput || !endInput) return;
 
         var baseOptions = { dateFormat: 'Y-m-d', altInput: true, altFormat: 'd/m/Y', allowInput: true };
+        // Opt-in, not the default - most staff date-range pickers (Reports/Payouts/Statement/...)
+        // legitimately need past dates (viewing a bygone period). Only a booking's own dates
+        // (Owner Suite reservations) should behave like the guest-facing search picker and refuse
+        // a past date outright.
+        if (container.classList.contains('staff-date-future-only')) {
+            baseOptions.minDate = 'today';
+        }
         var startPicker, endPicker;
 
         startPicker = flatpickr(startInput, Object.assign({}, baseOptions, {
