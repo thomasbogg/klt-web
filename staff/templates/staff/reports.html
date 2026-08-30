@@ -89,6 +89,12 @@
                         {% if 'basic_rental' in selected_columns %}
                         <td>{% if row.basic_rental is not None %}&euro;{{ row.basic_rental }}{% else %}&mdash;{% endif %}</td>
                         {% endif %}
+                        {% if 'commission' in selected_columns %}
+                        <td>{% if row.commission is not None %}&euro;{{ row.commission }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'klt_net_commission' in selected_columns %}
+                        <td>{% if row.klt_net_commission is not None %}&euro;{{ row.klt_net_commission }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
                         {% if 'rental_to_owner' in selected_columns %}
                         <td>{% if row.rental_to_owner is not None %}&euro;{{ row.rental_to_owner }}{% else %}&mdash;{% endif %}</td>
                         {% endif %}
@@ -121,6 +127,12 @@
                         {% endif %}
                         {% if 'basic_rental' in selected_columns %}
                         <td>{% if totals.basic_rental is not None %}&euro;{{ totals.basic_rental }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'commission' in selected_columns %}
+                        <td>{% if totals.commission is not None %}&euro;{{ totals.commission }}{% else %}&mdash;{% endif %}</td>
+                        {% endif %}
+                        {% if 'klt_net_commission' in selected_columns %}
+                        <td>{% if totals.klt_net_commission is not None %}&euro;{{ totals.klt_net_commission }}{% else %}&mdash;{% endif %}</td>
                         {% endif %}
                         {% if 'rental_to_owner' in selected_columns %}
                         <td>{% if totals.rental_to_owner is not None %}&euro;{{ totals.rental_to_owner }}{% else %}&mdash;{% endif %}</td>

@@ -23,8 +23,9 @@ from properties.models import (
 )
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.monthly_reports import (
-    bookings_trend_rows, extras_trend_rows, monthly_bookings_rows, monthly_extras_rows,
-    monthly_revenue_rows, monthly_stays_rows, revenue_trend_rows, stays_trend_rows,
+    bookings_trend_rows, commissions_trend_rows, extras_trend_rows, monthly_bookings_rows,
+    monthly_commissions_rows, monthly_extras_rows, monthly_revenue_rows, monthly_stays_rows,
+    revenue_trend_rows, stays_trend_rows,
 )
 from staff.reports import booking_report_rows, report_totals
 from staff.utils import (
@@ -3781,6 +3782,14 @@ class StaffReportsTests(TestCase):
         expected_net = row['rental_to_owner'] - row['clean_cost'] - row['meet_greet_cost'] - row['maintenance_cost']
         self.assertEqual(row['net_revenue'], expected_net)
         self.assertNotEqual(row['net_revenue'], row['rental_to_owner'])
+        # commission/klt_net_commission (2026-08-30): rental_to_owner = basic_rental - commission,
+        # and klt_net_commission is Post-IVA (commission minus whatever VAT the agency has to
+        # remit on it) - never equal to commission unless commission_vat happens to be zero, and
+        # never deducted from rental_to_owner itself (see this dict's own KLT-internal framing).
+        self.assertIsNotNone(row['commission'])
+        self.assertEqual(row['rental_to_owner'], row['basic_rental'] - row['commission'])
+        self.assertIsNotNone(row['klt_net_commission'])
+        self.assertLessEqual(row['klt_net_commission'], row['commission'])
 
     def test_owner_stay_still_reports_a_real_clean_cost_with_no_payout(self):
         """compute_owner_payout always reports an owner stay as unavailable, but the clean still
@@ -4544,3 +4553,118 @@ class StaffReportsExtrasViewTests(TestCase):
         response = self.client.get(reverse('staff:reports_extras'), {'year': '2024'})
         self.assertContains(response, 'id="extras-trend-chart"')
         self.assertContains(response, 'id="extras-trend-data"')
+
+
+class MonthlyCommissionsRowsTests(TestCase):
+    """staff/monthly_reports.py::monthly_commissions_rows() - KLT's own Pre-IVA/Post-IVA
+    commission only, mirroring the reference workbook's Commissions sheet minus its "Maria"
+    column (dropped per Thomas 2026-08-30 - a legacy item documented elsewhere)."""
+
+    def setUp(self):
+        self.owner = make_owner(is_paid_regularly=False)
+        self.property = Property.objects.create(
+            title='Commissions Report Property', short_title='COMMPROP', owner=self.owner,
+        )
+        self.guest = Guest.objects.create(first_name='Comm', last_name='Ission', email='commissions-test@example.com')
+
+    def _make_booking(self, arrival, enquiry_source='Website', is_owner=False):
+        booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=arrival,
+            departure_date=arrival + timedelta(days=4), is_owner=is_owner,
+            enquiry_status='Booking confirmed', enquiry_source=enquiry_source,
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        if not is_owner:
+            Charge.objects.create(booking=booking, basic_rental=Decimal('1000.00'))
+        return booking
+
+    def test_direct_booking_produces_a_real_commission(self):
+        self._make_booking(date(2024, 3, 5))
+
+        rows = monthly_commissions_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertGreater(march['groups']['Direct']['pre_iva'], Decimal('0'))
+        self.assertEqual(march['groups']['Total']['pre_iva'], march['groups']['Direct']['pre_iva'])
+
+    def test_post_iva_never_exceeds_pre_iva(self):
+        self._make_booking(date(2024, 3, 5))
+
+        rows = monthly_commissions_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertLessEqual(march['groups']['Direct']['post_iva'], march['groups']['Direct']['pre_iva'])
+
+    def test_owner_stay_excluded_entirely(self):
+        self._make_booking(date(2024, 3, 15), is_owner=True)
+
+        rows = monthly_commissions_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups']['Total']['pre_iva'], Decimal('0'))
+
+    def test_year_over_year_delta_is_a_real_change(self):
+        self._make_booking(date(2023, 3, 5))
+        self._make_booking(date(2024, 3, 5))
+
+        rows = monthly_commissions_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        # Same rental amount both years -> the commission itself matches -> delta is zero, not
+        # None or missing.
+        self.assertEqual(march['groups']['Direct']['pre_iva_delta'], Decimal('0'))
+
+    def test_a_month_with_no_bookings_has_zero_figures_and_raises_nothing(self):
+        rows = monthly_commissions_rows(2024)
+        july = next(r for r in rows if r['month'].month == 7)
+        self.assertEqual(july['groups']['Total']['pre_iva'], Decimal('0'))
+        self.assertEqual(july['groups']['Total']['pre_iva_pct'], Decimal('0'))
+
+
+class CommissionsTrendRowsTests(TestCase):
+    def setUp(self):
+        self.owner = make_owner(is_paid_regularly=False)
+        self.property = Property.objects.create(
+            title='Commissions Trend Property', short_title='COMMTREND', owner=self.owner,
+        )
+        self.guest = Guest.objects.create(first_name='Trend', last_name='Comm', email='trend-comm@example.com')
+
+    def test_empty_when_no_guest_bookings_exist(self):
+        self.assertEqual(commissions_trend_rows(), [])
+
+    def test_spans_from_earliest_to_latest_and_computes_a_real_commission(self):
+        booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=date(2020, 1, 10),
+            departure_date=date(2020, 1, 14), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=booking, basic_rental=Decimal('1000.00'))
+
+        rows = commissions_trend_rows()
+        self.assertEqual(rows[0]['month'], date(2020, 1, 1))
+        self.assertGreater(rows[0]['pre_iva'], Decimal('0'))
+
+
+class StaffReportsCommissionsViewTests(TestCase):
+    def setUp(self):
+        role = StaffRole.objects.create(name='Commissions Viewer', can_view_reports=True)
+        self.staffer = User.objects.create_user(username='commissionsstaffer', password='pw', is_staff=True)
+        StaffProfile.objects.create(user=self.staffer, role=role)
+        self.no_access_staffer = User.objects.create_user(username='noaccesscomm', password='pw', is_staff=True)
+
+    def test_requires_permission(self):
+        self.client.login(username='noaccesscomm', password='pw')
+        response = self.client.get(reverse('staff:reports_commissions'))
+        self.assertEqual(response.status_code, 403)
+
+    def test_page_renders_with_the_requested_year(self):
+        self.client.login(username='commissionsstaffer', password='pw')
+        response = self.client.get(reverse('staff:reports_commissions'), {'year': '2024'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['year'], 2024)
+        self.assertContains(response, 'Pre-IVA')
+        self.assertContains(response, 'Post-IVA')
+        self.assertNotContains(response, 'Maria')
+
+    def test_trend_chart_renders_on_the_page(self):
+        self.client.login(username='commissionsstaffer', password='pw')
+        response = self.client.get(reverse('staff:reports_commissions'), {'year': '2024'})
+        self.assertContains(response, 'id="commissions-trend-chart"')
+        self.assertContains(response, 'id="commissions-trend-data"')

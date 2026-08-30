@@ -4,7 +4,8 @@ from decimal import Decimal
 from django.db.models import Max, Min, Q
 
 import env_settings
-from bookings.models import AirportTransfer, Booking, Extra
+from bookings.models import AirportTransfer, Booking, Extra, PaymentSettings
+from bookings.payouts import compute_owner_payout
 from env_settings import VALID_BOOKING_STATUSES
 from staff.utils import last_day_of_month
 
@@ -389,4 +390,92 @@ def extras_trend_rows():
         row = {'month': date(year, month, 1)}
         row.update(totals)
         rows.append(row)
+    return rows
+
+
+def _commissions_totals_for_month(year, month, payment_settings):
+    """{group: {'pre_iva': Decimal, 'post_iva': Decimal}} for every REVENUE_GROUPS entry, summed
+    across every real guest booking (is_owner=False) arriving in this month - KLT's own
+    commission only. The reference workbook's own Commissions sheet also had a second recipient
+    ("Maria") alongside KLT; dropped here per Thomas 2026-08-30 as a legacy item documented
+    elsewhere, out of scope for this rebuild. Reuses bookings/payouts.py::compute_owner_payout()
+    directly (the same function the Bookings tab's own Commission/KLT Net Commission columns are
+    built from - see staff/reports.py) rather than recomputing the formula a second time.
+    pre_iva = payout['commission']; post_iva = commission minus whatever VAT the agency has to
+    remit on it (payout['commission_vat']) - see compute_owner_payout()'s own docstring on why
+    that VAT is "agency-absorbed, not deducted" from the owner's side."""
+    start = date(year, month, 1)
+    end = last_day_of_month(start)
+    bookings = Booking.objects.filter(
+        is_owner=False, enquiry_status__in=VALID_BOOKING_STATUSES, arrival_date__range=(start, end),
+    ).select_related('charges', 'platform_payout', 'property__owner')
+
+    totals = {group: {'pre_iva': ZERO, 'post_iva': ZERO} for group in REVENUE_GROUPS}
+    for booking in bookings:
+        payout = compute_owner_payout(booking, payment_settings)
+        if not payout['available']:
+            continue
+        group = _group_for_booking(booking)
+        totals[group]['pre_iva'] += payout['commission']
+        totals[group]['post_iva'] += payout['commission'] - payout['commission_vat']
+    return totals
+
+
+def monthly_commissions_rows(year):
+    """One row per calendar month of `year` - Total plus each REVENUE_GROUPS entry, each carrying
+    Pre-IVA/Post-IVA commission totals, that group's % share of the month's Total, and a
+    year-over-year delta - same shape as monthly_revenue_rows() above (Pre-IVA/Post-IVA in place
+    of Paid by Guest/Rcvd by KLT), mirroring the reference workbook's Commissions sheet (minus its
+    "Maria" column - see _commissions_totals_for_month()'s own docstring)."""
+    payment_settings = PaymentSettings.load()
+    rows = []
+    for month in range(1, 13):
+        this_year = _commissions_totals_for_month(year, month, payment_settings)
+        last_year = _commissions_totals_for_month(year - 1, month, payment_settings)
+
+        this_year['Total'] = {
+            'pre_iva': sum((v['pre_iva'] for v in this_year.values()), ZERO),
+            'post_iva': sum((v['post_iva'] for v in this_year.values()), ZERO),
+        }
+        last_year['Total'] = {
+            'pre_iva': sum((v['pre_iva'] for v in last_year.values()), ZERO),
+            'post_iva': sum((v['post_iva'] for v in last_year.values()), ZERO),
+        }
+
+        total_pre_iva = this_year['Total']['pre_iva']
+        total_post_iva = this_year['Total']['post_iva']
+        groups = {}
+        for group in ('Total',) + REVENUE_GROUPS:
+            pre_iva = this_year[group]['pre_iva']
+            post_iva = this_year[group]['post_iva']
+            groups[group] = {
+                'pre_iva': pre_iva,
+                'pre_iva_pct': _percent(pre_iva, total_pre_iva),
+                'pre_iva_delta': pre_iva - last_year[group]['pre_iva'],
+                'post_iva': post_iva,
+                'post_iva_pct': _percent(post_iva, total_post_iva),
+                'post_iva_delta': post_iva - last_year[group]['post_iva'],
+            }
+        rows.append({'month': date(year, month, 1), 'groups': groups})
+    return rows
+
+
+def commissions_trend_rows():
+    """Same shape as revenue_trend_rows() above - Total Pre-IVA/Post-IVA only, one continuous
+    "since records began" series for the Commissions tab's own growth-over-time chart."""
+    payment_settings = PaymentSettings.load()
+    bounds = Booking.objects.filter(
+        is_owner=False, enquiry_status__in=VALID_BOOKING_STATUSES,
+    ).aggregate(earliest=Min('arrival_date'), latest=Max('arrival_date'))
+    if bounds['earliest'] is None:
+        return []
+
+    rows = []
+    for year, month in _month_range(bounds['earliest'], bounds['latest']):
+        totals = _commissions_totals_for_month(year, month, payment_settings)
+        rows.append({
+            'month': date(year, month, 1),
+            'pre_iva': sum((v['pre_iva'] for v in totals.values()), ZERO),
+            'post_iva': sum((v['post_iva'] for v in totals.values()), ZERO),
+        })
     return rows

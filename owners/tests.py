@@ -128,6 +128,19 @@ class OwnerSuiteTests(TestCase):
         self.assertNotIn('admin_fee', response.context['selected_columns'])
         self.assertNotContains(response, 'Admin fee')
 
+    def test_report_never_shows_klt_internal_commission_columns(self):
+        """commission/klt_net_commission (2026-08-30) are KLT's own internal Pre-IVA/Post-IVA
+        commission figures - staff-only, same principle as admin fee above. OwnerReportView.
+        COLUMNS uses OWNER_SAFE_REPORT_COLUMNS rather than the full staff REPORT_COLUMNS
+        specifically to keep these two out."""
+        self.client.login(username='portalowner', password='pw')
+        response = self.client.get(reverse('owners:reports'), {
+            'start': self.today.isoformat(), 'end': (self.today + timedelta(days=14)).isoformat(),
+        })
+        self.assertNotIn('commission', response.context['selected_columns'])
+        self.assertNotIn('klt_net_commission', response.context['selected_columns'])
+        self.assertNotContains(response, 'KLT Net Commission')
+
 
 class OwnerBookingsTests(TestCase):
     """My Stays / New Reservation / booking detail - the three capabilities Thomas asked for

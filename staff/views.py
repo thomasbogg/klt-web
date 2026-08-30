@@ -41,9 +41,9 @@ from properties.models import (
 )
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.monthly_reports import (
-    EXTRAS_METRICS, REVENUE_GROUPS, bookings_trend_rows, extras_trend_rows, monthly_bookings_rows,
-    monthly_extras_rows, monthly_revenue_rows, monthly_stays_rows, revenue_trend_rows,
-    stays_trend_rows,
+    EXTRAS_METRICS, REVENUE_GROUPS, bookings_trend_rows, commissions_trend_rows, extras_trend_rows,
+    monthly_bookings_rows, monthly_commissions_rows, monthly_extras_rows, monthly_revenue_rows,
+    monthly_stays_rows, revenue_trend_rows, stays_trend_rows,
 )
 from staff.permissions import staff_page_required, superuser_required
 from staff.reports import REPORT_COLUMNS, booking_report_rows, report_totals
@@ -3320,4 +3320,27 @@ class StaffReportsExtrasView(View):
             'rows': monthly_extras_rows(year),
             'trend_rows': extras_trend_rows(),
             'active_tab': 'extras',
+        })
+
+
+@method_decorator(staff_page_required('can_view_reports'), name='dispatch')
+class StaffReportsCommissionsView(View):
+    """The Monthly tab's Commissions sub-view - same shape as StaffReportsMonthlyView above
+    (Total plus Direct/Airbnb/Booking.com/Vrbo, % share, year-over-year delta) but Pre-IVA/
+    Post-IVA commission totals - mirrors the reference workbook's Commissions sheet, minus its
+    "Maria" column (a legacy second recipient, dropped per Thomas 2026-08-30 - documented
+    elsewhere, out of scope here). See staff/monthly_reports.py::monthly_commissions_rows()."""
+    template_name = 'staff/reports_commissions.html'
+
+    def get(self, request, *args, **kwargs):
+        year = _requested_year(request)
+        selected_groups = _selected_revenue_groups(request)
+
+        return render(request, self.template_name, {
+            'year': year,
+            'revenue_groups': REVENUE_GROUPS,
+            'selected_groups': selected_groups,
+            'rows': monthly_commissions_rows(year),
+            'trend_rows': commissions_trend_rows(),
+            'active_tab': 'commissions',
         })

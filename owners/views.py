@@ -23,7 +23,7 @@ from finance.models import Memo, PayoutRecord
 from owners.permissions import owner_login_required
 from properties.models import Property
 from staff.models import TaskHistoryEntry
-from staff.reports import REPORT_COLUMNS, booking_report_rows, report_totals
+from staff.reports import OWNER_SAFE_REPORT_COLUMNS, booking_report_rows, report_totals
 from staff.utils import CLOSED_STATUSES, last_day_of_month, parsed_date
 
 
@@ -72,14 +72,13 @@ class OwnerHomeView(View):
 @method_decorator(owner_login_required, name='dispatch')
 class OwnerReportView(View):
     """The owner-facing booking-listing report - same staff.reports.py::booking_report_rows
-    row-builder the staff Reports page uses, scoped to this owner's own properties only, with the
-    same REPORT_COLUMNS set as staff (per Thomas: "basically everything the owner bookings report
-    has"). No further column hiding beyond the property scoping - admin fee is the one figure
-    Thomas explicitly didn't want owners to see, and it was never part of this row set to begin
-    with (basic_rental is Charge.total_rental, which excludes admin fee by construction - see
-    staff/reports.py's own docstring)."""
+    row-builder the staff Reports page uses, scoped to this owner's own properties only, with
+    OWNER_SAFE_REPORT_COLUMNS rather than the full staff REPORT_COLUMNS (per Thomas: "basically
+    everything the owner bookings report has", minus commission/klt_net_commission added
+    2026-08-30 - KLT's own internal Pre-IVA/Post-IVA commission figures, not something an owner
+    should see, same principle as admin fee already not being part of this row set at all)."""
     template_name = 'owners/reports.html'
-    COLUMNS = REPORT_COLUMNS
+    COLUMNS = OWNER_SAFE_REPORT_COLUMNS
 
     def get(self, request, *args, **kwargs):
         owner = request.user.owner_profile

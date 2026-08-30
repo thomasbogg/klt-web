@@ -11,11 +11,22 @@ REPORT_COLUMNS = (
     ('platform_fee', 'Platform fee'),
     ('platform_fee_vat', 'Platform fee IVA'),
     ('basic_rental', 'Basic rental'),
+    ('commission', 'Commission'),
+    ('klt_net_commission', 'KLT Net Commission'),
     ('rental_to_owner', 'Rental to Owner'),
     ('clean_cost', 'Clean'),
     ('meet_greet_cost', 'Meet & Greet'),
     ('maintenance_cost', 'Maintenance'),
     ('net_revenue', 'Net Revenue'),
+)
+
+# commission/klt_net_commission are KLT's own internal figures (the agency's Pre-IVA commission,
+# and what it actually nets after remitting VAT on that commission) - staff-only, per the same
+# "admin fee is the one figure Thomas doesn't want owners to see" principle already applied
+# elsewhere (see owners/views.py::OwnerReportView, which scopes its own COLUMNS to this set
+# rather than reusing REPORT_COLUMNS directly, now that the two aren't identical any more).
+OWNER_SAFE_REPORT_COLUMNS = tuple(
+    (key, label) for key, label in REPORT_COLUMNS if key not in ('commission', 'klt_net_commission')
 )
 
 
@@ -84,7 +95,15 @@ def booking_report_rows(start, end, properties=None):
             basic_rental = payout['rental_base']
             platform_fee = payout['platform_fee']
             platform_fee_vat = payout['platform_fee_vat']
-            rental_to_owner = basic_rental - payout['commission']
+            commission = payout['commission']
+            # "Post-IVA" - what KLT actually nets after remitting VAT on its own commission
+            # income, per Thomas 2026-08-30 (mirrors the reference workbook's Commissions sheet,
+            # Maria's own column dropped as a legacy item documented elsewhere). Not part of the
+            # owner-facing waterfall below - owner_balance/rental_to_owner only ever deduct the
+            # full Pre-IVA commission (see compute_owner_payout's own docstring on commission_vat
+            # being "agency-absorbed, not deducted") - this is a separate, KLT-internal figure.
+            klt_net_commission = commission - payout['commission_vat']
+            rental_to_owner = basic_rental - commission
             net_revenue = rental_to_owner - clean_cost - meet_greet_cost - maintenance_cost
         else:
             # No rental figure to build a waterfall from (owner stay, no owner assigned, or no
@@ -92,7 +111,7 @@ def booking_report_rows(start, end, properties=None):
             # regardless (see this function's own docstring), so Net Revenue still comes out as a
             # genuine negative number here rather than "unavailable" - a row with only deductions
             # and no income is exactly what a negative Net Revenue is for.
-            basic_rental = platform_fee = platform_fee_vat = rental_to_owner = None
+            basic_rental = platform_fee = platform_fee_vat = commission = klt_net_commission = rental_to_owner = None
             net_revenue = -(clean_cost + meet_greet_cost + maintenance_cost)
 
         rows.append({
@@ -102,6 +121,8 @@ def booking_report_rows(start, end, properties=None):
             'basic_rental': basic_rental,
             'platform_fee': platform_fee,
             'platform_fee_vat': platform_fee_vat,
+            'commission': commission,
+            'klt_net_commission': klt_net_commission,
             'clean_cost': clean_cost,
             'meet_greet_cost': meet_greet_cost,
             'maintenance_cost': maintenance_cost,
