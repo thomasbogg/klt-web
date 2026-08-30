@@ -79,4 +79,6 @@ urlpatterns = [
     path('reports/', views.StaffReportsView.as_view(), name='reports'),
     path('reports/monthly/', views.StaffReportsMonthlyView.as_view(), name='reports_monthly'),
     path('reports/stays/', views.StaffReportsStaysView.as_view(), name='reports_stays'),
+    path('reports/enquiries/', views.StaffReportsEnquiriesView.as_view(), name='reports_enquiries'),
+    path('reports/extras/', views.StaffReportsExtrasView.as_view(), name='reports_extras'),
 ]

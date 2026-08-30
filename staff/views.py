@@ -41,7 +41,9 @@ from properties.models import (
 )
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.monthly_reports import (
-    REVENUE_GROUPS, monthly_revenue_rows, monthly_stays_rows, revenue_trend_rows, stays_trend_rows,
+    EXTRAS_METRICS, REVENUE_GROUPS, bookings_trend_rows, extras_trend_rows, monthly_bookings_rows,
+    monthly_extras_rows, monthly_revenue_rows, monthly_stays_rows, revenue_trend_rows,
+    stays_trend_rows,
 )
 from staff.permissions import staff_page_required, superuser_required
 from staff.reports import REPORT_COLUMNS, booking_report_rows, report_totals
@@ -3272,4 +3274,50 @@ class StaffReportsStaysView(View):
             'rows': monthly_stays_rows(year, include_owner=include_owner),
             'trend_rows': stays_trend_rows(include_owner=include_owner),
             'active_tab': 'stays',
+        })
+
+
+@method_decorator(staff_page_required('can_view_reports'), name='dispatch')
+class StaffReportsEnquiriesView(View):
+    """The Monthly tab's Enquiries sub-view - same shape as StaffReportsMonthlyView/
+    StaffReportsStaysView above (Total plus Direct/Airbnb/Booking.com/Vrbo, % share,
+    year-over-year delta) but Bookings/Enquiries counts - mirrors the reference workbook's
+    Bookings sheet (named "Enquiries" here in the nav instead, to avoid colliding with the
+    existing "Bookings" sub-tab - the original booking-listing report - which this isn't a
+    variant of). See staff/monthly_reports.py::monthly_bookings_rows() for what distinguishes a
+    "booking" from an "enquiry" here."""
+    template_name = 'staff/reports_enquiries.html'
+
+    def get(self, request, *args, **kwargs):
+        year = _requested_year(request)
+        selected_groups = _selected_revenue_groups(request)
+
+        return render(request, self.template_name, {
+            'year': year,
+            'revenue_groups': REVENUE_GROUPS,
+            'selected_groups': selected_groups,
+            'rows': monthly_bookings_rows(year),
+            'trend_rows': bookings_trend_rows(),
+            'active_tab': 'enquiries',
+        })
+
+
+@method_decorator(staff_page_required('can_view_reports'), name='dispatch')
+class StaffReportsExtrasView(View):
+    """The Monthly tab's Extras sub-view - Tot + year-over-year Lst Yr only, no Direct/Airbnb/
+    Booking.com/Vrbo breakdown or % column (unlike every other Monthly-tab sheet) - six
+    independent counts (Airport Transfers, Welcome Packs, Cots, High Chairs, Mid-stay Cleans,
+    Late Check-outs) side by side, mirroring the reference workbook's own Extras sheet exactly.
+    See staff/monthly_reports.py::monthly_extras_rows()."""
+    template_name = 'staff/reports_extras.html'
+
+    def get(self, request, *args, **kwargs):
+        year = _requested_year(request)
+
+        return render(request, self.template_name, {
+            'year': year,
+            'extras_metrics': EXTRAS_METRICS,
+            'rows': monthly_extras_rows(year),
+            'trend_rows': extras_trend_rows(),
+            'active_tab': 'extras',
         })

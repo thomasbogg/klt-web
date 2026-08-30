@@ -1,10 +1,10 @@
 from datetime import date
 from decimal import Decimal
 
-from django.db.models import Max, Min
+from django.db.models import Max, Min, Q
 
 import env_settings
-from bookings.models import Booking
+from bookings.models import AirportTransfer, Booking, Extra
 from env_settings import VALID_BOOKING_STATUSES
 from staff.utils import last_day_of_month
 
@@ -236,4 +236,157 @@ def stays_trend_rows(include_owner=False):
             'arrivals': sum(totals[g]['arrivals'] for g in groups),
             'nights': sum(totals[g]['nights'] for g in groups),
         })
+    return rows
+
+
+def _bookings_totals_for_month(year, month):
+    """{group: {'bookings': int, 'enquiries': int}} for every REVENUE_GROUPS entry, counted
+    across every real guest Booking row (is_owner=False) arriving in this month, mirroring the
+    reference workbook's Bookings sheet. 'enquiries' = every such row regardless of status (no
+    status filter at all); 'bookings' = only the confirmed subset (VALID_BOOKING_STATUSES). The
+    two genuinely diverge for both direct and platform sources, just via different routes: an
+    abandoned/expired/failed direct reservation attempt still created a real Booking row that
+    never reached 'Booking confirmed' (see env_settings.py's own status-tuple docstrings for the
+    full list), and a platform reservation that was later cancelled on the platform itself still
+    has its row here too, as 'Cancelled by platform' (bookings/utils.py::sync_ical_link(), when a
+    previously-imported UID disappears from that platform's feed) - counting toward Enquiries but
+    not Bookings, same as the direct case. Per Thomas 2026-08-30: only a platform enquiry that
+    never became a reservation at all (no booking ever made) leaves no row here - that's the one
+    genuine invisible case, not cancellations."""
+    start = date(year, month, 1)
+    end = last_day_of_month(start)
+    bookings = Booking.objects.filter(is_owner=False, arrival_date__range=(start, end))
+    totals = {group: {'bookings': 0, 'enquiries': 0} for group in REVENUE_GROUPS}
+    for booking in bookings:
+        group = _group_for_booking(booking)
+        totals[group]['enquiries'] += 1
+        if booking.enquiry_status in VALID_BOOKING_STATUSES:
+            totals[group]['bookings'] += 1
+    return totals
+
+
+def monthly_bookings_rows(year):
+    """One row per calendar month of `year` - Total plus each REVENUE_GROUPS entry, each carrying
+    Bookings/Enquiries counts, that group's % share of the month's Total, and a year-over-year
+    delta - same shape as monthly_revenue_rows()/monthly_stays_rows() above, mirroring the
+    reference workbook's Bookings sheet."""
+    rows = []
+    for month in range(1, 13):
+        this_year = _bookings_totals_for_month(year, month)
+        last_year = _bookings_totals_for_month(year - 1, month)
+
+        this_year['Total'] = {
+            'bookings': sum(v['bookings'] for v in this_year.values()),
+            'enquiries': sum(v['enquiries'] for v in this_year.values()),
+        }
+        last_year['Total'] = {
+            'bookings': sum(v['bookings'] for v in last_year.values()),
+            'enquiries': sum(v['enquiries'] for v in last_year.values()),
+        }
+
+        total_bookings = this_year['Total']['bookings']
+        total_enquiries = this_year['Total']['enquiries']
+        groups = {}
+        for group in ('Total',) + REVENUE_GROUPS:
+            bookings_count = this_year[group]['bookings']
+            enquiries_count = this_year[group]['enquiries']
+            groups[group] = {
+                'bookings': bookings_count,
+                'bookings_pct': _percent(bookings_count, total_bookings),
+                'bookings_delta': bookings_count - last_year[group]['bookings'],
+                'enquiries': enquiries_count,
+                'enquiries_pct': _percent(enquiries_count, total_enquiries),
+                'enquiries_delta': enquiries_count - last_year[group]['enquiries'],
+            }
+        rows.append({'month': date(year, month, 1), 'groups': groups})
+    return rows
+
+
+def bookings_trend_rows():
+    """Same shape as revenue_trend_rows()/stays_trend_rows() above - Total Bookings/Enquiries
+    only, one continuous "since records began" series for the Bookings tab's own growth-over-time
+    chart."""
+    bounds = Booking.objects.filter(is_owner=False).aggregate(
+        earliest=Min('arrival_date'), latest=Max('arrival_date'),
+    )
+    if bounds['earliest'] is None:
+        return []
+
+    rows = []
+    for year, month in _month_range(bounds['earliest'], bounds['latest']):
+        totals = _bookings_totals_for_month(year, month)
+        rows.append({
+            'month': date(year, month, 1),
+            'bookings': sum(v['bookings'] for v in totals.values()),
+            'enquiries': sum(v['enquiries'] for v in totals.values()),
+        })
+    return rows
+
+
+# (key, label) - mirrors the reference workbook's Extras sheet column order exactly.
+EXTRAS_METRICS = (
+    ('airport_transfers', 'Airport Transfers'),
+    ('welcome_packs', 'Welcome Packs'),
+    ('cots', 'Cots'),
+    ('high_chairs', 'High Chairs'),
+    ('mid_stay_cleans', 'Mid-stay Cleans'),
+    ('late_checkouts', 'Late Check-outs'),
+)
+
+
+def _extras_totals_for_month(year, month):
+    """{metric_key: int} for every EXTRAS_METRICS entry, counted across every booking (owner
+    stays included this time - unlike Revenue/Stays/Bookings, extras are relevant regardless of
+    who's staying, and the reference workbook's own Extras sheet has no Direct/Airbnb/etc split
+    to exclude them from) whose ARRIVAL falls in this month and whose status is confirmed
+    (VALID_BOOKING_STATUSES). Airport Transfers count by the row itself (many per booking);
+    every other metric is a single boolean on that booking's one-to-one Extra, so counting
+    Extra rows with that flag set is equivalent to counting bookings with it requested."""
+    start = date(year, month, 1)
+    end = last_day_of_month(start)
+    booking_scope = Q(booking__enquiry_status__in=VALID_BOOKING_STATUSES, booking__arrival_date__range=(start, end))
+    return {
+        'airport_transfers': AirportTransfer.objects.filter(booking_scope).count(),
+        'welcome_packs': Extra.objects.filter(booking_scope, welcome_pack=True).count(),
+        'cots': Extra.objects.filter(booking_scope, cot=True).count(),
+        'high_chairs': Extra.objects.filter(booking_scope, high_chair=True).count(),
+        'mid_stay_cleans': Extra.objects.filter(booking_scope, mid_stay_clean=True).count(),
+        'late_checkouts': Extra.objects.filter(booking_scope, late_checkout=True).count(),
+    }
+
+
+def monthly_extras_rows(year):
+    """One row per calendar month of `year` - each of the six EXTRAS_METRICS with a Tot count and
+    a year-over-year Lst Yr delta only, no % column - unlike every other Monthly-tab sheet, there
+    is no Total-vs-group breakdown here to take a share of, just six independent counts side by
+    side, matching the reference workbook's own Extras sheet exactly."""
+    rows = []
+    for month in range(1, 13):
+        this_year = _extras_totals_for_month(year, month)
+        last_year = _extras_totals_for_month(year - 1, month)
+        metrics = {
+            key: {'total': this_year[key], 'delta': this_year[key] - last_year[key]}
+            for key, _label in EXTRAS_METRICS
+        }
+        rows.append({'month': date(year, month, 1), 'metrics': metrics})
+    return rows
+
+
+def extras_trend_rows():
+    """Same shape as revenue_trend_rows()/stays_trend_rows()/bookings_trend_rows() above - one
+    continuous "since records began" series per EXTRAS_METRICS entry, for the Extras tab's own
+    growth-over-time chart. Bounds are taken across every confirmed booking (owner included, same
+    scope as the table above)."""
+    bounds = Booking.objects.filter(enquiry_status__in=VALID_BOOKING_STATUSES).aggregate(
+        earliest=Min('arrival_date'), latest=Max('arrival_date'),
+    )
+    if bounds['earliest'] is None:
+        return []
+
+    rows = []
+    for year, month in _month_range(bounds['earliest'], bounds['latest']):
+        totals = _extras_totals_for_month(year, month)
+        row = {'month': date(year, month, 1)}
+        row.update(totals)
+        rows.append(row)
     return rows

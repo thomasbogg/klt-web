@@ -10,8 +10,9 @@ from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import (
-    Arrival, BalancePayment, Booking, BookingCondition, BookingSettings, Charge, CheckinSettings,
-    Departure, Extra, FAQ, Payment, PaymentSettings, PlatformPayout, TravelMethod,
+    AirportTransfer, AirportTransferDirection, Arrival, BalancePayment, Booking, BookingCondition,
+    BookingSettings, Charge, CheckinSettings, Departure, Extra, FAQ, Payment, PaymentSettings,
+    PlatformPayout, TravelMethod,
 )
 from finance.models import AdHocService
 from guests.models import Guest
@@ -22,6 +23,7 @@ from properties.models import (
 )
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.monthly_reports import (
+    bookings_trend_rows, extras_trend_rows, monthly_bookings_rows, monthly_extras_rows,
     monthly_revenue_rows, monthly_stays_rows, revenue_trend_rows, stays_trend_rows,
 )
 from staff.reports import booking_report_rows, report_totals
@@ -4272,3 +4274,273 @@ class StaysTrendRowsTests(TestCase):
 
         rows = stays_trend_rows(include_owner=True)
         self.assertEqual(rows[0]['arrivals'], 1)
+
+
+class MonthlyBookingsRowsTests(TestCase):
+    """staff/monthly_reports.py::monthly_bookings_rows() - Bookings vs Enquiries, mirroring the
+    reference workbook's Bookings sheet. Displayed as the "Enquiries" tab (see
+    StaffReportsEnquiriesView's own docstring for why it isn't called "Bookings" in the nav)."""
+
+    def setUp(self):
+        self.owner = make_owner(is_paid_regularly=False)
+        self.property = Property.objects.create(
+            title='Enquiries Property', short_title='ENQPROP', owner=self.owner,
+        )
+        self.guest = Guest.objects.create(first_name='Enq', last_name='Uiry', email='enquiries-test@example.com')
+
+    def _make_booking(self, arrival, enquiry_source='Website', enquiry_status='Booking confirmed', is_owner=False):
+        return Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=arrival,
+            departure_date=arrival + timedelta(days=4), is_owner=is_owner,
+            enquiry_status=enquiry_status, enquiry_source=enquiry_source,
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_confirmed_booking_counts_as_both_a_booking_and_an_enquiry(self):
+        self._make_booking(date(2024, 3, 5), enquiry_status='Booking confirmed')
+
+        rows = monthly_bookings_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups']['Direct']['bookings'], 1)
+        self.assertEqual(march['groups']['Direct']['enquiries'], 1)
+
+    def test_unconverted_enquiry_counts_only_as_an_enquiry(self):
+        """A cancelled/expired/failed direct reservation attempt still created a real Booking
+        row - it must count toward Enquiries but never toward Bookings."""
+        self._make_booking(date(2024, 3, 10), enquiry_status='Hold expired')
+
+        rows = monthly_bookings_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups']['Direct']['bookings'], 0)
+        self.assertEqual(march['groups']['Direct']['enquiries'], 1)
+
+    def test_platform_booking_cancelled_on_the_platform_counts_only_as_an_enquiry(self):
+        """Per Thomas 2026-08-30: a platform reservation that was later cancelled on the platform
+        itself (sync_ical_link() sets 'Cancelled by platform' when a previously-imported UID
+        disappears from that platform's feed) still has its row here, same as a direct
+        reservation attempt that never converted - it must count toward Airbnb's Enquiries but
+        never its Bookings, not be silently invisible."""
+        self._make_booking(date(2024, 3, 12), enquiry_source='Airbnb', enquiry_status='Cancelled by platform')
+
+        rows = monthly_bookings_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups']['Airbnb']['bookings'], 0)
+        self.assertEqual(march['groups']['Airbnb']['enquiries'], 1)
+
+    def test_owner_stay_excluded_entirely(self):
+        self._make_booking(date(2024, 3, 15), enquiry_source='Owner Suite', is_owner=True)
+
+        rows = monthly_bookings_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups']['Total']['enquiries'], 0)
+
+    def test_year_over_year_delta_is_a_real_change_not_the_prior_years_raw_figure(self):
+        self._make_booking(date(2023, 3, 5))
+        self._make_booking(date(2024, 3, 5))
+        self._make_booking(date(2024, 3, 12))
+
+        rows = monthly_bookings_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups']['Direct']['bookings'], 2)
+        self.assertEqual(march['groups']['Direct']['bookings_delta'], 1)
+
+    def test_a_month_with_no_bookings_has_zero_figures_and_raises_nothing(self):
+        rows = monthly_bookings_rows(2024)
+        july = next(r for r in rows if r['month'].month == 7)
+        self.assertEqual(july['groups']['Total']['bookings'], 0)
+        self.assertEqual(july['groups']['Total']['bookings_pct'], Decimal('0'))
+
+
+class BookingsTrendRowsTests(TestCase):
+    def setUp(self):
+        self.owner = make_owner(is_paid_regularly=False)
+        self.property = Property.objects.create(
+            title='Enquiries Trend Property', short_title='ENQTREND', owner=self.owner,
+        )
+        self.guest = Guest.objects.create(first_name='Trend', last_name='Enq', email='trend-enq@example.com')
+
+    def test_empty_when_no_guest_bookings_exist(self):
+        self.assertEqual(bookings_trend_rows(), [])
+
+    def test_spans_from_earliest_to_latest_regardless_of_status(self):
+        """Unlike revenue_trend_rows' bounds, this must include a never-confirmed enquiry's
+        month too - Enquiries is the whole funnel, not just what converted."""
+        Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=date(2020, 1, 10),
+            departure_date=date(2020, 1, 14), is_owner=False,
+            enquiry_status='Hold expired', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        rows = bookings_trend_rows()
+        self.assertEqual(rows[0]['month'], date(2020, 1, 1))
+        self.assertEqual(rows[0]['enquiries'], 1)
+        self.assertEqual(rows[0]['bookings'], 0)
+
+
+class StaffReportsEnquiriesViewTests(TestCase):
+    def setUp(self):
+        role = StaffRole.objects.create(name='Enquiries Viewer', can_view_reports=True)
+        self.staffer = User.objects.create_user(username='enqstaffer', password='pw', is_staff=True)
+        StaffProfile.objects.create(user=self.staffer, role=role)
+        self.no_access_staffer = User.objects.create_user(username='noaccessenq', password='pw', is_staff=True)
+
+        owner = make_owner(is_paid_regularly=False)
+        property = Property.objects.create(title='Enquiries View Property', short_title='ENQVIEW', owner=owner)
+        guest = Guest.objects.create(first_name='View', last_name='Enq', email='enq-view@example.com')
+        Booking.objects.create(
+            property=property, guest=guest, arrival_date=date(2024, 6, 10), departure_date=date(2024, 6, 14),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_requires_permission(self):
+        self.client.login(username='noaccessenq', password='pw')
+        response = self.client.get(reverse('staff:reports_enquiries'))
+        self.assertEqual(response.status_code, 403)
+
+    def test_page_renders_with_the_requested_year(self):
+        self.client.login(username='enqstaffer', password='pw')
+        response = self.client.get(reverse('staff:reports_enquiries'), {'year': '2024'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['year'], 2024)
+        self.assertContains(response, 'June')
+        self.assertContains(response, 'Bookings')
+        self.assertContains(response, 'Enquiries')
+
+    def test_groups_param_narrows_the_visible_columns(self):
+        self.client.login(username='enqstaffer', password='pw')
+        response = self.client.get(reverse('staff:reports_enquiries'), {'year': '2024', 'groups': 'Direct'})
+        self.assertEqual(response.context['selected_groups'], {'Direct'})
+        self.assertNotContains(response, '<th colspan="6">Airbnb</th>')
+        self.assertContains(response, '<th colspan="6">Direct</th>')
+
+    def test_trend_chart_renders_on_the_page(self):
+        self.client.login(username='enqstaffer', password='pw')
+        response = self.client.get(reverse('staff:reports_enquiries'), {'year': '2024'})
+        self.assertContains(response, 'id="enquiries-trend-chart"')
+        self.assertContains(response, 'id="enquiries-trend-data"')
+
+
+class MonthlyExtrasRowsTests(TestCase):
+    """staff/monthly_reports.py::monthly_extras_rows() - Tot + Lst Yr only, no % column and no
+    Direct/Airbnb/etc breakdown, mirroring the reference workbook's Extras sheet exactly."""
+
+    def setUp(self):
+        self.owner = make_owner(is_paid_regularly=False)
+        self.property = Property.objects.create(
+            title='Extras Report Property', short_title='EXTRPROP', owner=self.owner,
+        )
+        self.guest = Guest.objects.create(first_name='Ext', last_name='Ras', email='extras-report@example.com')
+
+    def _make_booking(self, arrival, enquiry_status='Booking confirmed', is_owner=False):
+        return Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=arrival,
+            departure_date=arrival + timedelta(days=4), is_owner=is_owner,
+            enquiry_status=enquiry_status, enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_counts_each_requested_extra_once(self):
+        booking = self._make_booking(date(2024, 3, 5))
+        Extra.objects.create(booking=booking, welcome_pack=True, cot=True, high_chair=True, late_checkout=True)
+        AirportTransfer.objects.create(
+            booking=booking, direction=AirportTransferDirection.INBOUND, time=time(14, 0),
+        )
+
+        rows = monthly_extras_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['metrics']['airport_transfers']['total'], 1)
+        self.assertEqual(march['metrics']['welcome_packs']['total'], 1)
+        self.assertEqual(march['metrics']['cots']['total'], 1)
+        self.assertEqual(march['metrics']['high_chairs']['total'], 1)
+        self.assertEqual(march['metrics']['late_checkouts']['total'], 1)
+        self.assertEqual(march['metrics']['mid_stay_cleans']['total'], 0)
+
+    def test_owner_stay_extras_are_included_unlike_revenue_and_stays(self):
+        """Extras aren't platform-specific, and the reference workbook's own Extras sheet has no
+        Direct/Airbnb/etc split to exclude owner stays from - unlike Revenue/Stays/Bookings, an
+        owner stay's extras must count here."""
+        booking = self._make_booking(date(2024, 3, 10), is_owner=True)
+        Extra.objects.create(booking=booking, cot=True)
+
+        rows = monthly_extras_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['metrics']['cots']['total'], 1)
+
+    def test_extra_on_an_unconfirmed_booking_is_not_counted(self):
+        booking = self._make_booking(date(2024, 3, 15), enquiry_status='Hold expired')
+        Extra.objects.create(booking=booking, welcome_pack=True)
+
+        rows = monthly_extras_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['metrics']['welcome_packs']['total'], 0)
+
+    def test_year_over_year_delta_is_a_real_change(self):
+        old = self._make_booking(date(2023, 3, 5))
+        Extra.objects.create(booking=old, cot=True)
+        new = self._make_booking(date(2024, 3, 5))
+        Extra.objects.create(booking=new, cot=True)
+
+        rows = monthly_extras_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['metrics']['cots']['total'], 1)
+        self.assertEqual(march['metrics']['cots']['delta'], 0)
+
+    def test_a_month_with_no_bookings_has_zero_figures_and_raises_nothing(self):
+        rows = monthly_extras_rows(2024)
+        july = next(r for r in rows if r['month'].month == 7)
+        self.assertEqual(july['metrics']['welcome_packs']['total'], 0)
+        self.assertEqual(july['metrics']['welcome_packs']['delta'], 0)
+
+
+class ExtrasTrendRowsTests(TestCase):
+    def setUp(self):
+        self.owner = make_owner(is_paid_regularly=False)
+        self.property = Property.objects.create(
+            title='Extras Trend Property', short_title='EXTRTREND', owner=self.owner,
+        )
+        self.guest = Guest.objects.create(first_name='Trend', last_name='Ext', email='trend-ext@example.com')
+
+    def test_empty_when_no_confirmed_bookings_exist(self):
+        self.assertEqual(extras_trend_rows(), [])
+
+    def test_spans_from_earliest_to_latest_confirmed_booking(self):
+        booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=date(2020, 1, 10),
+            departure_date=date(2020, 1, 14), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Extra.objects.create(booking=booking, welcome_pack=True)
+
+        rows = extras_trend_rows()
+        self.assertEqual(rows[0]['month'], date(2020, 1, 1))
+        self.assertEqual(rows[0]['welcome_packs'], 1)
+
+
+class StaffReportsExtrasViewTests(TestCase):
+    def setUp(self):
+        role = StaffRole.objects.create(name='Extras Viewer', can_view_reports=True)
+        self.staffer = User.objects.create_user(username='extrasstaffer', password='pw', is_staff=True)
+        StaffProfile.objects.create(user=self.staffer, role=role)
+        self.no_access_staffer = User.objects.create_user(username='noaccessextras', password='pw', is_staff=True)
+
+    def test_requires_permission(self):
+        self.client.login(username='noaccessextras', password='pw')
+        response = self.client.get(reverse('staff:reports_extras'))
+        self.assertEqual(response.status_code, 403)
+
+    def test_page_renders_with_the_requested_year(self):
+        self.client.login(username='extrasstaffer', password='pw')
+        response = self.client.get(reverse('staff:reports_extras'), {'year': '2024'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['year'], 2024)
+        self.assertContains(response, 'Airport Transfers')
+        self.assertContains(response, 'Welcome Packs')
+        self.assertContains(response, 'Mid-stay Cleans')
+
+    def test_trend_chart_renders_on_the_page(self):
+        self.client.login(username='extrasstaffer', password='pw')
+        response = self.client.get(reverse('staff:reports_extras'), {'year': '2024'})
+        self.assertContains(response, 'id="extras-trend-chart"')
+        self.assertContains(response, 'id="extras-trend-data"')
