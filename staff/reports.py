@@ -91,8 +91,16 @@ def booking_report_rows(start, end, properties=None):
         payout = compute_owner_payout(booking, payment_settings)
         memo = memos_by_booking_id.get(booking.pk)
         maintenance_cost = memo.ad_hoc_total() if memo else ZERO
-        clean_cost = clean_fee(payment_settings, booking)
-        meet_greet_cost = meet_greet_fee(payment_settings, booking)
+        # A sent Memo is frozen (see Memo's own docstring) - its clean_fee/meet_greet_fee are
+        # what the owner was actually billed, so this row must show those, not whatever
+        # PaymentSettings/standard_cleaning_fee say today. An unsent (or absent) Memo still
+        # live-recomputes, same as maintenance_cost above.
+        if memo is not None and memo.sent_at is not None:
+            clean_cost = memo.clean_fee
+            meet_greet_cost = memo.meet_greet_fee
+        else:
+            clean_cost = clean_fee(payment_settings, booking)
+            meet_greet_cost = meet_greet_fee(payment_settings, booking)
 
         if payout['available']:
             basic_rental = payout['rental_base']
