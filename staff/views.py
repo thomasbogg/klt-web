@@ -19,8 +19,8 @@ import env_settings
 from availability.utils import get_property_calendar
 from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Arrival, Booking, BookingCondition,
-    BookingSettings, CheckinSettings, Departure, ExtrasSettings, FAQ, PaymentSettings, RequestType,
-    TravelMethod, WelcomePackItem,
+    BookingSettings, CheckinSettings, Departure, ExtrasSettings, FAQ, PaymentSettings, PlatformPayout,
+    RequestType, TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
 from finance.models import AdHocService, DepositReturn, Memo, PayoutRecord
@@ -1812,6 +1812,7 @@ class StaffBookingDetailView(View):
 
     def _context(self, booking):
         charge = getattr(booking, 'charges', None)
+        platform_payout = getattr(booking, 'platform_payout', None)
         balance_payment = getattr(booking, 'balance_payment', None)
         subtotal = due_total = None
         split_mismatch = False
@@ -1823,6 +1824,7 @@ class StaffBookingDetailView(View):
             'booking': booking,
             'guest': booking.guest,
             'charge': charge,
+            'platform_payout': platform_payout,
             'is_platform_booking': booking.enquiry_source in env_settings.PLATFORMS,
             'payment': getattr(booking, 'payment', None),
             'balance_payment': balance_payment,
@@ -1965,6 +1967,43 @@ class StaffBookingDetailView(View):
                     charge_changed = True
                 charge.currency = currency
 
+        # Platform Payout replaces Rental Charges on this page for a platform booking (see
+        # booking_detail.html) - gross/commission/payout is structurally different money to a
+        # Charge's rental/admin split (see PlatformPayout's own docstring), and no import or sync
+        # path creates this row, so it's get-or-create'd here rather than requiring one to already
+        # exist like `charge` above. Only actually saved if a field was touched (platform_payout_
+        # changed), so a platform booking nobody's entered payout figures for yet doesn't grow an
+        # empty row on every unrelated booking edit.
+        is_platform_booking = booking.enquiry_source in env_settings.PLATFORMS
+        platform_payout = getattr(booking, 'platform_payout', None)
+        platform_payout_changed = False
+        if is_platform_booking:
+            if platform_payout is None:
+                platform_payout = PlatformPayout(booking=booking)
+            for field in ('gross_amount', 'platform_commission', 'payout_amount'):
+                raw = post.get(field, '').strip()
+                if not raw:
+                    if getattr(platform_payout, field) is not None:
+                        platform_payout_changed = True
+                        setattr(platform_payout, field, None)
+                    continue
+                value = _parsed_decimal(raw)
+                if value is None:
+                    messages.error(request, f"'{raw}' isn't a valid amount for {field.replace('_', ' ')}.")
+                    return
+                if value != getattr(platform_payout, field):
+                    platform_payout_changed = True
+                setattr(platform_payout, field, value)
+            payout_currency = post.get('payout_currency')
+            if payout_currency in dict(CURRENCY_CHOICES):
+                if payout_currency != platform_payout.payout_currency:
+                    platform_payout_changed = True
+                platform_payout.payout_currency = payout_currency
+            payout_date = _parsed_date(post.get('payout_date'))
+            if payout_date != platform_payout.payout_date:
+                platform_payout_changed = True
+            platform_payout.payout_date = payout_date
+
         guest = booking.guest
         guest.first_name = post.get('first_name', guest.first_name or '').strip()
         guest.last_name = post.get('last_name', guest.last_name).strip() or guest.last_name
@@ -2086,6 +2125,11 @@ class StaffBookingDetailView(View):
                     TaskHistoryEntry.objects.create(
                         booking=booking, description="Rental charges updated", created_by=request.user,
                     )
+            if platform_payout_changed:
+                platform_payout.save()
+                TaskHistoryEntry.objects.create(
+                    booking=booking, description="Platform payout updated", created_by=request.user,
+                )
             if payment is not None and payment_status:
                 payment.status = payment_status
                 payment.save(update_fields=['status'])
@@ -2166,9 +2210,11 @@ class StaffBookingDetailView(View):
         (see the "Reconcile Rental Charges with the Payments from Guest split" plan). Once the
         deposit is actually paid, due_at_booking is a locked historical fact - same rule
         bookings/utils.py::recalculate_balance_for_party() already applies on the guest-facing side
-        - so only due_at_balance moves; otherwise both are freshly derived via the one canonical
-        split formula, BookingSettings.compute_costs(). Never creates/deletes a BalancePayment row -
-        same limitation recalculate_balance_for_party() already has."""
+        - so only due_at_balance moves; otherwise both are freshly derived via
+        BookingSettings.split_subtotal() - NOT compute_costs(), which would re-derive its own
+        fresh admin_fee_percent on top of a subtotal that already has Charge.admin baked in and
+        double-count it. Never creates/deletes a BalancePayment row - same limitation
+        recalculate_balance_for_party() already has."""
         charge = getattr(booking, 'charges', None)
         if charge is None or charge.total_rental is None or charge.admin is None:
             messages.error(request, "No Charge record to recalculate.")
@@ -2179,10 +2225,12 @@ class StaffBookingDetailView(View):
             charge.due_at_balance = max(subtotal - (charge.due_at_booking or Decimal('0')), Decimal('0'))
             charge.save(update_fields=['due_at_balance'])
         else:
-            costs = BookingSettings.load().compute_costs(subtotal, arrival_date=booking.arrival_date)
-            charge.due_at_booking = costs['due_at_booking']
-            charge.due_at_balance = costs['due_at_balance']
-            charge.balance_due_date = costs['balance_due_date']
+            due_at_booking, due_at_balance, balance_due_date = BookingSettings.load().split_subtotal(
+                subtotal, arrival_date=booking.arrival_date
+            )
+            charge.due_at_booking = due_at_booking
+            charge.due_at_balance = due_at_balance
+            charge.balance_due_date = balance_due_date
             charge.save(update_fields=['due_at_booking', 'due_at_balance', 'balance_due_date'])
         messages.success(request, "Payment split recalculated.")
 

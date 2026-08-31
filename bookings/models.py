@@ -155,17 +155,9 @@ class BookingSettings(models.Model):
         balance stage" signal for the guest-facing Extras-at-balance flow.
         """
         rental_total = Decimal(rental_total)
-        today = today or date.today()
         admin_fee = (rental_total * self.admin_fee_percent / Decimal('100')).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
         subtotal = rental_total + admin_fee
-        due_at_booking = (subtotal * self.deposit_percent_at_booking / Decimal('100')).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
-        due_at_balance = subtotal - due_at_booking
-        balance_due_date = arrival_date - timedelta(days=self.balance_due_days_before_arrival) if arrival_date else None
-
-        if balance_due_date is not None and balance_due_date <= today:
-            due_at_booking = subtotal
-            due_at_balance = Decimal('0')
-            balance_due_date = None
+        due_at_booking, due_at_balance, balance_due_date = self.split_subtotal(subtotal, arrival_date, today)
 
         return {
             'rental_total': rental_total,
@@ -176,6 +168,25 @@ class BookingSettings(models.Model):
             'balance_due_date': balance_due_date,
             'security_deposit': self.security_deposit_amount,
         }
+
+    def split_subtotal(self, subtotal, arrival_date=None, today=None):
+        """The booking/balance-window portion of compute_costs(), for a subtotal that's already
+        final (admin fee already included, e.g. Charge.total_rental + Charge.admin) - use this
+        instead of compute_costs() to re-derive due_at_booking/due_at_balance for an existing
+        Charge, since compute_costs() always adds its own fresh admin_fee_percent on top of
+        whatever's passed in and would double-count an admin fee already baked into the subtotal."""
+        subtotal = Decimal(subtotal)
+        today = today or date.today()
+        due_at_booking = (subtotal * self.deposit_percent_at_booking / Decimal('100')).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+        due_at_balance = subtotal - due_at_booking
+        balance_due_date = arrival_date - timedelta(days=self.balance_due_days_before_arrival) if arrival_date else None
+
+        if balance_due_date is not None and balance_due_date <= today:
+            due_at_booking = subtotal
+            due_at_balance = Decimal('0')
+            balance_due_date = None
+
+        return due_at_booking, due_at_balance, balance_due_date
 
     def to_gbp(self, amount):
         return (Decimal(amount) * self.gbp_conversion_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)

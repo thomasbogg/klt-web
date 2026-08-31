@@ -219,6 +219,32 @@
             </div>
 
             <div class="staff-panel-column">
+                {% if is_platform_booking %}
+                <section class="staff-panel">
+                    <h2 class="staff-panel-title">Platform payout</h2>
+                    <div class="staff-form">
+                        <label class="staff-field">Payout Currency
+                            <select name="payout_currency" form="booking-detail-form" class="staff-input">
+                                {% for value, label in currency_choices %}
+                                <option value="{{ value }}" {% if platform_payout.payout_currency == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label class="staff-field">Gross Amount
+                            <input type="text" name="gross_amount" form="booking-detail-form" class="staff-input" value="{{ platform_payout.gross_amount|default:'' }}">
+                        </label>
+                        <label class="staff-field">Platform Commission
+                            <input type="text" name="platform_commission" form="booking-detail-form" class="staff-input" value="{{ platform_payout.platform_commission|default:'' }}">
+                        </label>
+                        <label class="staff-field">Payout Amount
+                            <input type="text" name="payout_amount" form="booking-detail-form" class="staff-input" value="{{ platform_payout.payout_amount|default:'' }}">
+                        </label>
+                        <label class="staff-field">Payout Date
+                            <input type="text" name="payout_date" form="booking-detail-form" class="staff-input staff-date-input" value="{{ platform_payout.payout_date|date:'Y-m-d' }}" autocomplete="off">
+                        </label>
+                    </div>
+                </section>
+                {% else %}
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Rental charges</h2>
                     {% if charge %}
@@ -256,6 +282,7 @@
                     <p class="staff-empty">No Charge record for this booking.</p>
                     {% endif %}
                 </section>
+                {% endif %}
 
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Extras</h2>
@@ -329,6 +356,7 @@
                     <p class="staff-next-step">{{ next_step }}</p>
                 </section>
 
+                {% if not is_platform_booking %}
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Payments from guest</h2>
                     <div class="staff-form">
@@ -380,6 +408,7 @@
                         {% endif %}
                     </div>
                 </section>
+                {% endif %}
 
                 <section class="staff-panel">
                     <h2 class="staff-panel-title">Owner payout</h2>
