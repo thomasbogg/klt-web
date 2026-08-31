@@ -10,7 +10,7 @@ from .models import (
     AirportTransfer, Arrival, BalancePayment, Booking, BookingCondition,
     BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge, Departure,
     Extra, ExtrasSettings, FAQ, GuestListAdjustment, Payment, PaymentSettings, PlatformPayout, RequestType,
-    WelcomePackItem,
+    TouristTax, WelcomePackItem,
 )
 from .utils import expire_stale_holds
 
@@ -48,6 +48,15 @@ class BalancePaymentInline(admin.StackedInline):
     switched off (a cross-talk issue with the legacy tourist-tax webhook on the same Revolut
     account), so staff flip status here by hand for both Wise and Revolut until that's turned on."""
     model = BalancePayment
+    max_num = 1
+
+
+class TouristTaxInline(admin.StackedInline):
+    """Only present once the guest has visited the Manage hub's Tourist Tax section (lazily
+    created there, unlike Payment/BalancePayment which always exist from booking creation) - same
+    manual-confirm role as PaymentInline/BalancePaymentInline, klt-hooks' webhook dispatch for
+    this is built but deliberately left switched off, see BalancePaymentInline's own note."""
+    model = TouristTax
     max_num = 1
 
 
@@ -117,9 +126,9 @@ class GuestListAdjustmentInline(admin.TabularInline):
 
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
-    inlines = [ChargeInline, PaymentInline, BalancePaymentInline, BookingGuestInline, PlatformPayoutInline,
-               ExtraInline, BookingRequestedExtraInline, AirportTransferInline, ArrivalInline, DepartureInline,
-               BookingDateAdjustmentInline, GuestListAdjustmentInline]
+    inlines = [ChargeInline, PaymentInline, BalancePaymentInline, TouristTaxInline, BookingGuestInline,
+               PlatformPayoutInline, ExtraInline, BookingRequestedExtraInline, AirportTransferInline,
+               ArrivalInline, DepartureInline, BookingDateAdjustmentInline, GuestListAdjustmentInline]
     list_display = ('reference', 'property', 'guest', 'arrival_date', 'departure_date', 'enquiry_status', 'enquiry_source')
     list_filter = ('enquiry_status', 'enquiry_source', 'manual_override')
     search_fields = ('reference', 'guest__first_name', 'guest__last_name', 'guest__email')
@@ -165,6 +174,13 @@ class BalancePaymentAdmin(admin.ModelAdmin):
     @admin.action(description="Mark reminder sent")
     def mark_reminder_sent(self, request, queryset):
         queryset.update(reminder_sent=True, reminder_sent_at=timezone.now())
+
+
+@admin.register(TouristTax)
+class TouristTaxAdmin(admin.ModelAdmin):
+    list_display = ('booking', 'provider', 'status', 'total', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('booking__reference', 'booking__guest__first_name', 'booking__guest__last_name')
 
 
 @admin.register(BookingCondition)

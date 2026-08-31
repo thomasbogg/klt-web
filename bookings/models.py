@@ -97,6 +97,22 @@ class BookingSettings(models.Model):
         help_text="Age at time of stay (inclusive) from which a guest is priced as a child rather than "
                    "an infant. Below this: infant, currently free (see cot-as-extra, not yet built)."
     )
+    tourist_tax_per_night = models.DecimalField(
+        max_digits=6, decimal_places=2, default=Decimal('2.00'),
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text="Flat municipal tourist tax charged per qualifying guest, per night."
+    )
+    tourist_tax_min_age = models.PositiveIntegerField(
+        default=13,
+        help_text="Age at time of stay (inclusive) from which a guest is liable for tourist tax. "
+                  "Deliberately separate from adult_min_age above - this tracks a municipal tax-law "
+                  "threshold, not a pricing decision, even though both happen to be 13 today."
+    )
+    tourist_tax_max_nights = models.PositiveIntegerField(
+        default=7,
+        help_text="Maximum number of nights per guest that tourist tax is charged for, regardless "
+                  "of how much longer the actual stay is."
+    )
 
     # Cost dict keys from compute_costs() that represent a money amount and are shown converted to
     # GBP when a guest toggles the currency display. security_deposit is deliberately excluded: it's
@@ -775,6 +791,38 @@ class BalancePayment(models.Model):
 
     def __str__(self):
         return f"{self.booking} - Balance Payment ({self.get_status_display()})"
+
+
+class TouristTax(models.Model):
+    """Municipal tourist tax owed on a booking - see BookingSettings.tourist_tax_per_night/
+    tourist_tax_min_age/tourist_tax_max_nights and bookings/utils.py::compute_tourist_tax().
+    Mirrors Payment/BalancePayment's shape (a mutable row updated by webhook events) but always
+    provider='revolut' - unlike the deposit/balance stages, this has no seasonal Wise alternative
+    in the legacy pattern it's ported from. total is nullable until first computed (lazily, on the
+    guest's first visit to the Manage hub's Tourist Tax section) and gets recomputed/re-frozen on
+    each visit until paid, since it depends on the party's real ages which can change up until
+    then - see BookingManageTouristTaxView."""
+    booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='tourist_tax')
+    total = models.DecimalField(max_digits=8, decimal_places=2, blank=True, null=True)
+    provider = models.CharField(max_length=10, choices=PROVIDER_CHOICES, default='revolut')
+    status = models.CharField(max_length=15, choices=PAYMENT_STATUS_CHOICES, default='pending')
+
+    revolut_order_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    revolut_checkout_url = models.URLField(blank=True, null=True)
+
+    last_event_type = models.CharField(max_length=100, blank=True, null=True)
+    in_progress_at = models.DateTimeField(blank=True, null=True)
+    paid_at = models.DateTimeField(blank=True, null=True)
+    failed_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'booking_tourist_tax'
+        verbose_name = 'Tourist Tax'
+        verbose_name_plural = 'Tourist Tax'
+
+    def __str__(self):
+        return f"{self.booking} - Tourist Tax ({self.get_status_display()})"
 
 
 class WelcomePackFoodChoice(models.TextChoices):

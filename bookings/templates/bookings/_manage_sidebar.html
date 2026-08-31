@@ -1,14 +1,14 @@
 {% comment %}
 Manage Booking hub sidebar - shared by every hub section template. Expects `booking`,
-`active_section`, `show_pay_balance` and `show_cancel_booking` in context (all supplied by
-bookings/views.py::_manage_nav_context()).
+`active_section`, `show_pay_balance`, `show_tourist_tax` and `show_cancel_booking` in context
+(all supplied by bookings/views.py::_manage_nav_context()).
 
 Two labelled groups, not one flat list: "Manage Your Stay" is everything the guest actively does
-something with (submits, edits, pays, cancels) - due to grow further still (Tourist Tax);
-"Holiday Info" is everything they're just looking up (Amenities, Location & Arrival, FAQ) - a
-guest reading these never changes anything, so they don't belong mixed in with the action items
-above. Same underlying plain-links mechanism as before (each item is a real page, not a
-client-side tab switch), just grouped visually - see bookings.css's .manage-hub-nav-group-label.
+something with (submits, edits, pays, cancels); "Holiday Info" is everything they're just looking
+up (Amenities, Location & Arrival, FAQ) - a guest reading these never changes anything, so they
+don't belong mixed in with the action items above. Same underlying plain-links mechanism as before
+(each item is a real page, not a client-side tab switch), just grouped visually - see
+bookings.css's .manage-hub-nav-group-label.
 {% endcomment %}
 <nav class="manage-hub-nav">
     <span class="manage-hub-nav-group-label">Manage Your Stay</span>
@@ -22,6 +22,10 @@ client-side tab switch), just grouped visually - see bookings.css's .manage-hub-
        href="{% url 'bookings:manage_extras' reference=booking.reference %}">Optional Extras</a>
     <a class="manage-hub-nav-link{% if active_section == 'guest_registrations' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_guest_registrations' reference=booking.reference %}">Guest Registrations</a>
+    {% if show_tourist_tax %}
+    <a class="manage-hub-nav-link{% if active_section == 'tourist_tax' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'bookings:manage_tourist_tax' reference=booking.reference %}">Tourist Tax</a>
+    {% endif %}
     {% if show_security_deposit %}
     <a class="manage-hub-nav-link{% if active_section == 'deposit' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_deposit' reference=booking.reference %}">Security Deposit</a>

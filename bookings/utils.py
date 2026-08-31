@@ -218,6 +218,21 @@ def guest_counts_by_age(ages, booking_settings):
     return counts
 
 
+def compute_tourist_tax(booking, booking_settings=None):
+    """Municipal tourist tax: qualifying_guests x min(nights, max_nights) x per_night. Qualifying
+    guests are named party members at/above tourist_tax_min_age, computed from their real ages
+    (BookingGuest.age) - deliberately not the adults/children/babies headcount split, since that's
+    keyed to a different (pricing) age cutoff, see BookingSettings.tourist_tax_min_age's docstring.
+    Returns (total, qualifying_guests, nights) so callers can show a full breakdown."""
+    from bookings.models import BookingSettings
+
+    booking_settings = booking_settings or BookingSettings.load()
+    nights = min((booking.departure_date - booking.arrival_date).days, booking_settings.tourist_tax_max_nights)
+    qualifying_guests = booking.party.filter(age__gte=booking_settings.tourist_tax_min_age).count()
+    total = Decimal(qualifying_guests) * Decimal(nights) * booking_settings.tourist_tax_per_night
+    return total, qualifying_guests, nights
+
+
 def recalculate_costs_for_party(booking, ages):
     """Recompute costs from real party ages, reusing get_stay_total_price()/compute_costs() exactly
     as create_booking() does at initial booking time. Returns (new_guests, new_costs, changed) -

@@ -16,13 +16,13 @@ from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, DepositBankDetails,
     Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, RequestType,
-    TravelMethod, WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
+    TouristTax, TravelMethod, WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, booking_confirmation_context, cancel_booking_hold, compute_deposit_waiver,
-    extras_summary, guest_counts_by_age, mid_stay_clean_window, parsed_arrival_departure_time,
-    parsed_travel_method, recalculate_balance_for_party, recalculate_costs_for_party,
-    reservation_retry_url, valid_flight_number,
+    compute_tourist_tax, extras_summary, guest_counts_by_age, mid_stay_clean_window,
+    parsed_arrival_departure_time, parsed_travel_method, recalculate_balance_for_party,
+    recalculate_costs_for_party, reservation_retry_url, valid_flight_number,
 )
 from libraries.banking.revolut import Revolut
 
@@ -42,6 +42,14 @@ def is_balance_paid(booking):
     nothing left to collect, so treat it as paid the same way is_paid() does for a missing Payment."""
     balance_payment = getattr(booking, 'balance_payment', None)
     return balance_payment is None or balance_payment.status == 'paid'
+
+
+def is_tourist_tax_paid(booking):
+    """No TouristTax row yet just means the guest hasn't visited that Manage hub section yet
+    (lazily created there, unlike Payment/BalancePayment which are always created at booking
+    time) - not the same as "nothing owed", so this only reflects an existing row's status."""
+    tourist_tax = getattr(booking, 'tourist_tax', None)
+    return tourist_tax is not None and tourist_tax.status == 'paid'
 
 
 def is_fully_paid(booking):
@@ -1025,6 +1033,9 @@ def _manage_nav_context(booking, active_section):
         # Only shown for a booking that actually needs one - see compute_deposit_waiver's own
         # docstring for the three independent reasons a deposit might not apply.
         'show_security_deposit': not cancelled and not compute_deposit_waiver(booking)['waived'],
+        # Always shown once not cancelled (same style as show_security_deposit) - the page itself
+        # handles "no party yet"/"nothing owed"/"already paid", no need to hide the link for those.
+        'show_tourist_tax': not cancelled,
         'cancelled': cancelled,
         'stage': 'fully_paid' if is_fully_paid(booking) else 'pre_balance',
     }
@@ -1647,6 +1658,109 @@ class BookingManageGuestRegistrationsView(View):
         return redirect(
             f"{reverse('bookings:manage_guest_registrations', args=[booking.reference])}?registrations_saved=1"
         )
+
+
+class BookingManageTouristTaxView(View):
+    """Tourist Tax section of the Manage Booking hub - shows the guest the computed municipal
+    tourist tax owed (see bookings/utils.py::compute_tourist_tax()) and a way to pay it, mirroring
+    how the legacy klt-management-software system bundled this into an arrival-registration email
+    (see reference_klt_tourist_tax_legacy_pattern in memory) - klt-web has no automated email yet,
+    so this is guest-initiated instead. Reachable as soon as the deposit is paid (same gate as
+    Guest Registrations), no edit cutoff. Requires a named Guest List first, since the total
+    depends on real per-guest ages - shows a "fill in your Guest List" prompt otherwise rather than
+    computing anything from the adults/children/babies headcount (which uses a different age
+    cutoff, see BookingSettings.tourist_tax_min_age's docstring).
+
+    The TouristTax row is created lazily here (unlike Payment/BalancePayment, which always exist
+    from booking creation) and its total is recomputed on every visit while unpaid, since the party
+    can change right up until payment - any change clears revolut_checkout_url too, so the pay
+    page creates a fresh Revolut order for the new amount instead of honouring a stale one."""
+    template_name = 'bookings/manage_tourist_tax.html'
+
+    def _get_gated_booking(self, reference):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return booking, redirect('bookings:details', reference=reference)
+        return booking, None
+
+    def get(self, request, reference, *args, **kwargs):
+        booking, redirect_response = self._get_gated_booking(reference)
+        if redirect_response is not None:
+            return redirect_response
+
+        context = _manage_nav_context(booking, 'tourist_tax')
+        context['booking'] = booking
+
+        if not booking.party.exists():
+            context['no_party'] = True
+            return render(request, self.template_name, context)
+
+        booking_settings = BookingSettings.load()
+        total, qualifying_guests, nights = compute_tourist_tax(booking, booking_settings)
+        tourist_tax, _created = TouristTax.objects.get_or_create(booking=booking, defaults={'total': total})
+        if tourist_tax.status != 'paid' and tourist_tax.total != total:
+            tourist_tax.total = total
+            tourist_tax.revolut_checkout_url = None
+            tourist_tax.save()
+
+        context.update({
+            'tourist_tax': tourist_tax,
+            'qualifying_guests': qualifying_guests,
+            'nights': nights,
+            'min_age': booking_settings.tourist_tax_min_age,
+            'max_nights': booking_settings.tourist_tax_max_nights,
+        })
+        return render(request, self.template_name, context)
+
+
+class BookingManageTouristTaxPayView(View):
+    """Checkout step for BookingManageTouristTaxView - mirrors BookingBalancePaymentView's lazy
+    Revolut-order-creation pattern exactly, but always provider='revolut' (no Wise branch - the
+    legacy pattern this is ported from never had one for tourist tax) and always EUR (a Portuguese
+    municipal tax, collected in EUR regardless of whatever currency the guest was quoted the
+    rental in - matches the legacy code's own hardcoded payment.currency = 'EUR')."""
+    template_name = 'bookings/tourist_tax_pay.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:pay', reference=reference)
+        if not hasattr(booking, 'tourist_tax') or is_tourist_tax_paid(booking):
+            return redirect('bookings:manage_tourist_tax', reference=reference)
+
+        tourist_tax = booking.tourist_tax
+        context = {
+            'booking': booking,
+            'tourist_tax': tourist_tax,
+            'pay_amount': tourist_tax.total,
+            'pay_currency': 'EUR',
+        }
+
+        if not tourist_tax.revolut_checkout_url:
+            self._create_revolut_order(booking, tourist_tax, tourist_tax.total)
+
+        context['payment_error'] = not tourist_tax.revolut_checkout_url
+        return render(request, self.template_name, context)
+
+    def _create_revolut_order(self, booking, tourist_tax, pay_amount):
+        order = Revolut(secretKey=env_settings.REVOLUT_API_SECRET_KEY).payment
+        order.amount = int(pay_amount * 100)  # Revolut wants minor units (cents/pence), not major units
+        order.currency = 'EUR'
+        order.description = f"Tourist Tax for booking {booking.reference}"
+        order.customerEmail = booking.guest.email
+        order.customerName = f"{booking.guest.first_name} {booking.guest.last_name}".strip()
+        order.create()
+
+        if order.id and order.has('checkout_url'):
+            tourist_tax.revolut_order_id = order.id
+            tourist_tax.revolut_checkout_url = order.checkoutUrl
+            tourist_tax.save()
+        # else: order.create() already logged the failure via logerror(); leave revolut_checkout_url
+        # unset so payment_error renders and the guest can retry on reload.
 
 
 class BookingManageDepositView(View):

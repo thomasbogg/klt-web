@@ -1,0 +1,61 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pay Tourist Tax for Booking {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="confirmation-page">
+        <h1>Pay your tourist tax</h1>
+
+        <div class="confirmation-reference">
+            <span class="confirmation-reference-label">Booking Reference</span>
+            <span class="confirmation-reference-value">{{ booking.reference }}</span>
+        </div>
+
+        <div class="confirmation-summary">
+            <div class="confirmation-chip">
+                <span class="confirmation-chip-label">Property</span>
+                <span class="confirmation-chip-value">{{ booking.property }}</span>
+            </div>
+            <div class="confirmation-chip">
+                <span class="confirmation-chip-label">Check-in</span>
+                <span class="confirmation-chip-value">{{ booking.arrival_date|date:"D, d M Y" }}</span>
+            </div>
+            <span class="confirmation-chip-arrow">&rarr;</span>
+            <div class="confirmation-chip">
+                <span class="confirmation-chip-label">Check-out</span>
+                <span class="confirmation-chip-value">{{ booking.departure_date|date:"D, d M Y" }}</span>
+            </div>
+        </div>
+
+        <div class="pay-amount">
+            <span class="pay-amount-label">Amount due</span>
+            <span class="pay-amount-value">&euro;{{ pay_amount|floatformat:2 }}</span>
+        </div>
+
+        {% if payment_error %}
+        <div class="reserve-form-errors">
+            <p>We couldn't set up card payment just now. Please reload this page to try again.</p>
+        </div>
+
+        {% else %}
+        <a class="reserve-form-submit pay-button" href="{{ tourist_tax.revolut_checkout_url }}">Pay now</a>
+        <p class="pay-instructions">Opens Revolut's secure checkout, where you can pay by card or bank transfer in EUR.</p>
+        {% endif %}
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

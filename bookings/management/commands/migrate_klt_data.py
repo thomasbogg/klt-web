@@ -2,11 +2,13 @@ import sqlite3
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from bookings.models import (
-    Booking, Arrival, Departure, Charge, Extra, Form, Email, Update
+    Booking, Arrival, BookingRequestedExtra, Charge, Departure, Email, Extra, Form, RequestType,
+    TouristTax, Update,
 )
 from guests.models import Guest
 from properties.models import (
-    Location, Manager, Owner, Accountant, Price, Property, Spec, SEFDetail
+    Accountant, Location, ManagementCompany, Owner, Platform, Price, Property, PropertyPlatformID,
+    PropertySpec, SEFDetail,
 )
 
 # klt-web trimmed VALID_BOOKING_STATUSES/PROVISIONAL_BOOKING_STATUSES (env_settings.py) to just
@@ -28,9 +30,22 @@ LEGACY_ENQUIRY_STATUS_MAP = {
 }
 
 
+def _truncated(value, max_length):
+    """Arrival/Departure.flight_number is CharField(max_length=50), but at least one legacy row
+    (booking 5149) has a full itinerary description crammed into that column instead of a real
+    flight code (92/74 chars) - truncate rather than let one bad row crash the whole migration."""
+    return value[:max_length] if value else value
+
+
 class Command(BaseCommand):
     help = 'Migrate data from existing KLT.db SQLite database to Django models'
     skipped_booking_rows = list()
+    # Populated by migrate_extras() for legacy airportTransfers/childSeats/excessBaggage signal
+    # that has no reliable structured home in the current AirportTransfer model (which requires a
+    # real, non-nullable time - the legacy schema never captured one) - reported as a summary at
+    # the end of the run rather than silently dropped or fabricated. See migrate_extras()'s
+    # docstring for the full reasoning.
+    unmigrated_airport_transfer_bookings = list()
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -66,6 +81,7 @@ class Command(BaseCommand):
                 self.migrate_accountants(old_cursor, dry_run)
                 #self.migrate_prices(old_cursor, dry_run)
                 self.migrate_properties(old_cursor, dry_run)
+                self.migrate_platform_ids(old_cursor, dry_run)
                 self.migrate_specs(old_cursor, dry_run)
                 self.migrate_sef_details(old_cursor, dry_run)
                 self.migrate_guests(old_cursor, dry_run)
@@ -73,6 +89,7 @@ class Command(BaseCommand):
                 self.migrate_arrivals(old_cursor, dry_run)
                 self.migrate_departures(old_cursor, dry_run)
                 self.migrate_charges(old_cursor, dry_run)
+                self.migrate_touristtax(old_cursor, dry_run)
                 self.migrate_extras(old_cursor, dry_run)
                 self.migrate_forms(old_cursor, dry_run)
                 self.migrate_emails(old_cursor, dry_run)
@@ -111,26 +128,28 @@ class Command(BaseCommand):
                 )
 
     def migrate_managers(self, cursor, dry_run):
-        # Manager no longer exists at all (folded into ManagementCompany, properties/models.py) -
-        # this already-run, one-shot import script can't be re-run unmodified.
+        # Manager was folded into ManagementCompany (properties/models.py) since this script was
+        # first written - legacy company/name/maintenance map onto ManagementCompany's
+        # name/head_name/maintenance_name (renamed), everything else is a direct rename. No legacy
+        # equivalent for the newer finance_*/operational-default fields - left at their defaults.
         cursor.execute("SELECT * FROM propertyManagers")
         rows = cursor.fetchall()
-        
+
         if not rows:
             self.stdout.write('No managers to migrate')
             return
-            
+
         self.stdout.write(f'Migrating {len(rows)} property managers...')
-        
+
         if not dry_run:
             for row in rows:
-                Manager.objects.create(
+                ManagementCompany.objects.create(
                     id=row['id'],
-                    company=row['company'],
+                    name=row['company'],
                     head_name=row['name'],
                     head_email=row['email'],
                     head_phone=row['phone'],
-                    maintenance=row['maintenance'],
+                    maintenance_name=row['maintenance'],
                     maintenance_phone=row['maintenancePhone'],
                     maintenance_email=row['maintenanceEmail'],
                     liaison_name=row['liaison'],
@@ -163,7 +182,8 @@ class Command(BaseCommand):
                     default_meet_greet=bool(row['defaultMeetGreet']),
                     takes_euros=bool(row['takesEuros']),
                     takes_pounds=bool(row['takesPounds']),
-                    wants_accounting=bool(row['wantsAccounting']),
+                    # wants_accounting has no current equivalent field on Owner (dropped along
+                    # with the rest of the model's restructure) - not migrated.
                     cleans_are_invoiced=bool(row['cleansAreInvoiced']),
                     rental_commissions_are_invoiced=bool(row['rentalCommissionsAreInvoiced']),
                     is_paid_regularly=bool(row['isPaidRegularly'])
@@ -222,15 +242,24 @@ class Command(BaseCommand):
                 )
 
     def migrate_properties(self, cursor, dry_run):
+        """Property.manager (single FK) was split into booking_company/cleaning_company - the
+        legacy weBook/weClean booleans are exactly the gate for which of the two (if either) the
+        single legacy managerId should be assigned to (confirmed against the real data: every
+        combination of managerId/weBook/weClean in klt_main.db is consistent with "managerId is
+        only a real booking/cleaning party when the matching flag is set", matching
+        ManagementCompany's own docstring for what a NULL booking_company/cleaning_company means).
+        booking_com_title/airbnb_title/send_owner_booking_forms no longer exist on Property -
+        the platform listing names are migrated separately, see migrate_platform_ids() below
+        (this method depends on it running first, for the same reason charges depends on bookings)."""
         cursor.execute("SELECT * FROM properties")
         rows = cursor.fetchall()
-        
+
         if not rows:
             self.stdout.write('No properties to migrate')
             return
-            
+
         self.stdout.write(f'Migrating {len(rows)} properties...')
-        
+
         if not dry_run:
             for row in rows:
                 Property.objects.create(
@@ -238,21 +267,49 @@ class Command(BaseCommand):
                     title=row['name'],
                     short_title=row['shortName'],
                     owner_id=row['ownerId'],
-                    manager_id=row['managerId'],
                     location_id=row['addressId'],
                     #price_id=row['priceId'] if row['priceId'] else None,
                     accountant_id=row['accountantId'] if row['accountantId'] else None,
                     al_number=row['alNumber'],
-                    # we_book/we_clean no longer exist on Property (replaced by
-                    # booking_company/cleaning_company FKs, see properties/models.py) - this
-                    # already-run, one-shot import script can't be re-run unmodified.
-                    we_book=bool(row['weBook']),
-                    booking_com_title=row['bookingComName'],
-                    airbnb_title=row['airbnbName'],
-                    we_clean=bool(row['weClean']),
+                    booking_company_id=row['managerId'] if row['weBook'] else None,
+                    cleaning_company_id=row['managerId'] if row['weClean'] else None,
                     standard_cleaning_fee=row['standardCleaningFee'],
-                    send_owner_booking_forms=bool(row['sendOwnerBookingForms'])
+                    # sendOwnerBookingForms/ownerRegistersGuests/lockBoxNumber have no current
+                    # equivalent field on Property - not migrated.
                 )
+
+    def migrate_platform_ids(self, cursor, dry_run):
+        """properties.bookingComName/airbnbName/vrboId replace Property's old hardcoded
+        booking_com_title/airbnb_title/vrbo_id fields with the open-ended PropertyPlatformID model
+        (properties/models.py) - one row per non-empty legacy value, matched against the Platform
+        catalog seeded by properties/migrations/0036_seed_platforms.py (must already exist in the
+        target DB - this doesn't create Platform rows itself, since that catalog is admin-managed)."""
+        cursor.execute("SELECT id, bookingComName, airbnbName, vrboId FROM properties")
+        rows = cursor.fetchall()
+
+        if not rows:
+            self.stdout.write('No properties to migrate platform IDs for')
+            return
+
+        self.stdout.write(f'Migrating platform IDs for {len(rows)} properties...')
+
+        if not dry_run:
+            platform_ids_by_name = {p.name: p.id for p in Platform.objects.all()}
+            legacy_columns = (('bookingComName', 'Booking.com'), ('airbnbName', 'Airbnb'), ('vrboId', 'Vrbo'))
+            for row in rows:
+                for column, platform_name in legacy_columns:
+                    listing_id = row[column]
+                    if not listing_id:
+                        continue
+                    platform_id = platform_ids_by_name.get(platform_name)
+                    if platform_id is None:
+                        self.stdout.write(self.style.WARNING(
+                            f'Skipping {platform_name} listing ID for property {row["id"]} - '
+                            f'no "{platform_name}" Platform row found in the target DB.'))
+                        continue
+                    PropertyPlatformID.objects.create(
+                        property_id=row['id'], platform_id=platform_id, listing_id=listing_id,
+                    )
 
     def migrate_specs(self, cursor, dry_run):
         cursor.execute("SELECT * FROM propertySpecs")
@@ -266,10 +323,11 @@ class Command(BaseCommand):
         
         if not dry_run:
             for row in rows:
-                Spec.objects.create(
+                # Spec was renamed to PropertySpec, and is_listed no longer exists on it (not
+                # migrated) - both since this script was first written.
+                PropertySpec.objects.create(
                     id=row['id'],
                     property_id=row['propertyId'],
-                    is_listed=bool(row['isListed']),
                     is_sea_view=bool(row['isSeaView']),
                     is_upper_floor=bool(row['isUpperFloor']),
                     is_beachfront=bool(row['isBeachfront']),
@@ -358,7 +416,12 @@ class Command(BaseCommand):
                     adults=row['adults'],
                     children=row['children'],
                     babies=row['babies'],
-                    manual_guests=bool(row['manualGuests']),
+                    # manualGuests has no current equivalent - Booking.manual_override means
+                    # something different now (an extra-nights date adjustment flag for the
+                    # external platform-sync scraper, see its own docstring) - not migrated.
+                    # reference is left blank: these are closed historical bookings that predate
+                    # the reference-based self-service system, same "predates this feature"
+                    # convention already used for Payment/BalancePayment elsewhere in this codebase.
                     last_updated=parse_datetime(row['lastUpdated']) or parse_date(row['lastUpdated'])
                 )
 
@@ -381,7 +444,7 @@ class Command(BaseCommand):
                 Arrival.objects.create(
                     id=row['id'],
                     booking_id=row['bookingId'],
-                    flight_number=row['flightNumber'],
+                    flight_number=_truncated(row['flightNumber'], 50),
                     method='flight_faro' if row['isFaro'] else 'other',
                     time=parse_time(row['time']) if row['time'] else None,
                     details=row['details'],
@@ -409,7 +472,7 @@ class Command(BaseCommand):
                 Departure.objects.create(
                     id=row['id'],
                     booking_id=row['bookingId'],
-                    flight_number=row['flightNumber'],
+                    flight_number=_truncated(row['flightNumber'], 50),
                     method='flight_faro' if row['isFaro'] else 'other',
                     time=parse_time(row['time']) if row['time'] else None,
                     details=row['details'],
@@ -447,17 +510,69 @@ class Command(BaseCommand):
                     manual_charges=bool(row['manualCharges']) if row['manualCharges'] is not None else None
                 )
 
+    def migrate_touristtax(self, cursor, dry_run):
+        cursor.execute("SELECT * FROM touristtax")
+        rows = cursor.fetchall()
+
+        if not rows:
+            self.stdout.write('No tourist tax records to migrate')
+            return
+
+        self.stdout.write(f'Migrating {len(rows)} tourist tax records...')
+
+        if not dry_run:
+            for row in rows:
+                charge_row = cursor.execute(
+                    "SELECT bookingId FROM charges WHERE id = ?", (row['chargesId'],)
+                ).fetchone()
+                if not charge_row or charge_row['bookingId'] in self.skipped_booking_rows:
+                    self.stdout.write(self.style.WARNING(
+                        f'Skipping tourist tax {row["id"]} - charge/booking not migrated.'))
+                    continue
+                TouristTax.objects.create(
+                    id=row['id'],
+                    booking_id=charge_row['bookingId'],
+                    total=row['total'],
+                    provider='revolut',
+                    status='paid' if row['paid'] else 'pending',
+                    revolut_order_id=row['orderId'] or None,
+                    # Legacy schema has no paid-timestamp column, only a boolean - paid_at stays
+                    # null for migrated rows even when status='paid'. Acceptable for historical
+                    # data, not an oversight.
+                )
+
     def migrate_extras(self, cursor, dry_run):
+        """Extra's field set was restructured (Welcome Pack/Cot/Late Checkout/AirportTransfer
+        redesign, see project_klt_web_extras_feature in memory) since this migrator was first
+        written - welcome_pack_modifications, other_requests, airport_transfers,
+        airport_transfer_inbound_only/outbound_only, child_seats, and excess_baggage no longer
+        exist on Extra at all. This rewrite (2026-08-30) maps each legacy field to its closest
+        current home rather than dropping the data or crashing on the removed kwargs:
+
+        - cot/high_chair/welcome_pack/mid_stay_clean/late_checkout/extra_nights/owner_is_paying
+          are unaffected 1:1 boolean fields, still present on Extra.
+        - welcomePackModifications (freeform text) -> Extra.welcome_pack_note, the closest
+          surviving free-text field (now labelled "allergies/dietary notes only" - relaxed here
+          deliberately for migrated historical data rather than dropping real guest requests).
+        - otherRequests (freeform text) -> one BookingRequestedExtra row against a shared
+          catch-all RequestType, rather than trying to match it to a real catalog item.
+        - airportTransfers/airportTransferInboundOnly/airportTransferOutboundOnly/childSeats/
+          excessBaggage -> NOT migrated into a fabricated AirportTransfer row (that model
+          requires a real, non-nullable time with no legacy equivalent, plus per-transfer detail
+          the old schema never captured). Collected into
+          self.unmigrated_airport_transfer_bookings instead and reported as a summary at the end
+          of this method, so the gap is visible and reviewable rather than silently dropped."""
         cursor.execute("SELECT * FROM extras")
         rows = cursor.fetchall()
-        
+
         if not rows:
             self.stdout.write('No extras to migrate')
             return
-            
+
         self.stdout.write(f'Migrating {len(rows)} extras...')
-        
+
         if not dry_run:
+            legacy_request_type = None
             for row in rows:
                 if row['bookingId'] in self.skipped_booking_rows:
                     self.stdout.write(self.style.WARNING(f'Skipping extra for booking {row["bookingId"]} due to missing booking data.'))
@@ -468,18 +583,40 @@ class Command(BaseCommand):
                     cot=bool(row['cot']) if row['cot'] is not None else None,
                     high_chair=bool(row['highChair']) if row['highChair'] is not None else None,
                     welcome_pack=bool(row['welcomePack']) if row['welcomePack'] is not None else None,
-                    welcome_pack_modifications=row['welcomePackModifications'],
+                    welcome_pack_note=row['welcomePackModifications'] or None,
                     mid_stay_clean=bool(row['midStayClean']) if row['midStayClean'] is not None else None,
                     late_checkout=bool(row['lateCheckout']) if row['lateCheckout'] is not None else None,
-                    other_requests=row['otherRequests'],
                     extra_nights=bool(row['extraNights']) if row['extraNights'] is not None else None,
-                    airport_transfers=bool(row['airportTransfers']) if row['airportTransfers'] is not None else None,
-                    airport_transfer_inbound_only=bool(row['airportTransferInboundOnly']) if row['airportTransferInboundOnly'] is not None else None,
-                    airport_transfer_outbound_only=bool(row['airportTransferOutboundOnly']) if row['airportTransferOutboundOnly'] is not None else None,
-                    child_seats=row['childSeats'],
-                    excess_baggage=row['excessBaggage'],
                     owner_is_paying=bool(row['ownerIsPaying']) if row['ownerIsPaying'] is not None else None
                 )
+
+                if row['otherRequests']:
+                    if legacy_request_type is None:
+                        legacy_request_type, _created = RequestType.objects.get_or_create(
+                            name='Legacy request (see note)', defaults={'default_price': 0, 'active': False},
+                        )
+                    BookingRequestedExtra.objects.create(
+                        booking_id=row['bookingId'], request_type=legacy_request_type,
+                        quantity=1, note=row['otherRequests'][:200], price_at_request=0,
+                    )
+
+                if row['airportTransfers'] or row['childSeats'] or row['excessBaggage']:
+                    self.unmigrated_airport_transfer_bookings.append({
+                        'booking_id': row['bookingId'],
+                        'inbound_only': bool(row['airportTransferInboundOnly']),
+                        'outbound_only': bool(row['airportTransferOutboundOnly']),
+                        'child_seats': row['childSeats'],
+                        'excess_baggage': row['excessBaggage'],
+                    })
+
+            if self.unmigrated_airport_transfer_bookings:
+                self.stdout.write(self.style.WARNING(
+                    f'{len(self.unmigrated_airport_transfer_bookings)} booking(s) had legacy '
+                    f'airport-transfer signal that could not be migrated into a real AirportTransfer '
+                    f'row (no reliable time value in the legacy data) - review manually if needed:'
+                ))
+                for entry in self.unmigrated_airport_transfer_bookings:
+                    self.stdout.write(self.style.WARNING(f'  {entry}'))
 
     def migrate_forms(self, cursor, dry_run):
         cursor.execute("SELECT * FROM forms")

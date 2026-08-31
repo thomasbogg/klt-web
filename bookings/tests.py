@@ -1,5 +1,6 @@
 from datetime import date, time, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
 from django.test import RequestFactory, TestCase
@@ -10,12 +11,12 @@ from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge,
     Departure, DepositBankDetails, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration,
-    Payment, PaymentSettings, PlatformPayout, RequestType, WelcomePackItem,
+    Payment, PaymentSettings, PlatformPayout, RequestType, TouristTax, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
 from staff.models import OwnerPayment
 from bookings.utils import (
-    add_business_days, compute_deposit_waiver, create_booking, create_owner_booking,
+    add_business_days, compute_deposit_waiver, compute_tourist_tax, create_booking, create_owner_booking,
     determine_payment_provider, expire_stale_holds, extras_summary, guest_counts_by_age,
     guest_for_owner, has_completed_previous_stay, payment_clearing_expiry,
     recalculate_balance_for_party, recalculate_costs_for_party, sync_ical_link,
@@ -1657,6 +1658,187 @@ class BookingBalancePaymentViewTests(TestCase):
         )
         response = self.client.get(self.url)
         self.assertEqual(response.context['extras']['total'], Decimal('20.00'))
+
+
+class ComputeTouristTaxTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property TT', short_title='TESTTT')
+        PropertySpec.objects.create(property=self.property, max_guests=6)
+        self.guest = Guest.objects.create(first_name='Nuno', last_name='Alves', email='nuno-tt@example.com')
+        self.start = date.today() + timedelta(days=100)
+        self.end = self.start + timedelta(days=10)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=1, babies=0, last_updated=timezone.now(),
+        )
+        self.settings = BookingSettings.load()
+        self.settings.tourist_tax_per_night = Decimal('2.00')
+        self.settings.tourist_tax_min_age = 13
+        self.settings.tourist_tax_max_nights = 7
+        self.settings.save()
+
+    def _add_guest(self, age, is_lead=False):
+        return self.booking.party.create(first_name='G', last_name='Guest', age=age, is_lead=is_lead)
+
+    def test_only_qualifying_ages_are_counted(self):
+        self._add_guest(30, is_lead=True)
+        self._add_guest(12)  # under min age, doesn't count
+        self._add_guest(13)  # exactly at min age, counts
+        total, qualifying_guests, nights = compute_tourist_tax(self.booking, self.settings)
+        self.assertEqual(qualifying_guests, 2)
+
+    def test_nights_capped_at_max_nights(self):
+        self._add_guest(30, is_lead=True)
+        total, qualifying_guests, nights = compute_tourist_tax(self.booking, self.settings)
+        self.assertEqual(nights, 7)  # stay is 10 nights, capped at 7
+
+    def test_total_is_guests_times_nights_times_rate(self):
+        self._add_guest(30, is_lead=True)
+        self._add_guest(40)
+        total, qualifying_guests, nights = compute_tourist_tax(self.booking, self.settings)
+        self.assertEqual(total, Decimal('28.00'))  # 2 guests x 7 nights x 2.00
+
+    def test_no_qualifying_guests_gives_zero_total(self):
+        self._add_guest(5, is_lead=True)
+        total, qualifying_guests, nights = compute_tourist_tax(self.booking, self.settings)
+        self.assertEqual(total, Decimal('0'))
+
+
+class BookingManageTouristTaxViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property TTV', short_title='TESTTTV')
+        PropertySpec.objects.create(property=self.property, max_guests=6)
+        self.guest = Guest.objects.create(first_name='Ines', last_name='Costa', email='ines-ttv@example.com')
+        self.start = date.today() + timedelta(days=100)
+        self.end = self.start + timedelta(days=5)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=self.booking, currency='EUR')
+        self.payment = Payment.objects.create(booking=self.booking, provider='wise', status='paid')
+        self.url = reverse('bookings:manage_tourist_tax', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+
+    def test_get_redirects_when_deposit_unpaid(self):
+        self.payment.status = 'pending'
+        self.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_get_shows_no_party_prompt_when_guest_list_empty(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['no_party'])
+
+    def test_get_computes_total_and_creates_tourist_tax_row(self):
+        self.booking.party.create(first_name='Ines', last_name='Costa', age=30, is_lead=True)
+        self.booking.party.create(first_name='Small', last_name='Child', age=8)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['qualifying_guests'], 1)
+        self.assertEqual(response.context['nights'], 5)
+        tourist_tax = TouristTax.objects.get(booking=self.booking)
+        self.assertEqual(tourist_tax.total, Decimal('10.00'))  # 1 guest x 5 nights x 2.00
+
+    def test_revisit_after_guest_list_change_recomputes_and_clears_stale_checkout_url(self):
+        self.booking.party.create(first_name='Ines', last_name='Costa', age=30, is_lead=True)
+        self.client.get(self.url)
+        tourist_tax = TouristTax.objects.get(booking=self.booking)
+        tourist_tax.revolut_checkout_url = 'https://checkout.revolut.com/pay/stale'
+        tourist_tax.save(update_fields=['revolut_checkout_url'])
+
+        self.booking.party.create(first_name='Extra', last_name='Adult', age=40)
+        self.client.get(self.url)
+        tourist_tax.refresh_from_db()
+        self.assertEqual(tourist_tax.total, Decimal('20.00'))  # 2 guests x 5 nights x 2.00
+        self.assertIsNone(tourist_tax.revolut_checkout_url)
+
+    def test_already_paid_row_is_not_recomputed(self):
+        self.booking.party.create(first_name='Ines', last_name='Costa', age=30, is_lead=True)
+        tourist_tax = TouristTax.objects.create(booking=self.booking, total=Decimal('999.00'), status='paid')
+        self.client.get(self.url)
+        tourist_tax.refresh_from_db()
+        self.assertEqual(tourist_tax.total, Decimal('999.00'))
+
+
+class BookingManageTouristTaxPayViewTests(TestCase):
+    """Unlike BookingBalancePaymentViewTests, there's no Wise-path booking to safely dodge the live
+    Revolut API - tourist tax is always Revolut (see TouristTax's docstring) - so the Revolut HTTP
+    call itself is mocked here (libraries.banking.revolut.requests.post), rather than left untested
+    the way BookingPaymentView's own Revolut path currently is."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property TTP', short_title='TESTTTP')
+        PropertySpec.objects.create(property=self.property, max_guests=6)
+        self.guest = Guest.objects.create(first_name='Paulo', last_name='Silva', email='paulo-ttp@example.com')
+        self.start = date.today() + timedelta(days=100)
+        self.end = self.start + timedelta(days=5)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=self.booking, currency='EUR')
+        self.payment = Payment.objects.create(booking=self.booking, provider='wise', status='paid')
+        self.tourist_tax = TouristTax.objects.create(booking=self.booking, total=Decimal('20.00'))
+        self.url = reverse('bookings:manage_tourist_tax_pay', kwargs={'reference': self.booking.reference})
+        self.summary_url = reverse('bookings:manage_tourist_tax', kwargs={'reference': self.booking.reference})
+        self.deposit_pay_url = reverse('bookings:pay', kwargs={'reference': self.booking.reference})
+
+    def test_get_redirects_to_deposit_pay_when_deposit_unpaid(self):
+        self.payment.status = 'pending'
+        self.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.deposit_pay_url, fetch_redirect_response=False)
+
+    def test_get_redirects_to_summary_when_no_tourist_tax_row(self):
+        self.tourist_tax.delete()
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.summary_url, fetch_redirect_response=False)
+
+    def test_get_redirects_to_summary_when_already_paid(self):
+        self.tourist_tax.status = 'paid'
+        self.tourist_tax.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.summary_url, fetch_redirect_response=False)
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_get_creates_revolut_order_and_renders_checkout_link(self, mock_post):
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {
+            'id': 'order-123', 'checkout_url': 'https://checkout.revolut.com/pay/order-123',
+        }
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.tourist_tax.refresh_from_db()
+        self.assertEqual(self.tourist_tax.revolut_order_id, 'order-123')
+        self.assertEqual(self.tourist_tax.revolut_checkout_url, 'https://checkout.revolut.com/pay/order-123')
+        self.assertFalse(response.context['payment_error'])
+        self.assertContains(response, 'https://checkout.revolut.com/pay/order-123')
+
+        # amount sent to Revolut is in minor units (cents)
+        _args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['json']['amount'], 2000)
+        self.assertEqual(kwargs['json']['currency'], 'EUR')
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_get_shows_payment_error_when_revolut_order_creation_fails(self, mock_post):
+        mock_post.return_value.status_code = 400
+        mock_post.return_value.text = 'bad request'
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['payment_error'])
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_existing_checkout_url_is_not_recreated(self, mock_post):
+        self.tourist_tax.revolut_checkout_url = 'https://checkout.revolut.com/pay/already-there'
+        self.tourist_tax.save(update_fields=['revolut_checkout_url'])
+        response = self.client.get(self.url)
+        mock_post.assert_not_called()
+        self.assertContains(response, 'https://checkout.revolut.com/pay/already-there')
 
 
 class WelcomePackItemMatchesTests(TestCase):

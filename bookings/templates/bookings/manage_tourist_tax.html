@@ -1,0 +1,66 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tourist Tax {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Tourist Tax</h1>
+
+            <div class="confirmation-reference">
+                <span class="confirmation-reference-label">Booking Reference</span>
+                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+            </div>
+
+            {% if no_party %}
+            <p class="details-note">
+                Please add your party to the <a href="{% url 'bookings:manage_guests' reference=booking.reference %}">Guest List</a>
+                first - tourist tax is calculated from each guest's age.
+            </p>
+            {% else %}
+            <p class="details-note">
+                The Algarve municipal tourist tax applies to guests aged {{ min_age }} and over,
+                charged per night up to a maximum of {{ max_nights }} nights per guest.
+            </p>
+
+            <div class="details-section">
+                <h2 class="details-section-title">Breakdown</h2>
+                <ul class="details-list">
+                    <li><strong>Guests liable for tourist tax:</strong> {{ qualifying_guests }}</li>
+                    <li><strong>Nights charged:</strong> {{ nights }}</li>
+                    <li><strong>Total due:</strong> &euro;{{ tourist_tax.total|floatformat:2 }}</li>
+                </ul>
+            </div>
+
+            {% if tourist_tax.status == 'paid' %}
+            <p class="details-note">Tourist tax has been paid - thank you.</p>
+            {% elif tourist_tax.total > 0 %}
+            <a class="reserve-form-submit" href="{% url 'bookings:manage_tourist_tax_pay' reference=booking.reference %}">Pay Tourist Tax</a>
+            {% else %}
+            <p class="details-note">No tourist tax is due for your party.</p>
+            {% endif %}
+            {% endif %}
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>
