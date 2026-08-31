@@ -294,15 +294,20 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertEqual(self.charge.due_at_balance, Decimal('603.87'))  # 788.50 - 184.63
 
     def test_recalculate_payment_split_with_unpaid_deposit_recomputes_both(self):
+        # Uses split_subtotal(), not compute_costs() - the subtotal (788.50) already has admin
+        # baked in, and compute_costs() would derive its own fresh admin fee on top of it and
+        # double-count. See BookingSettings.split_subtotal()'s own docstring.
         self.payment.status = 'pending'
         self.payment.save(update_fields=['status'])
         self.client.post(self.url, {'action': 'update_booking', 'basic_rental': '750.00'})
         response = self.client.post(self.url, {'action': 'recalculate_payment_split'})
         self.assertRedirects(response, self.url)
         self.charge.refresh_from_db()
-        expected = BookingSettings.load().compute_costs(Decimal('788.50'), arrival_date=self.start)
-        self.assertEqual(self.charge.due_at_booking, expected['due_at_booking'])
-        self.assertEqual(self.charge.due_at_balance, expected['due_at_balance'])
+        due_at_booking, due_at_balance, _balance_due_date = BookingSettings.load().split_subtotal(
+            Decimal('788.50'), arrival_date=self.start
+        )
+        self.assertEqual(self.charge.due_at_booking, due_at_booking)
+        self.assertEqual(self.charge.due_at_balance, due_at_balance)
 
     def test_recalculate_payment_split_without_a_charge_is_a_noop(self):
         self.charge.delete()
