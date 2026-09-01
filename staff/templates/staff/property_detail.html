@@ -342,57 +342,83 @@
 
                         <div class="staff-panel">
                             <h2 class="staff-panel-title">iCal Imports</h2>
-                            <ul class="staff-list">
-                                {% for link in ical_links %}
-                                <li class="staff-ical-link-row">
-                                    <div class="staff-ical-link-info">
-                                        <span class="staff-ical-link-source">{{ link.platform.name|default:"Unknown source" }}{% if link.is_owner_link %} <span class="staff-ical-owner-badge">Owner link</span>{% endif %}</span>
-                                        <form method="post" class="staff-ical-link-url-form">
-                                            {% csrf_token %}
-                                            <input type="hidden" name="action" value="update_ical_link">
-                                            <input type="hidden" name="link_id" value="{{ link.pk }}">
-                                            <input type="url" name="ical_url" class="staff-input staff-ical-link-url-input" value="{{ link.ical_url }}">
-                                            <label class="staff-checkbox-label" title="This is the owner's own listing, not one we manage - imported bookings will be marked as owner bookings and shown in their Owner Suite.">
-                                                <input type="checkbox" name="is_owner_link" {% if link.is_owner_link %}checked{% endif %}> Is owner link
-                                            </label>
-                                            <label class="staff-field" title="One term per line. An event whose title contains any of these (case-insensitive) is skipped entirely - e.g. 'Not Available' for Airbnb blocks, 'Tentative' for Vrbo enquiries.">Exclude events whose title contains
-                                                <textarea name="exclude_summary_contains" class="staff-input staff-ical-exclude-terms" rows="2" placeholder="Not Available">{{ link.exclude_summary_contains }}</textarea>
-                                            </label>
-                                            <button type="submit" class="staff-button staff-button-small">Save</button>
-                                        </form>
-                                    </div>
-                                    <div class="staff-list-actions">
-                                        <form method="post" action="{% url 'staff:ical_sync' property.pk link.pk %}" target="ical-sync-{{ link.pk }}" class="staff-inline-sync" data-ical-sync-popup>
-                                            {% csrf_token %}
-                                            <button type="submit" class="staff-button staff-button-small">Sync now&hellip;</button>
-                                        </form>
-                                        <form method="post" class="staff-inline-delete">
-                                            {% csrf_token %}
-                                            <input type="hidden" name="action" value="delete_ical_link">
-                                            <input type="hidden" name="link_id" value="{{ link.pk }}">
-                                            <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
-                                        </form>
-                                    </div>
-                                </li>
-                                {% empty %}
-                                <li class="staff-empty">No iCal import links yet.</li>
-                                {% endfor %}
-                            </ul>
-                            <form method="post" class="staff-inline-form staff-ical-add-form">
+                            {% comment %}
+                            Table layout (matching the Rate card panel's own pattern above) rather
+                            than a flex row of mixed label/input elements - a <form> can't legally
+                            wrap several <td>s in one <tr>, so each row's editable fields live in
+                            the cells and are associated with an out-of-band <form> below the table
+                            (one per row, plus one for the "add new" row) via the HTML5 form="..."
+                            attribute. This is what actually fixes the row-to-row misalignment: real
+                            table columns keep the URL/owner/exclude fields lined up across every
+                            row regardless of how long any one platform name or filter term is,
+                            which a flex row sized off its own content can't guarantee.
+                            {% endcomment %}
+                            <table class="staff-price-table staff-ical-table">
+                                <thead>
+                                    <tr>
+                                        <th>Platform</th>
+                                        <th>iCal URL</th>
+                                        <th>Owner link</th>
+                                        <th>Exclude titles containing</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for link in ical_links %}
+                                    <tr>
+                                        <td class="staff-ical-platform-cell">{{ link.platform.name|default:"Unknown source" }}</td>
+                                        <td><input type="url" name="ical_url" form="ical-link-form-{{ link.pk }}" class="staff-input staff-ical-link-url-input" value="{{ link.ical_url }}"></td>
+                                        <td class="staff-ical-owner-cell">
+                                            <input type="checkbox" name="is_owner_link" form="ical-link-form-{{ link.pk }}" {% if link.is_owner_link %}checked{% endif %} title="This is the owner's own listing, not one we manage - imported bookings will be marked as owner bookings and shown in their Owner Suite.">
+                                        </td>
+                                        <td><textarea name="exclude_summary_contains" form="ical-link-form-{{ link.pk }}" class="staff-input staff-ical-exclude-terms" rows="2" placeholder="Not Available" title="One term per line. An event whose title contains any of these (case-insensitive) is skipped entirely - e.g. 'Not Available' for Airbnb blocks, 'Tentative' for Vrbo enquiries.">{{ link.exclude_summary_contains }}</textarea></td>
+                                        <td class="staff-ical-actions-cell">
+                                            <button type="submit" form="ical-link-form-{{ link.pk }}" class="staff-button staff-button-small">Save</button>
+                                            <form method="post" action="{% url 'staff:ical_sync' property.pk link.pk %}" target="ical-sync-{{ link.pk }}" class="staff-inline-sync" data-ical-sync-popup>
+                                                {% csrf_token %}
+                                                <button type="submit" class="staff-button staff-button-small">Sync&hellip;</button>
+                                            </form>
+                                            <form method="post" class="staff-inline-delete">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="action" value="delete_ical_link">
+                                                <input type="hidden" name="link_id" value="{{ link.pk }}">
+                                                <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    {% empty %}
+                                    <tr><td colspan="5" class="staff-empty">No iCal import links yet.</td></tr>
+                                    {% endfor %}
+                                    <tr class="staff-price-row-new">
+                                        <td>
+                                            <select name="platform" form="ical-link-form-new" class="staff-input staff-input-small">
+                                                <option value="">-</option>
+                                                {% for platform in platforms %}
+                                                <option value="{{ platform.pk }}">{{ platform.name }}</option>
+                                                {% endfor %}
+                                            </select>
+                                        </td>
+                                        <td><input type="url" name="ical_url" form="ical-link-form-new" placeholder="https://..." class="staff-input"></td>
+                                        <td class="staff-ical-owner-cell">
+                                            <input type="checkbox" name="is_owner_link" form="ical-link-form-new" title="This is the owner's own listing, not one we manage - imported bookings will be marked as owner bookings and shown in their Owner Suite.">
+                                        </td>
+                                        <td><textarea name="exclude_summary_contains" form="ical-link-form-new" class="staff-input staff-ical-exclude-terms" rows="2" placeholder="One term per line, e.g. Not Available"></textarea></td>
+                                        <td class="staff-ical-actions-cell">
+                                            <button type="submit" form="ical-link-form-new" class="staff-button staff-button-small">+ Add</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            {% for link in ical_links %}
+                            <form method="post" id="ical-link-form-{{ link.pk }}">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="update_ical_link">
+                                <input type="hidden" name="link_id" value="{{ link.pk }}">
+                            </form>
+                            {% endfor %}
+                            <form method="post" id="ical-link-form-new">
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="add_ical_link">
-                                <select name="platform" class="staff-input staff-input-small">
-                                    <option value="">-</option>
-                                    {% for platform in platforms %}
-                                    <option value="{{ platform.pk }}">{{ platform.name }}</option>
-                                    {% endfor %}
-                                </select>
-                                <input type="url" name="ical_url" placeholder="https://..." class="staff-input">
-                                <label class="staff-checkbox-label" title="This is the owner's own listing, not one we manage - imported bookings will be marked as owner bookings and shown in their Owner Suite.">
-                                    <input type="checkbox" name="is_owner_link"> Is owner link
-                                </label>
-                                <textarea name="exclude_summary_contains" class="staff-input staff-ical-exclude-terms" rows="2" placeholder="Exclude titles containing (one per line), e.g. Not Available"></textarea>
-                                <button type="submit" class="staff-button staff-button-small">+ Add iCal link</button>
                             </form>
                         </div>
                     </div>

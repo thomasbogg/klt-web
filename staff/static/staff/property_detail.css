@@ -223,60 +223,80 @@
     display: inline;
 }
 
-.staff-ical-link-row {
-    flex-wrap: wrap;
+/* Fixed layout so the same 5 column widths hold across every row regardless of how long any one
+   platform name, URL or filter term is - table-layout: auto (the default, still used by the Rate
+   card table above) sizes each column off its own widest cell, which is exactly what produced the
+   original misaligned/jarring look here: a long Booking.com URL in one row and a short Airbnb one
+   in the next would each size their own column independently. Only the URL column (2nd) is left
+   unsized below, so it's the one that absorbs whatever width the other four don't claim. */
+.staff-ical-table {
+    table-layout: fixed;
 }
 
-.staff-ical-link-info {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex: 1;
-    min-width: 0;
+/* Overrides .staff-price-table th's own white-space: nowrap - that table's headers (Start, Rate €,
+   Weekly %...) are all short enough to never need it, but "Owner link" and "Exclude titles
+   containing" aren't, and nowrap text ignores its own column's width and visually spills into the
+   next header instead of wrapping - confirmed via screenshot, this is what was actually producing
+   the "OWNER LINKEXCLUDE TITLES CONTAINING" run-together look. */
+.staff-ical-table th {
+    white-space: normal;
 }
 
-.staff-ical-link-source {
+.staff-ical-table th:nth-child(1),
+.staff-ical-platform-cell {
+    width: 100px;
+}
+
+.staff-ical-table th:nth-child(3),
+.staff-ical-owner-cell {
+    width: 80px;
+    text-align: center;
+}
+
+.staff-ical-table th:nth-child(4) {
+    width: 26%;
+}
+
+.staff-ical-table th:last-child,
+.staff-ical-actions-cell {
+    width: 235px;
+}
+
+.staff-ical-platform-cell {
     font-weight: 700;
-    font-size: 0.95rem;
+    font-size: 0.85rem;
     color: #333;
     white-space: nowrap;
-}
-
-.staff-ical-owner-badge {
-    display: inline-block;
-    background: var(--secondary-color-soft);
-    color: var(--secondary-color);
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    padding: 2px 7px;
-    border-radius: 10px;
-    vertical-align: middle;
-}
-
-.staff-ical-link-url-form {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 1;
-    min-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .staff-ical-link-url-input {
     /* Emphasises the URL as the technical value it is - and makes clear it's editable, not just
        a plain link - since Booking.com/Airbnb/Vrbo occasionally change their own export paths. */
-    flex: 1;
-    min-width: 0;
+    width: 100%;
     font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
     font-size: 0.85rem;
 }
 
-.staff-list-actions {
+.staff-ical-exclude-terms {
+    resize: vertical;
+    font-size: 0.8rem;
+}
+
+/* Same technique the Rate card table already uses for its own actions column (see
+   .staff-price-row-actions) - a <td> can carry display: flex to lay out the several small
+   forms/buttons it holds without breaking the table's row/column structure. */
+.staff-ical-actions-cell {
     display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
     align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
+}
+
+.staff-ical-actions-cell .staff-button,
+.staff-ical-actions-cell form {
+    flex: 0 0 auto;
 }
 
 .staff-price-table {
@@ -386,21 +406,7 @@
     background: #fff;
 }
 
-/* The dropdown and button keep their natural width; only the URL field shrinks to make room, so
-   all three fit on one row instead of the URL field's default full-width pulling the button onto
-   a line of its own. */
-.staff-ical-add-form select,
-.staff-ical-add-form button {
-    flex: 0 0 auto;
-}
-
-.staff-ical-add-form input[type="url"] {
-    flex: 1 1 auto;
-    min-width: 0;
-    width: auto;
-}
-
-/* One-row treatment, flex priority the other way round from .staff-ical-add-form: the caption is
+/* One-row treatment: the caption is
    the least important field here, so it gets a small fixed width while the file picker (where
    seeing the selected filename actually matters) takes the freed-up space; the button stays its
    natural size. Chrome's own "Choose File" button renders a native <input type="file"> a few px
