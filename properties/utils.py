@@ -1,3 +1,4 @@
+import re
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -66,7 +67,28 @@ def get_stay_total_price(property, start_date, end_date, guests=None, monthly_di
 
 
 def pretty_title(title):
-    return ' '.join(word.capitalize() if word.lower() not in ['de', 'do', 'da', 'dos', 'das', 'e'] else word.lower() for word in title.split())
+    """Title-cases a location/property name, lowercasing Portuguese connector words - except the
+    unit code after a trailing ' - ' (e.g. 'CLUBE DO MONACO - AE', 'PARQUE DA CORCOVADA - 43-G'),
+    which is kept exactly as stored rather than run through capitalize() - that would turn 'AE'
+    into 'Ae' and '43-G' into '43-g', since capitalize() only uppercases a string's very first
+    character. A non-code suffix (e.g. 'QUINTA DA BARRACUDA - Penthouse') is unaffected: it's
+    already stored mixed-case in the DB rather than all-caps like every real unit code, so the
+    all-upper check below routes it through the normal word-by-word capitalization instead."""
+    def capitalize_words(text):
+        return ' '.join(word.capitalize() if word.lower() not in ['de', 'do', 'da', 'dos', 'das', 'e'] else word.lower() for word in text.split())
+
+    if ' - ' in title:
+        location_part, _, code_part = title.rpartition(' - ')
+        code_display = code_part if code_part == code_part.upper() else capitalize_words(code_part)
+        return f'{capitalize_words(location_part)} - {code_display}'
+    return capitalize_words(title)
+
+
+def natural_sort_key(text):
+    """Splits text into digit/non-digit chunks, comparing digit chunks by numeric value - so a
+    unit code list sorts '2', '4', '8', '19' in that order rather than plain string order, which
+    would put '19' before '2'. Used to order properties by door code within a location."""
+    return [int(chunk) if chunk.isdigit() else chunk.lower() for chunk in re.split(r'(\d+)', text)]
 
 
 def location_image_path(instance, filename):

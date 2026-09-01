@@ -52,8 +52,8 @@ from staff.utils import (
     AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, ENQUIRY_STATUS_GROUPS, ENQUIRY_STATUSES, GUEST_LETTERS,
     LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAFF_PAGE_PERMISSION_FIELDS,
     STAGE_TABS, STATUS_BUCKETS, apply_manual_checkin_time, apply_manual_task_date, booking_stage,
-    checkin_valid_range, cleaning_task_valid_range, next_step_hint, property_last_clean_before,
-    reservation_rows,
+    checkin_valid_range, cleaning_task_valid_range, next_step_hint, properties_grouped_by_location,
+    property_last_clean_before, reservation_rows,
 )
 from staff.utils import last_day_of_month as _last_day_of_month
 from staff.utils import parsed_date as _parsed_date
@@ -71,12 +71,14 @@ class StaffHomeView(View):
     template_name = 'staff/home.html'
 
     def get(self, request, *args, **kwargs):
-        properties = Property.objects.all()
+        properties = Property.objects.select_related('location').all()
 
         selected_property = None
         property_id = request.GET.get('property', '').strip()
         if property_id.isdigit():
             selected_property = properties.filter(pk=property_id).first()
+
+        property_groups = properties_grouped_by_location(properties)
 
         shown_properties = [selected_property] if selected_property else list(properties)
         months = 12 if selected_property else 3
@@ -113,7 +115,7 @@ class StaffHomeView(View):
         rows = reservation_rows(base, status_filter)
 
         context = {
-            'properties': properties,
+            'property_groups': property_groups,
             'selected_property': selected_property,
             'calendars': calendars,
             'rows': rows,

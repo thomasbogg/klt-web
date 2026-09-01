@@ -4,6 +4,7 @@ from django.db.models import Max
 from django.utils import timezone
 
 import env_settings
+from properties.utils import natural_sort_key
 
 # PIMS' own tab bar, minus 'Open Enquiry' - every klt-web Booking already has committed dates
 # from the moment it's created, so that stage is never reachable from this data (confirmed with
@@ -192,6 +193,35 @@ def reservation_rows(queryset, status_filter):
         status_label = booking.enquiry_status if bucket == 'Invalid' else stage
         rows.append({'booking': booking, 'status_label': status_label})
     return rows
+
+
+def properties_grouped_by_location(properties):
+    """[(location_label, [Property, ...]), ...] for StaffHomeView's property filter dropdown -
+    locations alphabetical by title (mirrors monthly_reports.py::location_groups()), properties
+    within each location ordered by their own displayed door code (natural_sort_key, so '2' < '4'
+    < '8' < '19' rather than the lexicographic '19' < '2') rather than by raw title/pk. A property
+    with no location (Property.location is nullable) falls into a trailing 'Unassigned' group -
+    none exist today, but the model allows it, so this doesn't silently drop such a property."""
+    by_location = {}
+    unassigned = []
+    for property in properties:
+        if property.location_id is None:
+            unassigned.append(property)
+        else:
+            by_location.setdefault(property.location, []).append(property)
+
+    def code_key(property):
+        display = str(property)
+        code = display.rsplit(' - ', 1)[-1] if ' - ' in display else display
+        return natural_sort_key(code)
+
+    groups = [
+        (str(location), sorted(props, key=code_key))
+        for location, props in sorted(by_location.items(), key=lambda item: item[0].title)
+    ]
+    if unassigned:
+        groups.append(('Unassigned', sorted(unassigned, key=code_key)))
+    return groups
 
 
 def next_step_hint(booking, charge, balance_payment):

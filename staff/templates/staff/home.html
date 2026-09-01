@@ -22,8 +22,12 @@
                 <label class="staff-field">Property
                     <select name="property" class="staff-input" onchange="this.form.submit()">
                         <option value="">All Properties</option>
-                        {% for property in properties %}
-                        <option value="{{ property.pk }}" {% if selected_property.pk == property.pk %}selected{% endif %}>{{ property }}</option>
+                        {% for location_label, location_properties in property_groups %}
+                        <optgroup label="{{ location_label }}">
+                            {% for property in location_properties %}
+                            <option value="{{ property.pk }}" {% if selected_property.pk == property.pk %}selected{% endif %}>{{ property }}</option>
+                            {% endfor %}
+                        </optgroup>
                         {% endfor %}
                     </select>
                 </label>
