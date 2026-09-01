@@ -190,7 +190,9 @@ class StaffGuestDetailView(View):
     guests.models.Guest actually stores) and, on the right, that guest's reservations using the
     same Valid/Invalid/Ended/All filter as StaffHomeView (via the shared reservation_rows()
     helper) but without a property selector - Thomas confirmed one guest's own booking list
-    doesn't need that extra granularity."""
+    doesn't need that extra granularity. Defaults to 'All' rather than StaffHomeView's 'Valid' -
+    unlike the home page's live reservation list, a single guest here often has only a
+    cancelled/ended booking, so defaulting to 'Valid' just shows an empty table."""
     template_name = 'staff/guest_detail.html'
 
     def _get_guest(self, pk):
@@ -201,7 +203,7 @@ class StaffGuestDetailView(View):
 
     def get(self, request, pk, *args, **kwargs):
         guest = self._get_guest(pk)
-        status_filter = request.GET.get('status', '').strip() or 'Valid'
+        status_filter = request.GET.get('status', '').strip() or 'All'
         context = {
             'guest': guest,
             'rows': reservation_rows(Booking.objects.filter(guest=guest), status_filter),

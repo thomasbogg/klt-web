@@ -1704,11 +1704,16 @@ class StaffGuestDetailViewTests(TestCase):
         response = self.client.get(reverse('staff:guest_detail', kwargs={'pk': 999999}))
         self.assertEqual(response.status_code, 404)
 
-    def test_default_shows_only_this_guests_valid_bookings(self):
+    def test_default_shows_all_of_this_guests_bookings(self):
         response = self.client.get(self.url)
-        self.assertEqual(response.context['status_filter'], 'Valid')
+        self.assertEqual(response.context['status_filter'], 'All')
         booking_ids = {row['booking'].pk for row in response.context['rows']}
-        self.assertEqual(booking_ids, {self.confirmed_booking.pk})  # excludes cancelled + other guest
+        self.assertEqual(booking_ids, {self.confirmed_booking.pk, self.cancelled_booking.pk})  # includes cancelled, excludes other guest
+
+    def test_valid_status_filter_excludes_cancelled(self):
+        response = self.client.get(self.url, {'status': 'Valid'})
+        booking_ids = {row['booking'].pk for row in response.context['rows']}
+        self.assertEqual(booking_ids, {self.confirmed_booking.pk})
 
     def test_all_status_filter_includes_cancelled_but_not_other_guest(self):
         response = self.client.get(self.url, {'status': 'All'})
