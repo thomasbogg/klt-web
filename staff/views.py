@@ -1532,6 +1532,7 @@ class StaffPropertyDetailView(View):
         iCalLink.objects.create(
             property=property, platform=platform, ical_url=url,
             is_owner_link=post.get('is_owner_link') == 'on',
+            exclude_summary_contains=post.get('exclude_summary_contains', '').strip(),
         )
         messages.success(request, "iCal link added.")
 
@@ -1545,7 +1546,8 @@ class StaffPropertyDetailView(View):
             return
         link.ical_url = url
         link.is_owner_link = request.POST.get('is_owner_link') == 'on'
-        link.save(update_fields=['ical_url', 'is_owner_link'])
+        link.exclude_summary_contains = request.POST.get('exclude_summary_contains', '').strip()
+        link.save(update_fields=['ical_url', 'is_owner_link', 'exclude_summary_contains'])
         messages.success(request, "iCal link updated.")
 
     def _delete_ical_link(self, request, property):

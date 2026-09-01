@@ -355,6 +355,9 @@
                                             <label class="staff-checkbox-label" title="This is the owner's own listing, not one we manage - imported bookings will be marked as owner bookings and shown in their Owner Suite.">
                                                 <input type="checkbox" name="is_owner_link" {% if link.is_owner_link %}checked{% endif %}> Is owner link
                                             </label>
+                                            <label class="staff-field" title="One term per line. An event whose title contains any of these (case-insensitive) is skipped entirely - e.g. 'Not Available' for Airbnb blocks, 'Tentative' for Vrbo enquiries.">Exclude events whose title contains
+                                                <textarea name="exclude_summary_contains" class="staff-input staff-ical-exclude-terms" rows="2" placeholder="Not Available">{{ link.exclude_summary_contains }}</textarea>
+                                            </label>
                                             <button type="submit" class="staff-button staff-button-small">Save</button>
                                         </form>
                                     </div>
@@ -388,6 +391,7 @@
                                 <label class="staff-checkbox-label" title="This is the owner's own listing, not one we manage - imported bookings will be marked as owner bookings and shown in their Owner Suite.">
                                     <input type="checkbox" name="is_owner_link"> Is owner link
                                 </label>
+                                <textarea name="exclude_summary_contains" class="staff-input staff-ical-exclude-terms" rows="2" placeholder="Exclude titles containing (one per line), e.g. Not Available"></textarea>
                                 <button type="submit" class="staff-button staff-button-small">+ Add iCal link</button>
                             </form>
                         </div>

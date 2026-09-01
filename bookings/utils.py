@@ -519,21 +519,29 @@ def sync_ical_link(link, ics_text):
     sync touch this booking again". A previously-cancelled booking whose UID reappears in the feed
     is resurrected back to 'Booking confirmed' - the platform un-cancelled it.
 
-    Returns a dict of counts (created/updated/resurrected/cancelled) plus a 'conflicts' list
-    ({'uid', 'start', 'end'} per skipped overlap) for the caller to report. Also returns an
+    Returns a dict of counts (created/updated/resurrected/cancelled/excluded) plus a 'conflicts'
+    list ({'uid', 'start', 'end'} per skipped overlap) for the caller to report. Also returns an
     'events' list - one entry per feed event ({'uid', 'start', 'end', 'result', 'booking'},
     'result' one of created/updated/resurrected/unchanged/manual_override/conflict) - and a
     'cancelled_bookings' list of the Booking objects cancelled because they'd disappeared from the
     feed (these aren't feed events, so they don't get an 'events' entry of their own) - both added
     for the staff "Sync now" popup (staff/views.py::StaffIcalSyncView) to report a per-booking
-    breakdown, matching PIMS' own manual-sync popup rather than just an aggregate count."""
+    breakdown, matching PIMS' own manual-sync popup rather than just an aggregate count.
+
+    A VEVENT whose SUMMARY matches link.excluded_summary_terms() (properties/models.py::iCalLink,
+    e.g. Airbnb's "Not Available" blocks, Vrbo's "Tentative" enquiries) is dropped before any of
+    the above even sees it - counted in 'excluded', never appears in 'events', and never enters
+    feed_events at all. That last part matters for the disappearance-cancellation pass below: if a
+    Booking was already created from a now-excluded UID before this filter existed, it's treated
+    exactly like any other booking that vanished from the feed and gets cancelled - the correct
+    outcome, since it was never a real stay."""
     from icalendar import Calendar
 
     from bookings.models import Booking
     from guests.models import Guest
 
     summary = {
-        'created': 0, 'updated': 0, 'resurrected': 0, 'cancelled': 0, 'conflicts': [],
+        'created': 0, 'updated': 0, 'resurrected': 0, 'cancelled': 0, 'excluded': 0, 'conflicts': [],
         'events': [], 'cancelled_bookings': [],
     }
 
@@ -545,9 +553,20 @@ def sync_ical_link(link, ics_text):
     def as_date(value):
         return value.date() if isinstance(value, datetime) else value
 
+    exclude_terms = [term.lower() for term in link.excluded_summary_terms()]
+
+    def is_excluded(component):
+        if not exclude_terms:
+            return False
+        summary = str(component.get('summary') or '').lower()
+        return any(term in summary for term in exclude_terms)
+
     calendar = Calendar.from_ical(ics_text)
     feed_events = {}
     for component in calendar.walk('VEVENT'):
+        if is_excluded(component):
+            summary['excluded'] += 1
+            continue
         uid = str(component.get('uid'))
         feed_events[uid] = (as_date(component.get('dtstart').dt), as_date(component.get('dtend').dt))
 

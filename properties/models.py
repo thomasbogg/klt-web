@@ -869,6 +869,19 @@ class iCalLink(models.Model):
     # payout-exempt treatment as the owner's own direct reservations, not the normal platform-
     # booking treatment (2026-08-30, per Thomas).
     is_owner_link = models.BooleanField(default=False)
+    # Per Thomas 2026-09-01: mirrors PIMS' own per-import "Summary/Name of booking Contains X"
+    # filter (Settings > Sync calendars) - a feed event whose SUMMARY contains any of these terms
+    # (case-insensitive substring, one term per line) is skipped entirely by sync_ical_link()
+    # rather than becoming a Booking. Exists because a real feed's VEVENTs aren't all real
+    # bookings: Airbnb includes host-set "Not Available" blocks, Vrbo includes "Tentative" entries
+    # that are enquiries rather than confirmed stays - neither was being filtered before this field
+    # existed, since sync_ical_link() previously only ever read UID/DTSTART/DTEND, never SUMMARY.
+    # Deliberately just substring-contains (PIMS' own simplest filter type) rather than also
+    # offering PIMS' date-range/duration filter types - nothing has needed those yet.
+    exclude_summary_contains = models.TextField(
+        blank=True, default='',
+        help_text="One term per line. A calendar event whose title contains any of these (case-insensitive) is skipped entirely - e.g. 'Not Available' for Airbnb blocks, 'Tentative' for Vrbo enquiries.",
+    )
 
     class Meta:
         db_table = 'property_ical_links'
@@ -877,3 +890,9 @@ class iCalLink(models.Model):
 
     def __str__(self):
         return f"{self.property.title} - iCal"
+
+    def excluded_summary_terms(self):
+        """exclude_summary_contains split into a clean list of terms, one per non-blank line -
+        sync_ical_link()'s only consumer, but also usable by the property_detail form to redisplay
+        the raw text."""
+        return [line.strip() for line in self.exclude_summary_contains.splitlines() if line.strip()]

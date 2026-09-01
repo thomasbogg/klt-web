@@ -2104,6 +2104,24 @@ class StaffPropertyDetailViewTests(TestCase):
         link.refresh_from_db()
         self.assertFalse(link.is_owner_link)
 
+    def test_add_ical_link_saves_exclude_terms(self):
+        airbnb = Platform.objects.get_or_create(name='Airbnb')[0]
+        self.client.post(self.url, {
+            'action': 'add_ical_link', 'platform': airbnb.pk, 'ical_url': 'https://airbnb.com/feed.ics',
+            'exclude_summary_contains': 'Not Available',
+        })
+        link = iCalLink.objects.get(property=self.property, platform=airbnb)
+        self.assertEqual(link.exclude_summary_contains, 'Not Available')
+
+    def test_update_ical_link_saves_exclude_terms(self):
+        link = iCalLink.objects.create(property=self.property, ical_url='https://old.example.com/feed.ics')
+        self.client.post(self.url, {
+            'action': 'update_ical_link', 'link_id': link.pk, 'ical_url': link.ical_url,
+            'exclude_summary_contains': 'Not Available\nTentative',
+        })
+        link.refresh_from_db()
+        self.assertEqual(link.excluded_summary_terms(), ['Not Available', 'Tentative'])
+
     def test_update_ical_link_saves_new_url(self):
         booking_com = Platform.objects.get_or_create(name='Booking.com')[0]
         link = iCalLink.objects.create(

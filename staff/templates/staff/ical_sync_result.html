@@ -16,9 +16,13 @@
 
         {% if fetch_error %}
         <p class="staff-message staff-message-error">{{ fetch_error }}</p>
-        {% elif not summary.events %}
+        {% elif not summary.events and not summary.excluded %}
         <p class="staff-message staff-message-success">Connected. No bookings currently in this feed.</p>
         {% else %}
+        {% if summary.excluded %}
+        <p class="staff-sync-subtitle">{{ summary.excluded }} event{{ summary.excluded|pluralize }} excluded by this link's title filter.</p>
+        {% endif %}
+        {% if summary.events %}
         <table class="staff-sync-table">
             <thead>
                 <tr><th>Reference</th><th>Dates</th><th>Result</th></tr>
@@ -39,6 +43,7 @@
                 {% endfor %}
             </tbody>
         </table>
+        {% endif %}
         {% endif %}
 
         {% if summary.cancelled_bookings %}

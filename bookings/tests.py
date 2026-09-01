@@ -3729,9 +3729,13 @@ class BookingManageFAQViewTests(TestCase):
         self.assertEqual(response.context['active_section'], 'faq')
 
 
-def _ics_feed(events):
+def _ics_feed(events, summaries=None):
     """events: list of (uid, start_date, end_date) tuples -> minimal valid .ics text, matching the
-    shape a real Airbnb/Booking.com/Vrbo reservations feed has (one all-day VEVENT per booking)."""
+    shape a real Airbnb/Booking.com/Vrbo reservations feed has (one all-day VEVENT per booking).
+    summaries: optional {uid: 'title text'} to override the default 'Reserved' SUMMARY - used for
+    exercising iCalLink.exclude_summary_contains, e.g. Airbnb's 'Not Available' blocks or Vrbo's
+    'Tentative' enquiries."""
+    summaries = summaries or {}
     lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Test//EN']
     for uid, start, end in events:
         lines += [
@@ -3739,7 +3743,7 @@ def _ics_feed(events):
             f'UID:{uid}',
             f'DTSTART;VALUE=DATE:{start.strftime("%Y%m%d")}',
             f'DTEND;VALUE=DATE:{end.strftime("%Y%m%d")}',
-            'SUMMARY:Reserved',
+            f'SUMMARY:{summaries.get(uid, "Reserved")}',
             'END:VEVENT',
         ]
     lines.append('END:VCALENDAR')
@@ -3905,7 +3909,7 @@ class SyncIcalLinkTests(TestCase):
         self.link.save(update_fields=['platform'])
         summary = sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)]))
         self.assertEqual(summary, {
-            'created': 0, 'updated': 0, 'resurrected': 0, 'cancelled': 0, 'conflicts': [],
+            'created': 0, 'updated': 0, 'resurrected': 0, 'cancelled': 0, 'excluded': 0, 'conflicts': [],
             'events': [], 'cancelled_bookings': [],
         })
         self.assertFalse(Booking.objects.filter(ical_uid='uid-1').exists())
@@ -3915,3 +3919,45 @@ class SyncIcalLinkTests(TestCase):
         sync_ical_link(self.link, _ics_feed([]))
         self.link.refresh_from_db()
         self.assertIsNotNone(self.link.last_synced)
+
+    def test_event_matching_exclude_term_is_not_imported(self):
+        self.link.exclude_summary_contains = 'Not Available'
+        self.link.save(update_fields=['exclude_summary_contains'])
+        summary = sync_ical_link(
+            self.link, _ics_feed([('uid-1', self.start, self.end)], summaries={'uid-1': 'Airbnb (Not Available)'}),
+        )
+        self.assertEqual(summary['created'], 0)
+        self.assertEqual(summary['excluded'], 1)
+        self.assertFalse(Booking.objects.filter(ical_uid='uid-1').exists())
+
+    def test_exclude_match_is_case_insensitive(self):
+        self.link.exclude_summary_contains = 'tentative'
+        self.link.save(update_fields=['exclude_summary_contains'])
+        summary = sync_ical_link(
+            self.link, _ics_feed([('uid-1', self.start, self.end)], summaries={'uid-1': 'TENTATIVE Reservation'}),
+        )
+        self.assertEqual(summary['excluded'], 1)
+        self.assertFalse(Booking.objects.filter(ical_uid='uid-1').exists())
+
+    def test_exclude_terms_are_one_per_line_and_non_matching_terms_dont_exclude(self):
+        self.link.exclude_summary_contains = 'Not Available\nTentative'
+        self.link.save(update_fields=['exclude_summary_contains'])
+        summary = sync_ical_link(
+            self.link, _ics_feed([('uid-1', self.start, self.end)], summaries={'uid-1': 'Reserved'}),
+        )
+        self.assertEqual(summary['excluded'], 0)
+        self.assertEqual(summary['created'], 1)
+
+    def test_previously_imported_booking_is_cancelled_once_a_matching_exclude_term_is_added(self):
+        sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)], summaries={'uid-1': 'Not Available'}))
+        booking = Booking.objects.get(ical_uid='uid-1')
+        self.assertEqual(booking.enquiry_status, 'Booking confirmed')
+
+        self.link.exclude_summary_contains = 'Not Available'
+        self.link.save(update_fields=['exclude_summary_contains'])
+        summary = sync_ical_link(
+            self.link, _ics_feed([('uid-1', self.start, self.end)], summaries={'uid-1': 'Not Available'}),
+        )
+        self.assertEqual(summary['cancelled'], 1)
+        booking.refresh_from_db()
+        self.assertEqual(booking.enquiry_status, 'Cancelled by platform')
