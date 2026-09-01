@@ -2646,6 +2646,23 @@ class StaffSettingsViewTests(TestCase):
         self.assertFalse(company.cleans_on_calendar)
         self.assertFalse(company.checkins_on_calendar)
 
+    def test_update_management_company_can_turn_bookable_on_website_off(self):
+        company = make_management_company(bookable_on_website=True)
+        self.client.post(self.url, {
+            'action': 'update_management_company', 'management_company_id': company.pk, 'name': company.name,
+        })
+        company.refresh_from_db()
+        self.assertFalse(company.bookable_on_website)
+
+    def test_update_management_company_can_turn_bookable_on_website_on(self):
+        company = make_management_company(bookable_on_website=False)
+        self.client.post(self.url, {
+            'action': 'update_management_company', 'management_company_id': company.pk, 'name': company.name,
+            'bookable_on_website': 'on',
+        })
+        company.refresh_from_db()
+        self.assertTrue(company.bookable_on_website)
+
     def test_add_washing_material_creates_row(self):
         company = make_management_company()
         self.client.post(self.url, {

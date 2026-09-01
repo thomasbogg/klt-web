@@ -782,6 +782,8 @@
                                             <label class="staff-checkbox-label"><input type="checkbox" name="checkins_on_calendar" form="management-company-form-{{ company.pk }}" {% if company.checkins_on_calendar %}checked{% endif %}> Check-ins appear on calendar</label>
                                             <p class="staff-settings-hint">Whether this company's properties are tracked in the Finance area - as a cleaning company, gates Memos/Ad-hoc Services; as a booking company, gates the Payouts tab/Statements.</p>
                                             <label class="staff-checkbox-label"><input type="checkbox" name="finances_managed_internally" form="management-company-form-{{ company.pk }}" {% if company.finances_managed_internally %}checked{% endif %}> Finances managed internally</label>
+                                            <p class="staff-settings-hint">As a booking company, whether its properties can appear in the website's own availability search - turn off for a company that sells its properties through its own separate channels rather than through us.</p>
+                                            <label class="staff-checkbox-label"><input type="checkbox" name="bookable_on_website" form="management-company-form-{{ company.pk }}" {% if company.bookable_on_website %}checked{% endif %}> Booked properties bookable through Algarve Beach Apartments</label>
                                             <div class="staff-washing-materials">
                                                 <h5 class="staff-manager-contact-title">Washing materials</h5>
                                                 <ul class="staff-list staff-washing-materials-list">
@@ -889,6 +891,7 @@
                                             <label class="staff-checkbox-label"><input type="checkbox" name="cleans_on_calendar" form="management-company-form-new" checked> Cleans appear on calendar</label>
                                             <label class="staff-checkbox-label"><input type="checkbox" name="checkins_on_calendar" form="management-company-form-new" checked> Check-ins appear on calendar</label>
                                             <label class="staff-checkbox-label"><input type="checkbox" name="finances_managed_internally" form="management-company-form-new"> Finances managed internally</label>
+                                            <label class="staff-checkbox-label"><input type="checkbox" name="bookable_on_website" form="management-company-form-new" checked> Booked properties bookable through Algarve Beach Apartments</label>
                                             <p class="staff-settings-hint">Save this company first to add its washing materials list.</p>
                                         </div>
                                     </td>

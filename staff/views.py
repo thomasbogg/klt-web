@@ -1159,15 +1159,17 @@ class StaffSettingsView(View):
         return result
 
     def _parsed_calendar_visibility_fields(self, post):
-        """cleans_on_calendar/checkins_on_calendar/finances_managed_internally - plain checkboxes,
-        unlike every field above: the whole management-company form always submits together (see
-        management-company-form-{{ company.pk }} in settings.html), so an absent key unambiguously
-        means "left unchecked" for this submission, not "not specified" - no None/leave-unchanged
-        case to thread through the way the two fields above need."""
+        """cleans_on_calendar/checkins_on_calendar/finances_managed_internally/
+        bookable_on_website - plain checkboxes, unlike every field above: the whole
+        management-company form always submits together (see management-company-form-{{
+        company.pk }} in settings.html), so an absent key unambiguously means "left unchecked" for
+        this submission, not "not specified" - no None/leave-unchanged case to thread through the
+        way the two fields above need."""
         return {
             'cleans_on_calendar': post.get('cleans_on_calendar') == 'on',
             'checkins_on_calendar': post.get('checkins_on_calendar') == 'on',
             'finances_managed_internally': post.get('finances_managed_internally') == 'on',
+            'bookable_on_website': post.get('bookable_on_website') == 'on',
         }
 
     def _add_management_company(self, request):

@@ -226,6 +226,19 @@ class ManagementCompany(models.Model):
     # command still exists for a manual/global re-reconcile (e.g. after a direct DB edit that
     # bypasses the save() path above).
     finances_managed_internally = models.BooleanField(default=False)
+    # Per Thomas 2026-09-01: gates whether this company's properties can appear in the public
+    # website's own availability search (availability/views.py::SearchView.
+    # get_available_properties()) - only meaningful as a property's booking_company, same scoping
+    # as finances_managed_internally above. Before this field existed, ANY booking_company being
+    # set at all made a property search-visible, with no way to distinguish "we book this
+    # ourselves" from "a different company books this property (through their own channels), we
+    # just track them as a ManagementCompany for ops purposes" - real gap found 2026-09-01: 1
+    # property booked through a company that isn't Thomas's own was already search-visible with no
+    # way to turn it off. Default True preserves every existing company's current visible/hidden
+    # set (every company that currently has search-visible properties keeps them, nothing changes
+    # on deploy) - Thomas then turns it off per company as needed, same opt-out default pattern as
+    # cleans_on_calendar/checkins_on_calendar above, not finances_managed_internally's opt-in one.
+    bookable_on_website = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'management_companies'

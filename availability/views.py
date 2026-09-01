@@ -58,6 +58,7 @@ class SearchView(View):
             #specs__bedrooms__gte=guests.get('adults', 0) - 1 + guests.get('children', 0) - 1, # Assuming 1 bedroom can accommodate 2 adults or 2 children
             specs__max_guests__gte=guests.get('adults', 0) + guests.get('children', 0) + guests.get('infants', 0),
             booking_company__isnull=False, # Exclude properties we don't book
+            booking_company__bookable_on_website=True, # Exclude a booking company that doesn't sell through our own site
         )
 
         for property in properties:

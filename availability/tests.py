@@ -47,3 +47,9 @@ class SearchViewFilteringTests(TestCase):
         property = self._make_property('CLEANONLY', cleaning_company=self.management_company)
         response = self.client.get(self.url, self.query)
         self.assertNotIn(property, response.context['available_properties'])
+
+    def test_property_of_a_non_bookable_on_website_company_does_not_appear(self):
+        other_company = ManagementCompany.objects.create(name='External Agency', bookable_on_website=False)
+        property = self._make_property('EXTERNAL', booking_company=other_company)
+        response = self.client.get(self.url, self.query)
+        self.assertNotIn(property, response.context['available_properties'])
