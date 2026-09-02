@@ -1148,6 +1148,42 @@ class FreshenTaskSyncTests(TestCase):
         self.assertEqual(task.status, 'pending')
         self.assertEqual(task.date, later.arrival_date - timedelta(days=1))
 
+    def test_backdated_gap_creates_a_done_freshen_task_not_pending(self):
+        # Real bug, fixed 2026-09-03: sync_freshen_tasks_for_property() walks a property's entire
+        # booking history with no lower date bound, so the first full sync_cleaning_tasks reconcile
+        # retroactively created 'pending' freshen tasks for gaps between bookings years in the past
+        # (301 of 365 total pending rows, oldest dated 2022-11-23) - nobody can act on a freshen
+        # recommendation for an already-arrived booking, so it must land as 'done' instead.
+        past_baseline = date.today() - timedelta(days=100)
+        earlier = self._make_booking(past_baseline - timedelta(days=10), past_baseline)
+        Departure.objects.create(booking=earlier, clean=True)
+        later = self._make_booking(past_baseline + timedelta(days=10), past_baseline + timedelta(days=17))
+
+        task = CleaningTask.objects.get(booking=later, task_type='freshen')
+        self.assertEqual(task.status, 'done')
+        self.assertIsNotNone(task.completed_at)
+
+    def test_stale_pending_freshen_task_self_heals_to_done_on_resweep(self):
+        # A row created 'pending' before the fix above existed must not stay 'pending' forever -
+        # the next sweep this property goes through (any booking save) should clean it up, with no
+        # separate one-off migration needed.
+        past_baseline = date.today() - timedelta(days=100)
+        earlier = self._make_booking(past_baseline - timedelta(days=10), past_baseline)
+        Departure.objects.create(booking=earlier, clean=True)
+        later = self._make_booking(past_baseline + timedelta(days=10), past_baseline + timedelta(days=17))
+        task = CleaningTask.objects.get(booking=later, task_type='freshen')
+
+        # Simulate a stale row from before the fix above existed.
+        task.status = 'pending'
+        task.completed_at = None
+        task.save(update_fields=['status', 'completed_at'])
+
+        later.save()  # re-triggers the sweep with no other state changed
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, 'done')
+        self.assertIsNotNone(task.completed_at)
+
     def test_owner_departure_with_no_clean_needed_counts_as_last_clean(self):
         # Real bug, fixed 2026-09-02: Departure.clean=False on an owner's own stay means "no clean
         # needed at this changeover", not "unknown/dirty" - sync_cleaning_tasks_for_booking() never
@@ -3301,6 +3337,18 @@ class ComputeArrivalEtaTests(TestCase):
         self.assertFalse(is_all_day)
         self.assertEqual(computed, time(14, 0))
 
+    def test_other_method_with_a_given_time_uses_it_verbatim(self):
+        # Real bug, fixed 2026-09-03: the guest form never lets a guest submit a time for 'other'
+        # (see compute_arrival_eta's docstring), but 2,612 production Arrival rows have method=
+        # 'other' with a real time anyway (legacy migration, or a booking recoded to 'other' after
+        # its time was already set under driving/bus/train) - the old code discarded it in favour
+        # of the generic standard-time fallback, which is what left Ulrich Görge's B05 arrival
+        # showing 14:00 on the check-ins calendar despite a given time of 15:30.
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.OTHER, time=time(15, 30), meet_greet=True)
+        computed, is_all_day = compute_arrival_eta(self.booking)
+        self.assertFalse(is_all_day)
+        self.assertEqual(computed, time(15, 30))
+
     def test_no_time_given_falls_back_to_standard_checkin_time(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=None, meet_greet=True)
         computed, is_all_day = compute_arrival_eta(self.booking)
@@ -3710,7 +3758,27 @@ class CheckinCalendarEndpointTests(TestCase):
         html = response.json()['popup_html']
         self.assertIn('Bo Costa', html)
         self.assertIn('+351911111111', html)
+        self.assertIn('checkin-endpoint@example.com', html)
         self.assertIn('Flight to Faro', html)
+
+    def test_detail_view_hides_extras_collected_checkbox_when_total_is_zero(self):
+        # Real case: a zero-priced extra (e.g. a comped Late Checkout) still lists as a line item
+        # but there's no actual cash to collect - showing the checkbox anyway reads as something
+        # staff need to act on when there's nothing to do.
+        Extra.objects.create(booking=self.booking, late_checkout=True, late_checkout_charge=Decimal('0.00'))
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
+        html = response.json()['popup_html']
+        self.assertIn('Late Checkout', html)
+        self.assertIn('Total: €0', html)
+        self.assertNotIn('checkin-extras-collected', html)
+
+    def test_detail_view_shows_extras_collected_checkbox_when_total_is_nonzero(self):
+        Extra.objects.create(booking=self.booking, late_checkout=True, late_checkout_charge=Decimal('15.00'))
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
+        html = response.json()['popup_html']
+        self.assertIn('checkin-extras-collected', html)
 
     def test_detail_view_shows_deposit_when_charge_security_is_set(self):
         # Charge.security is the actual source of truth (see its own docstring, bookings/

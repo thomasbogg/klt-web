@@ -364,12 +364,25 @@ def sync_freshen_tasks_for_property(property):
     cleaning_task_valid_range's own docstring), not an uncovered gap - excluding it undercounts
     what's actually covering that arrival and, in production, briefly did exactly that for a
     booking whose turnover had been manually dragged onto its next-arrival's own date.
-    - Gap qualifies, no freshen task yet -> create one dated the day before arrival.
-    - Gap qualifies, an earlier auto-dismissal ('gap_closed') exists -> reinstate it. This is the
-      symmetric case Thomas asked for: cancelling whatever booking had closed the gap should bring
-      the freshen back, since the sweep re-runs on that cancellation too.
-    - Gap qualifies, a manual dismissal exists, or the task is already pending/done -> leave it -
-      a manual dismissal is a staff decision and must never be silently overridden by this sweep.
+    - Gap qualifies, no freshen task yet -> create one dated the day before arrival. Backdated to
+      before today (booking.arrival_date < today) -> create it already 'done', not 'pending': the
+      booking has already arrived, so there's no real-world action left for staff to take, and
+      leaving it 'pending' forever is exactly what produced 301 of 365 total pending Freshen rows
+      as stale noise dated back to 2022-11-23 (found 2026-09-03, after `sync_cleaning_tasks` swept
+      every property's full booking history for the first time - see [[project_klt_web_reporting]]
+      or ask Thomas). 'done' still counts toward property_last_clean_before()'s "any non-dismissed
+      CleaningTask" chain the same as 'pending' would, so this doesn't change gap calculations for
+      later bookings in the walk - it only stops a backdated row from looking like open work.
+    - Gap qualifies, an earlier auto-dismissal ('gap_closed') exists -> reinstate it (to 'done' if
+      backdated, 'pending' otherwise, same reasoning as above). This is the symmetric case Thomas
+      asked for: cancelling whatever booking had closed the gap should bring the freshen back,
+      since the sweep re-runs on that cancellation too.
+    - Gap qualifies, existing task is still 'pending' but its booking's arrival has since passed
+      (a task created 'pending' before this backdating logic existed, or before its own arrival
+      date arrived) -> flip it to 'done'. Self-healing: every sweep re-run cleans up any leftover
+      stale-pending rows from before this fix, no separate one-off migration needed.
+    - Gap qualifies, a manual dismissal exists, or the task is already 'done' -> leave it - a
+      manual dismissal is a staff decision and must never be silently overridden by this sweep.
     - Gap doesn't qualify, a pending freshen task exists -> auto-dismiss it (dismissed_reason=
       'gap_closed', dismissed_by=None) - a later booking has closed the gap, so the speculative
       clean is no longer justified. Fires even if staff already assigned a team to it, per
@@ -397,23 +410,34 @@ def sync_freshen_tasks_for_property(property):
         enquiry_status__in=CLOSED_STATUSES,
     ).order_by('arrival_date')
 
+    today = timezone.now().date()
     for booking in bookings:
         last_clean = property_last_clean_before(property, booking)
         existing = CleaningTask.objects.filter(booking=booking, task_type='freshen').first()
         gap_qualifies = last_clean is not None and (booking.arrival_date - last_clean).days >= freshen_after_days
+        is_backdated = booking.arrival_date < today
 
         if gap_qualifies:
             if existing is None:
                 CleaningTask.objects.create(
                     booking=booking, task_type='freshen',
                     date=booking.arrival_date - timedelta(days=1),
+                    status='done' if is_backdated else 'pending',
+                    completed_at=timezone.now() if is_backdated else None,
                 )
             elif existing.status == 'dismissed' and existing.dismissed_reason == 'gap_closed':
-                existing.status = 'pending'
+                existing.status = 'done' if is_backdated else 'pending'
                 existing.dismissed_by = None
                 existing.dismissed_at = None
                 existing.dismissed_reason = ''
-                existing.save(update_fields=['status', 'dismissed_by', 'dismissed_at', 'dismissed_reason'])
+                existing.completed_at = timezone.now() if is_backdated else None
+                existing.save(update_fields=[
+                    'status', 'dismissed_by', 'dismissed_at', 'dismissed_reason', 'completed_at',
+                ])
+            elif existing.status == 'pending' and is_backdated:
+                existing.status = 'done'
+                existing.completed_at = timezone.now()
+                existing.save(update_fields=['status', 'completed_at'])
         else:
             if existing is not None and existing.status == 'pending':
                 existing.status = 'dismissed'
@@ -534,12 +558,32 @@ def compute_arrival_eta(booking):
     (bookings/templates/bookings/_arrival_departure_form.html): a flight's *landing* time, a bus/
     train's own "expected time in Albufeira" (already an at-property estimate, just needing a
     last-mile buffer), or - for driving - the guest's own estimated arrival time at the property
-    itself, used as-is with no buffer (explicit choice, not an oversight). method='other' never
-    gets a time field on that form at all, so there's nothing to compute - same as time simply
-    not having been filled in yet. Either case now falls back to _standard_checkin_time() rather
-    than rendering as an all-day event (2026-08-28, per Thomas - a guessed-but-labelled placeholder
-    time is more useful on a glance-and-go calendar than a blank all-day slot), so is_all_day is
-    always False; kept as part of the return shape since callers already destructure it."""
+    itself, used as-is with no buffer (explicit choice, not an oversight). Falls back to
+    _standard_checkin_time() only when there's genuinely no time to work with (arrival.time is
+    None) rather than rendering as an all-day event (2026-08-28, per Thomas - a guessed-but-
+    labelled placeholder time is more useful on a glance-and-go calendar than a blank all-day
+    slot), so is_all_day is always False; kept as part of the return shape since callers already
+    destructure it.
+
+    method='other' has no time field of its own on the guest form at all (nothing in
+    _arrival_departure_form.html's data-methods groups matches it, so arrival_departure.js
+    disables/omits it from every submission while that method is selected) - but arrival.time is
+    still very often populated for it in practice: 2,612 rows in production have method='other'
+    with a non-null time, almost all inherited from the legacy PIMS migration or from a booking
+    that was created under a real method (driving/bus/train) and recoded to 'other' afterwards
+    without a fresh time submission to clear it. That value is always already a final at-property
+    estimate carried over as-is (real example: "Bus to Albufeira station arriving @ 15.00" stored
+    with time=15:30, buffer already baked in) - never a raw landing/station time waiting on a
+    buffer - so 'other' is treated exactly like DRIVING below (use the time as given, buffer=0)
+    rather than discarding it in favour of the generic standard-time fallback. Found 2026-09-03:
+    this was a real bug - Ulrich Görge's B05 arrival showed 14:00 (the generic fallback) on the
+    check-ins calendar despite a given time of 15:30, because the old code's final `else` branch
+    treated every non-flight/bus/train/driving method, including 'other', as "no time available"
+    and ignored arrival.time outright. Checked against upcoming (non-cancelled) bookings before
+    fixing: 258 have method='other' with no time at all (still correctly fall through to the
+    None-check above, unaffected), 16 have a real non-midnight time (previously silently
+    discarded, now shown correctly), and none are the historical midnight-sentinel artifacts that
+    show up only in old/irrelevant migrated rows."""
     from bookings.models import CheckinSettings, TravelMethod
 
     arrival = getattr(booking, 'arrival', None)
@@ -552,10 +596,10 @@ def compute_arrival_eta(booking):
         buffer_minutes = CheckinSettings.load().lisbon_buffer_minutes
     elif arrival.method in (TravelMethod.BUS, TravelMethod.TRAIN):
         buffer_minutes = CheckinSettings.load().transit_buffer_minutes
-    elif arrival.method == TravelMethod.DRIVING:
-        buffer_minutes = 0
     else:
-        return _standard_checkin_time(booking), False
+        # DRIVING and OTHER (see docstring): both already represent a final at-property estimate,
+        # used as-is with no buffer applied here.
+        buffer_minutes = 0
 
     combined = datetime.combine(date.today(), arrival.time) + timedelta(minutes=buffer_minutes)
     if combined.date() != date.today():

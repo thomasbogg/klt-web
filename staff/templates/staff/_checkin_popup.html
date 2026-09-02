@@ -14,6 +14,7 @@
             <dt>Name</dt><dd>{{ booking.guest.first_name|default:"" }} {{ booking.guest.last_name }}</dd>
             <dt>Guests</dt><dd>{{ booking.total_guests }}</dd>
             <dt>Phone</dt><dd>{{ booking.guest.phone|default:"—" }}</dd>
+            <dt>Email</dt><dd>{{ booking.guest.email|default:"—" }}</dd>
         </dl>
     </fieldset>
 
@@ -39,10 +40,12 @@
             {% for item in extras.items %}<li>{{ item.label }} — €{{ item.price }}</li>{% endfor %}
         </ul>
         <p>Total: €{{ extras.total }}</p>
+        {% if extras.total %}
         <label class="staff-checkbox-label">
             <input type="checkbox" id="checkin-extras-collected" {% if checkin.extras_collected %}checked{% endif %}>
             Extras cash collected
         </label>
+        {% endif %}
         {% else %}
         <p class="staff-empty">No extras on this booking.</p>
         {% endif %}
