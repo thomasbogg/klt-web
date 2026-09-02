@@ -364,7 +364,15 @@ def extras_summary(booking):
     Details, all cash-at-check-in (see bookings/views.py::BookingDetailsView._save_extras -
     extras never touch Charge/Payment). Returns {'items': [{'label', 'price'}], 'total': Decimal}.
     Cot/High Chair is a single line even when both are requested, since they're priced as one
-    combo charge (see ExtrasSettings.compute_cot_high_chair_price), not two separate amounts."""
+    combo charge (see ExtrasSettings.compute_cot_high_chair_price), not two separate amounts.
+
+    Also includes one line per BookingDateAdjustment with a nonzero additional_charge (2026-09-02,
+    per Thomas) - a platform-derived booking's off-platform stay extension is the same kind of
+    cash-at-check-in money as everything else here (see that model's own docstring: deliberately
+    not wired into Charge, same as Extras itself), and this is the one function both the booking
+    detail page's Extras panel and the check-in calendar popup's Extras section (staff/views.py,
+    both call this) already share - so surfacing it here is what puts it in front of whoever's
+    actually collecting cash from the guest on arrival, not just the Owner Payout figures."""
     extra = getattr(booking, 'extras', None)
     items = []
 
@@ -398,6 +406,19 @@ def extras_summary(booking):
         items.append({
             'label': f"{label} x{requested.quantity}" if requested.quantity != 1 else label,
             'price': requested.price_at_request * requested.quantity,
+        })
+
+    for adjustment in booking.date_adjustments.all():
+        if not adjustment.additional_charge:
+            continue
+        previous_nights = (adjustment.previous_departure_date - adjustment.previous_arrival_date).days
+        new_nights = (adjustment.new_departure_date - adjustment.new_arrival_date).days
+        nights_delta = new_nights - previous_nights
+        sign = '+' if nights_delta >= 0 else ''
+        night_word = "night" if abs(nights_delta) == 1 else "nights"
+        items.append({
+            'label': f"Stay extension ({sign}{nights_delta} {night_word}, cash on arrival)",
+            'price': adjustment.additional_charge,
         })
 
     return {'items': items, 'total': sum((item['price'] for item in items), start=Decimal('0'))}
@@ -537,7 +558,7 @@ def sync_ical_link(link, ics_text):
     outcome, since it was never a real stay."""
     from icalendar import Calendar
 
-    from bookings.models import Booking
+    from bookings.models import Arrival, Booking, Departure
     from guests.models import Guest
 
     summary = {
@@ -619,6 +640,14 @@ def sync_ical_link(link, ics_text):
             adults=1, children=0, babies=0,
             last_updated=timezone.now(), ical_uid=uid,
         )
+        # Same defaults every other Arrival/Departure.get_or_create() call site already uses
+        # (bookings/views.py::_save_arrival, StaffBookingDetailView._update_booking(),
+        # owners/views.py) - without this, a booking created here had no Arrival/Departure at all
+        # until staff happened to open and save its detail page, leaving the check-ins calendar
+        # popup showing blank Method/Time in the meantime (found 2026-09-02, see
+        # sync_arrival_departure_legacy_data.py for the one-off backfill this gap needed).
+        Arrival.objects.create(booking=booking, self_check_in=False, meet_greet=True)
+        Departure.objects.create(booking=booking, clean=True)
         summary['created'] += 1
         summary['events'].append(
             {'uid': uid, 'start': start, 'end': end, 'result': 'created', 'booking': booking}

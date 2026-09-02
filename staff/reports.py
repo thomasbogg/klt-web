@@ -103,7 +103,11 @@ def booking_report_rows(start, end, properties=None):
             meet_greet_cost = meet_greet_fee(payment_settings, booking)
 
         if payout['available']:
-            basic_rental = payout['rental_base']
+            # + off_platform_cash: compute_owner_payout()'s own commission figure already includes
+            # it (BookingDateAdjustment.additional_charge, an off-platform cash extension), so this
+            # waterfall's basic_rental must too or rental_to_owner below would understate the owner
+            # by exactly that amount while commission looked disproportionately large against it.
+            basic_rental = payout['rental_base'] + payout['off_platform_cash']
             platform_fee = payout['platform_fee']
             platform_fee_vat = payout['platform_fee_vat']
             commission = payout['commission']

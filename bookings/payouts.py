@@ -2,6 +2,8 @@ import calendar
 from datetime import timedelta
 from decimal import Decimal
 
+from django.db.models import Sum
+
 import env_settings
 from bookings.models import TWO_PLACES, PaymentSettings
 
@@ -83,11 +85,23 @@ def _due_date(payment_settings, owner, arrival_date):
     return arrival_date.replace(day=last_day)
 
 
+def _off_platform_cash(booking):
+    """Sum of BookingDateAdjustment.additional_charge across every extension on this booking (a
+    guest paying cash on arrival for extra nights agreed direct with Thomas, off-platform - see
+    that model's own docstring). Deliberately NOT folded into Charge (that model's own scope is
+    online direct bookings only, per BookingDateAdjustment's docstring) - but it IS real rental
+    income the owner is owed our standard commission on, so it belongs here, added to rental_base
+    before commission/VAT are calculated, the same as everything else in this function."""
+    total = booking.date_adjustments.aggregate(total=Sum('additional_charge'))['total']
+    return total or ZERO
+
+
 def _unavailable(reason):
     return {
         'available': False,
         'reason': reason,
         'rental_base': None,
+        'off_platform_cash': None,
         'commission_percent': None,
         'commission': None,
         'commission_vat': None,
@@ -123,18 +137,20 @@ def compute_owner_payout(booking, payment_settings=None):
             return _unavailable("No PlatformPayout figures recorded yet.")
         rental_base = platform_payout.payout_amount
         platform_fee = platform_payout.platform_commission or ZERO
+        off_platform_cash = _off_platform_cash(booking)
     else:
         charge = getattr(booking, 'charges', None)
         if charge is None or charge.basic_rental is None:
             return _unavailable("No Charge record for this booking.")
         rental_base = charge.total_rental
         platform_fee = ZERO
+        off_platform_cash = ZERO
 
     if payment_settings is None:
         payment_settings = PaymentSettings.load()
 
     commission_percent = _commission_percent(payment_settings, booking.arrival_date)
-    commission = _round(rental_base * commission_percent / Decimal('100'))
+    commission = _round((rental_base + off_platform_cash) * commission_percent / Decimal('100'))
 
     high_season = _is_high_season(payment_settings, booking.arrival_date)
     if high_season:
@@ -166,12 +182,13 @@ def compute_owner_payout(booking, payment_settings=None):
     # own fee VAT (a reverse-charge cost genuinely incurred against the owner's money) is deducted.
     # Ad-hoc payments (staff.models.OwnerPayment) are money already sent to the owner outside this
     # calculation, so they reduce what's still outstanding.
-    owner_balance = rental_base - commission - platform_fee_vat - management_fee - ad_hoc_total
+    owner_balance = rental_base + off_platform_cash - commission - platform_fee_vat - management_fee - ad_hoc_total
 
     return {
         'available': True,
         'reason': None,
         'rental_base': rental_base,
+        'off_platform_cash': off_platform_cash,
         'commission_percent': commission_percent,
         'commission': commission,
         'commission_vat': commission_vat,

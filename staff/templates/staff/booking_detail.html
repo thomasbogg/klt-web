@@ -383,6 +383,9 @@
                     {% if owner_payout.available %}
                     <ul class="staff-list">
                         <li>Rental base <span class="staff-list-amount">&euro;{{ owner_payout.rental_base|floatformat:2 }}</span></li>
+                        {% if owner_payout.off_platform_cash %}
+                        <li>Off-platform cash extension <span class="staff-list-amount">+&euro;{{ owner_payout.off_platform_cash|floatformat:2 }}</span></li>
+                        {% endif %}
                         <li>Internal commission ({{ owner_payout.commission_percent }}%) <span class="staff-list-amount">-&euro;{{ owner_payout.commission|floatformat:2 }}</span></li>
                         {% if owner_payout.commission_vat %}
                         <li class="staff-list-informational">VAT on commission (agency-absorbed, not deducted) <span class="staff-list-amount">&euro;{{ owner_payout.commission_vat|floatformat:2 }}</span></li>
