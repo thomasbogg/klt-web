@@ -1,4 +1,12 @@
 <div class="staff-checkin-popup" data-checkin-id="{{ checkin.pk }}" data-status="{{ checkin.status }}" data-task-type="{{ checkin.task_type }}">
+    <fieldset class="staff-popup-section">
+        <legend>Property</legend>
+        <dl class="staff-departure-summary">
+            <dt>Code</dt><dd>{{ booking.property.short_title }}</dd>
+            <dt>Name</dt><dd>{{ booking.property }}</dd>
+        </dl>
+    </fieldset>
+
     {% if checkin.task_type == 'arrival' %}
     <fieldset class="staff-popup-section">
         <legend>Guest</legend>
@@ -56,7 +64,6 @@
     <fieldset class="staff-popup-section">
         <legend>{{ checkin.get_task_type_display }}</legend>
         <dl class="staff-departure-summary">
-            <dt>Property</dt><dd>{{ booking.property.short_title }}</dd>
             <dt>Guest</dt><dd>{{ booking.guest.first_name|default:"" }} {{ booking.guest.last_name }}</dd>
             <dt>Time</dt><dd>{{ checkin.time|time:'H:i'|default:"—" }}</dd>
         </dl>

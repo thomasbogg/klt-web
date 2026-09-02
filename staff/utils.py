@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from django.db.models import Max
 from django.utils import timezone
@@ -533,7 +533,20 @@ def compute_arrival_eta(booking):
     else:
         return _standard_checkin_time(booking), False
 
-    computed = (datetime.combine(date.today(), arrival.time) + timedelta(minutes=buffer_minutes)).time()
+    combined = datetime.combine(date.today(), arrival.time) + timedelta(minutes=buffer_minutes)
+    if combined.date() != date.today():
+        # The buffer pushed the ETA past midnight - guests don't actually check in during the
+        # small hours, so a naive .time() extraction here would silently drop the day-rollover
+        # and render as e.g. 00:50 on the check-in's own date, reading as "very early that
+        # morning" when it really means "very late that night" (2026-09-02, per Thomas - a real
+        # bug, not a deliberate all-day/no-buffer fallback). Map into the last hour of the
+        # correct date instead: overflow-minutes-past-midnight becomes minutes-past-23:00,
+        # capped at 23:59 for buffers large enough to overflow by more than an hour (Lisbon's can
+        # be, at up to 270 minutes) so it always lands within Thomas's stated 23:00-23:59 window.
+        overflow_minutes = combined.hour * 60 + combined.minute
+        computed = time(23, min(overflow_minutes, 59))
+    else:
+        computed = combined.time()
     return computed, False
 
 

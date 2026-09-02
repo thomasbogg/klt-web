@@ -18,27 +18,27 @@
 #checkins-calendar .fc-event {
     border: none;
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: 0.9rem;
     padding: 3px 5px;
     line-height: 1.25;
     border-radius: 4px;
 }
 
-/* FullCalendar's default 1.5em/30min timegrid scale is too short for a 3-part label (property
-   short name, guest first+last name, calculated ETA) to render without being clipped by the
-   event box's own height - the label wraps to 2 lines at typical week-view column widths, but
-   the box (sized off defaultTimedEventDuration below) was only ever tall enough for one. Scaling
-   the whole time axis up gives every event proportionally more room instead of just padding a
-   fixed box, which would still clip on longer guest names. */
+/* Was bumped to 3em (2026-09-02) to stop a 3-part label (property short name, guest name,
+   calculated ETA) from being clipped when it wrapped to 2 lines in narrow week-view columns, then
+   halved back toward the FullCalendar default once the calendar was widened to fill the viewport
+   (staff-checkins-page override above) - nudged up slightly from that halved value, alongside the
+   font-size bump just above, since 1.5em/20px read as too cramped once the width fix let most
+   labels fit on one line (2026-09-02, per Thomas). */
 #checkins-calendar .fc-timegrid-slot {
-    height: 3em;
+    height: 1.75em;
 }
 
 /* defaultTimedEventDuration (checkins_calendar.js) is deliberately kept short so unrelated
    arrivals a bit apart never falsely overlap - this just gives the resulting thin block a taller
    minimum render height so it reads clearly instead of as a sliver. */
 #checkins-calendar .fc-timegrid-event {
-    min-height: 40px;
+    min-height: 24px;
 }
 
 /* Task-type marker on key_box/welcome_visit tiles - see TASK_TYPE_ICON in checkins_calendar.js.

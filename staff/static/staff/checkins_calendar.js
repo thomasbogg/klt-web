@@ -99,6 +99,19 @@
             // blocks render with a real visual gap instead of sitting flush against each other
             // (which still reads as one touching/overlapping mass - 2026-08-28, per Thomas).
             defaultTimedEventDuration: '00:29',
+            // Nothing genuinely happens 00:00-05:00 (Google Calendar workflow never used those
+            // hours either, per Thomas) - a late-arrival ETA that would otherwise land there is
+            // now clamped into 23:00-23:59 of the correct date server-side (compute_arrival_eta
+            // in staff/utils.py), so there's nothing left to lose by hiding this range.
+            slotMinTime: '05:00:00',
+            // Without this, FullCalendar falls back to its default aspectRatio-based sizing
+            // (height = width / 1.35) whenever height/contentHeight aren't set - harmless at the
+            // old narrow width, but once the calendar was widened to fill the viewport
+            // (staff-checkins-page override in checkins_calendar.css) that formula started
+            // wanting more vertical space than 19 hours of slots actually need, leaving a large
+            // blank gap below the last real row (2026-09-02, per Thomas - confirmed via a local
+            // repro harness, not guessed). 'auto' sizes strictly off real content instead.
+            contentHeight: 'auto',
             allDaySlot: true,
             events: eventsUrl,
 
