@@ -4,6 +4,15 @@
     padding: 16px;
 }
 
+/* booking_detail.css's shared .staff-page caps every staff page at 1400px, which left this
+   7-day-wide calendar with a lot of dead space on wider viewports and narrower-than-necessary
+   day columns. Same class-combo/cascade-order override pattern as .staff-lookup-page there -
+   loaded after booking_detail.css, same specificity, wins on source order. Scoped to this page
+   only, not a change to the shared .staff-page rule itself. */
+.staff-checkins-page {
+    max-width: none;
+}
+
 #checkins-calendar .fc-event {
     border: none;
     cursor: pointer;
@@ -13,11 +22,21 @@
     border-radius: 4px;
 }
 
+/* FullCalendar's default 1.5em/30min timegrid scale is too short for a 3-part label (property
+   short name, guest first+last name, calculated ETA) to render without being clipped by the
+   event box's own height - the label wraps to 2 lines at typical week-view column widths, but
+   the box (sized off defaultTimedEventDuration below) was only ever tall enough for one. Scaling
+   the whole time axis up gives every event proportionally more room instead of just padding a
+   fixed box, which would still clip on longer guest names. */
+#checkins-calendar .fc-timegrid-slot {
+    height: 3em;
+}
+
 /* defaultTimedEventDuration (checkins_calendar.js) is deliberately kept short so unrelated
    arrivals a bit apart never falsely overlap - this just gives the resulting thin block a taller
    minimum render height so it reads clearly instead of as a sliver. */
 #checkins-calendar .fc-timegrid-event {
-    min-height: 26px;
+    min-height: 40px;
 }
 
 /* Task-type marker on key_box/welcome_visit tiles - see TASK_TYPE_ICON in checkins_calendar.js.
