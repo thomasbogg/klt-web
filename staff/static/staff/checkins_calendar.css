@@ -11,6 +11,8 @@
    only, not a change to the shared .staff-page rule itself. */
 .staff-checkins-page {
     max-width: none;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 #checkins-calendar .fc-event {
