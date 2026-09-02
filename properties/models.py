@@ -192,22 +192,38 @@ class ManagementCompany(models.Model):
     # turnover. See staff/utils.py::sync_cleaning_tasks_for_booking for how it's actually applied.
     freshen_after_days = models.PositiveSmallIntegerField(null=True, blank=True)
     # Unlike the operational fields above, these two always have a real value rather than "not
-    # specified" - the check-ins calendar (staff/utils.py::compute_arrival_eta) falls back to
-    # standard_checkin_time to place an arrival with no real ETA at a sensible clock time instead
-    # of the all-day band, so a null here would just push the ambiguity somewhere else.
+    # specified" - the check-ins calendar (staff/utils.py::compute_arrival_eta, via
+    # _standard_checkin_time) falls back to standard_checkin_time to place an arrival with no real
+    # ETA at a sensible clock time instead of the all-day band, so a null here would just push the
+    # ambiguity somewhere else. Read off a property's cleaning_company there, not booking_company
+    # (2026-09-02, per Thomas, fixed alongside the same cleaning-vs-booking-company mixup on
+    # checkins_on_calendar above) - the cleaning company is who actually performs the meet &
+    # greet, so it's their standard time that applies.
     # standard_checkout_time has no consumer yet (no departure-side calendar exists), added ahead
     # of that per Thomas, 2026-08-28.
     standard_checkin_time = models.TimeField(default=time(14, 0))
     standard_checkout_time = models.TimeField(default=time(10, 0))
-    # Per-company on/off switch for whether a property under this company's cleaning/booking
-    # management generates CleaningTask/Checkin rows at all (staff/utils.py::
-    # sync_cleaning_tasks_for_booking, sync_freshen_tasks_for_property, sync_checkins_for_booking)
-    # - lets a company that manages its own cleaning/check-ins separately (2026-08-28, per Thomas)
-    # stay off those calendars entirely, rather than cluttering them with tasks nobody here acts
-    # on. Default True preserves today's behaviour (every property currently appears) for every
-    # existing company. Only consulted when a company is actually set (Property.cleaning_company/
-    # booking_company is nullable) - an untracked property is unaffected either way, same as every
-    # other operational field above. Toggling this doesn't retroactively clean up or backfill
+    # Per-company on/off switch for whether a property under this company's CLEANING management
+    # generates CleaningTask/Checkin rows at all (staff/utils.py::sync_cleaning_tasks_for_booking,
+    # sync_freshen_tasks_for_property, sync_checkins_for_booking) - lets a company that manages its
+    # own cleaning/check-ins separately (2026-08-28, per Thomas) stay off those calendars entirely,
+    # rather than cluttering them with tasks nobody here acts on.
+    #
+    # Both fields are checked against a property's cleaning_company specifically, never its
+    # booking_company - including checkins_on_calendar, despite the "check-ins" name. This is
+    # deliberate, not a naming accident: the cleaning company is who actually performs the meet &
+    # greet in practice (2026-09-02, per Thomas), and the whole check-ins calendar exists to
+    # schedule that meet & greet - it has to follow whoever does it, not whoever books the stay.
+    # sync_checkins_for_booking() originally checked booking_company instead (2026-08-28) - a real
+    # bug, silently inert on any property whose booking and cleaning companies differ, fixed
+    # 2026-09-02. If a property's booking_company and cleaning_company are different companies,
+    # only the cleaning_company's checkins_on_calendar value matters; the booking_company's own
+    # value (if it even has one set) is never consulted for this.
+    #
+    # Default True preserves today's behaviour (every property currently appears) for every
+    # existing company. Only consulted when a company is actually set (Property.cleaning_company
+    # is nullable) - an untracked property is unaffected either way, same as every other
+    # operational field above. Toggling this doesn't retroactively clean up or backfill
     # already-existing task rows - re-run the sync_cleaning_tasks/sync_checkins management commands
     # to reconcile, same as any other operational-setting change here.
     cleans_on_calendar = models.BooleanField(default=True)

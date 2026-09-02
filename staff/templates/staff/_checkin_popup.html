@@ -57,7 +57,7 @@
             Deposit collected
         </label>
         {% else %}
-        <p class="staff-empty">{% if deposit_waived_by_platform %}Not required - this platform doesn't take security deposits.{% elif deposit_waived_by_country %}Not required - guest's country of residence is outside the UK/EU.{% else %}Not required for a returning guest.{% endif %}</p>
+        <p class="staff-empty">Not required. Adjust on the <a href="{% url 'staff:booking_detail' reference=booking.reference %}">booking's page</a> if this is wrong.</p>
         {% endif %}
     </fieldset>
     {% else %}

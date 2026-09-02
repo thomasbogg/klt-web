@@ -1148,6 +1148,24 @@ class FreshenTaskSyncTests(TestCase):
         self.assertEqual(task.status, 'pending')
         self.assertEqual(task.date, later.arrival_date - timedelta(days=1))
 
+    def test_owner_departure_with_no_clean_needed_counts_as_last_clean(self):
+        # Real bug, fixed 2026-09-02: Departure.clean=False on an owner's own stay means "no clean
+        # needed at this changeover", not "unknown/dirty" - sync_cleaning_tasks_for_booking() never
+        # creates a CleaningTask row for a clean=False departure, so without property_last_clean_
+        # before() also counting it directly, this departure was invisible and the gap calculation
+        # fell back to whatever real clean predated the owner's whole stay - however long that was.
+        owner_stay = Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=self.baseline - timedelta(days=60), departure_date=self.baseline,
+            is_owner=True, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Departure.objects.create(booking=owner_stay, clean=False)
+        self.assertFalse(CleaningTask.objects.filter(booking=owner_stay).exists())
+
+        later = self._make_booking(self.baseline, self.baseline + timedelta(days=7))
+        self.assertFalse(CleaningTask.objects.filter(booking=later, task_type='freshen').exists())
+
     def test_gap_below_threshold_creates_no_freshen_task(self):
         self._seed_last_clean()
         later = self._make_booking(self.baseline + timedelta(days=9), self.baseline + timedelta(days=16))
@@ -3296,7 +3314,20 @@ class ComputeArrivalEtaTests(TestCase):
 
     def test_falls_back_to_property_company_standard_checkin_time_when_set(self):
         company = ManagementCompany.objects.create(name='ETA Co', standard_checkin_time=time(16, 30))
-        self.property.booking_company = company
+        self.property.cleaning_company = company
+        self.property.save()
+        computed, is_all_day = compute_arrival_eta(self.booking)
+        self.assertFalse(is_all_day)
+        self.assertEqual(computed, time(16, 30))
+
+    def test_standard_checkin_time_fallback_reads_cleaning_company_not_booking_company(self):
+        # Real bug, fixed 2026-09-02: the cleaning company is who actually performs the meet &
+        # greet, so its standard_checkin_time is what should apply - the booking company's own
+        # value (if it even has one set) must not be consulted for this.
+        booking_co = ManagementCompany.objects.create(name='Booking Only ETA Co', standard_checkin_time=time(11, 0))
+        cleaning_co = ManagementCompany.objects.create(name='Cleaning Only ETA Co', standard_checkin_time=time(16, 30))
+        self.property.booking_company = booking_co
+        self.property.cleaning_company = cleaning_co
         self.property.save()
         computed, is_all_day = compute_arrival_eta(self.booking)
         self.assertFalse(is_all_day)
@@ -3404,14 +3435,14 @@ class CheckinSyncTests(TestCase):
 
     def test_checkins_on_calendar_false_creates_no_checkin_rows(self):
         company = make_management_company(name='No Checkin Calendar Co', checkins_on_calendar=False)
-        self.property.booking_company = company
+        self.property.cleaning_company = company
         self.property.save()
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
         self.assertFalse(Checkin.objects.filter(booking=self.booking).exists())
 
     def test_turning_checkins_on_calendar_off_removes_pending_rows_on_next_sync(self):
         company = make_management_company(name='No Checkin Calendar Co 2', checkins_on_calendar=True)
-        self.property.booking_company = company
+        self.property.cleaning_company = company
         self.property.save()
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
         self.assertTrue(Checkin.objects.filter(booking=self.booking).exists())
@@ -3423,7 +3454,7 @@ class CheckinSyncTests(TestCase):
 
     def test_checkins_on_calendar_false_does_not_remove_a_done_row(self):
         company = make_management_company(name='No Checkin Calendar Co 3', checkins_on_calendar=True)
-        self.property.booking_company = company
+        self.property.cleaning_company = company
         self.property.save()
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
         checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
@@ -3436,11 +3467,33 @@ class CheckinSyncTests(TestCase):
         checkin.refresh_from_db()
         self.assertEqual(checkin.status, 'done')
 
-    def test_no_booking_company_is_unaffected_by_checkins_on_calendar(self):
-        # Property.booking_company is None here (never set) - the flag only applies when a
+    def test_no_cleaning_company_is_unaffected_by_checkins_on_calendar(self):
+        # Property.cleaning_company is None here (never set) - the flag only applies when a
         # company is actually tracked.
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
         self.assertTrue(Checkin.objects.filter(booking=self.booking, task_type='arrival').exists())
+
+    def test_checkins_on_calendar_is_checked_against_cleaning_company_not_booking_company(self):
+        # Real bug, fixed 2026-09-02: the cleaning company is who actually performs the meet &
+        # greet, so that's whose checkins_on_calendar has to gate this - not the booking company,
+        # even though "checkins" sounds booking-related. A booking company with the flag off must
+        # NOT suppress checkins if a different cleaning company (flag on) is on the same property.
+        booking_co = make_management_company(name='Booking Only Co', checkins_on_calendar=False)
+        cleaning_co = make_management_company(name='Cleaning Only Co', checkins_on_calendar=True)
+        self.property.booking_company = booking_co
+        self.property.cleaning_company = cleaning_co
+        self.property.save()
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        self.assertTrue(Checkin.objects.filter(booking=self.booking, task_type='arrival').exists())
+
+    def test_checkins_on_calendar_off_on_cleaning_company_wins_even_if_booking_company_is_on(self):
+        booking_co = make_management_company(name='Booking Only Co 2', checkins_on_calendar=True)
+        cleaning_co = make_management_company(name='Cleaning Only Co 2', checkins_on_calendar=False)
+        self.property.booking_company = booking_co
+        self.property.cleaning_company = cleaning_co
+        self.property.save()
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        self.assertFalse(Checkin.objects.filter(booking=self.booking).exists())
 
     def test_dragging_a_time_survives_an_unrelated_resync(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
@@ -3659,73 +3712,32 @@ class CheckinCalendarEndpointTests(TestCase):
         self.assertIn('+351911111111', html)
         self.assertIn('Flight to Faro', html)
 
-    def test_detail_view_hides_deposit_for_a_returning_guest(self):
-        past_booking = Booking.objects.create(
-            property=self.property, guest=self.guest, arrival_date=self.start - timedelta(days=100),
-            departure_date=self.start - timedelta(days=93), is_owner=False,
-            enquiry_status='Booking confirmed', enquiry_source='Website',
-            adults=2, children=0, babies=0, last_updated=timezone.now(),
-        )
+    def test_detail_view_shows_deposit_when_charge_security_is_set(self):
+        # Charge.security is the actual source of truth (see its own docstring, bookings/
+        # models.py) - the popup just reads it directly, no live recomputation any more.
+        Charge.objects.create(booking=self.booking, security=Decimal('200.00'))
         self.client.login(username='checkinstaffer', password='pw')
         response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
         html = response.json()['popup_html']
-        self.assertIn('Not required for a returning guest', html)
+        self.assertIn('due', html)
 
-    def test_detail_view_hides_deposit_when_platform_does_not_take_them(self):
-        Platform.objects.get_or_create(name='Airbnb', defaults={'take_security_deposits': False})
-        self.booking.enquiry_source = 'Airbnb'
-        self.booking.save(update_fields=['enquiry_source'])
+    def test_detail_view_hides_deposit_when_charge_security_is_zero(self):
+        # Staff (or create_booking()'s own one-time waiver-aware calculation) set this to 0 -
+        # that's authoritative, whatever the reason was.
+        Charge.objects.create(booking=self.booking, security=Decimal('0.00'))
         self.client.login(username='checkinstaffer', password='pw')
         response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
         html = response.json()['popup_html']
-        self.assertIn("doesn't take security deposits", html)
+        self.assertIn('Not required', html)
         self.assertNotIn('due', html)
 
-    def test_detail_view_shows_deposit_when_platform_does_take_them(self):
-        platform, _ = Platform.objects.get_or_create(name='Airbnb')
-        platform.take_security_deposits = True
-        platform.save()
-        self.booking.enquiry_source = 'Airbnb'
-        self.booking.save(update_fields=['enquiry_source'])
+    def test_detail_view_hides_deposit_when_there_is_no_charge_at_all(self):
+        # e.g. an owner's own self-booking (create_owner_booking()) never gets a Charge row.
         self.client.login(username='checkinstaffer', password='pw')
         response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
         html = response.json()['popup_html']
-        self.assertIn('due', html)
-
-    def test_detail_view_shows_deposit_for_an_unrecognised_source(self):
-        # enquiry_source 'Website' (a direct booking) never matches a Platform by name, so the
-        # platform waiver simply doesn't apply - same as today's behaviour before this feature.
-        self.client.login(username='checkinstaffer', password='pw')
-        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
-        html = response.json()['popup_html']
-        self.assertIn('due', html)
-
-    def test_detail_view_hides_deposit_for_a_guest_outside_uk_eu(self):
-        self.guest.country = 'US'
-        self.guest.save(update_fields=['country'])
-        self.client.login(username='checkinstaffer', password='pw')
-        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
-        html = response.json()['popup_html']
-        self.assertIn('outside the UK/EU', html)
+        self.assertIn('Not required', html)
         self.assertNotIn('due', html)
-
-    def test_detail_view_shows_deposit_for_a_guest_inside_uk_eu(self):
-        self.guest.country = 'FR'
-        self.guest.save(update_fields=['country'])
-        self.client.login(username='checkinstaffer', password='pw')
-        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
-        html = response.json()['popup_html']
-        self.assertIn('due', html)
-
-    def test_detail_view_shows_deposit_for_a_guest_with_no_country_on_record(self):
-        # Unknown isn't the same as confirmed-international - see compute_deposit_waiver's own
-        # docstring. self.guest.country defaults to unset in setUp, so this is really just
-        # confirming the baseline case stays unwaived.
-        self.assertFalse(self.guest.country)
-        self.client.login(username='checkinstaffer', password='pw')
-        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': self.checkin.pk}))
-        html = response.json()['popup_html']
-        self.assertIn('due', html)
 
     def test_detail_view_shows_key_box_popup_content(self):
         arrival = self.booking.arrival

@@ -243,7 +243,7 @@
                             <input type="text" class="staff-input" value="{{ subtotal|floatformat:2 }}" readonly>
                         </label>
                         <label class="staff-field">Security Charge
-                            <input type="text" name="security" form="booking-detail-form" class="staff-input" value="{{ charge.security|default:'' }}">
+                            <input type="text" name="security" form="booking-detail-form" class="staff-input" value="{{ charge.security|default_if_none:'' }}">
                         </label>
                     </div>
                     {% else %}

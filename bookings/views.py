@@ -19,7 +19,7 @@ from bookings.models import (
     TouristTax, TravelMethod, WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
-    FLIGHT_NUMBER_HINT, booking_confirmation_context, cancel_booking_hold, compute_deposit_waiver,
+    FLIGHT_NUMBER_HINT, booking_confirmation_context, cancel_booking_hold,
     compute_tourist_tax, extras_summary, guest_counts_by_age, mid_stay_clean_window,
     parsed_arrival_departure_time, parsed_travel_method, recalculate_balance_for_party,
     recalculate_costs_for_party, reservation_retry_url, valid_flight_number,
@@ -649,12 +649,15 @@ class BookingDetailsView(BookingFormMixin, View):
             charge.discount_total = new_costs['discount_total']
             charge.extra_guest_total = new_costs['extra_guest_total']
             charge.admin = new_costs['admin_fee']
-            charge.security = new_costs['security_deposit']
+            # security deliberately NOT touched here - it's a one-time waiver-aware calculation
+            # at create_booking() time, staff-owned from then on (see compute_deposit_waiver()'s
+            # docstring, bookings/utils.py) - a party-size change must never silently reset a
+            # staff override back to the flat default.
             charge.due_at_booking = new_costs['due_at_booking']
             charge.due_at_balance = new_costs['due_at_balance']
             charge.balance_due_date = new_costs['balance_due_date']
             charge.save(update_fields=[
-                'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'security',
+                'basic_rental', 'discount_total', 'extra_guest_total', 'admin',
                 'due_at_booking', 'due_at_balance', 'balance_due_date',
             ])
 
@@ -806,10 +809,11 @@ class BookingBalanceDetailsView(BookingFormMixin, View):
             charge.discount_total = new_costs['discount_total']
             charge.extra_guest_total = new_costs['extra_guest_total']
             charge.admin = new_costs['admin_fee']
-            charge.security = new_costs['security_deposit']
+            # security deliberately NOT touched here - see the equivalent comment in
+            # BookingDetailsView above.
             charge.due_at_balance = new_costs['due_at_balance']
             charge.save(update_fields=[
-                'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'security', 'due_at_balance',
+                'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'due_at_balance',
             ])
 
             # A price change after a Revolut checkout URL already exists (guest went balance ->
@@ -1030,9 +1034,9 @@ def _manage_nav_context(booking, active_section):
             and booking.enquiry_source not in env_settings.PLATFORMS
             and booking.arrival_date > timezone.now().date()
         ),
-        # Only shown for a booking that actually needs one - see compute_deposit_waiver's own
-        # docstring for the three independent reasons a deposit might not apply.
-        'show_security_deposit': not cancelled and not compute_deposit_waiver(booking)['waived'],
+        # Only shown for a booking that actually has a deposit owed - Charge.security is the
+        # actual source of truth (see its own docstring, bookings/models.py), not recomputed here.
+        'show_security_deposit': not cancelled and bool(getattr(booking, 'charges', None) and booking.charges.security),
         # Always shown once not cancelled (same style as show_security_deposit) - the page itself
         # handles "no party yet"/"nothing owed"/"already paid", no need to hide the link for those.
         'show_tourist_tax': not cancelled,
@@ -1161,10 +1165,11 @@ class BookingManageGuestsView(BookingFormMixin, View):
             charge.discount_total = new_costs['discount_total']
             charge.extra_guest_total = new_costs['extra_guest_total']
             charge.admin = new_costs['admin_fee']
-            charge.security = new_costs['security_deposit']
+            # security deliberately NOT touched here - see the equivalent comment in
+            # BookingDetailsView above.
             charge.due_at_balance = new_costs['due_at_balance']
             charge.save(update_fields=[
-                'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'security', 'due_at_balance',
+                'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'due_at_balance',
             ])
 
             # Same reason BookingBalanceDetailsView clears this - a stale checkout URL would
@@ -1768,18 +1773,19 @@ class BookingManageDepositView(View):
     details for the cash-deposit refund by bank transfer, replicating the legacy
     klt-management-software 'Account details' popup's fields per Thomas's reference screenshot
     (2026-08-29). Reachable as soon as the deposit is paid (same is_paid() gate as Guest
-    Registrations/Arrival & Departure) and only for a booking whose deposit isn't waived
-    (bookings/utils.py::compute_deposit_waiver) - _manage_nav_context()'s show_security_deposit
-    hides the sidebar link too, this is the server-side backstop for someone hitting the URL
-    directly. No edit cutoff - a guest can come back and correct these any time before departure,
-    same reasoning as Arrival & Departure/Guest Registrations."""
+    Registrations/Arrival & Departure) and only for a booking that actually has a deposit owed
+    (Charge.security - see its own docstring, bookings/models.py) - _manage_nav_context()'s
+    show_security_deposit hides the sidebar link too, this is the server-side backstop for
+    someone hitting the URL directly. No edit cutoff - a guest can come back and correct these
+    any time before departure, same reasoning as Arrival & Departure/Guest Registrations."""
     template_name = 'bookings/manage_deposit.html'
 
     def _get_gated_booking(self, reference):
         booking = Booking.objects.filter(reference=reference).first()
         if booking is None:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking) or compute_deposit_waiver(booking)['waived']:
+        charge = getattr(booking, 'charges', None)
+        if not is_paid(booking) or not charge or not charge.security:
             return booking, redirect('bookings:details', reference=reference)
         return booking, None
 
@@ -1787,7 +1793,7 @@ class BookingManageDepositView(View):
         context = _manage_nav_context(booking, 'deposit')
         context.update({
             'booking': booking, 'details': details,
-            'security_deposit_amount': BookingSettings.load().security_deposit_amount,
+            'security_deposit_amount': booking.charges.security,
         })
         return context
 

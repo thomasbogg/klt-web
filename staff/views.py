@@ -2758,18 +2758,15 @@ class StaffCheckinDetailView(View):
         booking = checkin.booking
         context = {'checkin': checkin, 'booking': booking}
         if checkin.task_type == 'arrival':
-            # Three independent waivers, any one is enough to zero the deposit - see
-            # bookings/utils.py::compute_deposit_waiver's own docstring for what each one means
-            # and why an unknown guest country never silently waives a deposit. Computed live on
-            # every popup open, not stored anywhere, so this applies to every booking - past or
-            # future - the moment any of these flags/fields changes, with nothing to backfill.
-            deposit_waiver = compute_deposit_waiver(booking)
+            # Charge.security is the actual source of truth for what's owed (see its own
+            # docstring, bookings/models.py) - read directly, not recomputed here. A booking with
+            # no Charge at all (an owner's own self-booking, created via create_owner_booking(),
+            # which never gets one - "an owner stay is never charged") has nothing owed either.
+            charge = getattr(booking, 'charges', None)
             context.update({
                 'arrival': getattr(booking, 'arrival', None),
                 'extras': extras_summary(booking),
-                'deposit_amount': None if deposit_waiver['waived'] else BookingSettings.load().security_deposit_amount,
-                'deposit_waived_by_platform': deposit_waiver['by_platform'],
-                'deposit_waived_by_country': deposit_waiver['by_country'],
+                'deposit_amount': charge.security if charge and charge.security else None,
             })
         popup_html = render_to_string('staff/_checkin_popup.html', context)
         return JsonResponse({'popup_html': popup_html})

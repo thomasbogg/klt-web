@@ -775,6 +775,46 @@ class CreateBookingTests(TestCase):
         self.assertEqual(charge.extra_guest_total, Decimal('75.00'))
         self.assertEqual(charge.total_rental, Decimal('575.00'))
 
+    def test_charge_security_defaults_to_the_standard_deposit_amount(self):
+        # One-time, waiver-aware calculation at creation - see Charge.security's own docstring
+        # (bookings/models.py). No waiver condition applies here, so it's just the standard amount.
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+        )
+        self.assertEqual(booking.charges.security, Decimal('200.00'))
+
+    def test_charge_security_is_zero_for_a_guest_outside_uk_eu(self):
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        guest_data = dict(self.guest_data, country='US')
+        booking = create_booking(
+            self.property, guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+        )
+        self.assertEqual(booking.charges.security, Decimal('0.00'))
+
+    def test_charge_security_is_zero_for_a_returning_guest(self):
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        past_start = date.today() - timedelta(days=100)
+        guest = Guest.objects.create(first_name='Nuno', last_name='Pereira', email=self.guest_data['email'])
+        Booking.objects.create(
+            property=self.property, guest=guest, arrival_date=past_start,
+            departure_date=past_start + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+        )
+        self.assertEqual(booking.charges.security, Decimal('0.00'))
+
+
 
 class CreateOwnerBookingTests(TestCase):
     """bookings/utils.py::guest_for_owner()/create_owner_booking() - the Owner Suite's own
@@ -932,6 +972,21 @@ class BookingDetailsViewTests(TestCase):
         self.booking.refresh_from_db()
         self.assertEqual(self.booking.adults, 3)
         self.assertEqual(self.booking.children, 0)
+
+    def test_post_confirmed_party_change_does_not_reset_security_deposit(self):
+        # Real regression guard: Charge.security is staff-owned from creation onward (see its own
+        # docstring, bookings/models.py) - a guest confirming a party-size/price change must never
+        # silently reset a waived/adjusted deposit back to the flat default.
+        self.charge.security = Decimal('0.00')
+        self.charge.save(update_fields=['security'])
+        self._set_session()
+        response = self.client.post(self.url, self._post_data(
+            ['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 15], confirmed=True,
+        ))
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.total_rental, Decimal('770.00'))
+        self.assertEqual(self.charge.security, Decimal('0.00'))
 
     def test_post_against_expired_hold_is_rejected(self):
         self._set_session()
@@ -2765,7 +2820,8 @@ class ComputeDepositWaiverTests(TestCase):
     def test_not_waived_by_default(self):
         result = compute_deposit_waiver(self.booking)
         self.assertEqual(result, {
-            'waived': False, 'by_platform': False, 'by_country': False, 'by_returning_guest': False,
+            'waived': False, 'by_owner_booking': False, 'by_platform': False, 'by_country': False,
+            'by_returning_guest': False,
         })
 
     def test_waived_for_a_guest_outside_uk_eu(self):
@@ -2791,6 +2847,26 @@ class ComputeDepositWaiverTests(TestCase):
         self.assertTrue(result['by_platform'])
         self.assertFalse(result['by_country'])
 
+    def test_waived_for_an_owner_booking(self):
+        self.booking.is_owner = True
+        self.booking.save(update_fields=['is_owner'])
+        result = compute_deposit_waiver(self.booking)
+        self.assertTrue(result['waived'])
+        self.assertTrue(result['by_owner_booking'])
+
+    def test_owner_booking_waiver_takes_priority_over_platform_and_country_waivers(self):
+        Platform.objects.filter(name='Airbnb').update(take_security_deposits=False)
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.is_owner = True
+        self.booking.save(update_fields=['enquiry_source', 'is_owner'])
+        self.guest.country = 'US'
+        self.guest.save(update_fields=['country'])
+        result = compute_deposit_waiver(self.booking)
+        self.assertTrue(result['waived'])
+        self.assertTrue(result['by_owner_booking'])
+        self.assertFalse(result['by_platform'])
+        self.assertFalse(result['by_country'])
+
 
 class BookingManageDepositViewTests(TestCase):
     def setUp(self):
@@ -2804,9 +2880,10 @@ class BookingManageDepositViewTests(TestCase):
             adults=2, children=0, babies=0, last_updated=timezone.now(),
         )
         Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
-        Charge.objects.create(
+        self.charge = Charge.objects.create(
             booking=self.booking, basic_rental=Decimal('300.00'), admin=Decimal('16.50'),
             due_at_booking=Decimal('79.13'), due_at_balance=Decimal('237.37'), currency='EUR',
+            security=Decimal('200.00'),
         )
         self.url = reverse('bookings:manage_deposit', kwargs={'reference': self.booking.reference})
         self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
@@ -2819,8 +2896,10 @@ class BookingManageDepositViewTests(TestCase):
         self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
 
     def test_get_redirects_to_details_when_deposit_is_waived(self):
-        self.guest.country = 'US'
-        self.guest.save(update_fields=['country'])
+        # Charge.security is the actual source of truth (see its own docstring, bookings/
+        # models.py) - not guest.country, which only matters at create_booking() time.
+        self.charge.security = Decimal('0.00')
+        self.charge.save(update_fields=['security'])
         response = self.client.get(self.url)
         self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
 
@@ -2842,8 +2921,8 @@ class BookingManageDepositViewTests(TestCase):
         self.assertFalse(details.is_blank())
 
     def test_sidebar_link_hidden_when_deposit_waived(self):
-        self.guest.country = 'US'
-        self.guest.save(update_fields=['country'])
+        self.charge.security = Decimal('0.00')
+        self.charge.save(update_fields=['security'])
         response = self.client.get(self.manage_hub_url)
         self.assertNotContains(response, 'Security Deposit')
 
@@ -2998,6 +3077,17 @@ class BookingManageGuestsViewTests(TestCase):
         self.assertRedirects(response, f"{self.url}?guests_saved=1", fetch_redirect_response=False)
         self.charge.refresh_from_db()
         self.assertEqual(self.charge.due_at_balance, Decimal('0'))
+
+    def test_confirmed_party_change_does_not_reset_security_deposit(self):
+        # Real regression guard: Charge.security is staff-owned from creation onward (see its own
+        # docstring, bookings/models.py) - a guest confirming a party-size change here must never
+        # silently reset a waived/adjusted deposit back to the flat default.
+        self.charge.security = Decimal('0.00')
+        self.charge.save(update_fields=['security'])
+        response = self.client.post(self.url, self._post_data(['Elena'], ['Costa'], [30], confirmed=True))
+        self.assertRedirects(response, f"{self.url}?guests_saved=1", fetch_redirect_response=False)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.security, Decimal('0.00'))
 
     def test_price_change_clears_a_stale_revolut_checkout_url(self):
         self.balance_payment.revolut_order_id = 'old-order-id'
@@ -3278,20 +3368,18 @@ class ConfirmationDetailsDisplayTests(TestCase):
         self.assertIn('all payments have been received', text)
         self.assertNotIn('your deposit has been received', text)
 
-    def test_non_returning_guest_sees_the_real_security_amount(self):
+    def test_charge_with_a_deposit_shows_the_real_security_amount(self):
         response = self.client.get(self.url)
         self.assertContains(response, '&euro;200.00')
-        self.assertNotContains(response, 'Not required for a returning guest')
+        self.assertNotContains(response, 'Not required')
 
-    def test_returning_guest_sees_the_waiver_message(self):
-        Booking.objects.create(
-            property=self.property, guest=self.guest, arrival_date=self.start - timedelta(days=300),
-            departure_date=self.start - timedelta(days=293), is_owner=False,
-            enquiry_status='Booking confirmed', enquiry_source='Website',
-            adults=2, children=0, babies=0, last_updated=timezone.now(),
-        )
+    def test_charge_with_a_waived_deposit_shows_the_waiver_message(self):
+        # Charge.security is the actual source of truth (see its own docstring, bookings/
+        # models.py) - not recomputed here from guest/booking state, just read directly.
+        self.charge.security = Decimal('0.00')
+        self.charge.save(update_fields=['security'])
         response = self.client.get(self.url)
-        self.assertContains(response, 'Not required for a returning guest')
+        self.assertContains(response, 'Not required')
 
 
 class ConfirmationDetailsBalanceDueRowTests(TestCase):
@@ -3504,7 +3592,14 @@ class BookingManageAmenitiesViewTests(TestCase):
         self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
 
     def test_shows_provided_amenities(self):
-        Amenity.objects.create(property=self.property, wifi=True, coffee_machine=True, pool=False)
+        # Property.save() auto-creates an Amenity row now (properties/models.py) - update the
+        # one that already exists rather than creating a second, which would violate the
+        # OneToOneField's uniqueness.
+        amenity = self.property.amenities
+        amenity.wifi = True
+        amenity.coffee_machine = True
+        amenity.pool = False
+        amenity.save()
         response = self.client.get(self.url)
         self.assertContains(response, 'WiFi')
         self.assertContains(response, 'Filter coffee machine')
@@ -3512,8 +3607,11 @@ class BookingManageAmenitiesViewTests(TestCase):
 
     def test_no_amenity_row_renders_without_error_or_side_effect(self):
         """A public bearer-link GET must never create data as a side effect - unlike the staff
-        detail page's own get_or_create(), a property with no Amenity row yet just shows an
-        empty section here."""
+        detail page's own get_or_create(), a property with no Amenity row shows an empty section
+        here. Property.save() auto-creates one for every new property now (properties/models.py),
+        so this deletes it explicitly to reconstruct the legacy state (a property saved before
+        that fix existed) rather than relying on it being the default."""
+        self.property.amenities.delete()
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.context['amenities'])
@@ -3521,7 +3619,9 @@ class BookingManageAmenitiesViewTests(TestCase):
 
     def test_shows_towel_line_items_scaled_by_guest_count(self):
         # setUp's booking has adults=2, no party list yet, so total_guests falls back to 2.
-        Amenity.objects.create(property=self.property, beach_towels_per_guest=0)
+        amenity = self.property.amenities
+        amenity.beach_towels_per_guest = 0
+        amenity.save()
         response = self.client.get(self.url)
         self.assertContains(response, '<li>2 Hand towels</li>', html=True)
         self.assertContains(response, '<li>2 Bath towels</li>', html=True)
@@ -3531,7 +3631,9 @@ class BookingManageAmenitiesViewTests(TestCase):
         self.assertEqual(response.context['active_section'], 'amenities')
 
     def test_towels_section_is_titled_towels_and_linen(self):
-        Amenity.objects.create(property=self.property, beach_towels_per_guest=0)
+        amenity = self.property.amenities
+        amenity.beach_towels_per_guest = 0
+        amenity.save()
         response = self.client.get(self.url)
         self.assertContains(response, 'Towels and Linen')
 
@@ -3554,8 +3656,9 @@ class BookingManageAmenitiesViewTests(TestCase):
         self.assertNotContains(response, 'All beds dressed in linen appropriate to the season')
 
     def test_towels_and_linen_section_shows_for_linen_alone_with_no_towel_items(self):
-        # No Amenity row at all (so towel_items is empty) - the section should still appear for
-        # the linen line on its own.
+        # setUp's Property.save() auto-creates an Amenity row with default field values (no
+        # towel-related fields touched here) - the section should still appear for the linen
+        # line on its own regardless.
         company = ManagementCompany.objects.create(name='Linen Only Co', linen_provided=True)
         self.property.cleaning_company = company
         self.property.save(update_fields=['cleaning_company'])

@@ -120,13 +120,22 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
         booking.full_clean()
         booking.save()
 
+        # One-time waiver-aware calculation, right here at first submission while guest.country/
+        # booking.is_owner/enquiry_source are all in their final initial state (2026-09-02, per
+        # Thomas) - Charge.security is the actual source of truth for what's owed at check-in from
+        # this point on, not a live recomputation. Nothing re-derives it after this (see the
+        # matching comments in bookings/views.py's party-size recompute views) - if a guest's
+        # circumstances change later (e.g. edits their country), that's on staff to notice and
+        # adjust directly on the Booking page, not something the system chases automatically.
+        security_deposit = Decimal('0.00') if compute_deposit_waiver(booking)['waived'] else costs['security_deposit']
+
         Charge.objects.create(
             booking=booking,
             basic_rental=pricing['basic_total'],
             discount_total=pricing['discount_total'],
             extra_guest_total=pricing['extra_guest_total'],
             admin=costs['admin_fee'],
-            security=costs['security_deposit'],
+            security=security_deposit,
             due_at_booking=costs['due_at_booking'],
             due_at_balance=costs['due_at_balance'],
             balance_due_date=costs['balance_due_date'],
@@ -463,30 +472,39 @@ def has_completed_previous_stay(guest, exclude_booking_id=None):
 
 
 def compute_deposit_waiver(booking):
-    """Whether this booking's cash security deposit is waived, and why - the single source of
-    truth for all three independent conditions (any one is enough): a returning guest
-    (has_completed_previous_stay), a platform whose own terms mean we don't take one directly
-    (properties.models.Platform.take_security_deposits=False, matched by booking.enquiry_source -
-    2026-08-28, per Thomas), or a guest whose country of residence is outside the UK/EU
-    (env_settings.UK_EU_COUNTRY_CODES - 2026-08-29, per Thomas: the cash-in/bank-transfer-back
-    process has extra cost/hassle for those). A guest with no country on record (every Guest
-    created before that field existed) is treated as NOT outside the UK/EU - unknown isn't the
-    same as confirmed-international, so this never silently waives a deposit that would otherwise
-    be taken. Computed live on every call, never stored anywhere, so this applies to every
-    booking - past or future - the moment any of these flags/fields changes, with nothing to
-    backfill. Shared by booking_confirmation_context() (guest-facing), _manage_nav_context()'s
-    show_security_deposit gate, and staff/views.py::StaffCheckinDetailView (staff-facing)."""
+    """Whether this booking's cash security deposit should be waived, and why - a ONE-TIME
+    calculation, used only by create_booking() to seed Charge.security at the moment a guest first
+    submits their details (2026-09-02, per Thomas - see Charge.security's own docstring,
+    bookings/models.py, for the full design: that field is the actual source of truth for what's
+    owed from that point on, never re-derived, staff-editable directly for anything this function
+    can't catch). NOT used for live display anywhere - the check-ins popup, the guest-facing
+    confirmation page, and the manage-booking sidebar's deposit gate all read Charge.security
+    directly instead of calling this again.
+
+    Four independent conditions, any one is enough:
+    - The property owner themself or a family/friend of theirs staying (booking.is_owner) - an
+      owner booking is never charged a deposit, full stop.
+    - A returning guest (has_completed_previous_stay).
+    - A platform whose own terms mean we don't take one directly (properties.models.Platform.
+      take_security_deposits=False, matched by booking.enquiry_source - 2026-08-28, per Thomas).
+    - A guest whose country of residence is outside the UK/EU (env_settings.UK_EU_COUNTRY_CODES -
+      2026-08-29, per Thomas: the cash-in/bank-transfer-back process has extra cost/hassle for
+      those). A guest with no country on record is treated as NOT outside the UK/EU - unknown
+      isn't the same as confirmed-international, so this never silently waives a deposit that
+      would otherwise be taken."""
     from properties.models import Platform
 
+    by_owner_booking = booking.is_owner
     platform = Platform.objects.filter(name=booking.enquiry_source).first()
     by_platform = platform is not None and not platform.take_security_deposits
     by_returning_guest = has_completed_previous_stay(booking.guest, exclude_booking_id=booking.pk)
     guest_country = booking.guest.country
     by_country = bool(guest_country) and guest_country.code not in env_settings.UK_EU_COUNTRY_CODES
     return {
-        'waived': by_platform or by_returning_guest or by_country,
-        'by_platform': by_platform,
-        'by_country': by_country and not by_platform,
+        'waived': by_owner_booking or by_platform or by_returning_guest or by_country,
+        'by_owner_booking': by_owner_booking,
+        'by_platform': by_platform and not by_owner_booking,
+        'by_country': by_country and not by_platform and not by_owner_booking,
         'by_returning_guest': by_returning_guest,
     }
 
@@ -496,7 +514,6 @@ def booking_confirmation_context(booking):
     charge = booking.charges
     balance_payment = getattr(booking, 'balance_payment', None)
     cancelled = booking.enquiry_status == 'Cancelled by guest'  # mirrors views.py::is_cancelled()
-    deposit_waiver = compute_deposit_waiver(booking)
     # Deliberately keyed off the BalancePayment's own paid status, not 'balance_due' below - a
     # cancelled booking whose balance was genuinely paid before the cancellation should still show
     # that money as paid; 'balance_due' folds in "and not cancelled" for a different purpose (hiding
@@ -518,8 +535,9 @@ def booking_confirmation_context(booking):
         # Excludes a cancelled booking - there's nothing to pay toward a cancelled stay, even if
         # the balance was technically never collected.
         'balance_due': balance_payment is not None and balance_payment.status != 'paid' and not cancelled,
-        'returning_guest': deposit_waiver['by_returning_guest'],
-        'deposit_waived_by_country': deposit_waiver['by_country'],
+        # Charge.security is the actual source of truth for what's owed (see its own docstring,
+        # bookings/models.py) - not recomputed here, just read directly.
+        'deposit_due': bool(charge.security),
     }
 
 

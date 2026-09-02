@@ -426,8 +426,8 @@ class DepositBankDetails(models.Model):
     comes from. One per Booking, captured guest-facing via the Manage Booking hub's Security
     Deposit section (bookings/views.py::BookingManageDepositView, added 2026-08-29 per Thomas's
     reference screenshot of the legacy klt-management-software 'Account details' popup). Only
-    reachable for a booking whose deposit isn't waived (bookings/utils.py::
-    compute_deposit_waiver) - see that section's own docstring. get_or_create'd the first time the
+    reachable for a booking that actually has a deposit owed (Charge.security, see its own
+    docstring above) - see that section's own docstring. get_or_create'd the first time the
     guest visits, same lazy-creation pattern as GuestRegistration above; every field starts blank
     rather than defaulting to anything guessed, since a wrong bank detail is worse than an
     obviously-incomplete one. No validation beyond max_length - deliberately accepts whatever
@@ -609,6 +609,19 @@ class Charge(models.Model):
     discount_total = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     extra_guest_total = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     admin = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    # The actual source of truth for whether/how much cash security deposit is owed at check-in -
+    # not just a rental-charges line item (2026-09-02, per Thomas). Set once, waiver-aware, at
+    # create_booking() time (bookings/utils.py, via compute_deposit_waiver() - owner booking,
+    # returning guest, no-deposit platform, or non-UK/EU guest all zero it automatically at that
+    # point) using whatever the guest's own submitted details say at that moment. Deliberately
+    # NEVER re-derived after that - a party-size change (bookings/views.py's recalculate_costs_for_
+    # party/recalculate_balance_for_party call sites) explicitly leaves it alone, and nothing else
+    # recomputes it live. From creation onward, editing this field directly on the staff Booking
+    # page (including down to 0 to waive it) IS how staff make any needed adjustment - e.g. a
+    # genuinely returning guest who books under a different email, so has_completed_previous_
+    # stay() can't (and shouldn't try to) catch her automatically. Every consumer - the check-ins
+    # popup, the guest-facing confirmation page, and the manage-booking sidebar's deposit gate -
+    # reads this field directly rather than recomputing anything.
     security = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     security_method = models.CharField(max_length=100, blank=True, null=True)
 

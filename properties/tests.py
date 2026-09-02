@@ -410,52 +410,62 @@ class AmenityTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Towel Property', short_title='TOWELPROP')
 
+    def _set_amenities(self, **kwargs):
+        # Property.save() auto-creates an Amenity row now (properties/models.py) - update the one
+        # that already exists rather than Amenity.objects.create(), which would violate the
+        # OneToOneField's uniqueness.
+        amenities = self.property.amenities
+        for field, value in kwargs.items():
+            setattr(amenities, field, value)
+        amenities.save()
+        return amenities
+
     def test_towel_summary_leads_with_beach_towels_when_provided(self):
-        amenities = Amenity.objects.create(property=self.property)
+        amenities = self._set_amenities()
         self.assertEqual(amenities.towel_summary(), 'Bath and beach towels')
 
     def test_towel_summary_falls_back_to_hand_and_bath_without_beach_towels(self):
-        amenities = Amenity.objects.create(property=self.property, beach_towels_per_guest=0)
+        amenities = self._set_amenities(beach_towels_per_guest=0)
         self.assertEqual(amenities.towel_summary(), 'Hand and bath towels')
 
     def test_towel_summary_ignores_count_values_only_presence_matters(self):
-        amenities = Amenity.objects.create(
-            property=self.property, hand_towels_per_guest=5, bath_towels_per_guest=3, beach_towels_per_guest=2,
+        amenities = self._set_amenities(
+            hand_towels_per_guest=5, bath_towels_per_guest=3, beach_towels_per_guest=2,
         )
         self.assertEqual(amenities.towel_summary(), 'Bath and beach towels')
 
     def test_towel_summary_none_when_nothing_provided(self):
-        amenities = Amenity.objects.create(
-            property=self.property, hand_towels_per_guest=0, bath_towels_per_guest=0, beach_towels_per_guest=0,
+        amenities = self._set_amenities(
+            hand_towels_per_guest=0, bath_towels_per_guest=0, beach_towels_per_guest=0,
         )
         self.assertIsNone(amenities.towel_summary())
 
     def test_towel_line_items_scales_by_guest_count(self):
-        amenities = Amenity.objects.create(property=self.property)
+        amenities = self._set_amenities()
         self.assertEqual(
             amenities.towel_line_items(2),
             [(2, 'Hand towels'), (2, 'Bath towels'), (2, 'Beach towels')],
         )
 
     def test_towel_line_items_singular_noun_for_a_total_of_one(self):
-        amenities = Amenity.objects.create(property=self.property)
+        amenities = self._set_amenities()
         self.assertEqual(
             amenities.towel_line_items(1),
             [(1, 'Hand towel'), (1, 'Bath towel'), (1, 'Beach towel')],
         )
 
     def test_towel_line_items_omits_zero_count_type(self):
-        amenities = Amenity.objects.create(property=self.property, beach_towels_per_guest=0)
+        amenities = self._set_amenities(beach_towels_per_guest=0)
         self.assertEqual(amenities.towel_line_items(3), [(3, 'Hand towels'), (3, 'Bath towels')])
 
     def test_towel_line_items_empty_when_nothing_provided(self):
-        amenities = Amenity.objects.create(
-            property=self.property, hand_towels_per_guest=0, bath_towels_per_guest=0, beach_towels_per_guest=0,
+        amenities = self._set_amenities(
+            hand_towels_per_guest=0, bath_towels_per_guest=0, beach_towels_per_guest=0,
         )
         self.assertEqual(amenities.towel_line_items(4), [])
 
     def test_full_feature_list_includes_only_true_fields_in_declared_order(self):
-        amenities = Amenity.objects.create(property=self.property, wifi=True, pool=True, coffee_machine=True)
+        amenities = self._set_amenities(wifi=True, pool=True, coffee_machine=True)
         # wifi and pool are both True by model default too, but only the fields explicitly set
         # True here (plus their defaults) should show, and 'WiFi' - first in GUEST_FEATURE_LIST -
         # must come before 'Pool' regardless of the order they were set in this call.
@@ -465,14 +475,14 @@ class AmenityTests(TestCase):
         self.assertLess(features.index('WiFi'), features.index('Filter coffee machine'))
 
     def test_full_feature_list_excludes_false_fields(self):
-        amenities = Amenity.objects.create(property=self.property, pool=False, barbecue=False)
+        amenities = self._set_amenities(pool=False, barbecue=False)
         features = amenities.full_feature_list()
         self.assertNotIn('Pool', features)
         self.assertNotIn('Barbecue', features)
 
     def test_full_feature_list_drops_generic_air_conditioning_when_room_specific_is_set(self):
-        amenities = Amenity.objects.create(
-            property=self.property, air_conditioning=True, air_conditioning_in_bedrooms=True,
+        amenities = self._set_amenities(
+            air_conditioning=True, air_conditioning_in_bedrooms=True,
             air_conditioning_in_living_room=False,
         )
         features = amenities.full_feature_list()
@@ -480,16 +490,16 @@ class AmenityTests(TestCase):
         self.assertIn('Air conditioning in bedrooms', features)
 
     def test_full_feature_list_drops_generic_heating_when_either_room_specific_is_set(self):
-        amenities = Amenity.objects.create(
-            property=self.property, heating=True, heating_in_bedrooms=False, heating_in_living_room=True,
+        amenities = self._set_amenities(
+            heating=True, heating_in_bedrooms=False, heating_in_living_room=True,
         )
         features = amenities.full_feature_list()
         self.assertNotIn('Heating', features)
         self.assertIn('Heating in living room', features)
 
     def test_full_feature_list_keeps_generic_air_conditioning_when_no_room_specific_is_set(self):
-        amenities = Amenity.objects.create(
-            property=self.property, air_conditioning=True,
+        amenities = self._set_amenities(
+            air_conditioning=True,
             air_conditioning_in_bedrooms=False, air_conditioning_in_living_room=False,
         )
         features = amenities.full_feature_list()

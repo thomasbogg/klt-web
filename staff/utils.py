@@ -306,25 +306,46 @@ def sync_cleaning_tasks_for_booking(booking):
 
 
 def property_last_clean_before(property, booking):
-    """The property's most recent recorded clean on or before booking.arrival_date - any
-    CleaningTask type, not just 'done', across the property's other active (non-CLOSED_STATUSES,
-    non-dismissed) bookings; this booking's own tasks are excluded since they can never be what
-    covers its own arrival (a turnover/mid-stay date is always later than its own arrival, and a
-    freshen task existing for this same booking would otherwise count itself as covering its own
-    gap on a re-sweep). "On or before", not strictly before: a same-day turnover is a normal,
-    covering clean (see cleaning_task_valid_range's docstring), not an uncovered gap. Shared by
-    sync_freshen_tasks_for_property(), cleaning_task_valid_range()'s freshen branch, and the
-    Freshen popup's "Last Clean" display (staff/views.py::StaffCleaningTaskDetailView) so all
-    three agree on what counts."""
+    """The property's most recent recorded clean on or before booking.arrival_date - the later of:
+
+    1. Any CleaningTask date, not just 'done', across the property's other active
+       (non-CLOSED_STATUSES, non-dismissed) bookings; this booking's own tasks are excluded since
+       they can never be what covers its own arrival (a turnover/mid-stay date is always later
+       than its own arrival, and a freshen task existing for this same booking would otherwise
+       count itself as covering its own gap on a re-sweep).
+    2. Any other active booking's departure_date where Departure.clean=False (2026-09-02, per
+       Thomas - a real gap found via an owner's own stay: Departure.clean=False means "no clean
+       needed at this changeover", for whatever reason - the owner tidied it themselves, staff
+       decided it wasn't warranted - not "unknown/dirty". sync_cleaning_tasks_for_booking() never
+       creates a CleaningTask row at all for a clean=False departure, so without this, such a
+       departure was invisible here and the gap calculation fell all the way back to whatever
+       real CleaningTask predated it - inflating the apparent gap by however long that occupancy
+       lasted and triggering a false-positive Freshen task on the very next arrival).
+
+    "On or before", not strictly before: a same-day turnover is a normal, covering clean (see
+    cleaning_task_valid_range's docstring), not an uncovered gap - same reasoning applies to a
+    same-day clean=False departure. Shared by sync_freshen_tasks_for_property(),
+    cleaning_task_valid_range()'s freshen branch, and the Freshen popup's "Last Clean" display
+    (staff/views.py::StaffCleaningTaskDetailView) so all three agree on what counts."""
+    from bookings.models import Booking
     from staff.models import CleaningTask
 
-    return CleaningTask.objects.filter(
+    last_task_date = CleaningTask.objects.filter(
         booking__property=property,
     ).exclude(
         booking__enquiry_status__in=CLOSED_STATUSES,
     ).exclude(status='dismissed').exclude(booking=booking).filter(
         date__lte=booking.arrival_date,
     ).aggregate(last=Max('date'))['last']
+
+    last_no_clean_needed_departure = Booking.objects.filter(
+        property=property, departure__clean=False, departure_date__lte=booking.arrival_date,
+    ).exclude(enquiry_status__in=CLOSED_STATUSES).exclude(pk=booking.pk).aggregate(
+        last=Max('departure_date'),
+    )['last']
+
+    dates = [d for d in (last_task_date, last_no_clean_needed_departure) if d is not None]
+    return max(dates) if dates else None
 
 
 def sync_freshen_tasks_for_property(property):
@@ -496,11 +517,14 @@ def apply_manual_task_date(task, new_date):
 
 def _standard_checkin_time(booking):
     """The fallback clock time for an arrival with no real ETA to compute from - the booking
-    property's booking_company's standard_checkin_time, or the same 14:00 that field itself
-    defaults to when no company is tracked for this property at all (Property.booking_company is
-    nullable - see ManagementCompany's own docstring)."""
+    property's cleaning_company's standard_checkin_time, or the same 14:00 that field itself
+    defaults to when no company is tracked for this property at all (Property.cleaning_company is
+    nullable - see ManagementCompany's own docstring). Read off cleaning_company, not
+    booking_company (2026-09-02, per Thomas, same reasoning as checkins_on_calendar just above -
+    the cleaning company is who actually performs the meet & greet, so it's their standard time
+    that should apply when there's nothing more specific to go on)."""
     from datetime import time as time_cls
-    company = booking.property.booking_company
+    company = booking.property.cleaning_company
     return company.standard_checkin_time if company else time_cls(14, 0)
 
 
@@ -615,17 +639,26 @@ def sync_checkins_for_booking(booking):
     sync_cleaning_tasks_for_booking() already applies to turnover/mid-stay above. A cancelled
     booking (CLOSED_STATUSES) gets no check-in tasks at all - one blanket pending-delete across
     every task_type, matching that function's own cancellation branch exactly (not three separate
-    per-type branches - a cancelled booking needs none of them, full stop). Same blanket-delete
-    when the property's booking_company has checkins_on_calendar=False (2026-08-28, per Thomas) -
-    only when a company is actually set, an untracked property is unaffected."""
+    per-type branches - a cancelled booking needs none of them, full stop).
+
+    Same blanket-delete when the property's cleaning_company has checkins_on_calendar=False, only
+    when a company is actually set (an untracked property is unaffected) - checked against
+    cleaning_company, deliberately NOT booking_company, because the cleaning company is who
+    actually performs the meet & greet in practice (2026-09-02, per Thomas - this whole calendar
+    exists to schedule that meet & greet, so it has to follow whoever does it, not whoever books
+    the stay). Originally gated on booking_company instead (2026-08-28) - a real bug, silently
+    inert on any property whose booking and cleaning companies differ, since toggling the
+    booking company's flag then does nothing and the cleaning company's flag is never consulted.
+    sync_cleaning_tasks_for_booking() above got this right from day one (cleans_on_calendar checks
+    cleaning_company already) - this function just hadn't been brought in line with it."""
     from staff.models import Checkin
 
     if booking.enquiry_status in CLOSED_STATUSES:
         Checkin.objects.filter(booking=booking, status='pending').delete()
         return
 
-    booking_company = booking.property.booking_company
-    if booking_company is not None and not booking_company.checkins_on_calendar:
+    cleaning_company = booking.property.cleaning_company
+    if cleaning_company is not None and not cleaning_company.checkins_on_calendar:
         Checkin.objects.filter(booking=booking, status='pending').delete()
         return
 
