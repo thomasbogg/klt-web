@@ -361,6 +361,7 @@ class Property(models.Model):
         if not self.ical_export_token:
             self.ical_export_token = secrets.token_urlsafe(32)
         super().save(*args, **kwargs)
+        Amenity.objects.get_or_create(property=self)
 
 
 class PropertyImage(models.Model):
