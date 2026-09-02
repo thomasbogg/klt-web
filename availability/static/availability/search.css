@@ -123,7 +123,8 @@
 }
 
 .container.cards.results .card {
-    display: block;
+    display: flex;
+    flex-direction: column;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
     border-radius: 18px;
     overflow: hidden;
@@ -238,6 +239,7 @@
     justify-content: space-between;
     gap: 12px;
     align-items: center;
+    margin-top: auto;
 }
 
 .container.cards.results .card-address {
