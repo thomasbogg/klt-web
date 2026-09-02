@@ -1,15 +1,52 @@
 import sqlite3
+from datetime import time as time_of_day
+
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from bookings.models import (
-    Booking, Arrival, BookingRequestedExtra, Charge, Departure, Email, Extra, Form, RequestType,
-    TouristTax, Update,
+    Booking, Arrival, BookingRequestedExtra, Charge, Departure, Email, Extra, ExtrasSettings, Form,
+    RequestType, TouristTax, TravelMethod, Update,
 )
+from bookings.utils import guest_for_owner
 from guests.models import Guest
 from properties.models import (
     Accountant, Location, ManagementCompany, Owner, Platform, Price, Property, PropertyPlatformID,
     PropertySpec, SEFDetail,
 )
+
+# 'Flight to Faro'/'Other' for Arrival, 'Flight from Faro'/'Other' for Departure - the exact
+# labels the live app would show via get_method_display()/TravelMethod.departure_choices(). Legacy
+# flight_number occasionally just restates this (see _cleaned_flight_number's docstring).
+ARRIVAL_METHOD_LABELS = dict(TravelMethod.choices)
+DEPARTURE_METHOD_LABELS = dict(TravelMethod.departure_choices())
+
+
+def _cleaned_flight_number(raw_flight_number, method, method_labels):
+    """A legacy flight_number sometimes just restates the method ('Flight to Faro' for an
+    isFaro=True row) rather than holding a real flight code - confirmed 2026-09-02 against ~430
+    already-migrated Arrival/Departure rows, all pure restatements with zero extra information.
+    Clearing it is lossless in that case; kept as-is otherwise (including a genuine-looking value
+    this heuristic can't classify, e.g. an airline+flight-number sentence - left for a human to
+    review/reformat rather than guessed at)."""
+    value = _truncated(raw_flight_number, 50)
+    if not value:
+        return None
+    if value.strip().lower() == method_labels.get(method, '').strip().lower():
+        return None
+    return value
+
+
+def _cleaned_time(raw_time, flight_number):
+    """Legacy klt_main.db stored a literal '00:00' placeholder for 'no time given' instead of
+    leaving the column NULL - confirmed 2026-09-02 against ~430 already-migrated rows: zero overlap
+    between a parsed 00:00 time and a row that also had a real flight_number, across the whole
+    scope, which is what makes this safe to normalize rather than a guess (a booking that
+    genuinely has both a 00:00 time AND a real flight number is left alone)."""
+    from django.utils.dateparse import parse_time
+    parsed = parse_time(raw_time) if raw_time else None
+    if parsed == time_of_day(0, 0) and not flight_number:
+        return None
+    return parsed
 
 # klt-web trimmed VALID_BOOKING_STATUSES/PROVISIONAL_BOOKING_STATUSES (env_settings.py) to just
 # 'Booking confirmed'/'Awaiting payment' 2026-08-25 - these five PIMS-inherited labels were never
@@ -46,6 +83,14 @@ class Command(BaseCommand):
     # the end of the run rather than silently dropped or fabricated. See migrate_extras()'s
     # docstring for the full reasoning.
     unmigrated_airport_transfer_bookings = list()
+    # Populated by migrate_guests() for a legacy 'BLOCK - Unbookable'/'BLOCK - Late Check-out'/
+    # '<property> Owners/Family' guest row that got folded onto a shared canonical Guest instead
+    # of getting its own new row - {legacy_guest_id: new_guest_id} - migrate_bookings() consults
+    # this so those bookings still point at the canonical row rather than a duplicate. See
+    # migrate_guests()'s own docstring for why (85/22 such duplicate rows found 2026-09-02, see
+    # guests/management/commands/consolidate_block_guest_records.py and
+    # consolidate_property_owner_family_guests.py for the one-off cleanup this gap needed).
+    guest_id_remap = dict()
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -371,9 +416,46 @@ class Command(BaseCommand):
         # bookings.GuestRegistration instead - one row per BookingGuest, not per Guest, so
         # migrating that data needs a bookings/guests pass, not this one; see the migration
         # notes memory for the planned approach).
+        #
+        # Legacy klt_main.db gave a calendar-block or an owner-stay booking its own brand new
+        # Guest row every time, rather than sharing one - confirmed 2026-09-02 (see
+        # guest_id_remap's own comment above): 85 'BLOCK - Unbookable'/'BLOCK - Late Check-out'
+        # rows and 22 '<property> Owners/Family' rows, each a duplicate of the same non-person
+        # identity. Folded onto one canonical Guest per bucket here - a shared placeholder row for
+        # the two BLOCK categories (first occurrence in file order keeps its own legacy id), and
+        # the property's own real owner (bookings/utils.py::guest_for_owner(), the same row the
+        # Owner Suite's self-service booking flow already uses) for Owners/Family, skipping the
+        # placeholder-then-reassign-later two-step this needed the first time round entirely.
+        # Every OTHER duplicate-name situation found in that same investigation (a real returning
+        # guest booked under several different emails) is a judgment call per case - not something
+        # safe to fold in here automatically.
         if not dry_run:
+            canonical_guest_ids = {}
             for row in rows:
-                Guest.objects.create(
+                last_name = (row['lastName'] or '').strip().lower()
+                first_name = (row['firstName'] or '').strip()
+
+                bucket_key = None
+                if last_name == 'block - unbookable':
+                    bucket_key = ('block', 'BLOCK - Unbookable')
+                elif last_name == 'block - late check-out':
+                    bucket_key = ('block', 'BLOCK - Late Check-out')
+                elif last_name == 'owners/family' and first_name:
+                    owner_property = Property.objects.filter(title__iexact=first_name).first()
+                    if owner_property and owner_property.owner_id:
+                        bucket_key = ('owner', owner_property.owner_id)
+
+                if bucket_key in canonical_guest_ids:
+                    self.guest_id_remap[row['id']] = canonical_guest_ids[bucket_key]
+                    continue
+
+                if bucket_key is not None and bucket_key[0] == 'owner':
+                    canonical_guest = guest_for_owner(Owner.objects.get(pk=bucket_key[1]))
+                    canonical_guest_ids[bucket_key] = canonical_guest.pk
+                    self.guest_id_remap[row['id']] = canonical_guest.pk
+                    continue
+
+                guest = Guest.objects.create(
                     id=row['id'],
                     first_name=row['firstName'],
                     last_name=row['lastName'],
@@ -381,6 +463,8 @@ class Command(BaseCommand):
                     phone=row['phone'],
                     preferred_language=row['preferredLanguage']
                 )
+                if bucket_key is not None:
+                    canonical_guest_ids[bucket_key] = guest.pk
 
     def migrate_bookings(self, cursor, dry_run):
         cursor.execute("SELECT * FROM bookings")
@@ -404,7 +488,7 @@ class Command(BaseCommand):
                 Booking.objects.create(
                     id=row['id'],
                     property_id=row['propertyId'],
-                    guest_id=row['guestId'],
+                    guest_id=self.guest_id_remap.get(row['guestId'], row['guestId']),
                     pims_id=row['PIMSId'],
                     platform_id=row['platformId'],
                     arrival_date=parse_date(arrival_date['date']) if arrival_date else None,
@@ -441,12 +525,14 @@ class Command(BaseCommand):
                 if row['bookingId'] in self.skipped_booking_rows:
                     self.stdout.write(self.style.WARNING(f'Skipping arrival for booking {row["bookingId"]} due to missing booking data.'))
                     continue
+                method = 'flight_faro' if row['isFaro'] else 'other'
+                flight_number = _cleaned_flight_number(row['flightNumber'], method, ARRIVAL_METHOD_LABELS)
                 Arrival.objects.create(
                     id=row['id'],
                     booking_id=row['bookingId'],
-                    flight_number=_truncated(row['flightNumber'], 50),
-                    method='flight_faro' if row['isFaro'] else 'other',
-                    time=parse_time(row['time']) if row['time'] else None,
+                    flight_number=flight_number,
+                    method=method,
+                    time=_cleaned_time(row['time'], flight_number),
                     details=row['details'],
                     self_check_in=bool(row['selfCheckIn']) if row['selfCheckIn'] is not None else None,
                     meet_greet=bool(row['meetGreet']),
@@ -469,12 +555,14 @@ class Command(BaseCommand):
                 if row['bookingId'] in self.skipped_booking_rows:
                     self.stdout.write(self.style.WARNING(f'Skipping departure for booking {row["bookingId"]} due to missing booking data.'))
                     continue
+                method = 'flight_faro' if row['isFaro'] else 'other'
+                flight_number = _cleaned_flight_number(row['flightNumber'], method, DEPARTURE_METHOD_LABELS)
                 Departure.objects.create(
                     id=row['id'],
                     booking_id=row['bookingId'],
-                    flight_number=_truncated(row['flightNumber'], 50),
-                    method='flight_faro' if row['isFaro'] else 'other',
-                    time=parse_time(row['time']) if row['time'] else None,
+                    flight_number=flight_number,
+                    method=method,
+                    time=_cleaned_time(row['time'], flight_number),
                     details=row['details'],
                     clean=bool(row['clean']),
                 )
@@ -572,20 +660,46 @@ class Command(BaseCommand):
         self.stdout.write(f'Migrating {len(rows)} extras...')
 
         if not dry_run:
+            # The legacy schema tracked these as plain yes/no flags with no stored price at all -
+            # priced here the same way the live guest-facing flow prices a fresh request
+            # (bookings/views.py::BookingDetailsView._save_extras), using TODAY's ExtrasSettings,
+            # rather than leaving Extra.X_charge blank (confirmed 2026-09-02: that's exactly what
+            # this method used to do, and extras_summary() then silently shows "€0" for a real
+            # request - see backfill_migrated_extras_charges.py for the one-off catch-up this
+            # caused).
+            extras_settings = ExtrasSettings.load()
             legacy_request_type = None
             for row in rows:
                 if row['bookingId'] in self.skipped_booking_rows:
                     self.stdout.write(self.style.WARNING(f'Skipping extra for booking {row["bookingId"]} due to missing booking data.'))
                     continue
+                booking = Booking.objects.select_related('property__specs').get(pk=row['bookingId'])
+                nights = (booking.departure_date - booking.arrival_date).days
+
+                cot = bool(row['cot']) if row['cot'] is not None else None
+                high_chair = bool(row['highChair']) if row['highChair'] is not None else None
+                welcome_pack = bool(row['welcomePack']) if row['welcomePack'] is not None else None
+                mid_stay_clean = bool(row['midStayClean']) if row['midStayClean'] is not None else None
+                late_checkout = bool(row['lateCheckout']) if row['lateCheckout'] is not None else None
+
                 Extra.objects.create(
                     id=row['id'],
                     booking_id=row['bookingId'],
-                    cot=bool(row['cot']) if row['cot'] is not None else None,
-                    high_chair=bool(row['highChair']) if row['highChair'] is not None else None,
-                    welcome_pack=bool(row['welcomePack']) if row['welcomePack'] is not None else None,
+                    cot=cot,
+                    high_chair=high_chair,
+                    cot_high_chair_charge=(
+                        extras_settings.compute_cot_high_chair_price(nights, cot, high_chair)
+                        if cot or high_chair else None
+                    ),
+                    welcome_pack=welcome_pack,
                     welcome_pack_note=row['welcomePackModifications'] or None,
-                    mid_stay_clean=bool(row['midStayClean']) if row['midStayClean'] is not None else None,
-                    late_checkout=bool(row['lateCheckout']) if row['lateCheckout'] is not None else None,
+                    welcome_pack_charge=extras_settings.welcome_pack_price if welcome_pack else None,
+                    mid_stay_clean=mid_stay_clean,
+                    mid_stay_clean_charge=(
+                        extras_settings.compute_mid_stay_clean_price(booking.property) if mid_stay_clean else None
+                    ),
+                    late_checkout=late_checkout,
+                    late_checkout_charge=extras_settings.late_checkout_price if late_checkout else None,
                     extra_nights=bool(row['extraNights']) if row['extraNights'] is not None else None,
                     owner_is_paying=bool(row['ownerIsPaying']) if row['ownerIsPaying'] is not None else None
                 )
