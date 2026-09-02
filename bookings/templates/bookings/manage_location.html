@@ -54,10 +54,11 @@
             </div>
             {% endif %}
 
-            {% if location.nearest_bins or location.nearest_corner_shop or location.nearest_supermarket %}
+            {% if location.nearest_bins or location.nearest_corner_shop or location.nearest_supermarket or location.parking_details %}
             <div class="details-section">
                 <h2 class="details-section-title">Good to know</h2>
                 <ul class="details-list">
+                    {% if location.parking_details %}<li><strong>Parking:</strong> {{ location.parking_details|linkify }}</li>{% endif %}
                     {% if location.nearest_bins %}<li><strong>Bins:</strong> {{ location.nearest_bins|linkify }}</li>{% endif %}
                     {% if location.nearest_corner_shop %}<li><strong>Nearest corner shop:</strong> {{ location.nearest_corner_shop|linkify }}</li>{% endif %}
                     {% if location.nearest_supermarket %}<li><strong>Nearest supermarket:</strong> {{ location.nearest_supermarket|linkify }}</li>{% endif %}

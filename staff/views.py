@@ -1717,6 +1717,7 @@ class StaffLocationDetailView(View):
         location.nearest_bins = post.get('nearest_bins', '').strip()
         location.nearest_corner_shop = post.get('nearest_corner_shop', '').strip()
         location.nearest_supermarket = post.get('nearest_supermarket', '').strip()
+        location.parking_details = post.get('parking_details', '').strip()
         location.color = post.get('color', '').strip()
         try:
             location.full_clean()
