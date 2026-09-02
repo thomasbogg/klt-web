@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 from env_settings import (
     DJANGO_SECRET_KEY,
@@ -100,6 +101,27 @@ DATABASES = {
         'PORT': DATABASE_PORT,
     }
 }
+
+# Opt-in override for `manage.py test`: the real DB above is the shared remote Railway Postgres,
+# which has consistently slow/variable round-trip latency (see project memory) - a full test run
+# there can take 20-25+ minutes even though the test DB itself is tiny (Django's TestCase builds
+# its own fixtures per test and rolls them back, so there's no real data to speed up, only network
+# round trips to cut). Set LOCAL_TEST_DB=1 to point at a local Postgres instead - HOST/PORT blank
+# makes psycopg connect over the local Unix socket with peer auth (no password needed, matches
+# `psql -U thomas-bogg -d postgres` already working passwordless on this machine). Only ever
+# swaps the connection when this env var is explicitly set - every other run (including a plain
+# `manage.py test` with nothing set) still uses the real remote DB, so this can never silently
+# affect a non-test command. django-admin's own test runner creates/destroys a `test_<NAME>` DB
+# on whichever server DATABASES points at, so this is the only override needed - it doesn't
+# matter that the existing local `kltwebdb` database itself is stale/unmigrated.
+if os.environ.get('LOCAL_TEST_DB'):
+    DATABASES['default'].update({
+        'NAME': 'kltwebdb',
+        'USER': 'thomas-bogg',
+        'PASSWORD': '',
+        'HOST': '',
+        'PORT': '',
+    })
 
 
 # Password validation
