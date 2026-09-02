@@ -14,10 +14,20 @@ STAGE_TABS = (
 )
 
 # Mirrors the "deliberately excluded from both status tuples" comment in env_settings.py -
-# every status that frees the calendar, i.e. a dead/cancelled booking.
+# every status that frees the calendar, i.e. a dead/cancelled booking. 'Booking cancelled',
+# 'Enquiry that failed to convert', 'Open enquiry', and 'Booking cancelled with fees' added
+# 2026-09-02 (per Thomas) - all legacy/migrated status strings, not one of the 'Cancelled by ...'
+# ones this list previously only had. Sizeable, not the "one drifted row" the comment below once
+# assumed: 1041/221/55/8 real Bookings respectively carry these statuses. Their absence here meant
+# sync_checkins_for_booking()/sync_cleaning_tasks_for_booking() (both gate on CLOSED_STATUSES, not
+# Booking.objects.holding()) treated every one of those as still active, generating real Checkin/
+# CleaningTask rows for cancelled/never-confirmed bookings - see
+# backfill_closed_status_calendar_tasks.py for the one-off cleanup of whatever had already been
+# created before this fix.
 CLOSED_STATUSES = (
     'Cancelled by guest', 'Cancelled by platform', 'Cancelled by staff', 'Cancelled by owner',
-    'Payment failed', 'Hold expired', 'Payment received - needs review',
+    'Payment failed', 'Hold expired', 'Payment received - needs review', 'Booking cancelled',
+    'Enquiry that failed to convert', 'Open enquiry', 'Booking cancelled with fees',
 )
 
 # The subset of CLOSED_STATUSES a staffer can revive from the booking detail page's "Uncancel
@@ -30,11 +40,12 @@ REVIVABLE_STATUSES = ('Cancelled by guest', 'Cancelled by staff', 'Cancelled by 
 # Every enquiry_status string the rest of the app actually gives meaning to, grouped for the
 # booking detail page's Outcome/status dropdown (previously free text - a typo there wouldn't
 # error, it would just silently stop matching VALID_BOOKING_STATUSES/PROVISIONAL_BOOKING_STATUSES/
-# CLOSED_STATUSES and so stop blocking the calendar or bucketing correctly; confirmed at least one
-# real booking has already drifted this way - 'Booking cancelled' instead of one of the 'Cancelled
-# by ...' strings - so the dropdown/view still has to tolerate a value outside this list rather
-# than assume it can't happen). Grouped to match how staff already think about status via the
-# STAGE_TABS/STATUS_BUCKETS split above.
+# CLOSED_STATUSES and so stop blocking the calendar or bucketing correctly - 'Booking cancelled'/
+# 'Enquiry that failed to convert'/'Open enquiry'/'Booking cancelled with fees' were exactly this
+# drift, now folded into CLOSED_STATUSES above (2026-09-02) - so the dropdown/view still has to
+# tolerate a value outside this list rather than assume it can't happen, in case another one shows
+# up). Grouped to match how staff already think about status via the STAGE_TABS/STATUS_BUCKETS
+# split above.
 ENQUIRY_STATUS_GROUPS = (
     ('Valid', env_settings.VALID_BOOKING_STATUSES),
     ('Provisional', env_settings.PROVISIONAL_BOOKING_STATUSES),
