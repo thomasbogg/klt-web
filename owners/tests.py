@@ -96,6 +96,22 @@ class OwnerSuiteTests(TestCase):
         self.assertRedirects(response, reverse('owners:home'))
         self.assertContains(response, 'Owner Suite Property')
 
+    def test_logout_via_post_logs_out_and_redirects_to_login(self):
+        # Real bug, fixed 2026-09-03: Django 5's LogoutView is POST-only, but the sidebar's "Log
+        # out" link was a plain GET <a> - a 405 on click, same bug class as the staff nav's own
+        # Logout link (see staff.tests.StaffAuthGateTests).
+        self.client.login(username='portalowner', password='pw')
+        self.assertEqual(self.client.get(reverse('owners:home')).status_code, 200)
+
+        response = self.client.post(reverse('owners:logout'))
+        self.assertRedirects(response, reverse('owners:login'))
+        self.assertEqual(self.client.get(reverse('owners:home')).status_code, 302)  # session cleared
+
+    def test_logout_via_get_is_not_allowed(self):
+        self.client.login(username='portalowner', password='pw')
+        response = self.client.get(reverse('owners:logout'))
+        self.assertEqual(response.status_code, 405)
+
     def test_report_only_shows_this_owners_own_bookings(self):
         self.client.login(username='portalowner', password='pw')
         response = self.client.get(reverse('owners:reports'), {

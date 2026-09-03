@@ -501,6 +501,18 @@
     color: var(--primary-color-dark);
 }
 
+button.manage-hub-nav-link {
+    /* Django 5's LogoutView is POST-only (owners/urls.py), so Log out is a <button> inside a
+       form, not an <a> - reset the button-specific defaults a browser would otherwise add on top
+       of the shared rules above. */
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font: inherit;
+}
+
 .manage-hub-nav-link-active {
     background: rgba(44, 121, 185, 0.1);
     border-left-color: var(--primary-color);

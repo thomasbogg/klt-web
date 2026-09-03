@@ -1,9 +1,17 @@
+from django.contrib.auth import views as auth_views
 from django.urls import path
 
 from . import views
 
 app_name = 'staff'
 urlpatterns = [
+    # next_page='admin:login' matches the current sign-in entry point (staff_page_required
+    # composes Django admin's own staff_member_required, which redirects an unauthenticated/
+    # non-staff request there) - staff/urls.py had no auth routes of its own at all until this,
+    # unlike owners/urls.py's OwnerLoginView. Not a dedicated staff login page (yet) - deliberately
+    # deferred pending a decision on unified vs. separate staff/owner login pages, see the 2026-
+    # 09-03 memory note.
+    path('logout/', auth_views.LogoutView.as_view(next_page='admin:login'), name='logout'),
     path('', views.StaffHomeView.as_view(), name='home'),
     path('bookings/', views.StaffBookingLookupView.as_view(), name='booking_lookup'),
     path('guests/', views.StaffGuestListView.as_view(), name='guest_list'),

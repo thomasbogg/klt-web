@@ -132,6 +132,25 @@ class StaffAuthGateTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn('/admin/login/', response.url)
 
+    def test_logout_via_post_logs_out_and_redirects_to_admin_login(self):
+        # Real bug, fixed 2026-09-03: Django 5's LogoutView is POST-only, but the nav bar's
+        # Logout link was a plain GET <a> to /admin/logout/ - a 405 on click, no working logout
+        # anywhere in the staff app at all.
+        User.objects.create_user(username='logoutstaffer', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='logoutstaffer', password='pw')
+        self.assertEqual(self.client.get(self.detail_url).status_code, 200)
+
+        response = self.client.post(reverse('staff:logout'))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/admin/login/', response.url)
+        self.assertEqual(self.client.get(self.detail_url).status_code, 302)  # session actually cleared
+
+    def test_logout_via_get_is_not_allowed(self):
+        User.objects.create_user(username='logoutgetstaffer', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='logoutgetstaffer', password='pw')
+        response = self.client.get(reverse('staff:logout'))
+        self.assertEqual(response.status_code, 405)
+
 
 class StaffRolePermissionTests(TestCase):
     """staff.permissions.staff_page_required + the Settings > Staff/Roles superuser carve-out -

@@ -26,5 +26,8 @@
     {% if staff_nav_permissions.can_view_settings %}
     <a href="{% url 'staff:settings' %}" class="staff-nav-link">Settings</a>
     {% endif %}
-    <a href="/admin/logout/" class="staff-nav-link staff-nav-link-logout">Logout</a>
+    <form method="post" action="{% url 'staff:logout' %}" class="staff-logout-form">
+        {% csrf_token %}
+        <button type="submit" class="staff-nav-link staff-nav-link-logout">Logout</button>
+    </form>
 </nav>

@@ -41,8 +41,18 @@ body {
     text-decoration: underline;
 }
 
-.staff-nav-link-logout {
+.staff-logout-form {
     margin-left: auto;
+}
+
+.staff-nav-link-logout {
+    /* Django 5's LogoutView is POST-only (staff/urls.py), so this is a <button> inside a form,
+       not an <a> - reset the button-specific defaults a browser would otherwise add on top of
+       the shared .staff-nav-link rules above. */
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
     color: var(--status-booked-color);
 }
 
