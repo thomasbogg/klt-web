@@ -30,6 +30,22 @@ CLOSED_STATUSES = (
     'Enquiry that failed to convert', 'Open enquiry', 'Booking cancelled with fees',
 )
 
+# The two legacy PIMS calendar-block categories (an owner/admin marking a property unbookable, or
+# holding a late check-out) - not a real guest, so no check-in ever happens for one (2026-09-03,
+# per Thomas: these were cluttering the check-ins calendar as e.g. "D12, BLOCK - Unbookable, No
+# ETA"). Identified by guest.last_name, lowercased - the only signal available (no dedicated flag
+# on Booking) - matching guests/management/commands/consolidate_block_guest_records.py's own
+# BLOCK_GROUPS, which already normalized legacy casing variants onto these two canonical spellings.
+# Deliberately scoped to sync_checkins_for_booking() only, not sync_cleaning_tasks_for_booking() -
+# a "Late Check-out" block plausibly still needs a real turnover clean once it ends, unlike
+# "Unbookable"; Thomas would need to weigh in before cleaning tasks get the same treatment.
+BLOCK_GUEST_LAST_NAMES = {'block - unbookable', 'block - late check-out'}
+
+
+def is_block_booking(booking):
+    guest = getattr(booking, 'guest', None)
+    return bool(guest) and (guest.last_name or '').strip().lower() in BLOCK_GUEST_LAST_NAMES
+
 # The subset of CLOSED_STATUSES a staffer can revive from the booking detail page's "Uncancel
 # booking" button - deliberately excludes 'Cancelled by platform' (the platform is the source of
 # truth there; reviving it here without the platform agreeing just means the next iCal sync
@@ -708,7 +724,10 @@ def sync_checkins_for_booking(booking):
     inert on any property whose booking and cleaning companies differ, since toggling the
     booking company's flag then does nothing and the cleaning company's flag is never consulted.
     sync_cleaning_tasks_for_booking() above got this right from day one (cleans_on_calendar checks
-    cleaning_company already) - this function just hadn't been brought in line with it."""
+    cleaning_company already) - this function just hadn't been brought in line with it.
+
+    Same blanket-delete for a BLOCK booking (see BLOCK_GUEST_LAST_NAMES/is_block_booking above) -
+    a calendar-block placeholder has no real guest, so there's nothing to check in."""
     from staff.models import Checkin
 
     if booking.enquiry_status in CLOSED_STATUSES:
@@ -717,6 +736,10 @@ def sync_checkins_for_booking(booking):
 
     cleaning_company = booking.property.cleaning_company
     if cleaning_company is not None and not cleaning_company.checkins_on_calendar:
+        Checkin.objects.filter(booking=booking, status='pending').delete()
+        return
+
+    if is_block_booking(booking):
         Checkin.objects.filter(booking=booking, status='pending').delete()
         return
 

@@ -3507,6 +3507,39 @@ class CheckinSyncTests(TestCase):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
         self.assertFalse(Checkin.objects.filter(booking=self.booking).exists())
 
+    def test_block_unbookable_booking_creates_no_checkin_rows(self):
+        # Real bug, fixed 2026-09-03: 'BLOCK - Unbookable'/'BLOCK - Late Check-out' are legacy
+        # PIMS calendar-block placeholders, not a real guest - they were showing up on the
+        # check-ins calendar as e.g. "D12, BLOCK - Unbookable, No ETA".
+        self.guest.last_name = 'BLOCK - Unbookable'
+        self.guest.save()
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        self.assertFalse(Checkin.objects.filter(booking=self.booking).exists())
+
+    def test_block_late_check_out_booking_creates_no_checkin_rows(self):
+        self.guest.last_name = 'BLOCK - Late Check-out'
+        self.guest.save()
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        self.assertFalse(Checkin.objects.filter(booking=self.booking).exists())
+
+    def test_block_guest_name_match_is_case_insensitive(self):
+        # Matches guests/management/commands/consolidate_block_guest_records.py's own BLOCK_GROUPS
+        # - legacy data has an inconsistent 'Block - Unbookable' casing too.
+        self.guest.last_name = 'Block - Unbookable'
+        self.guest.save()
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        self.assertFalse(Checkin.objects.filter(booking=self.booking).exists())
+
+    def test_a_pending_checkin_is_removed_if_the_guest_becomes_a_block_placeholder(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
+        self.assertTrue(Checkin.objects.filter(booking=self.booking).exists())
+
+        self.guest.last_name = 'BLOCK - Unbookable'
+        self.guest.save()
+        self.booking.save()
+
+        self.assertFalse(Checkin.objects.filter(booking=self.booking).exists())
+
     def test_turning_checkins_on_calendar_off_removes_pending_rows_on_next_sync(self):
         company = make_management_company(name='No Checkin Calendar Co 2', checkins_on_calendar=True)
         self.property.cleaning_company = company
