@@ -121,17 +121,19 @@ class StaffHomeView(View):
         exclude_owner = request.GET.get('exclude_owner') == 'on'
         if direct_only:
             # Same "direct vs platform" definition already used for payout math - see
-            # bookings/payouts.py::_is_platform_booking(). Deliberately enquiry_source-based, not
-            # ical_uid-based (see ical_only below) - a different concept: which platform the guest
-            # actually booked through, not whether this row happened to arrive via iCal sync.
+            # bookings/payouts.py::_is_platform_booking().
             base = base.exclude(enquiry_source__in=env_settings.PLATFORMS)
         if ical_only:
-            # ical_uid is only ever populated by bookings/utils.py::sync_ical_link() - blank/null
-            # means the booking was created directly (guest-facing site or staff), not imported
-            # from a platform's iCal feed. exclude(ical_uid__in=[None, '']) looks equivalent but
-            # isn't - Django/psycopg silently drop NULL from the IN() SQL list, so it excludes
-            # nothing at all (confirmed empirically); Q objects are needed for a real NULL check.
-            base = base.exclude(Q(ical_uid__isnull=True) | Q(ical_uid=''))
+            # Was ical_uid-based until 2026-09-03 (a real bug, per Thomas): ical_uid is only ever
+            # populated by bookings/utils.py::sync_ical_link(), the *live* sync mechanism, so it
+            # only caught bookings synced after that feature existed - 1,990 of 2,078 real
+            # platform-sourced bookings (96%) had no ical_uid at all (correctly enquiry_source-
+            # tagged at migration time, never backfilled with one), making this checkbox
+            # effectively blind to almost every historic platform booking. Now the exact inverse of
+            # direct_only above - "iCal Only" is a legacy label for what's really "Platform Only"
+            # (the template's checkbox text was updated to match; the GET param name/session-
+            # persisted filter state deliberately weren't, to avoid breaking either).
+            base = base.filter(enquiry_source__in=env_settings.PLATFORMS)
         if owner_only:
             base = base.filter(is_owner=True)
         if exclude_owner:

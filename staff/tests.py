@@ -1763,6 +1763,24 @@ class StaffHomeViewTests(TestCase):
         self.assertIsNone(response.context['selected_property'])
         self.assertEqual(response.context['status_filter'], 'Valid')
 
+    def test_ical_only_shows_platform_sourced_bookings_with_no_ical_uid(self):
+        # Real bug, fixed 2026-09-03, per Thomas: this checkbox used to filter on ical_uid being
+        # set, but that field is only ever populated by the *live* iCal sync mechanism - 1,990 of
+        # 2,078 real platform-sourced bookings (96%) were correctly enquiry_source-tagged at
+        # migration time but never got an ical_uid backfilled, making the checkbox blind to almost
+        # every historic platform booking. Now the exact inverse of direct_only: enquiry_source-
+        # based, regardless of ical_uid.
+        historic_platform_booking = Booking.objects.create(
+            property=self.property_a, guest=self.guest, ical_uid=None,
+            arrival_date=date.today() + timedelta(days=40), departure_date=date.today() + timedelta(days=47),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Airbnb',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url, {'ical_only': 'on', 'status': 'All'})
+        booking_ids = {row['booking'].pk for row in response.context['rows']}
+        self.assertIn(historic_platform_booking.pk, booking_ids)
+        self.assertNotIn(self.booking_a.pk, booking_ids)  # enquiry_source='Website', not a platform
+
     def test_includes_inline_booking_lookup_form(self):
         response = self.client.get(self.url)
         self.assertContains(response, f'action="{reverse("staff:booking_lookup")}"')
