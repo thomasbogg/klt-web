@@ -4,6 +4,7 @@ from django.db.models import Max
 from django.utils import timezone
 
 import env_settings
+from bookings.utils import BLOCK_GUEST_LAST_NAMES, BLOCK_UNBOOKABLE_LAST_NAME
 from properties.utils import natural_sort_key
 
 # PIMS' own tab bar, minus 'Open Enquiry' - every klt-web Booking already has committed dates
@@ -30,15 +31,12 @@ CLOSED_STATUSES = (
     'Enquiry that failed to convert', 'Open enquiry', 'Booking cancelled with fees',
 )
 
-# The two legacy PIMS calendar-block categories (an owner/admin marking a property unbookable, or
-# holding a late check-out) - not a real guest, so no check-in ever happens for one (2026-09-03,
-# per Thomas: these were cluttering the check-ins calendar as e.g. "D12, BLOCK - Unbookable, No
-# ETA"). Identified by guest.last_name, lowercased - the only signal available (no dedicated flag
-# on Booking) - matching guests/management/commands/consolidate_block_guest_records.py's own
-# BLOCK_GROUPS, which already normalized legacy casing variants onto these two canonical spellings.
-BLOCK_UNBOOKABLE_LAST_NAME = 'block - unbookable'
-BLOCK_LATE_CHECK_OUT_LAST_NAME = 'block - late check-out'
-BLOCK_GUEST_LAST_NAMES = {BLOCK_UNBOOKABLE_LAST_NAME, BLOCK_LATE_CHECK_OUT_LAST_NAME}
+# BLOCK_UNBOOKABLE_LAST_NAME/BLOCK_GUEST_LAST_NAMES now live in bookings/utils.py (2026-09-03) so
+# BookingQuerySet.next_confirmed_arrival_after/next_confirmed_booking_after (bookings/models.py)
+# can filter on the same two categories - not a real guest, so no check-in ever happens for one
+# (2026-09-03, per Thomas: these were cluttering the check-ins calendar as e.g. "D12, BLOCK -
+# Unbookable, No ETA") and, as of the same date, never a "next arrival" another booking's turnover
+# clean gets keyed off either.
 
 
 def _guest_last_name(booking):

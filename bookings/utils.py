@@ -19,6 +19,20 @@ REFERENCE_GROUPS = 2
 
 WISE_MONTHS = {11, 12, 1, 2, 3}  # Nov-Mar arrivals
 
+# The two legacy PIMS calendar-block categories (an owner/admin marking a property unbookable, or
+# holding a late check-out) - not a real guest, so never a real arrival/departure for anything
+# downstream (a check-in, a "next arrival" a turnover clean is racing to be ready for) to key off.
+# Identified by guest.last_name, lowercased - the only signal available (no dedicated flag on
+# Booking) - matching canonical spellings guests/management/commands/
+# consolidate_block_guest_records.py already normalized legacy casing variants onto. Lives here
+# (not staff/utils.py, its original home) so bookings/models.py's BookingQuerySet methods can
+# filter on it too without staff importing back into bookings - keep this the one definition,
+# don't duplicate the strings elsewhere.
+BLOCK_UNBOOKABLE_LAST_NAME = 'block - unbookable'
+BLOCK_LATE_CHECK_OUT_LAST_NAME = 'block - late check-out'
+BLOCK_GUEST_LAST_NAMES = {BLOCK_UNBOOKABLE_LAST_NAME, BLOCK_LATE_CHECK_OUT_LAST_NAME}
+
+
 def generate_reference_candidate():
     """One random booking-reference string, e.g. 'K7QX-3H9M'. Not guaranteed unique - the caller checks."""
     groups = [

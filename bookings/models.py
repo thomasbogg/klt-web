@@ -8,7 +8,7 @@ from django.db import models
 from django.utils import timezone
 from django_countries.fields import CountryField
 
-from bookings.utils import generate_reference_candidate
+from bookings.utils import BLOCK_LATE_CHECK_OUT_LAST_NAME, BLOCK_UNBOOKABLE_LAST_NAME, generate_reference_candidate
 from env_settings import VALID_BOOKING_STATUSES, PROVISIONAL_BOOKING_STATUSES
 from properties.models import Location, Property
 from guests.models import Guest
@@ -216,25 +216,42 @@ class BookingQuerySet(models.QuerySet):
         )
 
     def next_confirmed_arrival_after(self, property, date):
-        """Earliest confirmed (VALID_BOOKING_STATUSES) arrival for `property` strictly after
-        `date`, or None if uncapped. Confirmed only, not holding() - a still-provisional hold
-        shouldn't constrain where a cleaning task can be dragged to (see
-        staff/utils.py::cleaning_task_valid_range)."""
+        """Earliest confirmed (VALID_BOOKING_STATUSES) arrival for `property` on or after `date`,
+        or None if uncapped. Confirmed only, not holding() - a still-provisional hold shouldn't
+        constrain where a cleaning task can be dragged to (see
+        staff/utils.py::cleaning_task_valid_range).
+
+        `date` is always the departing booking's own departure_date, so "on or after" (not
+        strictly after, as this was until 2026-09-03) matters for a real same-day turnover: with
+        `__gt`, a next arrival landing exactly on `date` was invisible to this lookup, and the cap
+        silently fell through to whatever booking arrived *after* that one instead - letting a
+        turnover clean be dragged to a date past a guest who'd already checked into an unclean
+        property. `__gte` correctly collapses (min_date, max_date) to that single day instead.
+
+        Excludes the two BLOCK placeholder categories (see BLOCK_GUEST_LAST_NAMES,
+        bookings/utils.py) - a calendar-block isn't a real guest, so it must never be the thing
+        capping (or, via next_confirmed_booking_after below, being displayed as) another booking's
+        turnover deadline."""
         return self.filter(
             property_id=getattr(property, 'pk', property),
             enquiry_status__in=VALID_BOOKING_STATUSES,
-            arrival_date__gt=date,
+            arrival_date__gte=date,
+        ).exclude(guest__last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME).exclude(
+            guest__last_name__iexact=BLOCK_LATE_CHECK_OUT_LAST_NAME,
         ).order_by('arrival_date').values_list('arrival_date', flat=True).first()
 
     def next_confirmed_booking_after(self, property, date):
-        """Same lookup as next_confirmed_arrival_after but returns the whole Booking (not just its
-        arrival_date) - for display purposes (the cleaning-task popup's "next check-in" summary,
-        staff/views.py::StaffCleaningTaskDetailView), not the date-boundary math that function
+        """Same lookup as next_confirmed_arrival_after (including the same-day and BLOCK-
+        exclusion fixes, 2026-09-03) but returns the whole Booking (not just its arrival_date) -
+        for display purposes (the cleaning-task popup's "next check-in" summary, staff/views.py::
+        StaffCleaningTaskDetailView and _extras_for_row), not the date-boundary math that function
         exists for."""
         return self.filter(
             property_id=getattr(property, 'pk', property),
             enquiry_status__in=VALID_BOOKING_STATUSES,
-            arrival_date__gt=date,
+            arrival_date__gte=date,
+        ).exclude(guest__last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME).exclude(
+            guest__last_name__iexact=BLOCK_LATE_CHECK_OUT_LAST_NAME,
         ).select_related('arrival', 'guest').order_by('arrival_date').first()
 
 
