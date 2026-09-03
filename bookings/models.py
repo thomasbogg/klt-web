@@ -276,6 +276,27 @@ class BookingQuerySet(models.QuerySet):
             by_property[property_id].append(arrival_date)
         return dict(by_property)
 
+    def next_confirmed_booking_ids_by_property(self, property_ids):
+        """Same batching as confirmed_arrival_dates_by_property, but keeps each row's pk alongside
+        its arrival_date - {property_id: [(arrival_date, pk), ...]} sorted ascending - so a caller
+        needing the whole next Booking (not just its date) can bisect for the matching pk here,
+        then fetch/prefetch just those specific rows in one further query, instead of one
+        next_confirmed_booking_after query per task (see staff/views.py::StaffCleaningRotaView,
+        which had exactly that problem: 109 queries/8.1s for a 5-day window, 2026-09-03 - each
+        turnover task's own next_confirmed_booking_after call, compounded by extras_summary()'s
+        four further per-booking queries on top of that)."""
+        from collections import defaultdict
+
+        rows = self.filter(
+            property_id__in=list(property_ids), enquiry_status__in=VALID_BOOKING_STATUSES,
+        ).exclude(guest__last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME).exclude(
+            guest__last_name__iexact=BLOCK_LATE_CHECK_OUT_LAST_NAME,
+        ).order_by('property_id', 'arrival_date').values_list('property_id', 'arrival_date', 'pk')
+        by_property = defaultdict(list)
+        for property_id, arrival_date, pk in rows:
+            by_property[property_id].append((arrival_date, pk))
+        return dict(by_property)
+
 
 class Booking(models.Model):
     """Main booking model."""
@@ -346,8 +367,14 @@ class Booking(models.Model):
         instead of the builtin and crashes at import time ("'ForeignKey' object is not callable"),
         confirmed the hard way. Django templates still call a zero-arg method automatically, so
         `{{ booking.total_guests }}` works the same either way - only Python call sites need the
-        explicit ()."""
-        party_count = self.party.count()
+        explicit ().
+
+        len(self.party.all()), not self.party.count() (2026-09-03) - a party is always tiny (a
+        booking's own guest list), so evaluating it in Python costs nothing extra, but it lets a
+        caller who's already prefetch_related('party') (e.g. StaffCleaningRotaView, batching many
+        bookings' guest counts at once) reuse that cache instead of a fresh COUNT query per
+        booking - .count() always issues its own query regardless of what's prefetched."""
+        party_count = len(self.party.all())
         return party_count if party_count else self.adults + self.children + self.babies
 
     def clean(self):

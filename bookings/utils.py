@@ -424,7 +424,15 @@ def extras_summary(booking):
         label = f"Airport Transfer - {transfer.get_direction_display()}"
         items.append({'label': f"{label} ({detail})" if detail else label, 'price': transfer.price_at_request or 0})
 
-    for requested in booking.requested_extras.select_related('request_type').all():
+    # Bare .all(), not .select_related('request_type') - a caller that's already
+    # prefetch_related('requested_extras__request_type') (e.g. StaffCleaningRotaView, batching
+    # extras_summary() across many bookings, 2026-09-03) needs a bare .all() to hit that cache;
+    # any further queryset method here (including select_related) builds a fresh, uncached
+    # queryset instead, silently reintroducing one query per booking. A caller that hasn't
+    # prefetched still only pays one lazy query per requested_extra row accessed below - never
+    # more than a handful for a single booking, which is the normal case everywhere except the
+    # one place that now prefetches.
+    for requested in booking.requested_extras.all():
         label = requested.request_type.name
         items.append({
             'label': f"{label} x{requested.quantity}" if requested.quantity != 1 else label,

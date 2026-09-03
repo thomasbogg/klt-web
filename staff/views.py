@@ -2398,20 +2398,34 @@ class StaffCleaningRotaView(View):
         # days instead of jumping to a disjoint block.
         window_dates = [target_date + timedelta(days=offset) for offset in range(-1, 4)]
 
+        # select_related/prefetch_related here cover task.booking's own extras_summary()/
+        # total_guests() needs (mid_stay/freshen) - the turnover case's *next* booking is a
+        # separate row entirely and gets its own batched fetch below.
+        extras_relations = (
+            'booking__airport_transfers', 'booking__requested_extras__request_type',
+            'booking__date_adjustments', 'booking__party',
+        )
         if request.user.is_superuser:
             tasks = CleaningTask.objects.filter(date__range=(window_dates[0], window_dates[-1])).select_related(
-                'booking__property', 'booking__guest',
-            ).prefetch_related('assigned_to')
+                'booking__property', 'booking__guest', 'booking__extras',
+            ).prefetch_related('assigned_to', *extras_relations)
         else:
             tasks = CleaningTask.objects.filter(
                 date__range=(window_dates[0], window_dates[-1]), assigned_to=request.user,
-            ).select_related('booking__property', 'booking__guest').prefetch_related('assigned_to')
+            ).select_related(
+                'booking__property', 'booking__guest', 'booking__extras',
+            ).prefetch_related('assigned_to', *extras_relations)
+        tasks = list(tasks)
+
+        next_bookings_by_id = self._next_bookings_for_turnover_tasks(tasks)
 
         rows_by_date = {}
         for task in tasks:
+            guest_booking, extras = self._guest_booking_and_extras(task, next_bookings_by_id)
             rows_by_date.setdefault(task.date, []).append({
                 'task': task,
-                'extras': self._extras_for_row(task),
+                'guest_booking': guest_booking,
+                'extras': extras,
                 'assigned_names': ', '.join(u.username for u in task.assigned_to.all()),
             })
         days = [{'date': day, 'rows': rows_by_date.get(day, [])} for day in window_dates]
@@ -2426,18 +2440,57 @@ class StaffCleaningRotaView(View):
             'is_superuser': request.user.is_superuser,
         }
 
-    def _extras_for_row(self, task):
-        """What a cleaner actually needs to know, which is NOT always "this booking's own
-        extras": for a turnover, the departing guest's extras are irrelevant to prepping the
-        property - what matters is what the NEXT guest ordered (a cot to set up, a welcome pack to
-        leave out). Only a mid-stay clean (same guest still in-house, no next-arrival concept)
-        shows the booking's own extras. Returns None (distinct from an empty extras_summary) when
-        a turnover has no next booking yet, so the template can say so rather than implying
-        "nothing ordered"."""
+    def _next_bookings_for_turnover_tasks(self, tasks):
+        """{task.pk: next Booking or None} for every turnover task in `tasks`, fully prefetched
+        for extras_summary() (extras/airport_transfers/requested_extras/date_adjustments) - one
+        query for the (arrival_date, pk) pairs across every relevant property, one more to fetch
+        the actual next-booking rows, instead of one next_confirmed_booking_after call (plus
+        extras_summary()'s own four queries on top of *that*) per turnover task. Was 109 queries/
+        8.1s for this page's 5-day window before batching (2026-09-03) - the same shape of bug as
+        StaffCleaningEventsView's had, just worse here since extras_summary() compounds it."""
+        import bisect
+
+        turnover_tasks = [t for t in tasks if t.task_type == 'turnover']
+        property_ids = {t.booking.property_id for t in turnover_tasks}
+        pairs_by_property = Booking.objects.next_confirmed_booking_ids_by_property(property_ids)
+
+        next_booking_id_for_task = {}
+        for task in turnover_tasks:
+            pairs = pairs_by_property.get(task.booking.property_id, [])
+            dates = [d for d, _ in pairs]
+            idx = bisect.bisect_left(dates, task.booking.departure_date)
+            next_booking_id_for_task[task.pk] = pairs[idx][1] if idx < len(pairs) else None
+
+        next_booking_ids = {bid for bid in next_booking_id_for_task.values() if bid is not None}
+        bookings_by_id = Booking.objects.filter(pk__in=next_booking_ids).select_related(
+            'guest', 'extras',
+        ).prefetch_related(
+            'airport_transfers', 'requested_extras__request_type', 'date_adjustments', 'party',
+        ).in_bulk()
+
+        return {
+            task_pk: bookings_by_id.get(booking_id)
+            for task_pk, booking_id in next_booking_id_for_task.items()
+        }
+
+    def _guest_booking_and_extras(self, task, next_bookings_by_id):
+        """(booking to show guest/guest-count for, its extras) - NOT always task.booking's own:
+        for a turnover, the departing guest's name/count/extras are irrelevant to prepping the
+        property - what matters is who's actually arriving and what they ordered (a cot to set
+        up, a welcome pack to leave out). The card showed the departing guest's name/count
+        alongside the *arriving* guest's extras until 2026-09-03 (per Thomas) - confusing, since
+        "no extras requested by the next guest" then sat directly under a name that wasn't the
+        next guest. Both now come from the same booking, whichever one is actually relevant. Only
+        a mid-stay clean (same guest still in-house, no next-arrival concept) shows the booking's
+        own everything. guest_booking is None (distinct from an empty extras_summary) when a
+        turnover has no next booking yet, so the template can say so rather than implying an
+        empty guest line or "nothing ordered"."""
         if task.task_type != 'turnover':
-            return extras_summary(task.booking)
-        next_booking = Booking.objects.next_confirmed_booking_after(task.booking.property, task.booking.departure_date)
-        return extras_summary(next_booking) if next_booking else None
+            return task.booking, extras_summary(task.booking)
+        next_booking = next_bookings_by_id.get(task.pk)
+        if next_booking is None:
+            return None, None
+        return next_booking, extras_summary(next_booking)
 
 
 @method_decorator(superuser_required, name='dispatch')

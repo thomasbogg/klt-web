@@ -13,8 +13,8 @@ from django.utils import timezone
 
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment, Booking, BookingCondition,
-    BookingSettings, Charge, CheckinSettings, Departure, Extra, FAQ, Payment, PaymentSettings,
-    PlatformPayout, TravelMethod,
+    BookingRequestedExtra, BookingSettings, Charge, CheckinSettings, Departure, Extra, FAQ, Payment,
+    PaymentSettings, PlatformPayout, RequestType, TravelMethod,
 )
 from finance.models import AdHocService
 from guests.models import Guest
@@ -1516,6 +1516,108 @@ class StaffCleaningRotaViewTests(TestCase):
         self.client.login(username='rotasuperuser', password='pw')
         response = self.client.get(self.url)
         self.assertContains(response, 'Next arrival not yet booked.')
+
+    def test_turnover_shows_next_bookings_guest_and_count_not_own(self):
+        """The guest name/count shown alongside a turnover's extras must be the arriving guest's
+        (matching the extras, which are already the arriving guest's own) - until 2026-09-03 this
+        showed the departing guest's own name/count sitting directly above extras described as
+        "the next guest"'s, which was misleading."""
+        next_guest = Guest.objects.create(first_name='Bo', last_name='Costa', email='rota-next-guest@example.com')
+        next_booking = Booking.objects.create(
+            property=self.property, guest=next_guest, arrival_date=self.today + timedelta(days=2),
+            departure_date=self.today + timedelta(days=9), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=3, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        self.assertContains(response, str(next_guest))
+        self.assertContains(response, '3 guests')
+        self.assertNotContains(response, str(self.guest))
+        self.assertContains(
+            response, reverse('staff:booking_detail', kwargs={'reference': next_booking.reference}),
+        )
+
+    def test_query_count_does_not_scale_with_turnover_task_count(self):
+        """Regression guard for the 2026-09-03 N+1 fix: this page's guest_booking/extras lookup
+        used to call next_confirmed_booking_after (plus extras_summary()'s own four further
+        queries) per turnover task - 109 queries/8.1s for this page's 5-day window before
+        batching. Compares one turnover-with-a-next-booking's query count against four (each on
+        its own property, so they can't share a cached queryset some other way, and each with a
+        confirmed next booking that itself has a requested extra, so extras_summary()'s own
+        per-booking queries are exercised in both scenarios) rather than a hardcoded number, so
+        this doesn't need updating if unrelated middleware/session query counts change - only the
+        one-time cost of the batch machinery engaging at all should show up in the baseline,
+        never a per-task increment on top of it."""
+        request_type = RequestType.objects.create(name='Late arrival kit')
+        other_location = Location.objects.create(
+            title='Rota Location 2', street='Rua Test 2', zip_code='8200-002', city='Albufeira',
+            coordinates='37.0,-8.2', map_link='https://maps.example.com', color='#654321',
+        )
+
+        def add_turnover_with_next_booking(i):
+            extra_property = Property.objects.create(
+                title=f'Extra Rota Property {i}', short_title=f'EXTRA{i}', location=other_location,
+            )
+            departing_guest = Guest.objects.create(
+                first_name='Departing', last_name=f'Guest{i}', email=f'rota-departing{i}@example.com',
+            )
+            departing_booking = Booking.objects.create(
+                property=extra_property, guest=departing_guest,
+                arrival_date=self.today - timedelta(days=3), departure_date=self.today,
+                is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+                adults=2, children=0, babies=0, last_updated=timezone.now(),
+            )
+            Departure.objects.create(booking=departing_booking, clean=True)
+            arriving_guest = Guest.objects.create(
+                first_name='Arriving', last_name=f'Guest{i}', email=f'rota-arriving{i}@example.com',
+            )
+            arriving_booking = Booking.objects.create(
+                property=extra_property, guest=arriving_guest,
+                arrival_date=self.today + timedelta(days=2), departure_date=self.today + timedelta(days=9),
+                is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+                adults=2, children=0, babies=0, last_updated=timezone.now(),
+            )
+            BookingRequestedExtra.objects.create(
+                booking=arriving_booking, request_type=request_type, quantity=1, price_at_request=5,
+            )
+
+        add_turnover_with_next_booking(0)
+        self.client.login(username='rotasuperuser', password='pw')
+
+        with CaptureQueriesContext(connection) as one_task:
+            self.client.get(self.url)
+
+        for i in range(1, 4):
+            add_turnover_with_next_booking(i)
+
+        with CaptureQueriesContext(connection) as four_tasks:
+            response = self.client.get(self.url)
+
+        self.assertContains(response, 'Late arrival kit')
+        self.assertEqual(len(four_tasks.captured_queries), len(one_task.captured_queries))
+
+    def test_turnover_badge_hidden_but_freshen_and_mid_stay_badges_shown(self):
+        """Turnover's own badge was dropped from this page's cards (2026-09-03, matching the
+        cleaning calendar - it's the overwhelming majority of tasks, so naming it on every card
+        is redundant); Freshen/Mid-stay stay labelled, since either one is the informative,
+        minority case here too."""
+        Extra.objects.create(
+            booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=self.today - timedelta(days=1),
+        )
+        mid_task = CleaningTask.objects.get(booking=self.booking, task_type='mid_stay')
+        mid_task.date = self.today
+        mid_task.save(update_fields=['date'])
+        freshen_task = CleaningTask.objects.create(booking=self.booking, task_type='freshen', date=self.today)
+
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        html = response.content.decode()
+        self.assertNotIn('staff-cleaning-badge-turnover', html)
+        self.assertIn('staff-cleaning-badge-mid_stay', html)
+        self.assertIn('staff-cleaning-badge-freshen', html)
+        self.assertContains(response, 'Mid-stay')
+        self.assertContains(response, 'Freshen')
 
     def test_assignee_can_mark_done(self):
         self.task.assigned_to.set([self.cleaner])

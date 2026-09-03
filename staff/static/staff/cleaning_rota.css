@@ -63,6 +63,18 @@
     opacity: 0.7;
 }
 
+/* Turnover cards render no badge at all (2026-09-03, see cleaning_rota.html) - without this,
+   the guest-info line just gets the card's plain 10px flex gap under the property title, which
+   reads as a conspicuous empty beat where the badge would otherwise have sat, next to badge-
+   bearing cards where that same gap is visually closed by the badge (see its own negative
+   margin below). Matches the badge's own pull exactly so both card shapes read the same
+   distance from title to whatever comes right after it. `+`, not a class on the paragraph
+   itself, since .staff-cleaning-meta is reused for several other lines in the card (assigned-to,
+   notes) that must never inherit this. */
+.staff-panel-title + .staff-cleaning-meta {
+    margin-top: -6px;
+}
+
 .staff-cleaning-badge {
     align-self: flex-start;
     /* Pulls it closer to the property title above it than the card's general 10px row gap - the

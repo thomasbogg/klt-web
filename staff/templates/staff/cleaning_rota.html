@@ -44,11 +44,15 @@
                 {% for row in day.rows %}
                 <div class="staff-panel staff-cleaning-card{% if row.task.status == 'done' %} staff-cleaning-card-done{% endif %}">
                     <h3 class="staff-panel-title">{{ row.task.booking.property }}</h3>
+                    {% if row.task.task_type != 'turnover' %}
                     <span class="staff-cleaning-badge staff-cleaning-badge-{{ row.task.task_type }}">{{ row.task.get_task_type_display }}</span>
+                    {% endif %}
+                    {% if row.guest_booking %}
                     <p class="staff-cleaning-meta">
-                        <a href="{% url 'staff:booking_detail' reference=row.task.booking.reference %}">{{ row.task.booking.guest }}</a>
-                        &middot; {{ row.task.booking.total_guests }} guests
+                        <a href="{% url 'staff:booking_detail' reference=row.guest_booking.reference %}">{{ row.guest_booking.guest }}</a>
+                        &middot; {{ row.guest_booking.total_guests }} guests
                     </p>
+                    {% endif %}
 
                     {% if row.extras is None %}
                     <p class="staff-cleaning-meta">Next arrival not yet booked.</p>
