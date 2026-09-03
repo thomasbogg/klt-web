@@ -66,6 +66,114 @@ def get_stay_total_price(property, start_date, end_date, guests=None, monthly_di
     }
 
 
+def scale_rate(rate, percent):
+    """rate * (1 + percent/100), rounded to the nearest whole euro (matches this project's
+    pricing convention - every Price.rate in the DB is a whole number) then re-quantized to the
+    field's 2 decimal places."""
+    factor = Decimal('1') + (Decimal(percent) / Decimal('100'))
+    return (Decimal(rate) * factor).quantize(Decimal('1'), rounding=ROUND_HALF_UP).quantize(TWO_PLACES)
+
+
+def build_price_bulk_plan(mode, percent, properties=None, year=None, source_year=None,
+                           target_year=None, scale_extra_rates=False):
+    """Computes what Price.bulk-adjust-a-year or clone-a-year-forward would do, without writing
+    anything - the logic behind staff/views.py::StaffPriceBulkToolsView. Returns a dict: 'mode',
+    'scale_extra_rates', 'updates' (existing Price rows plus their new field values, adjust mode),
+    'creates' (unsaved Price instances, clone mode), 'skipped' (clone rows whose shifted dates
+    already overlap an existing row in the target year - reported rather than raised, so one
+    collision doesn't abort the whole batch) and 'no_data' (properties explicitly selected that
+    turned out to have no price rows at all for the relevant year - otherwise they'd just be
+    silently absent from the plan with no indication why, since a property with nothing to adjust
+    or clone contributes zero rows either way).
+
+    Properties with no booking_company are excluded from scope entirely, not just from 'no_data':
+    such a property isn't sold through our own booking flow at all (see Property.booking_company/
+    ManagementCompany.bookable_on_website), so it routinely has no current-year pricing and
+    flagging that as 'missing data' would just be noise, per Thomas 2026-09-04. An explicit
+    selection that includes one is silently narrowed rather than reported - the staff picker
+    (staff/views.py::StaffPriceBulkToolsView) doesn't even list them, so this only matters for a
+    stale/manually-crafted selection."""
+    from properties.models import Price
+
+    properties = [p for p in properties if p.booking_company_id] if properties else None
+    plan = {
+        'mode': mode, 'scale_extra_rates': scale_extra_rates,
+        'updates': [], 'creates': [], 'skipped': [], 'no_data': [],
+    }
+
+    if properties:
+        relevant_year = year if mode == 'adjust' else source_year
+        priced_property_ids = set(
+            Price.objects.filter(property__in=properties, start_date__year=relevant_year)
+            .values_list('property_id', flat=True).distinct()
+        )
+        plan['no_data'] = [p for p in properties if p.pk not in priced_property_ids]
+
+    if mode == 'adjust':
+        qs = Price.objects.filter(
+            start_date__year=year,
+        ).exclude(property__booking_company__isnull=True).select_related('property')
+        if properties:
+            qs = qs.filter(property__in=properties)
+        for price in qs.order_by('property__title', 'start_date'):
+            new_extra_adult = scale_rate(price.extra_adult_rate, percent) if scale_extra_rates else price.extra_adult_rate
+            new_extra_child = scale_rate(price.extra_child_rate, percent) if scale_extra_rates else price.extra_child_rate
+            plan['updates'].append({
+                'price': price,
+                'old_rate': price.rate, 'new_rate': scale_rate(price.rate, percent),
+                'old_extra_adult_rate': price.extra_adult_rate, 'new_extra_adult_rate': new_extra_adult,
+                'old_extra_child_rate': price.extra_child_rate, 'new_extra_child_rate': new_extra_child,
+            })
+    else:
+        offset = target_year - source_year
+        qs = Price.objects.filter(
+            start_date__year=source_year,
+        ).exclude(property__booking_company__isnull=True).select_related('property')
+        if properties:
+            qs = qs.filter(property__in=properties)
+        for price in qs.order_by('property__title', 'start_date'):
+            new_start = price.start_date.replace(year=price.start_date.year + offset)
+            new_end = price.end_date.replace(year=price.end_date.year + offset)
+            if Price.overlapping(price.property_id, new_start, new_end).exists():
+                plan['skipped'].append({'price': price, 'new_start': new_start, 'new_end': new_end})
+                continue
+            new_extra_adult = scale_rate(price.extra_adult_rate, percent) if scale_extra_rates else price.extra_adult_rate
+            new_extra_child = scale_rate(price.extra_child_rate, percent) if scale_extra_rates else price.extra_child_rate
+            new_price = Price(
+                property=price.property,
+                start_date=new_start,
+                end_date=new_end,
+                rate=scale_rate(price.rate, percent),
+                weekly_discount_percent=price.weekly_discount_percent,
+                last_minute_discount_percent=price.last_minute_discount_percent,
+                last_minute_discount_days=price.last_minute_discount_days,
+                monthly_discount_percent=price.monthly_discount_percent,
+                extra_adult_rate=new_extra_adult,
+                extra_child_rate=new_extra_child,
+            )
+            plan['creates'].append({'price': new_price, 'old_rate': price.rate, 'new_rate': new_price.rate})
+    return plan
+
+
+def apply_price_bulk_plan(plan):
+    """Writes a plan from build_price_bulk_plan(). Returns the number of rows updated/created."""
+    from properties.models import Price
+
+    if plan['mode'] == 'adjust':
+        rows = []
+        for u in plan['updates']:
+            row = u['price']
+            row.rate = u['new_rate']
+            row.extra_adult_rate = u['new_extra_adult_rate']
+            row.extra_child_rate = u['new_extra_child_rate']
+            rows.append(row)
+        Price.objects.bulk_update(rows, ['rate', 'extra_adult_rate', 'extra_child_rate'], batch_size=200)
+        return len(rows)
+    else:
+        Price.objects.bulk_create([c['price'] for c in plan['creates']], batch_size=200)
+        return len(plan['creates'])
+
+
 def pretty_title(title):
     """Title-cases a location/property name, lowercasing Portuguese connector words - except the
     unit code after a trailing ' - ' (e.g. 'CLUBE DO MONACO - AE', 'PARQUE DA CORCOVADA - 43-G'),

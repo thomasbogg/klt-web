@@ -18,6 +18,7 @@ urlpatterns = [
     path('guests/<int:pk>/', views.StaffGuestDetailView.as_view(), name='guest_detail'),
     path('properties/', views.StaffPropertyListView.as_view(), name='property_list'),
     path('properties/new/', views.StaffPropertyCreateView.as_view(), name='property_create'),
+    path('properties/bulk-prices/', views.StaffPriceBulkToolsView.as_view(), name='property_bulk_prices'),
     path('locations/', views.StaffLocationListView.as_view(), name='location_list'),
     path('locations/new/', views.StaffLocationCreateView.as_view(), name='location_create'),
     path('quick-add/<str:model>/', views.StaffQuickAddView.as_view(), name='quick_add'),

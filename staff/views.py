@@ -39,6 +39,7 @@ from properties.models import (
     Owner, Platform, Price, Property, PropertyImage, PropertyOwnership, PropertyPlatformID,
     PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
+from properties.utils import apply_price_bulk_plan, build_price_bulk_plan
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.monthly_reports import (
     EXTRAS_METRICS, REVENUE_GROUPS, bookings_trend_rows, commissions_trend_rows, extras_trend_rows,
@@ -336,6 +337,89 @@ class StaffPropertyListView(View):
             'locations': locations,
             'selected_location': selected_location,
         }
+        return render(request, self.template_name, context)
+
+
+@method_decorator(staff_page_required('can_view_properties'), name='dispatch')
+class StaffPriceBulkToolsView(View):
+    """Bulk-adjusts a whole year's rate card at once, either in place (raise/cut every price row
+    in a given year by a %) or by cloning one year's rows forward into a new year (shifted dates,
+    same % applied to rate) - see properties/utils.py::build_price_bulk_plan/apply_price_bulk_plan
+    for the actual computation, which this view is the only caller of (2026-09-04: Thomas doesn't
+    want a Django admin equivalent - staff app is the only surface for this). Two-step confirm
+    (preview, then a resubmit carrying step=confirm) so a wrong year/percentage doesn't silently
+    rewrite hundreds of rows before anyone's seen what it would do."""
+    template_name = 'staff/property_bulk_prices.html'
+
+    def _bookable_properties(self):
+        # Excludes properties with no booking_company - not sold through our own booking flow at
+        # all, so they routinely have no current-year pricing and would just be noise in the
+        # picker and in 'no_data' reporting (see build_price_bulk_plan's own docstring).
+        return Property.objects.exclude(booking_company__isnull=True).order_by('title')
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name, {'properties': self._bookable_properties()})
+
+    def post(self, request, *args, **kwargs):
+        post = request.POST
+        mode = post.get('mode')
+        percent = _parsed_decimal(post.get('percent'))
+        year = _parsed_int(post.get('year'))
+        source_year = _parsed_int(post.get('source_year'))
+        target_year = _parsed_int(post.get('target_year'))
+        scale_extra_rates = post.get('scale_extra_rates') == 'on'
+        selected_ids = [pk for pk in post.getlist('properties') if pk.isdigit()]
+        selected_properties = Property.objects.filter(pk__in=selected_ids) if selected_ids else None
+
+        errors = []
+        if mode not in ('adjust', 'clone'):
+            errors.append("Choose whether to adjust a year or clone one forward.")
+        if percent is None:
+            errors.append("Enter a percentage change.")
+        if mode == 'adjust' and not year:
+            errors.append("Enter the year to adjust.")
+        if mode == 'clone':
+            if not source_year:
+                errors.append("Enter a source year.")
+            if not target_year:
+                errors.append("Enter a target year.")
+            if source_year and target_year and source_year == target_year:
+                errors.append("The target year must differ from the source year.")
+
+        context = {
+            'properties': self._bookable_properties(),
+            'mode': mode, 'percent': post.get('percent', ''),
+            'year': post.get('year', ''), 'source_year': post.get('source_year', ''),
+            'target_year': post.get('target_year', ''),
+            'scale_extra_rates': scale_extra_rates,
+            'selected_ids': {int(pk) for pk in selected_ids},
+        }
+        if errors:
+            for error in errors:
+                messages.error(request, error)
+            return render(request, self.template_name, context)
+
+        plan = build_price_bulk_plan(
+            mode, percent, properties=selected_properties, year=year,
+            source_year=source_year, target_year=target_year, scale_extra_rates=scale_extra_rates,
+        )
+
+        if post.get('step') == 'confirm':
+            count = apply_price_bulk_plan(plan)
+            verb = 'Updated' if mode == 'adjust' else 'Created'
+            notes = []
+            if plan['skipped']:
+                notes.append(f"{len(plan['skipped'])} row(s) skipped - already priced in the target year")
+            if plan['no_data']:
+                notes.append(f"{len(plan['no_data'])} selected propert{'y' if len(plan['no_data']) == 1 else 'ies'} had no price rows to touch")
+            note_text = f" ({'; '.join(notes)})" if notes else ''
+            messages.success(request, f"{verb} {count} price rows.{note_text}")
+            return redirect('staff:property_bulk_prices')
+
+        context['plan'] = plan
+        preview_source = plan['updates'] or plan['creates']
+        context['preview_rows'] = preview_source[:100]
+        context['preview_truncated'] = len(preview_source) > 100
         return render(request, self.template_name, context)
 
 
@@ -1361,7 +1445,8 @@ class StaffPropertyDetailView(View):
         property = self._get_property(pk)
         panel = request.GET.get('panel', '')
         active_panel = panel if panel in self.PANELS else 'main'
-        context = self._context(property, active_panel)
+        show_historic = request.GET.get('show_historic') == '1'
+        context = self._context(property, active_panel, show_historic)
         context['export_url'] = request.build_absolute_uri(
             reverse('properties:calendar_export', kwargs={'token': property.ical_export_token})
         )
@@ -1390,15 +1475,21 @@ class StaffPropertyDetailView(View):
         extra_query = handler(request, property) if handler is not None else None
         panel = self.ACTION_PANELS.get(action, 'main')
         url = f"{reverse('staff:property_detail', kwargs={'pk': property.pk})}?panel={panel}"
+        if request.POST.get('show_historic') == '1':
+            url += '&show_historic=1'
         if extra_query:
             url += f"&{extra_query}"
         return redirect(url)
 
-    def _context(self, property, active_panel):
+    def _context(self, property, active_panel, show_historic=False):
         specs, _ = PropertySpec.objects.get_or_create(property=property)
         amenities, _ = Amenity.objects.get_or_create(property=property)
         sef_details, _ = SEFDetail.objects.get_or_create(property=property)
         existing_listing_ids = {p.platform_id: p.listing_id for p in property.platform_ids.all()}
+        all_prices = property.prices.order_by('start_date')
+        today = timezone.localdate()
+        historic_price_count = all_prices.filter(end_date__lt=today).count()
+        prices = all_prices if show_historic else all_prices.filter(end_date__gte=today)
         context = {
             'property': property,
             'active_panel': active_panel,
@@ -1412,7 +1503,9 @@ class StaffPropertyDetailView(View):
                 for platform in Platform.objects.all()
             ],
             'images': property.images.all(),
-            'prices': property.prices.order_by('start_date'),
+            'prices': prices,
+            'show_historic': show_historic,
+            'historic_price_count': historic_price_count,
             'ownership_history': property.ownership_history.all(),
         }
         context.update(_property_form_context())

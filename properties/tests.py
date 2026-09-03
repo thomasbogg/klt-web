@@ -3,7 +3,6 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.apps import apps
-from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.urls import reverse
@@ -14,7 +13,7 @@ from guests.models import Guest
 from properties.models import (
     Amenity, Location, ManagementCompany, Owner, Price, Property, PropertyOwnership, PropertySpec,
 )
-from properties.utils import get_stay_total_price
+from properties.utils import apply_price_bulk_plan, build_price_bulk_plan, get_stay_total_price
 
 
 def make_owner(name, email):
@@ -407,19 +406,20 @@ class GetStayTotalPriceTests(TestCase):
         self.assertIsNone(pricing)
 
 
-class PriceBulkToolsAdminTests(TestCase):
-    """The admin's 'bulk price tools' page (properties/admin.py PriceAdmin.bulk_tools_view) -
-    adjusts a whole year's rates in place, or clones a year forward into a new one with a %
-    adjustment applied to rate only (discounts/extra-guest rates carry over unchanged)."""
+class PriceBulkPlanTests(TestCase):
+    """build_price_bulk_plan()/apply_price_bulk_plan() (properties/utils.py) - the shared logic
+    behind the staff 'bulk price tools' page (staff/views.py::StaffPriceBulkToolsView, tested at
+    the view level in staff/tests.py::StaffPriceBulkToolsViewTests). Tested directly here since
+    it's plain data-in/data-out with no view/request involved."""
 
     def setUp(self):
-        self.staff_user = User.objects.create_user(
-            username='pricetooladmin', password='pw', is_staff=True, is_superuser=True,
+        self.management_company = ManagementCompany.objects.create(name='Bulk Price Test Management Co')
+        self.property = Property.objects.create(
+            title='Bulk Price Property', short_title='BULKPRICEPROP', booking_company=self.management_company,
         )
-        self.client.force_login(self.staff_user)
-        self.property = Property.objects.create(title='Bulk Price Property', short_title='BULKPRICEPROP')
-        self.other_property = Property.objects.create(title='Other Bulk Property', short_title='OTHERBULKPROP')
-        self.url = reverse('admin:properties_price_bulk_tools')
+        self.other_property = Property.objects.create(
+            title='Other Bulk Property', short_title='OTHERBULKPROP', booking_company=self.management_company,
+        )
 
     def _make_price(self, prop, year, month, day, nights, **overrides):
         start = date(year, month, day)
@@ -428,41 +428,42 @@ class PriceBulkToolsAdminTests(TestCase):
         fields.update(overrides)
         return Price.objects.create(property=prop, start_date=start, end_date=end, **fields)
 
-    def test_adjust_preview_does_not_write(self):
+    def test_build_plan_does_not_write(self):
         price = self._make_price(self.property, 2031, 1, 1, 30, monthly_discount_percent=Decimal('20.00'))
-        response = self.client.post(self.url, {
-            'mode': 'adjust', 'year': 2031, 'percent': '10', 'properties': [],
-        })
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Preview')
+        build_price_bulk_plan('adjust', Decimal('10'), year=2031)
         price.refresh_from_db()
-        self.assertEqual(price.rate, Decimal('100.00'))  # untouched until confirmed
+        self.assertEqual(price.rate, Decimal('100.00'))
 
-    def test_adjust_confirm_scales_rate_only(self):
+    def test_adjust_scales_rate_only_by_default(self):
         price = self._make_price(self.property, 2031, 1, 1, 30, monthly_discount_percent=Decimal('20.00'))
-        response = self.client.post(self.url, {
-            'step': 'confirm', 'mode': 'adjust', 'year': 2031, 'percent': '10', 'properties': [],
-        }, follow=True)
-        self.assertEqual(response.status_code, 200)
+        plan = build_price_bulk_plan('adjust', Decimal('10'), year=2031)
+        apply_price_bulk_plan(plan)
         price.refresh_from_db()
         self.assertEqual(price.rate, Decimal('110.00'))
         self.assertEqual(price.monthly_discount_percent, Decimal('20.00'))  # unchanged
+        self.assertEqual(price.extra_adult_rate, Decimal('10.00'))  # unchanged
 
     def test_adjust_negative_percent_cuts_rate(self):
         price = self._make_price(self.property, 2031, 2, 1, 27)
-        self.client.post(self.url, {
-            'step': 'confirm', 'mode': 'adjust', 'year': 2031, 'percent': '-10', 'properties': [],
-        })
+        plan = build_price_bulk_plan('adjust', Decimal('-10'), year=2031)
+        apply_price_bulk_plan(plan)
         price.refresh_from_db()
         self.assertEqual(price.rate, Decimal('90.00'))
+
+    def test_adjust_scale_extra_rates_opted_in(self):
+        price = self._make_price(self.property, 2031, 2, 1, 27)
+        plan = build_price_bulk_plan('adjust', Decimal('10'), year=2031, scale_extra_rates=True)
+        apply_price_bulk_plan(plan)
+        price.refresh_from_db()
+        self.assertEqual(price.rate, Decimal('110.00'))
+        self.assertEqual(price.extra_adult_rate, Decimal('11.00'))
+        self.assertEqual(price.extra_child_rate, Decimal('6.00'))  # 5.00 * 1.10 = 5.50, rounds up to the nearest euro
 
     def test_adjust_scoped_to_selected_properties_only(self):
         mine = self._make_price(self.property, 2031, 3, 1, 30)
         other = self._make_price(self.other_property, 2031, 3, 1, 30)
-        self.client.post(self.url, {
-            'step': 'confirm', 'mode': 'adjust', 'year': 2031, 'percent': '50',
-            'properties': [self.property.pk],
-        })
+        plan = build_price_bulk_plan('adjust', Decimal('50'), year=2031, properties=[self.property])
+        apply_price_bulk_plan(plan)
         mine.refresh_from_db()
         other.refresh_from_db()
         self.assertEqual(mine.rate, Decimal('150.00'))
@@ -473,32 +474,75 @@ class PriceBulkToolsAdminTests(TestCase):
             self.property, 2031, 1, 1, 30,
             weekly_discount_percent=Decimal('5.00'), monthly_discount_percent=Decimal('20.00'),
         )
-        response = self.client.post(self.url, {
-            'step': 'confirm', 'mode': 'clone', 'source_year': 2031, 'target_year': 2032,
-            'percent': '10', 'properties': [],
-        }, follow=True)
-        self.assertEqual(response.status_code, 200)
+        plan = build_price_bulk_plan('clone', Decimal('10'), source_year=2031, target_year=2032)
+        apply_price_bulk_plan(plan)
         new_price = Price.objects.get(property=self.property, start_date__year=2032)
         self.assertEqual(new_price.start_date, date(2032, 1, 1))
         self.assertEqual(new_price.end_date, date(2032, 1, 31))
         self.assertEqual(new_price.rate, Decimal('110.00'))
         self.assertEqual(new_price.weekly_discount_percent, Decimal('5.00'))
         self.assertEqual(new_price.monthly_discount_percent, Decimal('20.00'))
+        self.assertEqual(new_price.extra_adult_rate, Decimal('10.00'))  # not scaled by default
         # source row itself is untouched
         source_price = Price.objects.get(property=self.property, start_date__year=2031)
         self.assertEqual(source_price.rate, Decimal('100.00'))
+
+    def test_clone_scales_extra_rates_when_opted_in(self):
+        self._make_price(self.property, 2031, 1, 1, 30)
+        plan = build_price_bulk_plan(
+            'clone', Decimal('10'), source_year=2031, target_year=2032, scale_extra_rates=True,
+        )
+        apply_price_bulk_plan(plan)
+        new_price = Price.objects.get(property=self.property, start_date__year=2032)
+        self.assertEqual(new_price.extra_adult_rate, Decimal('11.00'))
+        self.assertEqual(new_price.extra_child_rate, Decimal('6.00'))  # 5.00 * 1.10 = 5.50, rounds up to the nearest euro
 
     def test_clone_skips_rows_that_would_overlap_existing_target_year_pricing(self):
         self._make_price(self.property, 2031, 1, 1, 30)
         # Target year already has a price row covering the shifted period.
         self._make_price(self.property, 2032, 1, 1, 30, rate=Decimal('999.00'))
-        self.client.post(self.url, {
-            'step': 'confirm', 'mode': 'clone', 'source_year': 2031, 'target_year': 2032,
-            'percent': '10', 'properties': [],
-        })
+        plan = build_price_bulk_plan('clone', Decimal('10'), source_year=2031, target_year=2032)
+        self.assertEqual(len(plan['skipped']), 1)
+        apply_price_bulk_plan(plan)
         target_rows = Price.objects.filter(property=self.property, start_date__year=2032)
         self.assertEqual(target_rows.count(), 1)
         self.assertEqual(target_rows.first().rate, Decimal('999.00'))  # pre-existing row untouched
+
+    def test_no_data_reports_selected_properties_missing_from_the_relevant_year(self):
+        self._make_price(self.property, 2031, 1, 1, 30)
+        # other_property has no price rows in 2031 at all.
+        plan = build_price_bulk_plan(
+            'adjust', Decimal('10'), year=2031, properties=[self.property, self.other_property],
+        )
+        self.assertEqual(plan['no_data'], [self.other_property])
+
+    def test_no_data_uses_source_year_for_clone_mode(self):
+        self._make_price(self.property, 2031, 1, 1, 30)
+        plan = build_price_bulk_plan(
+            'clone', Decimal('10'), source_year=2031, target_year=2032,
+            properties=[self.property, self.other_property],
+        )
+        self.assertEqual(plan['no_data'], [self.other_property])
+
+    def test_no_data_empty_when_no_properties_explicitly_selected(self):
+        self._make_price(self.property, 2031, 1, 1, 30)
+        plan = build_price_bulk_plan('adjust', Decimal('10'), year=2031)
+        self.assertEqual(plan['no_data'], [])
+
+    def test_property_with_no_booking_company_excluded_from_default_scope(self):
+        unmanaged = Property.objects.create(title='Unmanaged Bulk Property', short_title='UNMANAGEDBULKPROP')
+        self._make_price(self.property, 2031, 6, 1, 27)
+        unmanaged_price = self._make_price(unmanaged, 2031, 6, 1, 27)
+        plan = build_price_bulk_plan('adjust', Decimal('10'), year=2031)
+        touched = {u['price'].pk for u in plan['updates']}
+        self.assertNotIn(unmanaged_price.pk, touched)
+
+    def test_property_with_no_booking_company_silently_dropped_from_explicit_selection(self):
+        # Not reported as 'no_data' either - it's out of scope entirely, not "missing" data.
+        unmanaged = Property.objects.create(title='Unmanaged Bulk Property 2', short_title='UNMANAGEDBULKPROP2')
+        self._make_price(self.property, 2031, 7, 1, 27)
+        plan = build_price_bulk_plan('adjust', Decimal('10'), year=2031, properties=[self.property, unmanaged])
+        self.assertEqual(plan['no_data'], [])
 
     def test_clone_across_year_boundary_shifts_both_dates(self):
         # A festive-style row that spans the year boundary, like the real Dec23-Jan2 rows.
@@ -506,23 +550,11 @@ class PriceBulkToolsAdminTests(TestCase):
             property=self.property, start_date=date(2031, 12, 23), end_date=date(2032, 1, 2),
             rate=Decimal('100.00'),
         )
-        self.client.post(self.url, {
-            'step': 'confirm', 'mode': 'clone', 'source_year': 2031, 'target_year': 2033,
-            'percent': '0', 'properties': [],
-        })
+        plan = build_price_bulk_plan('clone', Decimal('0'), source_year=2031, target_year=2033)
+        apply_price_bulk_plan(plan)
         new_price = Price.objects.get(property=self.property, start_date__year=2033)
         self.assertEqual(new_price.start_date, date(2033, 12, 23))
         self.assertEqual(new_price.end_date, date(2034, 1, 2))
-
-    def test_requires_staff_login(self):
-        price = self._make_price(self.property, 2031, 1, 1, 30)
-        self.client.logout()
-        response = self.client.post(self.url, {
-            'step': 'confirm', 'mode': 'adjust', 'year': 2031, 'percent': '10', 'properties': [],
-        })
-        self.assertNotEqual(response.status_code, 200)
-        price.refresh_from_db()
-        self.assertEqual(price.rate, Decimal('100.00'))
 
 
 class AmenityTests(TestCase):

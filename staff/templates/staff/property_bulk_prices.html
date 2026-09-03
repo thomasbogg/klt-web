@@ -1,0 +1,160 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bulk price tools | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/property_bulk_prices.css' %}">
+    <script src="{% static 'staff/property_bulk_prices.js' %}" defer></script>
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Bulk price tools</h1>
+            <a href="{% url 'staff:property_list' %}" class="staff-header-link">&larr; All properties</a>
+        </header>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if plan %}
+        <div class="staff-panel">
+            <h2 class="staff-panel-title">Preview</h2>
+            {% if plan.mode == 'adjust' %}
+            <p>{{ plan.updates|length }} price row{{ plan.updates|length|pluralize }} in {{ year }}
+                will have their nightly rate adjusted by {{ percent }}%{% if scale_extra_rates %},
+                and their extra adult/child rates too{% endif %}. Discount percentages are untouched{% if not scale_extra_rates %},
+                and extra guest rates are untouched{% endif %}.</p>
+            {% else %}
+            <p>{{ plan.creates|length }} new price row{{ plan.creates|length|pluralize }} will be
+                created for {{ target_year }}, cloned from {{ source_year }} with the nightly rate
+                adjusted by {{ percent }}%{% if scale_extra_rates %} (extra adult/child rates too){% endif %}.
+                Discount percentages{% if not scale_extra_rates %} and extra guest rates{% endif %} carry over unchanged.</p>
+            {% if plan.skipped %}
+            <p><strong>{{ plan.skipped|length }} row{{ plan.skipped|length|pluralize }} skipped</strong>
+                because {{ target_year }} already has an overlapping price row for that property:</p>
+            <ul>
+                {% for s in plan.skipped %}
+                <li>{{ s.price.property }}: {{ s.new_start }} to {{ s.new_end }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            {% endif %}
+
+            {% if plan.no_data %}
+            <p><strong>{{ plan.no_data|length }} selected propert{{ plan.no_data|length|pluralize:"y,ies" }} skipped</strong>
+                - no price rows at all for {% if plan.mode == 'adjust' %}{{ year }}{% else %}{{ source_year }}{% endif %}:</p>
+            <ul>
+                {% for property in plan.no_data %}
+                <li>{{ property }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
+            <table class="staff-price-table">
+                <thead>
+                    <tr>
+                        <th>Property</th><th>Start</th><th>End</th>
+                        <th>Old rate</th><th>New rate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in preview_rows %}
+                    <tr>
+                        <td>{{ row.price.property }}</td>
+                        <td>{{ row.price.start_date }}</td>
+                        <td>{{ row.price.end_date }}</td>
+                        <td>&euro;{{ row.old_rate }}</td>
+                        <td>&euro;{{ row.new_rate }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% if preview_truncated %}<p>&hellip;and more not shown here (all will still be applied).</p>{% endif %}
+
+            <form method="post" class="staff-bulk-price-confirm">
+                {% csrf_token %}
+                <input type="hidden" name="step" value="confirm">
+                <input type="hidden" name="mode" value="{{ mode }}">
+                <input type="hidden" name="year" value="{{ year }}">
+                <input type="hidden" name="source_year" value="{{ source_year }}">
+                <input type="hidden" name="target_year" value="{{ target_year }}">
+                <input type="hidden" name="percent" value="{{ percent }}">
+                <input type="hidden" name="scale_extra_rates" value="{% if scale_extra_rates %}on{% endif %}">
+                {% for pk in selected_ids %}
+                <input type="hidden" name="properties" value="{{ pk }}">
+                {% endfor %}
+                <button type="submit" class="staff-button">Confirm and apply</button>
+                <a href="{% url 'staff:property_bulk_prices' %}" class="staff-header-link">Start over</a>
+            </form>
+        </div>
+
+        {% else %}
+        <div class="staff-panel">
+            <p>Raise or cut a whole year's rates at once, or spin up next year's prices by cloning
+                an existing year with a percentage adjustment.</p>
+
+            <form method="post" class="staff-form">
+                {% csrf_token %}
+
+                <div class="staff-field">
+                    <label for="staff-price-tool-mode">What do you want to do?</label>
+                    <select name="mode" id="staff-price-tool-mode" class="staff-input">
+                        <option value="adjust" {% if mode == 'adjust' or not mode %}selected{% endif %}>Adjust an existing year in place</option>
+                        <option value="clone" {% if mode == 'clone' %}selected{% endif %}>Clone a year forward with an adjustment</option>
+                    </select>
+                </div>
+
+                <div class="staff-field-row" data-methods="adjust">
+                    <label class="staff-field">Year
+                        <input type="text" name="year" value="{{ year }}" class="staff-input" placeholder="e.g. 2027">
+                    </label>
+                </div>
+
+                <div class="staff-field-row" data-methods="clone">
+                    <label class="staff-field">Source year
+                        <input type="text" name="source_year" value="{{ source_year }}" class="staff-input" placeholder="e.g. 2027">
+                    </label>
+                    <label class="staff-field">Target year
+                        <input type="text" name="target_year" value="{{ target_year }}" class="staff-input" placeholder="e.g. 2028">
+                    </label>
+                </div>
+
+                <div class="staff-field-row">
+                    <label class="staff-field">Percentage change
+                        <input type="text" name="percent" value="{{ percent }}" class="staff-input" placeholder="e.g. 5 or -10">
+                    </label>
+                </div>
+
+                <label class="staff-checkbox-label">
+                    <input type="checkbox" name="scale_extra_rates" {% if scale_extra_rates %}checked{% endif %}>
+                    Also scale extra adult/child rates by the same percentage
+                </label>
+
+                <div class="staff-field">
+                    <label for="staff-price-tool-properties">Properties</label>
+                    <select name="properties" id="staff-price-tool-properties" class="staff-input" multiple size="8">
+                        {% for property in properties %}
+                        <option value="{{ property.pk }}" {% if property.pk in selected_ids %}selected{% endif %}>{{ property }}</option>
+                        {% endfor %}
+                    </select>
+                    <span class="staff-bulk-price-hint">Leave blank to apply to every property with price rows in the relevant year.</span>
+                </div>
+
+                <button type="submit" class="staff-button">Preview changes</button>
+            </form>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

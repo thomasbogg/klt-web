@@ -2066,6 +2066,105 @@ class StaffPropertyListViewTests(TestCase):
         self.assertContains(response, reverse('staff:property_create'))
 
 
+class StaffPriceBulkToolsViewTests(TestCase):
+    """The 'Bulk price tools' page (properties/properties/bulk-prices/) - adjusts a whole year's
+    rates in place or clones a year forward into a new one with a % change, reusing
+    properties/utils.py::build_price_bulk_plan/apply_price_bulk_plan (properties/tests.py covers
+    that logic directly; these tests are about the view: parsing, permission gating, and the
+    preview-then-confirm flow)."""
+
+    def setUp(self):
+        User.objects.create_user(username='bulkpricestaffer', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='bulkpricestaffer', password='pw')
+        self.management_company = make_management_company()
+        self.property = Property.objects.create(
+            title='Bulk Price Property', short_title='STAFFBULKPROP', booking_company=self.management_company,
+        )
+        self.other_property = Property.objects.create(
+            title='Other Bulk Property', short_title='STAFFOTHERBULK', booking_company=self.management_company,
+        )
+        self.url = reverse('staff:property_bulk_prices')
+
+    def _make_price(self, prop, year, month, day, nights, **overrides):
+        start = date(year, month, day)
+        end = start + timedelta(days=nights)
+        fields = dict(rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'))
+        fields.update(overrides)
+        return Price.objects.create(property=prop, start_date=start, end_date=end, **fields)
+
+    def test_requires_can_view_properties(self):
+        User.objects.create_user(username='roleless_bulk_price', password='pw', is_staff=True)
+        self.client.login(username='roleless_bulk_price', password='pw')
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 403)
+
+    def test_link_present_on_property_list(self):
+        response = self.client.get(reverse('staff:property_list'))
+        self.assertContains(response, self.url)
+
+    def test_preview_does_not_write(self):
+        price = self._make_price(self.property, 2041, 1, 1, 30)
+        response = self.client.post(self.url, {'mode': 'adjust', 'year': '2041', 'percent': '10'})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.context['plan'])
+        price.refresh_from_db()
+        self.assertEqual(price.rate, Decimal('100.00'))
+
+    def test_confirm_adjust_scales_rate_but_not_extra_guest_rates_by_default(self):
+        price = self._make_price(self.property, 2041, 1, 1, 30)
+        self.client.post(self.url, {'step': 'confirm', 'mode': 'adjust', 'year': '2041', 'percent': '10'})
+        price.refresh_from_db()
+        self.assertEqual(price.rate, Decimal('110.00'))
+        self.assertEqual(price.extra_adult_rate, Decimal('10.00'))
+
+    def test_confirm_adjust_scales_extra_guest_rates_when_opted_in(self):
+        price = self._make_price(self.property, 2041, 2, 1, 27)
+        self.client.post(self.url, {
+            'step': 'confirm', 'mode': 'adjust', 'year': '2041', 'percent': '10',
+            'scale_extra_rates': 'on',
+        })
+        price.refresh_from_db()
+        self.assertEqual(price.rate, Decimal('110.00'))
+        self.assertEqual(price.extra_adult_rate, Decimal('11.00'))
+        self.assertEqual(price.extra_child_rate, Decimal('6.00'))  # 5.00 * 1.10 = 5.50, rounds up to the nearest euro
+
+    def test_confirm_clone_creates_shifted_rows_scoped_to_selected_properties(self):
+        mine = self._make_price(self.property, 2041, 3, 1, 30)
+        other = self._make_price(self.other_property, 2041, 3, 1, 30)
+        self.client.post(self.url, {
+            'step': 'confirm', 'mode': 'clone', 'source_year': '2041', 'target_year': '2042',
+            'percent': '5', 'properties': [str(self.property.pk)],
+        })
+        self.assertTrue(Price.objects.filter(property=self.property, start_date__year=2042).exists())
+        self.assertFalse(Price.objects.filter(property=self.other_property, start_date__year=2042).exists())
+
+    def test_missing_required_field_shows_error_without_writing(self):
+        price = self._make_price(self.property, 2041, 4, 1, 27)
+        response = self.client.post(self.url, {'mode': 'adjust', 'percent': '10'})  # no year
+        self.assertEqual(response.status_code, 200)
+        messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('year' in m.lower() for m in messages))
+        price.refresh_from_db()
+        self.assertEqual(price.rate, Decimal('100.00'))
+
+    def test_picker_excludes_properties_with_no_booking_company(self):
+        unmanaged = Property.objects.create(title='Unmanaged Property', short_title='UNMANAGEDPROP')
+        response = self.client.get(self.url)
+        listed = list(response.context['properties'])
+        self.assertIn(self.property, listed)
+        self.assertNotIn(unmanaged, listed)
+
+    def test_confirm_adjust_leaves_no_booking_company_property_untouched(self):
+        unmanaged = Property.objects.create(title='Unmanaged Property 2', short_title='UNMANAGEDPROP2')
+        managed_price = self._make_price(self.property, 2041, 5, 1, 27)
+        unmanaged_price = self._make_price(unmanaged, 2041, 5, 1, 27)
+        self.client.post(self.url, {'step': 'confirm', 'mode': 'adjust', 'year': '2041', 'percent': '10'})
+        managed_price.refresh_from_db()
+        unmanaged_price.refresh_from_db()
+        self.assertEqual(managed_price.rate, Decimal('110.00'))
+        self.assertEqual(unmanaged_price.rate, Decimal('100.00'))  # no booking_company - out of scope
+
+
 class StaffPropertyCreateViewTests(TestCase):
     def setUp(self):
         User.objects.create_user(username='property_create_staffer', password='pw', is_staff=True, is_superuser=True)
@@ -2355,6 +2454,54 @@ class StaffPropertyDetailViewTests(TestCase):
         )
         self.client.post(self.url, {'action': 'delete_price', 'price_id': price.pk})
         self.assertFalse(Price.objects.filter(pk=price.pk).exists())
+
+    def test_rate_card_hides_historic_prices_by_default(self):
+        yesterday = timezone.localdate() - timedelta(days=1)
+        historic = Price.objects.create(
+            property=self.property, start_date=yesterday - timedelta(days=30), end_date=yesterday,
+        )
+        current = Price.objects.create(
+            property=self.property, start_date=timezone.localdate(),
+            end_date=timezone.localdate() + timedelta(days=30),
+        )
+        response = self.client.get(self.url, {'panel': 'rates'})
+        prices = list(response.context['prices'])
+        self.assertIn(current, prices)
+        self.assertNotIn(historic, prices)
+        self.assertEqual(response.context['historic_price_count'], 1)
+        self.assertFalse(response.context['show_historic'])
+
+    def test_rate_card_show_historic_reveals_past_price_rows(self):
+        yesterday = timezone.localdate() - timedelta(days=1)
+        historic = Price.objects.create(
+            property=self.property, start_date=yesterday - timedelta(days=30), end_date=yesterday,
+        )
+        response = self.client.get(self.url, {'panel': 'rates', 'show_historic': '1'})
+        self.assertIn(historic, list(response.context['prices']))
+        self.assertTrue(response.context['show_historic'])
+
+    def test_update_price_preserves_show_historic_through_redirect(self):
+        price = Price.objects.create(
+            property=self.property, start_date=date(2027, 1, 1), end_date=date(2027, 1, 31),
+            rate=Decimal('100.00'),
+        )
+        response = self.client.post(self.url, {
+            'action': 'update_price', 'price_id': price.pk,
+            'start_date': '2027-01-01', 'end_date': '2027-01-31', 'rate': '110.00',
+            'show_historic': '1',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=rates&show_historic=1')
+
+    def test_rate_card_end_date_today_counts_as_current_not_historic(self):
+        # end_date < today is historic; end_date == today (still checkable-out of, arguably still
+        # "live") should not be hidden by default.
+        today_row = Price.objects.create(
+            property=self.property, start_date=timezone.localdate() - timedelta(days=10),
+            end_date=timezone.localdate(),
+        )
+        response = self.client.get(self.url, {'panel': 'rates'})
+        self.assertIn(today_row, list(response.context['prices']))
+        self.assertEqual(response.context['historic_price_count'], 0)
 
     def test_add_ical_link(self):
         airbnb = Platform.objects.get_or_create(name='Airbnb')[0]

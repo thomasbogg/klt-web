@@ -1,0 +1,15 @@
+.staff-bulk-price-hint {
+    font-size: 0.75rem;
+    color: #999;
+}
+
+.staff-bulk-price-confirm {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 14px;
+}
+
+#staff-price-tool-properties {
+    max-width: 320px;
+}
