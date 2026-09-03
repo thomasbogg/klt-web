@@ -551,6 +551,39 @@ def cleaning_task_valid_range(task):
     return min_date, max_date
 
 
+def batch_cleaning_task_valid_ranges(tasks):
+    """{task.pk: (min_date, max_date)} for every task in `tasks`, matching
+    cleaning_task_valid_range(task) exactly but with one query total for every 'turnover' task's
+    max_date instead of one query each - built for StaffCleaningEventsView, which renders every
+    task in the current view up front (so, unlike the single-task detail/move endpoints
+    cleaning_task_valid_range still serves directly, always needs all of them, not just whichever
+    one a user happens to click). 'freshen'/'mid_stay' tasks still go through
+    cleaning_task_valid_range one at a time - turnover is the overwhelming majority of real tasks
+    (130 of 135 across a full month, 2026-09-03), so batching just that one case eliminates nearly
+    all of the extra round trips for a fraction of the complexity of also batching
+    property_last_clean_before's two-query freshen lookup."""
+    import bisect
+
+    from bookings.models import Booking
+
+    turnover_tasks = [t for t in tasks if t.task_type == 'turnover']
+    property_ids = {t.booking.property_id for t in turnover_tasks}
+    arrivals_by_property = Booking.objects.confirmed_arrival_dates_by_property(property_ids)
+
+    ranges = {}
+    for task in turnover_tasks:
+        min_date = task.booking.departure_date
+        dates = arrivals_by_property.get(task.booking.property_id, [])
+        idx = bisect.bisect_left(dates, min_date)
+        max_date = dates[idx] if idx < len(dates) else None
+        ranges[task.pk] = (min_date, max_date)
+
+    for task in tasks:
+        if task.task_type != 'turnover':
+            ranges[task.pk] = cleaning_task_valid_range(task)
+    return ranges
+
+
 def apply_manual_task_date(task, new_date):
     """Validates new_date against cleaning_task_valid_range(task), then sets
     date/manually_scheduled/auto_date and saves - exactly what a calendar drag

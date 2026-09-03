@@ -99,6 +99,14 @@ DATABASES = {
         'PASSWORD': DATABASE_PASSWORD,
         'HOST': DATABASE_HOST,
         'PORT': DATABASE_PORT,
+        # Django's own default (0) closes and reopens the DB connection on every single request -
+        # fine for a local socket, expensive for this remote Railway proxy: measured at ~0.4s just
+        # to open a fresh connection, on top of query time, so every page load/navigation on this
+        # dev server was paying that twice (once for the request, again next time) for no reason -
+        # nothing here needs a *fresh* connection each request, just a live one. 60s lets
+        # runserver's process reuse one connection across requests within that window instead
+        # (2026-09-03, found while diagnosing slow cleaning-calendar loads/navigation).
+        'CONN_MAX_AGE': 60,
     }
 }
 

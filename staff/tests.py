@@ -5,7 +5,9 @@ from unittest.mock import Mock, patch
 import requests
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -3252,6 +3254,50 @@ class StaffCleaningCalendarEndpointTests(TestCase):
         })
         ids = [e['id'] for e in response.json()]
         self.assertNotIn(self.task.pk, ids)
+
+    def test_events_feed_query_count_does_not_scale_with_turnover_task_count(self):
+        """Regression guard for the 2026-09-03 N+1 fix: StaffCleaningEventsView used to call
+        cleaning_task_valid_range(task) - one next_confirmed_arrival_after query - per task, so a
+        week with 31 turnover tasks issued 31 extra round trips to the DB (measured at 2.3s of a
+        2.5-4.5s total response time against the real remote Postgres). batch_cleaning_task_
+        valid_ranges/Booking.confirmed_arrival_dates_by_property replaced that with one query for
+        every turnover task in the response, so adding more turnover tasks (each on its own
+        property, so they can't share a cached queryset some other way) must not add queries.
+        Compares actual query counts for one task vs. four rather than asserting a hardcoded
+        number, so this doesn't need updating if unrelated middleware/session query counts
+        change - only the *difference* is the thing this fix guarantees."""
+        params = {
+            'start': self.start.isoformat() + 'T00:00:00',
+            'end': (self.end + timedelta(days=30)).isoformat() + 'T00:00:00',
+        }
+        self.client.login(username='calendarsuperuser', password='pw')
+
+        with CaptureQueriesContext(connection) as one_task:
+            self.client.get(reverse('staff:cleaning_calendar_events'), params)
+
+        other_location = Location.objects.create(
+            title='Calendar Location 2', street='Rua Test 2', zip_code='8200-002', city='Albufeira',
+            coordinates='37.0,-8.2', map_link='https://maps.example.com', color='#654321',
+        )
+        for i in range(3):
+            extra_property = Property.objects.create(
+                title=f'Extra Calendar Property {i}', short_title=f'EXTRA{i}', location=other_location,
+            )
+            extra_guest = Guest.objects.create(
+                first_name='Extra', last_name=f'Guest{i}', email=f'extra{i}@example.com',
+            )
+            extra_booking = Booking.objects.create(
+                property=extra_property, guest=extra_guest, arrival_date=self.start, departure_date=self.end,
+                is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+                adults=2, children=0, babies=0, last_updated=timezone.now(),
+            )
+            Departure.objects.create(booking=extra_booking, clean=True)
+
+        with CaptureQueriesContext(connection) as four_tasks:
+            response = self.client.get(reverse('staff:cleaning_calendar_events'), params)
+
+        self.assertEqual(len(response.json()), 4)
+        self.assertEqual(len(four_tasks.captured_queries), len(one_task.captured_queries))
 
     def test_dismiss_view_requires_superuser(self):
         freshen_task = CleaningTask.objects.create(

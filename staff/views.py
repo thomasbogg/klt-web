@@ -51,9 +51,10 @@ from staff.reports import REPORT_COLUMNS, booking_report_rows, report_totals
 from staff.utils import (
     AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, ENQUIRY_STATUS_GROUPS, ENQUIRY_STATUSES, GUEST_LETTERS,
     LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAFF_PAGE_PERMISSION_FIELDS,
-    STAGE_TABS, STATUS_BUCKETS, apply_manual_checkin_time, apply_manual_task_date, booking_stage,
-    checkin_valid_range, cleaning_task_valid_range, compute_arrival_eta, next_step_hint,
-    properties_grouped_by_location, property_last_clean_before, reservation_rows,
+    STAGE_TABS, STATUS_BUCKETS, apply_manual_checkin_time, apply_manual_task_date,
+    batch_cleaning_task_valid_ranges, booking_stage, checkin_valid_range, cleaning_task_valid_range,
+    compute_arrival_eta, next_step_hint, properties_grouped_by_location, property_last_clean_before,
+    reservation_rows,
 )
 from staff.utils import last_day_of_month as _last_day_of_month
 from staff.utils import parsed_date as _parsed_date
@@ -2471,10 +2472,17 @@ class StaffCleaningEventsView(View):
             tasks = tasks.filter(date__gte=start_date)
         if end_date:
             tasks = tasks.filter(date__lt=end_date)
+        tasks = list(tasks)
+
+        # Was one cleaning_task_valid_range(task) call per task here - one next_confirmed_
+        # arrival_after query per turnover task, each a full round trip to the remote Railway
+        # Postgres (~75ms measured). batch_cleaning_task_valid_ranges collapses that to one query
+        # total for every turnover task in the response (2026-09-03 - see its own docstring).
+        valid_ranges = batch_cleaning_task_valid_ranges(tasks)
 
         events = []
         for task in tasks:
-            min_date, max_date = cleaning_task_valid_range(task)
+            min_date, max_date = valid_ranges[task.pk]
             location = task.booking.property.location
             assigned_usernames = [u.username for u in task.assigned_to.all()]
             # short_title, not the full property title - the location's own colour (below)
