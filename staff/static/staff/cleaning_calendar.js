@@ -206,7 +206,12 @@
             editable: true,
             eventStartEditable: true,
             eventDurationEditable: false,
-            dayMaxEventRows: 4,
+            // Was capped at 4 (collapsing the rest behind a "+more" popover) - a busy day easily
+            // has more tasks than that, and the popover hid both individual task labels and the
+            // Group N banding (applyGrouping() below only marks harnesses that are actually in the
+            // DOM, so anything behind "+more" lost its divider/label too). false lets each day
+            // cell grow to fit every task instead, per Thomas 2026-09-03.
+            dayMaxEventRows: false,
             events: eventsUrl,
             eventOrder: function (a, b) {
                 return bucketRank(a) - bucketRank(b);
