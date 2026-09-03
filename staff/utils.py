@@ -553,17 +553,24 @@ def _standard_checkin_time(booking):
 
 
 def compute_arrival_eta(booking):
-    """(time, is_all_day) - the calendar-displayed clock time for this booking's arrival.
-    Arrival.time means something different per travel method, per the guest-facing form
+    """(time, has_given_eta) - the calendar-displayed clock time for this booking's arrival, and
+    whether that time is a genuine guest-given ETA or a guessed placeholder. Arrival.time means
+    something different per travel method, per the guest-facing form
     (bookings/templates/bookings/_arrival_departure_form.html): a flight's *landing* time, a bus/
     train's own "expected time in Albufeira" (already an at-property estimate, just needing a
     last-mile buffer), or - for driving - the guest's own estimated arrival time at the property
     itself, used as-is with no buffer (explicit choice, not an oversight). Falls back to
-    _standard_checkin_time() only when there's genuinely no time to work with (arrival.time is
-    None) rather than rendering as an all-day event (2026-08-28, per Thomas - a guessed-but-
-    labelled placeholder time is more useful on a glance-and-go calendar than a blank all-day
-    slot), so is_all_day is always False; kept as part of the return shape since callers already
-    destructure it.
+    _standard_checkin_time() whenever there's genuinely no time to work with (arrival.time is
+    None or the time(0, 0) migration sentinel - see below) rather than rendering as an all-day
+    event (2026-08-28, per Thomas - a guessed-but-labelled placeholder time is more useful on a
+    glance-and-go calendar than a blank all-day slot) - has_given_eta is False on that path,
+    distinguishing it from a real given time (True) even though both render a clock time.
+    StaffCheckinEventsView's calendar tile label uses this to show "No ETA" instead of the guessed
+    time (2026-09-03, per Thomas: staff need to tell a legitimate 15:00 arrival apart from an
+    automatically-placed one at a glance, without opening the popup). Was previously named
+    is_all_day and always False - the all-day-rendering path it once drove was retired 2026-08-28,
+    leaving the slot dead until repurposed here; still a 2-tuple since every caller already
+    destructures it that way.
 
     method='other' has no time field of its own on the guest form at all (nothing in
     _arrival_departure_form.html's data-methods groups matches it, so arrival_departure.js
@@ -579,15 +586,22 @@ def compute_arrival_eta(booking):
     this was a real bug - Ulrich Görge's B05 arrival showed 14:00 (the generic fallback) on the
     check-ins calendar despite a given time of 15:30, because the old code's final `else` branch
     treated every non-flight/bus/train/driving method, including 'other', as "no time available"
-    and ignored arrival.time outright. Checked against upcoming (non-cancelled) bookings before
-    fixing: 258 have method='other' with no time at all (still correctly fall through to the
-    None-check above, unaffected), 16 have a real non-midnight time (previously silently
-    discarded, now shown correctly), and none are the historical midnight-sentinel artifacts that
-    show up only in old/irrelevant migrated rows."""
+    and ignored arrival.time outright.
+
+    time(0, 0) is treated the same as None - a real migration/data artifact, not a genuine given
+    time: 772 method='other' rows and 21 flight_faro rows have arrival.time exactly midnight, none
+    of them for driving/bus/train (which never got this sentinel), all but a handful in old,
+    pre-2026 bookings - clearly a "no time known" default baked in at some past import/edit, not an
+    actual guest-submitted 00:00 arrival (found while fixing the 'other'-verbatim bug above: naively
+    trusting it would have shown a nonsense literal-midnight ETA on the calendar for hundreds of
+    rows). Checked against upcoming (non-cancelled) bookings before the 'other' fix above: 258 have
+    method='other' with no time at all (still correctly fall through to this same branch,
+    unaffected), 16 have a real non-midnight time (previously silently discarded, now shown
+    correctly)."""
     from bookings.models import CheckinSettings, TravelMethod
 
     arrival = getattr(booking, 'arrival', None)
-    if arrival is None or arrival.time is None:
+    if arrival is None or arrival.time is None or arrival.time == time(0, 0):
         return _standard_checkin_time(booking), False
 
     if arrival.method == TravelMethod.FLIGHT_FARO:
@@ -615,7 +629,7 @@ def compute_arrival_eta(booking):
         computed = time(23, min(overflow_minutes, 59))
     else:
         computed = combined.time()
-    return computed, False
+    return computed, True
 
 
 def _computed_checkin_time(booking, task_type):

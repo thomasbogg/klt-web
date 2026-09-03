@@ -42,13 +42,17 @@
         document.getElementById('checkin-dialog-toggle-done').addEventListener('click', function () {
             if (currentCheckinId != null) toggleDone(currentCheckinId);
         });
-        // Extras/deposit checkboxes only exist inside an 'arrival' popup's freshly-rendered HTML
-        // - delegate from the static dialog body rather than re-binding on every eventClick.
+        // Extras/deposit checkboxes only exist inside an 'arrival' or 'welcome_visit' popup's
+        // freshly-rendered HTML - delegate from the static dialog body rather than re-binding on
+        // every eventClick. A welcome_visit popup's checkboxes carry their own data-checkin-id
+        // (the sibling 'arrival' row - see StaffCheckinDetailView, staff/views.py) since
+        // extras_collected/deposit_collected only ever live on that row, not on the popup
+        // actually open; an 'arrival' popup has no such override and just saves against itself.
         dialogBody.addEventListener('change', function (event) {
             if (currentCheckinId == null) return;
             var id = event.target.id;
             if (id === 'checkin-extras-collected' || id === 'checkin-deposit-collected') {
-                saveCheckboxes(currentCheckinId);
+                saveCheckboxes(event.target.dataset.checkinId || currentCheckinId);
             }
         });
 

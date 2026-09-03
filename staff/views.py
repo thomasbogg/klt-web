@@ -52,8 +52,8 @@ from staff.utils import (
     AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, ENQUIRY_STATUS_GROUPS, ENQUIRY_STATUSES, GUEST_LETTERS,
     LOCATION_SPEC_BOOLEAN_FIELDS, OWNER_BOOLEAN_FIELDS, REVIVABLE_STATUSES, STAFF_PAGE_PERMISSION_FIELDS,
     STAGE_TABS, STATUS_BUCKETS, apply_manual_checkin_time, apply_manual_task_date, booking_stage,
-    checkin_valid_range, cleaning_task_valid_range, next_step_hint, properties_grouped_by_location,
-    property_last_clean_before, reservation_rows,
+    checkin_valid_range, cleaning_task_valid_range, compute_arrival_eta, next_step_hint,
+    properties_grouped_by_location, property_last_clean_before, reservation_rows,
 )
 from staff.utils import last_day_of_month as _last_day_of_month
 from staff.utils import parsed_date as _parsed_date
@@ -2656,7 +2656,18 @@ class StaffCheckinEventsView(View):
     and the title's own time label both keep showing the real time - and since the render nudge can
     now legitimately diverge from that real time, the calendar tile itself no longer displays a
     clock time at all (checkins_calendar.js's displayEventTime: false) to avoid it reading as
-    authoritative."""
+    authoritative.
+
+    A self-check-in booking's own 'arrival' Checkin is excluded from this feed entirely (2026-09-03,
+    per Thomas) - self-check-in means nobody actually attends a meet & greet at the guest's real
+    ETA, so a normal arrival tile there is a redundant, never-actioned duplicate of the key_box/
+    welcome_visit tiles that already cover the same booking. The row itself still gets created/kept
+    in sync as before (see sync_checkins_for_booking()) - it's the one place extras_collected/
+    deposit_collected live, and finance/services.py::deposits_due_in_range() depends on a
+    task_type='arrival' row existing to query against - only its calendar visibility changes.
+    StaffCheckinDetailView folds its Guest/Arrival-plans content into the key_box popup and its
+    Extras/Security-deposit content into the welcome_visit popup instead, so nothing it would have
+    shown is actually lost, just relocated to the two tiles staff do interact with."""
 
     # The push-out step between consecutive blocks. Deliberately NOT the same as
     # checkins_calendar.js's defaultTimedEventDuration ('00:29') - a block rendered for the full
@@ -2669,7 +2680,9 @@ class StaffCheckinEventsView(View):
     def get(self, request, *args, **kwargs):
         start_date = _parsed_date((request.GET.get('start') or '').split('T')[0])
         end_date = _parsed_date((request.GET.get('end') or '').split('T')[0])
-        checkins = Checkin.objects.select_related('booking__property__location', 'booking__guest', 'booking__arrival')
+        checkins = Checkin.objects.select_related(
+            'booking__property__location', 'booking__guest', 'booking__arrival',
+        ).exclude(task_type='arrival', booking__arrival__self_check_in=True)
         if start_date:
             checkins = checkins.filter(date__gte=start_date)
         if end_date:
@@ -2682,7 +2695,18 @@ class StaffCheckinEventsView(View):
             location = booking.property.location
             arrival = getattr(booking, 'arrival', None)
             guest_name = f"{booking.guest.first_name or ''} {booking.guest.last_name}".strip()
-            time_label = checkin.time.strftime('%H:%M') if checkin.time else 'No time given'
+            # A guessed/fallback ETA (compute_arrival_eta's has_given_eta=False - no real Arrival.
+            # time to work with) reads as just another clock time otherwise, indistinguishable from
+            # a legitimate guest-given one (2026-09-03, per Thomas). Only applies to 'arrival' -
+            # key_box/welcome_visit times come from CheckinSettings' own fixed policy slots, not
+            # the guest's ETA, so this distinction is meaningless for them. A manual drag
+            # (manually_scheduled) is a deliberate staff decision, not a guess, so it's exempted
+            # even if the booking's own Arrival still has no real time on file.
+            if (checkin.task_type == 'arrival' and not checkin.manually_scheduled
+                    and not compute_arrival_eta(booking)[1]):
+                time_label = 'No ETA'
+            else:
+                time_label = checkin.time.strftime('%H:%M') if checkin.time else 'No time given'
             title = f"{booking.property.short_title}, {guest_name}, {time_label}"
 
             all_day = checkin.time is None
@@ -2744,9 +2768,19 @@ class StaffCheckinMoveView(View):
 class StaffCheckinDetailView(View):
     """Fetched by checkins_calendar.js when a calendar event is clicked - returns the popup's
     content as server-rendered HTML (this codebase has no JS templating anywhere), shaped
-    differently per task_type: an 'arrival' row gets the full guest/travel/extras/deposit picture,
-    a 'key_box'/'welcome_visit' row gets a short property/guest/notes fragment - extras and
-    deposit tracking are meaningless for those."""
+    differently per task_type. 'arrival' (a non-self-check-in booking's only Checkin row) gets the
+    full guest/travel/extras/deposit picture in one popup, same as always.
+
+    For a self-check-in booking, that same picture is split across the two tiles staff actually
+    interact with (2026-09-03, per Thomas - the 'arrival' row itself is hidden from the calendar
+    entirely, see StaffCheckinEventsView): 'key_box' (the same-day key-box-prep task) gets the
+    Guest/Arrival-plans sections, since that's the prep staff need before the guest even arrives;
+    'welcome_visit' (the next-day policy visit) gets Extras/Security-deposit, since that's when
+    staff actually meet the guest and can collect cash. Both still need the extras/deposit
+    checkboxes to write to the *underlying 'arrival' row* (extras_collected/deposit_collected only
+    exist there, and finance/services.py::deposits_due_in_range() specifically queries
+    task_type='arrival' - see StaffCheckinEventsView's docstring), so 'deposit_checkin' in context
+    is always that sibling row, not `checkin` itself, whenever it differs."""
 
     def get(self, request, *args, **kwargs):
         checkin = Checkin.objects.select_related(
@@ -2757,16 +2791,21 @@ class StaffCheckinDetailView(View):
 
         booking = checkin.booking
         context = {'checkin': checkin, 'booking': booking}
-        if checkin.task_type == 'arrival':
+        if checkin.task_type in ('arrival', 'key_box'):
+            context['arrival'] = getattr(booking, 'arrival', None)
+        if checkin.task_type in ('arrival', 'welcome_visit'):
             # Charge.security is the actual source of truth for what's owed (see its own
             # docstring, bookings/models.py) - read directly, not recomputed here. A booking with
             # no Charge at all (an owner's own self-booking, created via create_owner_booking(),
             # which never gets one - "an owner stay is never charged") has nothing owed either.
             charge = getattr(booking, 'charges', None)
+            deposit_checkin = checkin if checkin.task_type == 'arrival' else Checkin.objects.filter(
+                booking=booking, task_type='arrival',
+            ).first()
             context.update({
-                'arrival': getattr(booking, 'arrival', None),
                 'extras': extras_summary(booking),
                 'deposit_amount': charge.security if charge and charge.security else None,
+                'deposit_checkin': deposit_checkin,
             })
         popup_html = render_to_string('staff/_checkin_popup.html', context)
         return JsonResponse({'popup_html': popup_html})

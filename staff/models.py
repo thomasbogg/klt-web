@@ -222,8 +222,8 @@ class CleaningTask(models.Model):
 
 
 class Checkin(models.Model):
-    """A check-ins-calendar-visible task for one booking's arrival - either the arrival itself
-    (task_type='arrival', always exactly one per booking) or, for a self-check-in booking, two
+    """A check-in task for one booking's arrival - either the arrival itself (task_type='arrival',
+    always exactly one per booking, though see below) or, for a self-check-in booking, two
     auto-generated staff prep/policy tasks: setting the key box before the guest arrives, and a
     next-day in-person welcome visit (company policy: everyone gets met in person eventually, even
     a guest who let themselves in). Kept in sync via post_save signals on Arrival/Booking/
@@ -231,6 +231,15 @@ class Checkin(models.Model):
     being signal-driven rather than call-site-driven - bookings/admin.py's ArrivalInline/
     BookingDateAdjustmentInline are a second write path a call-site approach would silently miss.
     See staff/utils.py::sync_checkins_for_booking().
+
+    A self-check-in booking's 'arrival' row still exists and stays in sync exactly as before, but
+    is deliberately hidden from the calendar itself (2026-09-03, per Thomas - see
+    StaffCheckinEventsView's docstring, staff/views.py): with no in-person meet & greet, a normal
+    arrival tile at the guest's real ETA is a redundant tile nobody actions, so its content is
+    folded into the key_box (Guest/Arrival plans) and welcome_visit (Extras/Security deposit)
+    popups instead (StaffCheckinDetailView). The row is still very much load-bearing though, not
+    vestigial - extras_collected/deposit_collected only exist on it (see below), and
+    finance/services.py::deposits_due_in_range() specifically queries task_type='arrival'.
 
     time is deliberately denormalized from Arrival.time (adjusted by CheckinSettings' per-method
     buffer - staff/utils.py::compute_arrival_eta) for 'arrival' rows, or from CheckinSettings'

@@ -3305,36 +3305,38 @@ class ComputeArrivalEtaTests(TestCase):
 
     def test_faro_flight_adds_faro_buffer(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0), meet_greet=True)
-        computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertFalse(is_all_day)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertTrue(has_given_eta)
         self.assertEqual(computed, time(15, 30))
 
     def test_lisbon_flight_adds_lisbon_buffer(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_LISBON, time=time(10, 0), meet_greet=True)
-        computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertFalse(is_all_day)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertTrue(has_given_eta)
         self.assertEqual(computed, time(14, 30))
 
     def test_bus_adds_transit_buffer(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.BUS, time=time(12, 0), meet_greet=True)
-        computed, is_all_day = compute_arrival_eta(self.booking)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertTrue(has_given_eta)
         self.assertEqual(computed, time(12, 30))
 
     def test_train_adds_transit_buffer(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.TRAIN, time=time(9, 15), meet_greet=True)
-        computed, is_all_day = compute_arrival_eta(self.booking)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertTrue(has_given_eta)
         self.assertEqual(computed, time(9, 45))
 
     def test_driving_uses_given_time_verbatim(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.DRIVING, time=time(16, 0), meet_greet=True)
-        computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertFalse(is_all_day)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertTrue(has_given_eta)
         self.assertEqual(computed, time(16, 0))
 
     def test_other_method_falls_back_to_standard_checkin_time(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.OTHER, time=None, meet_greet=True)
-        computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertFalse(is_all_day)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertFalse(has_given_eta)
         self.assertEqual(computed, time(14, 0))
 
     def test_other_method_with_a_given_time_uses_it_verbatim(self):
@@ -3345,27 +3347,44 @@ class ComputeArrivalEtaTests(TestCase):
         # of the generic standard-time fallback, which is what left Ulrich Görge's B05 arrival
         # showing 14:00 on the check-ins calendar despite a given time of 15:30.
         Arrival.objects.create(booking=self.booking, method=TravelMethod.OTHER, time=time(15, 30), meet_greet=True)
-        computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertFalse(is_all_day)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertTrue(has_given_eta)
         self.assertEqual(computed, time(15, 30))
 
     def test_no_time_given_falls_back_to_standard_checkin_time(self):
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=None, meet_greet=True)
-        computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertFalse(is_all_day)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertFalse(has_given_eta)
+        self.assertEqual(computed, time(14, 0))
+
+    def test_midnight_time_is_treated_as_no_time_given(self):
+        # Real bug, fixed 2026-09-03: time(0, 0) is a migration/data-artifact sentinel for "no time
+        # known", not a genuine given time - 772 method='other' rows and 21 flight_faro rows have
+        # arrival.time exactly midnight, none of them for driving/bus/train. Naively trusting it
+        # (as the 'other'-verbatim fix above would otherwise do) computed a nonsense literal-
+        # midnight ETA for hundreds of rows instead of falling back to the standard time.
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.OTHER, time=time(0, 0), meet_greet=True)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertFalse(has_given_eta)
+        self.assertEqual(computed, time(14, 0))
+
+    def test_midnight_flight_time_also_falls_back_to_standard_checkin_time(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(0, 0), meet_greet=True)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertFalse(has_given_eta)
         self.assertEqual(computed, time(14, 0))
 
     def test_no_arrival_row_falls_back_to_standard_checkin_time(self):
-        computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertFalse(is_all_day)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertFalse(has_given_eta)
         self.assertEqual(computed, time(14, 0))
 
     def test_falls_back_to_property_company_standard_checkin_time_when_set(self):
         company = ManagementCompany.objects.create(name='ETA Co', standard_checkin_time=time(16, 30))
         self.property.cleaning_company = company
         self.property.save()
-        computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertFalse(is_all_day)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertFalse(has_given_eta)
         self.assertEqual(computed, time(16, 30))
 
     def test_standard_checkin_time_fallback_reads_cleaning_company_not_booking_company(self):
@@ -3377,8 +3396,8 @@ class ComputeArrivalEtaTests(TestCase):
         self.property.booking_company = booking_co
         self.property.cleaning_company = cleaning_co
         self.property.save()
-        computed, is_all_day = compute_arrival_eta(self.booking)
-        self.assertFalse(is_all_day)
+        computed, has_given_eta = compute_arrival_eta(self.booking)
+        self.assertFalse(has_given_eta)
         self.assertEqual(computed, time(16, 30))
 
 
@@ -3655,7 +3674,10 @@ class CheckinCalendarEndpointTests(TestCase):
         event = next(e for e in response.json() if e['id'] == self.checkin.pk)
         self.assertFalse(event['extendedProps']['meet_greet'])
 
-    def test_events_feed_renders_no_eta_at_standard_checkin_time(self):
+    def test_events_feed_renders_at_standard_checkin_time_but_labels_it_no_eta(self):
+        # 2026-09-03, per Thomas: the tile still has to render *somewhere* sensible on the
+        # calendar (the standard checkin time, same as always), but its label must read "No ETA",
+        # not a guessed clock time indistinguishable from a real guest-given one.
         arrival = self.booking.arrival
         arrival.method = TravelMethod.OTHER
         arrival.time = None
@@ -3667,7 +3689,37 @@ class CheckinCalendarEndpointTests(TestCase):
         event = next(e for e in response.json() if e['id'] == self.checkin.pk)
         self.assertFalse(event['allDay'])
         self.assertEqual(event['start'], f"{self.start.isoformat()}T14:00:00")
-        self.assertIn('14:00', event['title'])
+        self.assertIn('No ETA', event['title'])
+        self.assertNotIn('14:00', event['title'])
+
+    def test_events_feed_shows_real_time_for_a_given_eta(self):
+        # Regression guard alongside the No-ETA case above: a real given ETA (self.checkin's setUp
+        # Faro flight) must keep showing its actual clock time, not get swept into "No ETA" too.
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkins_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.start + timedelta(days=1)).isoformat() + 'T00:00:00',
+        })
+        event = next(e for e in response.json() if e['id'] == self.checkin.pk)
+        self.assertIn('15:30', event['title'])
+        self.assertNotIn('No ETA', event['title'])
+
+    def test_events_feed_shows_real_time_for_a_manually_dragged_no_eta_checkin(self):
+        # A manual drag is a deliberate staff decision, not a guess - even if the booking's own
+        # Arrival still has no real time on file, a dragged checkin must show its actual (staff-
+        # chosen) time, not "No ETA".
+        arrival = self.booking.arrival
+        arrival.method = TravelMethod.OTHER
+        arrival.time = None
+        arrival.save()
+        error = apply_manual_checkin_time(self.checkin, time(17, 0))
+        self.assertIsNone(error)
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkins_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.start + timedelta(days=1)).isoformat() + 'T00:00:00',
+        })
+        event = next(e for e in response.json() if e['id'] == self.checkin.pk)
+        self.assertIn('17:00', event['title'])
+        self.assertNotIn('No ETA', event['title'])
 
     def test_close_but_distinct_times_are_pushed_a_full_block_apart(self):
         # Regression 2026-08-28: two checkins one minute apart still numerically overlap at the
@@ -3808,6 +3860,10 @@ class CheckinCalendarEndpointTests(TestCase):
         self.assertNotIn('due', html)
 
     def test_detail_view_shows_key_box_popup_content(self):
+        # 2026-09-03, per Thomas: for a self-check-in booking, key_box's popup absorbs the full
+        # Guest/Arrival-plans picture the (now calendar-hidden) 'arrival' popup used to show alone
+        # - staff still need it to actually prep the key box. Extras/deposit stay off this popup,
+        # they belong to welcome_visit instead (see the test below).
         arrival = self.booking.arrival
         arrival.self_check_in = True
         arrival.save()
@@ -3817,6 +3873,72 @@ class CheckinCalendarEndpointTests(TestCase):
         html = response.json()['popup_html']
         self.assertIn('Key box', html)
         self.assertIn('CHECKINEP', html)
+        self.assertIn('Bo Costa', html)
+        self.assertIn('+351911111111', html)
+        self.assertIn('checkin-endpoint@example.com', html)
+        self.assertIn('Flight to Faro', html)
+        self.assertNotIn('checkin-extras-collected', html)
+        self.assertNotIn('checkin-deposit-collected', html)
+
+    def test_detail_view_shows_welcome_visit_popup_with_extras_and_deposit(self):
+        arrival = self.booking.arrival
+        arrival.self_check_in = True
+        arrival.save()
+        Charge.objects.create(booking=self.booking, security=Decimal('200.00'))
+        Extra.objects.create(booking=self.booking, late_checkout=True, late_checkout_charge=Decimal('15.00'))
+        arrival_checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
+        welcome_visit = Checkin.objects.get(booking=self.booking, task_type='welcome_visit')
+
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkin_detail', kwargs={'pk': welcome_visit.pk}))
+        html = response.json()['popup_html']
+        self.assertIn('Welcome visit', html)
+        self.assertIn('Late Checkout', html)
+        self.assertIn('due', html)
+        # Both checkboxes must save against the sibling 'arrival' row's pk, not welcome_visit's own
+        # - extras_collected/deposit_collected only exist there (Checkin's own docstring), and
+        # finance/services.py::deposits_due_in_range() specifically queries task_type='arrival'.
+        # (The outer popup wrapper's own data-checkin-id, welcome_visit's own pk, is unrelated and
+        # expected to stay as-is - only the two checkbox inputs' override matters here.)
+        self.assertIn(f'id="checkin-extras-collected" data-checkin-id="{arrival_checkin.pk}"', html)
+        self.assertIn(f'id="checkin-deposit-collected" data-checkin-id="{arrival_checkin.pk}"', html)
+        self.assertNotIn('Arrival plans', html)
+
+    def test_events_feed_hides_arrival_tile_for_self_check_in_booking(self):
+        arrival = self.booking.arrival
+        arrival.self_check_in = True
+        arrival.save()
+        arrival_checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
+        key_box = Checkin.objects.get(booking=self.booking, task_type='key_box')
+        welcome_visit = Checkin.objects.get(booking=self.booking, task_type='welcome_visit')
+
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.get(reverse('staff:checkins_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00',
+            'end': (self.start + timedelta(days=2)).isoformat() + 'T00:00:00',
+        })
+        ids = [e['id'] for e in response.json()]
+        self.assertNotIn(arrival_checkin.pk, ids)
+        self.assertIn(key_box.pk, ids)
+        self.assertIn(welcome_visit.pk, ids)
+
+    def test_save_view_still_works_on_a_calendar_hidden_arrival_checkin(self):
+        # The row is hidden from the calendar's own feed, but StaffCheckinSaveView is reached via
+        # the welcome_visit popup's data-checkin-id override (see the JS), not via a tile click -
+        # it must keep accepting writes against it.
+        arrival = self.booking.arrival
+        arrival.self_check_in = True
+        arrival.save()
+        arrival_checkin = Checkin.objects.get(booking=self.booking, task_type='arrival')
+
+        self.client.login(username='checkinstaffer', password='pw')
+        response = self.client.post(reverse('staff:checkin_save', kwargs={'pk': arrival_checkin.pk}), {
+            'extras_collected': 'true', 'deposit_collected': 'true',
+        })
+        self.assertEqual(response.status_code, 200)
+        arrival_checkin.refresh_from_db()
+        self.assertTrue(arrival_checkin.extras_collected)
+        self.assertTrue(arrival_checkin.deposit_collected)
 
     def test_toggle_done_marks_and_unmarks(self):
         self.client.login(username='checkinstaffer', password='pw')
