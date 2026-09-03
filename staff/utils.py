@@ -36,15 +36,29 @@ CLOSED_STATUSES = (
 # ETA"). Identified by guest.last_name, lowercased - the only signal available (no dedicated flag
 # on Booking) - matching guests/management/commands/consolidate_block_guest_records.py's own
 # BLOCK_GROUPS, which already normalized legacy casing variants onto these two canonical spellings.
-# Deliberately scoped to sync_checkins_for_booking() only, not sync_cleaning_tasks_for_booking() -
-# a "Late Check-out" block plausibly still needs a real turnover clean once it ends, unlike
-# "Unbookable"; Thomas would need to weigh in before cleaning tasks get the same treatment.
-BLOCK_GUEST_LAST_NAMES = {'block - unbookable', 'block - late check-out'}
+BLOCK_UNBOOKABLE_LAST_NAME = 'block - unbookable'
+BLOCK_LATE_CHECK_OUT_LAST_NAME = 'block - late check-out'
+BLOCK_GUEST_LAST_NAMES = {BLOCK_UNBOOKABLE_LAST_NAME, BLOCK_LATE_CHECK_OUT_LAST_NAME}
+
+
+def _guest_last_name(booking):
+    guest = getattr(booking, 'guest', None)
+    return (guest.last_name or '').strip().lower() if guest else ''
 
 
 def is_block_booking(booking):
-    guest = getattr(booking, 'guest', None)
-    return bool(guest) and (guest.last_name or '').strip().lower() in BLOCK_GUEST_LAST_NAMES
+    """Either BLOCK category - used by sync_checkins_for_booking() (no real guest, so never a
+    check-in for either kind)."""
+    return _guest_last_name(booking) in BLOCK_GUEST_LAST_NAMES
+
+
+def is_unbookable_block_booking(booking):
+    """'BLOCK - Unbookable' only - used by sync_cleaning_tasks_for_booking() (2026-09-03, per
+    Thomas). Deliberately narrower than is_block_booking(): unlike an unbookable period, a "Late
+    Check-out" block is a placeholder for a real future change to the cleaning schedule that
+    hasn't been designed yet (Thomas's own words) - left alone as an intentional reminder, not
+    swept into this gate."""
+    return _guest_last_name(booking) == BLOCK_UNBOOKABLE_LAST_NAME
 
 # The subset of CLOSED_STATUSES a staffer can revive from the booking detail page's "Uncancel
 # booking" button - deliberately excludes 'Cancelled by platform' (the platform is the source of
@@ -290,7 +304,13 @@ def sync_cleaning_tasks_for_booking(booking):
     Same blanket-pending-delete treatment when the property's cleaning_company has
     cleans_on_calendar=False (2026-08-28, per Thomas) - a company managing its own cleaning
     separately shouldn't have its properties' tasks cluttering this calendar. Only when a company
-    is actually set: an untracked property (cleaning_company=None) is unaffected."""
+    is actually set: an untracked property (cleaning_company=None) is unaffected.
+
+    Same blanket-pending-delete for a 'BLOCK - Unbookable' placeholder booking (see
+    is_unbookable_block_booking() above, 2026-09-03, per Thomas) - a property marked unbookable has
+    no real stay to clean for. Deliberately NOT applied to 'BLOCK - Late Check-out' - Thomas is
+    keeping that one showing up on purpose, as a placeholder reminder for a real cleaning-schedule
+    effect it needs that hasn't been designed yet."""
     from staff.models import CleaningTask
 
     if booking.enquiry_status in CLOSED_STATUSES:
@@ -299,6 +319,10 @@ def sync_cleaning_tasks_for_booking(booking):
 
     cleaning_company = booking.property.cleaning_company
     if cleaning_company is not None and not cleaning_company.cleans_on_calendar:
+        CleaningTask.objects.filter(booking=booking, status='pending').delete()
+        return
+
+    if is_unbookable_block_booking(booking):
         CleaningTask.objects.filter(booking=booking, status='pending').delete()
         return
 
@@ -413,7 +437,16 @@ def sync_freshen_tasks_for_property(property):
     Two known gaps, not addressed here: a property's very first-ever booking never gets a freshen
     task (nothing to measure a gap against), and platform-synced (iCal) bookings don't get a
     Departure row (bookings/utils.py::sync_ical_link()) so they never register as a "last clean"
-    even though the platform's own cleaner may have serviced the property in between."""
+    even though the platform's own cleaner may have serviced the property in between.
+
+    'BLOCK - Unbookable' placeholder bookings are excluded from the walk entirely (2026-09-03, per
+    Thomas) - same reasoning as sync_cleaning_tasks_for_booking()'s own gate: nobody arrives for
+    one, so a freshen task tied to its "arrival" is meaningless. They're still fully visible to
+    property_last_clean_before()'s gap calculation for every *other* booking though (simply by
+    never contributing a CleaningTask of their own to that chain) - an unbookable period says
+    nothing about whether the property is actually clean, unlike an owner's own clean=False
+    departure (see that function's own docstring), so it's correct for a long unbookable stretch to
+    still count toward the next real guest's gap, not get treated as covering it."""
     from bookings.models import Booking
     from staff.models import CleaningTask
 
@@ -424,7 +457,7 @@ def sync_freshen_tasks_for_property(property):
 
     bookings = Booking.objects.filter(property=property).exclude(
         enquiry_status__in=CLOSED_STATUSES,
-    ).order_by('arrival_date')
+    ).exclude(guest__last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME).order_by('arrival_date')
 
     today = timezone.now().date()
     for booking in bookings:

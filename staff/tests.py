@@ -1097,6 +1097,31 @@ class CleaningTaskSyncTests(TestCase):
         Departure.objects.create(booking=self.booking, clean=True)
         self.assertTrue(CleaningTask.objects.filter(booking=self.booking, task_type='turnover').exists())
 
+    def test_block_unbookable_booking_creates_no_cleaning_task(self):
+        # Real fix, 2026-09-03, per Thomas - explicitly scoped to 'BLOCK - Unbookable' only, NOT
+        # 'BLOCK - Late Check-out': the latter is a deliberate placeholder for a real future
+        # cleaning-schedule effect that hasn't been designed yet, left untouched on purpose.
+        self.guest.last_name = 'BLOCK - Unbookable'
+        self.guest.save()
+        Departure.objects.create(booking=self.booking, clean=True)
+        self.assertFalse(CleaningTask.objects.filter(booking=self.booking).exists())
+
+    def test_block_late_check_out_booking_still_creates_a_cleaning_task(self):
+        self.guest.last_name = 'BLOCK - Late Check-out'
+        self.guest.save()
+        Departure.objects.create(booking=self.booking, clean=True)
+        self.assertTrue(CleaningTask.objects.filter(booking=self.booking, task_type='turnover').exists())
+
+    def test_a_pending_task_is_removed_if_the_guest_becomes_an_unbookable_block(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        self.assertTrue(CleaningTask.objects.filter(booking=self.booking).exists())
+
+        self.guest.last_name = 'BLOCK - Unbookable'
+        self.guest.save()
+        self.booking.save()
+
+        self.assertFalse(CleaningTask.objects.filter(booking=self.booking).exists())
+
 
 class FreshenTaskSyncTests(TestCase):
     """staff/utils.py::sync_freshen_tasks_for_property() - the auto-insert/auto-dismiss cascade
@@ -1201,6 +1226,33 @@ class FreshenTaskSyncTests(TestCase):
 
         later = self._make_booking(self.baseline, self.baseline + timedelta(days=7))
         self.assertFalse(CleaningTask.objects.filter(booking=later, task_type='freshen').exists())
+
+    def test_unbookable_block_booking_gets_no_freshen_task_of_its_own(self):
+        self._seed_last_clean()
+        block_guest = Guest.objects.create(first_name='', last_name='BLOCK - Unbookable', email='block-unbookable@example.com')
+        block_booking = Booking.objects.create(
+            property=self.property, guest=block_guest,
+            arrival_date=self.baseline + timedelta(days=10), departure_date=self.baseline + timedelta(days=17),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=0, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.assertFalse(CleaningTask.objects.filter(booking=block_booking).exists())
+
+    def test_unbookable_block_period_still_counts_toward_the_next_real_bookings_gap(self):
+        # Unlike an owner's own clean=False departure (see the test above), an unbookable period
+        # says nothing about whether the property is actually clean - it must still count toward
+        # the gap for whoever arrives next, not get silently treated as "covered".
+        self._seed_last_clean()
+        block_guest = Guest.objects.create(first_name='', last_name='BLOCK - Unbookable', email='block-unbookable-2@example.com')
+        Booking.objects.create(
+            property=self.property, guest=block_guest,
+            arrival_date=self.baseline + timedelta(days=5), departure_date=self.baseline + timedelta(days=9),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=0, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+        later = self._make_booking(self.baseline + timedelta(days=10), self.baseline + timedelta(days=17))
+        self.assertTrue(CleaningTask.objects.filter(booking=later, task_type='freshen').exists())
 
     def test_gap_below_threshold_creates_no_freshen_task(self):
         self._seed_last_clean()

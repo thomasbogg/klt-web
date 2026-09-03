@@ -79,7 +79,12 @@
         }
 
         var calendar = new FullCalendar.Calendar(el, {
-            initialView: 'timeGridWeek',
+            // A full week is too cramped to read on a phone - default to Day there instead
+            // (2026-09-03, per Thomas). Checked once at load, not kept in sync on resize/rotate -
+            // staff who explicitly switch views via the toolbar shouldn't get silently flipped
+            // back. 768px matches this site's one established mobile breakpoint (header.css/
+            // footer.css/property.css and others all use it), not a new one invented here.
+            initialView: window.innerWidth < 768 ? 'timeGridDay' : 'timeGridWeek',
             locale: 'en-gb',
             headerToolbar: {
                 left: 'prev,next today',
