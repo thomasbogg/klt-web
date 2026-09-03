@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.apps import apps
+from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.urls import reverse
@@ -404,6 +405,124 @@ class GetStayTotalPriceTests(TestCase):
         end = start + timedelta(days=3)
         pricing = get_stay_total_price(self.property, start, end, {'adults': 2})
         self.assertIsNone(pricing)
+
+
+class PriceBulkToolsAdminTests(TestCase):
+    """The admin's 'bulk price tools' page (properties/admin.py PriceAdmin.bulk_tools_view) -
+    adjusts a whole year's rates in place, or clones a year forward into a new one with a %
+    adjustment applied to rate only (discounts/extra-guest rates carry over unchanged)."""
+
+    def setUp(self):
+        self.staff_user = User.objects.create_user(
+            username='pricetooladmin', password='pw', is_staff=True, is_superuser=True,
+        )
+        self.client.force_login(self.staff_user)
+        self.property = Property.objects.create(title='Bulk Price Property', short_title='BULKPRICEPROP')
+        self.other_property = Property.objects.create(title='Other Bulk Property', short_title='OTHERBULKPROP')
+        self.url = reverse('admin:properties_price_bulk_tools')
+
+    def _make_price(self, prop, year, month, day, nights, **overrides):
+        start = date(year, month, day)
+        end = start + timedelta(days=nights)
+        fields = dict(rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'))
+        fields.update(overrides)
+        return Price.objects.create(property=prop, start_date=start, end_date=end, **fields)
+
+    def test_adjust_preview_does_not_write(self):
+        price = self._make_price(self.property, 2031, 1, 1, 30, monthly_discount_percent=Decimal('20.00'))
+        response = self.client.post(self.url, {
+            'mode': 'adjust', 'year': 2031, 'percent': '10', 'properties': [],
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Preview')
+        price.refresh_from_db()
+        self.assertEqual(price.rate, Decimal('100.00'))  # untouched until confirmed
+
+    def test_adjust_confirm_scales_rate_only(self):
+        price = self._make_price(self.property, 2031, 1, 1, 30, monthly_discount_percent=Decimal('20.00'))
+        response = self.client.post(self.url, {
+            'step': 'confirm', 'mode': 'adjust', 'year': 2031, 'percent': '10', 'properties': [],
+        }, follow=True)
+        self.assertEqual(response.status_code, 200)
+        price.refresh_from_db()
+        self.assertEqual(price.rate, Decimal('110.00'))
+        self.assertEqual(price.monthly_discount_percent, Decimal('20.00'))  # unchanged
+
+    def test_adjust_negative_percent_cuts_rate(self):
+        price = self._make_price(self.property, 2031, 2, 1, 27)
+        self.client.post(self.url, {
+            'step': 'confirm', 'mode': 'adjust', 'year': 2031, 'percent': '-10', 'properties': [],
+        })
+        price.refresh_from_db()
+        self.assertEqual(price.rate, Decimal('90.00'))
+
+    def test_adjust_scoped_to_selected_properties_only(self):
+        mine = self._make_price(self.property, 2031, 3, 1, 30)
+        other = self._make_price(self.other_property, 2031, 3, 1, 30)
+        self.client.post(self.url, {
+            'step': 'confirm', 'mode': 'adjust', 'year': 2031, 'percent': '50',
+            'properties': [self.property.pk],
+        })
+        mine.refresh_from_db()
+        other.refresh_from_db()
+        self.assertEqual(mine.rate, Decimal('150.00'))
+        self.assertEqual(other.rate, Decimal('100.00'))  # not selected, untouched
+
+    def test_clone_creates_new_year_shifted_and_scaled(self):
+        self._make_price(
+            self.property, 2031, 1, 1, 30,
+            weekly_discount_percent=Decimal('5.00'), monthly_discount_percent=Decimal('20.00'),
+        )
+        response = self.client.post(self.url, {
+            'step': 'confirm', 'mode': 'clone', 'source_year': 2031, 'target_year': 2032,
+            'percent': '10', 'properties': [],
+        }, follow=True)
+        self.assertEqual(response.status_code, 200)
+        new_price = Price.objects.get(property=self.property, start_date__year=2032)
+        self.assertEqual(new_price.start_date, date(2032, 1, 1))
+        self.assertEqual(new_price.end_date, date(2032, 1, 31))
+        self.assertEqual(new_price.rate, Decimal('110.00'))
+        self.assertEqual(new_price.weekly_discount_percent, Decimal('5.00'))
+        self.assertEqual(new_price.monthly_discount_percent, Decimal('20.00'))
+        # source row itself is untouched
+        source_price = Price.objects.get(property=self.property, start_date__year=2031)
+        self.assertEqual(source_price.rate, Decimal('100.00'))
+
+    def test_clone_skips_rows_that_would_overlap_existing_target_year_pricing(self):
+        self._make_price(self.property, 2031, 1, 1, 30)
+        # Target year already has a price row covering the shifted period.
+        self._make_price(self.property, 2032, 1, 1, 30, rate=Decimal('999.00'))
+        self.client.post(self.url, {
+            'step': 'confirm', 'mode': 'clone', 'source_year': 2031, 'target_year': 2032,
+            'percent': '10', 'properties': [],
+        })
+        target_rows = Price.objects.filter(property=self.property, start_date__year=2032)
+        self.assertEqual(target_rows.count(), 1)
+        self.assertEqual(target_rows.first().rate, Decimal('999.00'))  # pre-existing row untouched
+
+    def test_clone_across_year_boundary_shifts_both_dates(self):
+        # A festive-style row that spans the year boundary, like the real Dec23-Jan2 rows.
+        Price.objects.create(
+            property=self.property, start_date=date(2031, 12, 23), end_date=date(2032, 1, 2),
+            rate=Decimal('100.00'),
+        )
+        self.client.post(self.url, {
+            'step': 'confirm', 'mode': 'clone', 'source_year': 2031, 'target_year': 2033,
+            'percent': '0', 'properties': [],
+        })
+        new_price = Price.objects.get(property=self.property, start_date__year=2033)
+        self.assertEqual(new_price.start_date, date(2033, 12, 23))
+        self.assertEqual(new_price.end_date, date(2034, 1, 2))
+
+    def test_requires_staff_login(self):
+        price = self._make_price(self.property, 2031, 1, 1, 30)
+        self.client.logout()
+        response = self.client.post(self.url, {
+            'step': 'confirm', 'mode': 'adjust', 'year': 2031, 'percent': '10', 'properties': [],
+        })
+        self.assertNotEqual(response.status_code, 200)
+        price.refresh_from_db()
+        self.assertEqual(price.rate, Decimal('100.00'))
 
 
 class AmenityTests(TestCase):
