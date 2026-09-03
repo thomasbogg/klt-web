@@ -74,6 +74,22 @@ def scale_rate(rate, percent):
     return (Decimal(rate) * factor).quantize(Decimal('1'), rounding=ROUND_HALF_UP).quantize(TWO_PLACES)
 
 
+def gross_up_for_commission(direct_rate, commission_percent):
+    """What to list on a platform charging commission_percent so its cut still nets back
+    direct_rate - direct_rate / (1 - commission_percent/100), rounded to the nearest cent. Used
+    only by the Rate Card's "Platform rates" popup (informational - never written anywhere); a
+    flat estimate that deliberately doesn't model per-platform complexity beyond one % (see
+    Platform.commission_percent's own docstring for the Booking.com Genius/payment-charge
+    caveat). Returns None if there's no commission_percent to gross up with, or it's 100%+
+    (division would be zero or negative)."""
+    if commission_percent is None:
+        return None
+    factor = Decimal('1') - (Decimal(commission_percent) / Decimal('100'))
+    if factor <= 0:
+        return None
+    return (Decimal(direct_rate) / factor).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+
+
 def build_price_bulk_plan(mode, percent, properties=None, year=None, source_year=None,
                            target_year=None, scale_extra_rates=False):
     """Computes what Price.bulk-adjust-a-year or clone-a-year-forward would do, without writing

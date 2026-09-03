@@ -25,6 +25,10 @@ urlpatterns = [
     path('settings/', views.StaffSettingsView.as_view(), name='settings'),
     path('properties/<int:pk>/', views.StaffPropertyDetailView.as_view(), name='property_detail'),
     path(
+        'properties/<int:pk>/platform-rates/',
+        views.StaffPropertyPlatformRatesView.as_view(), name='property_platform_rates',
+    ),
+    path(
         'properties/<int:pk>/ical/<int:link_id>/sync/',
         views.StaffIcalSyncView.as_view(), name='ical_sync',
     ),

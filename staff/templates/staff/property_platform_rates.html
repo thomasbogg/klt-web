@@ -1,0 +1,48 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Platform rates - {{ property.title }}</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/ical_sync.css' %}">
+</head>
+<body>
+    <div class="staff-page staff-sync-page">
+        <h1 class="staff-page-title">Platform rates</h1>
+        <p class="staff-sync-subtitle">{{ property.title }}</p>
+
+        {% if not platforms %}
+        <p class="staff-message staff-message-error">No platform has a commission % set yet - add one under Settings &rsaquo; Platforms.</p>
+        {% else %}
+        <p class="staff-sync-subtitle">Grossed up from the Direct nightly rate so that platform's own commission still nets that rate back - an estimate only, not what actually gets charged (Booking.com's Genius programme discount and payment charges aren't modelled here).</p>
+        <table class="staff-sync-table">
+            <thead>
+                <tr>
+                    <th>Start</th><th>End</th><th>Direct</th>
+                    {% for platform in platforms %}<th>{{ platform.name }}</th>{% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    <td>{{ row.price.start_date|date:'d M Y' }}</td>
+                    <td>{{ row.price.end_date|date:'d M Y' }}</td>
+                    <td>&euro;{{ row.price.rate }}</td>
+                    {% for rate in row.platform_rates %}
+                    <td>{% if rate %}&euro;{{ rate }}{% else %}&mdash;{% endif %}</td>
+                    {% endfor %}
+                </tr>
+                {% empty %}
+                <tr><td colspan="{{ platforms|length|add:3 }}" class="staff-empty">No current or upcoming price rows.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        <button type="button" class="staff-button staff-button-small staff-sync-close" onclick="window.close();">Close window</button>
+    </div>
+</body>
+</html>

@@ -139,13 +139,14 @@
                         <p class="staff-settings-hint">The booking platforms available to choose from when adding a property's iCal link or listing ID.</p>
                         <table class="staff-price-table staff-extras-aligned-table">
                             <thead>
-                                <tr><th>Name</th><th>Takes security deposits</th><th></th></tr>
+                                <tr><th>Name</th><th>Takes security deposits</th><th>Commission %</th><th></th></tr>
                             </thead>
                             <tbody>
                                 {% for platform in platforms %}
                                 <tr>
                                     <td><input type="text" name="name" form="platform-form-{{ platform.pk }}" value="{{ platform.name }}" class="staff-input"></td>
                                     <td><input type="checkbox" name="take_security_deposits" form="platform-form-{{ platform.pk }}" {% if platform.take_security_deposits %}checked{% endif %}></td>
+                                    <td><input type="text" name="commission_percent" form="platform-form-{{ platform.pk }}" value="{{ platform.commission_percent|default_if_none:'' }}" class="staff-input staff-input-small" placeholder="e.g. 15"></td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="platform-form-{{ platform.pk }}" class="staff-button staff-button-small">Save</button>
                                         <form method="post" class="staff-inline-delete">
@@ -157,17 +158,19 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="3" class="staff-empty">No platforms yet.</td></tr>
+                                <tr><td colspan="4" class="staff-empty">No platforms yet.</td></tr>
                                 {% endfor %}
                                 <tr class="staff-price-row-new">
                                     <td><input type="text" name="name" form="platform-form-new" class="staff-input"></td>
                                     <td><input type="checkbox" name="take_security_deposits" form="platform-form-new"></td>
+                                    <td><input type="text" name="commission_percent" form="platform-form-new" class="staff-input staff-input-small" placeholder="e.g. 15"></td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="platform-form-new" class="staff-button staff-button-small">Add</button>
                                     </td>
                                 </tr>
                             </tbody>
                         </table>
+                        <p class="staff-settings-hint">Commission % feeds the Rate Card's "Platform rates" popup - a flat estimate only. Booking.com's real cut also depends on the Genius programme discount and payment charges, not modelled here yet.</p>
                         {% for platform in platforms %}
                         <form method="post" id="platform-form-{{ platform.pk }}">
                             {% csrf_token %}

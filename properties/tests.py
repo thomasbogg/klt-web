@@ -13,7 +13,9 @@ from guests.models import Guest
 from properties.models import (
     Amenity, Location, ManagementCompany, Owner, Price, Property, PropertyOwnership, PropertySpec,
 )
-from properties.utils import apply_price_bulk_plan, build_price_bulk_plan, get_stay_total_price
+from properties.utils import (
+    apply_price_bulk_plan, build_price_bulk_plan, gross_up_for_commission, get_stay_total_price,
+)
 
 
 def make_owner(name, email):
@@ -404,6 +406,25 @@ class GetStayTotalPriceTests(TestCase):
         end = start + timedelta(days=3)
         pricing = get_stay_total_price(self.property, start, end, {'adults': 2})
         self.assertIsNone(pricing)
+
+
+class GrossUpForCommissionTests(TestCase):
+    """gross_up_for_commission() (properties/utils.py) - the Rate Card 'Platform rates' popup's
+    math: what to list on a platform charging commission_percent so it still nets back
+    direct_rate after that platform's cut."""
+
+    def test_grosses_up_correctly(self):
+        # €100 direct, 15% commission -> list at €117.65 so 0.85 * 117.65 ~= 100.
+        self.assertEqual(gross_up_for_commission(Decimal('100'), Decimal('15')), Decimal('117.65'))
+
+    def test_zero_commission_returns_direct_rate_unchanged(self):
+        self.assertEqual(gross_up_for_commission(Decimal('100'), Decimal('0')), Decimal('100.00'))
+
+    def test_none_commission_returns_none(self):
+        self.assertIsNone(gross_up_for_commission(Decimal('100'), None))
+
+    def test_hundred_percent_commission_returns_none_not_a_division_error(self):
+        self.assertIsNone(gross_up_for_commission(Decimal('100'), Decimal('100')))
 
 
 class PriceBulkPlanTests(TestCase):

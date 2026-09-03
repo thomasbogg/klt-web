@@ -39,7 +39,7 @@ from properties.models import (
     Owner, Platform, Price, Property, PropertyImage, PropertyOwnership, PropertyPlatformID,
     PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
-from properties.utils import apply_price_bulk_plan, build_price_bulk_plan
+from properties.utils import apply_price_bulk_plan, build_price_bulk_plan, gross_up_for_commission
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.monthly_reports import (
     EXTRAS_METRICS, REVENUE_GROUPS, bookings_trend_rows, commissions_trend_rows, extras_trend_rows,
@@ -903,6 +903,7 @@ class StaffSettingsView(View):
             return
         platform = Platform(
             name=name, take_security_deposits=request.POST.get('take_security_deposits') == 'on',
+            commission_percent=_parsed_decimal(request.POST.get('commission_percent')),
         )
         try:
             platform.full_clean()
@@ -923,6 +924,7 @@ class StaffSettingsView(View):
             return
         platform.name = name
         platform.take_security_deposits = request.POST.get('take_security_deposits') == 'on'
+        platform.commission_percent = _parsed_decimal(request.POST.get('commission_percent'))
         try:
             platform.full_clean()
         except ValidationError as error:
@@ -1709,6 +1711,38 @@ class StaffPropertyDetailView(View):
             _flash_validation_error(request, error)
             return
         messages.success(request, f"Ownership transferred to {new_owner} effective {effective_date}.")
+
+
+@method_decorator(staff_page_required('can_view_properties'), name='dispatch')
+class StaffPropertyPlatformRatesView(View):
+    """Rate Card "Platform rates" popup - opened via the same named-window pattern as the iCal
+    sync popup below (see property_detail.js/property_detail.html's data-popup-link), except a
+    plain GET link rather than a POST form since this has no side effects at all. Grosses up this
+    property's current/future Direct rates by every Platform with a commission_percent set (see
+    properties/utils.py::gross_up_for_commission and Platform's own docstring for the caveats) -
+    purely informational, telling staff what to type into a platform's own calendar when updating
+    it by hand. Historic rows are left out for the same reason the Rate card panel hides them by
+    default - a platform's live calendar only cares about current/future pricing."""
+    template_name = 'staff/property_platform_rates.html'
+
+    def get(self, request, pk, *args, **kwargs):
+        property = Property.objects.filter(pk=pk).first()
+        if property is None:
+            raise Http404("No property found.")
+        platforms = Platform.objects.filter(commission_percent__isnull=False).order_by('name')
+        prices = property.prices.filter(end_date__gte=timezone.localdate()).order_by('start_date')
+        rows = [
+            {
+                'price': price,
+                'platform_rates': [
+                    gross_up_for_commission(price.rate, platform.commission_percent)
+                    for platform in platforms
+                ],
+            }
+            for price in prices
+        ]
+        context = {'property': property, 'platforms': platforms, 'rows': rows}
+        return render(request, self.template_name, context)
 
 
 @method_decorator(staff_page_required('can_view_properties'), name='dispatch')

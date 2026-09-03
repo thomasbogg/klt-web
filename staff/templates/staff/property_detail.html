@@ -256,6 +256,7 @@
                     <div class="staff-panel-column">
                         <div class="staff-panel">
                             <h2 class="staff-panel-title">Rate card</h2>
+                            <a href="{% url 'staff:property_platform_rates' property.pk %}" target="platform-rates-{{ property.pk }}" class="staff-button staff-button-small" data-popup-link>Platform rates</a>
                             {% if historic_price_count %}
                             {% if show_historic %}
                             <a href="?panel=rates" class="staff-show-more-link">Hide historic prices</a>

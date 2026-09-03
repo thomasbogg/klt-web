@@ -2705,6 +2705,56 @@ def _ics_feed(events):
     return '\r\n'.join(lines)
 
 
+class StaffPropertyPlatformRatesViewTests(TestCase):
+    """Rate Card's 'Platform rates' popup - grosses up current/future Direct rates by each
+    Platform's commission_percent. The math itself is covered directly in
+    properties/tests.py::GrossUpForCommissionTests; these tests are about what the view includes/
+    excludes (only commission-having platforms, only current/future price rows)."""
+
+    def setUp(self):
+        User.objects.create_user(username='platformratesstaffer', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='platformratesstaffer', password='pw')
+        self.property = Property.objects.create(title='Platform Rates Property', short_title='PLATFORMRATESPROP')
+        self.url = reverse('staff:property_platform_rates', kwargs={'pk': self.property.pk})
+
+    def test_unknown_property_404s(self):
+        response = self.client.get(reverse('staff:property_platform_rates', kwargs={'pk': 999999}))
+        self.assertEqual(response.status_code, 404)
+
+    def test_only_platforms_with_commission_percent_are_included(self):
+        Platform.objects.update_or_create(name='Airbnb', defaults={'commission_percent': Decimal('15')})[0]
+        Platform.objects.create(name='No Commission Set')
+        response = self.client.get(self.url)
+        names = [p.name for p in response.context['platforms']]
+        self.assertEqual(names, ['Airbnb'])
+
+    def test_grosses_up_direct_rate_per_platform(self):
+        Platform.objects.update_or_create(name='Airbnb', defaults={'commission_percent': Decimal('15')})[0]
+        Price.objects.create(
+            property=self.property, start_date=timezone.localdate(),
+            end_date=timezone.localdate() + timedelta(days=30), rate=Decimal('100.00'),
+        )
+        response = self.client.get(self.url)
+        row = response.context['rows'][0]
+        self.assertEqual(row['platform_rates'], [Decimal('117.65')])
+
+    def test_historic_price_rows_are_excluded(self):
+        Platform.objects.update_or_create(name='Airbnb', defaults={'commission_percent': Decimal('15')})[0]
+        yesterday = timezone.localdate() - timedelta(days=1)
+        Price.objects.create(
+            property=self.property, start_date=yesterday - timedelta(days=30), end_date=yesterday,
+            rate=Decimal('100.00'),
+        )
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['rows'], [])
+
+    def test_button_present_on_rate_card_panel(self):
+        response = self.client.get(
+            reverse('staff:property_detail', kwargs={'pk': self.property.pk}), {'panel': 'rates'},
+        )
+        self.assertContains(response, self.url)
+
+
 class StaffIcalSyncViewTests(TestCase):
     """Covers the view wiring around sync_ical_link() (fetch, error handling, template choice) -
     see bookings/tests.py::SyncIcalLinkTests for the actual sync-logic coverage."""
@@ -2945,15 +2995,34 @@ class StaffSettingsViewTests(TestCase):
         })
         self.assertTrue(Platform.objects.get(name='Direct').take_security_deposits)
 
+    def test_add_platform_with_commission_percent(self):
+        self.client.post(self.url, {
+            'action': 'add_platform', 'name': 'Direct', 'commission_percent': '15.5',
+        })
+        self.assertEqual(Platform.objects.get(name='Direct').commission_percent, Decimal('15.50'))
+
+    def test_add_platform_blank_commission_percent_stays_none(self):
+        self.client.post(self.url, {'action': 'add_platform', 'name': 'Direct'})
+        self.assertIsNone(Platform.objects.get(name='Direct').commission_percent)
+
     def test_update_platform(self):
         platform = Platform.objects.create(name='Old Name')
         self.client.post(self.url, {
             'action': 'update_platform', 'platform_id': platform.pk, 'name': 'New Name',
-            'take_security_deposits': 'on',
+            'take_security_deposits': 'on', 'commission_percent': '18',
         })
         platform.refresh_from_db()
         self.assertEqual(platform.name, 'New Name')
         self.assertTrue(platform.take_security_deposits)
+        self.assertEqual(platform.commission_percent, Decimal('18'))
+
+    def test_update_platform_can_clear_commission_percent(self):
+        platform = Platform.objects.create(name='Was Set', commission_percent=Decimal('15'))
+        self.client.post(self.url, {
+            'action': 'update_platform', 'platform_id': platform.pk, 'name': 'Was Set',
+        })
+        platform.refresh_from_db()
+        self.assertIsNone(platform.commission_percent)
 
     def test_delete_platform(self):
         platform = Platform.objects.create(name='Unused Platform')

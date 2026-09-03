@@ -24,3 +24,12 @@ document.addEventListener('submit', function (event) {
     if (!form) return;
     window.open('', form.target, 'width=700,height=600,scrollbars=yes,resizable=yes');
 });
+
+// Same named-window pattern as the iCal sync popup above, for a plain GET link instead of a
+// POST form (e.g. Rate card's "Platform rates") - opens/focuses the target window before the
+// link's own default navigation follows into it.
+document.addEventListener('click', function (event) {
+    var link = event.target.closest('[data-popup-link]');
+    if (!link) return;
+    window.open('', link.target, 'width=800,height=600,scrollbars=yes,resizable=yes');
+});

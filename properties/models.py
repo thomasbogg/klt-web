@@ -824,12 +824,29 @@ class Platform(models.Model):
     booking terms already cover damage/security deposits - not read anywhere yet, added ahead of a
     consumer per Thomas.
 
+    commission_percent (blank until set) is a flat expected commission rate used only to gross up
+    a property's Direct rate for the Rate Card's "Platform rates" popup (staff/views.py::
+    StaffPropertyPlatformRatesView) - purely informational, telling staff what nightly figure to
+    type into that platform's own calendar so the payout nets back the Direct rate. It is NOT what
+    actually gets charged on a given booking (see PlatformPayout for real per-booking figures,
+    scraped rather than estimated) and deliberately doesn't model per-platform complexity beyond a
+    flat %, e.g. Booking.com's Genius programme discount (5-25%, stacks on top of commission) and
+    payment processing charges - flagged by Thomas 2026-09-04 as real but out of scope for now.
+
     NOTE: env_settings.PLATFORMS still separately hardcodes 'Airbnb'/'Booking.com'/'Vrbo' for
     platform-payout and direct-guest-exclusion logic (bookings/payouts.py, staff/views.py,
     properties/views.py) - a Platform added here beyond those three won't automatically be
     recognised as a platform booking by that logic. Flagged, not migrated, in this pass."""
     name = models.CharField(max_length=100, unique=True)
     take_security_deposits = models.BooleanField(default=False)
+    commission_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        verbose_name='commission %',
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Flat expected commission this platform takes, as a percentage - used to gross "
+                   "up Direct rates for the Rate Card's Platform rates popup. Leave blank if not "
+                   "known yet; that platform's column just won't show a figure.",
+    )
 
     class Meta:
         db_table = 'platforms'
