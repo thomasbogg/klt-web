@@ -2540,9 +2540,28 @@ class StaffCleaningEventsView(View):
             assigned_usernames = [u.username for u in task.assigned_to.all()]
             # short_title, not the full property title - the location's own colour (below)
             # already identifies which property group a clean belongs to, so the extra label
-            # length just crowds out the task-type/NEW/team information that's actually
-            # decision-relevant on a busy day.
-            title = f"{task.booking.property.short_title} — {task.get_task_type_display()}"
+            # length just crowds out the task-type/NEW/team/turnaround information that's
+            # actually decision-relevant on a busy day. 'Turnover' itself is dropped from the
+            # label (2026-09-03, per Thomas) - it's the overwhelming majority of tasks (130 of
+            # 135 over a full month), so naming it on every tile is redundant; Mid-stay/Freshen
+            # stay labelled since either one is the actually-informative, minority case. A
+            # turnover's own suffix instead carries whichever of two things is more useful right
+            # now (2026-09-03, per Thomas): the departure-to-next-arrival gap while nobody's
+            # picked it up yet (how much runway staff have), or - once it's assigned - who has
+            # it, since the gap's job (surfacing what still needs a decision) is done at that
+            # point.
+            title = task.booking.property.short_title
+            if task.task_type != 'turnover':
+                title = f"{title} — {task.get_task_type_display()}"
+            elif assigned_usernames:
+                title = f"{title} — {', '.join(assigned_usernames)}"
+            elif max_date is not None:
+                gap_days = (max_date - min_date).days
+                if gap_days == 0:
+                    gap_label = 'Same-day'
+                else:
+                    gap_label = f"{gap_days} day" + ('s' if gap_days != 1 else '')
+                title = f"{title} — {gap_label}"
             if not assigned_usernames:
                 title = f"NEW {title}"
             events.append({

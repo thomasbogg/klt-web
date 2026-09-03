@@ -3315,16 +3315,71 @@ class StaffCleaningCalendarEndpointTests(TestCase):
         self.assertEqual(event['extendedProps']['min_date'], self.end.isoformat())
         self.assertEqual(event['extendedProps']['assigned_to'], [])
         self.assertEqual(event['extendedProps']['team'], 1)
-        self.assertEqual(event['title'], 'NEW CALPROP — Turnover')
+        self.assertEqual(event['title'], 'NEW CALPROP')
 
-    def test_events_feed_title_uses_short_title_and_drops_new_once_assigned(self):
-        self.task.assigned_to.set([self.cleaner])
+    def test_events_feed_title_shows_assigned_staff_and_drops_new_once_assigned(self):
+        """Once a turnover has someone assigned, the label swaps the departure-to-next-arrival
+        gap (below) for who has it - the gap's job (flagging what still needs a decision) is
+        done at that point, per Thomas 2026-09-03."""
+        second_cleaner = User.objects.create_user(username='calendarcleaner2', password='pw', is_staff=True)
+        self.task.assigned_to.set([self.cleaner, second_cleaner])
         self.client.login(username='calendarsuperuser', password='pw')
         response = self.client.get(reverse('staff:cleaning_calendar_events'), {
             'start': self.start.isoformat() + 'T00:00:00', 'end': (self.end + timedelta(days=30)).isoformat() + 'T00:00:00',
         })
         event = next(e for e in response.json() if e['id'] == self.task.pk)
-        self.assertEqual(event['title'], 'CALPROP — Turnover')
+        self.assertEqual(event['title'], 'CALPROP — calendarcleaner, calendarcleaner2')
+
+    def test_events_feed_title_shows_same_day_gap_for_unassigned_turnover(self):
+        """0-day gap reads as 'Same-day', not '0 days' - the phrase staff actually use for a
+        same-day turnover, per Thomas 2026-09-03."""
+        next_guest = Guest.objects.create(first_name='Bo', last_name='Costa', email='calendar-next-sameday@example.com')
+        Booking.objects.create(
+            property=self.property, guest=next_guest, arrival_date=self.end,
+            departure_date=self.end + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.end + timedelta(days=30)).isoformat() + 'T00:00:00',
+        })
+        event = next(e for e in response.json() if e['id'] == self.task.pk)
+        self.assertEqual(event['title'], 'NEW CALPROP — Same-day')
+
+    def test_events_feed_title_shows_singular_and_plural_day_gap(self):
+        next_guest = Guest.objects.create(first_name='Cy', last_name='Gale', email='calendar-next-plural@example.com')
+        Booking.objects.create(
+            property=self.property, guest=next_guest, arrival_date=self.end + timedelta(days=1),
+            departure_date=self.end + timedelta(days=6), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_calendar_events'), {
+            'start': self.start.isoformat() + 'T00:00:00', 'end': (self.end + timedelta(days=30)).isoformat() + 'T00:00:00',
+        })
+        event = next(e for e in response.json() if e['id'] == self.task.pk)
+        self.assertEqual(event['title'], 'NEW CALPROP — 1 day')
+
+    def test_events_feed_title_keeps_task_type_for_mid_stay_and_freshen(self):
+        """Unlike turnover (dropped from the label, 2026-09-03 - it's the overwhelming majority
+        of tasks, so naming it on every tile is redundant), Mid-stay and Freshen stay labelled -
+        either one is the informative, minority case."""
+        freshen_task = CleaningTask.objects.create(
+            booking=self.booking, task_type='freshen', date=self.start,
+        )
+        mid_stay_task = CleaningTask.objects.create(
+            booking=self.booking, task_type='mid_stay', date=self.start + timedelta(days=2),
+        )
+        self.client.login(username='calendarsuperuser', password='pw')
+        response = self.client.get(reverse('staff:cleaning_calendar_events'), {
+            'start': (self.start - timedelta(days=1)).isoformat() + 'T00:00:00',
+            'end': (self.end + timedelta(days=30)).isoformat() + 'T00:00:00',
+        })
+        events = {e['id']: e['title'] for e in response.json()}
+        self.assertEqual(events[freshen_task.pk], 'NEW CALPROP — Freshen')
+        self.assertEqual(events[mid_stay_task.pk], 'NEW CALPROP — Mid-stay')
 
     def test_move_view_accepts_valid_date_and_sets_override(self):
         self.client.login(username='calendarsuperuser', password='pw')
