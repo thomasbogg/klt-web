@@ -67,10 +67,35 @@ class StaffHomeView(View):
     property shown here rather than modified) and staff/utils.py::booking_stage() (built for the
     booking detail page) for the reservation table's Status column. Deliberately no PIMS-style
     "BLOCK - Unbookable" rows (no such model exists) or overlap-warning icons - see the plan this
-    was built from for what's deferred."""
+    was built from for what's deferred.
+
+    The filter bar (property/status/checkboxes) is a single auto-submitting GET form
+    (staff/templates/staff/home.html) - every real submission of it therefore always carries a
+    full, unambiguous query string (a <select> and every checkbox's on/off state is always present
+    or absent exactly as the browser currently shows them), even one that resets every filter back
+    to its default. The nav bar's own "Home" link, by contrast, is a bare `staff:home` URL with no
+    query string at all - clicking it used to always reset to the true defaults, discarding
+    whatever a staffer had just filtered to, no matter how recently (2026-09-03, per Thomas: this
+    was a real annoyance clicking back in from a booking they'd found by filtering to one
+    property). Persisted in request.session (per-staffer, survives across tabs and any amount of
+    time away, same lifetime as their login session - no client-side storage needed) rather than
+    via a redirect from the nav link itself, since the link is a plain <a> with no server
+    involvement until it's followed: an empty query string on this view now means "restore the
+    last filter this staffer used" rather than "no filter", and a real (possibly filter-resetting)
+    query string always overwrites what's remembered, exactly matching "only change when those
+    filters are changed again"."""
     template_name = 'staff/home.html'
+    SESSION_KEY = 'staff_home_query_string'
 
     def get(self, request, *args, **kwargs):
+        query_string = request.META.get('QUERY_STRING', '')
+        if query_string:
+            request.session[self.SESSION_KEY] = query_string
+        else:
+            remembered = request.session.get(self.SESSION_KEY)
+            if remembered:
+                return redirect(f'{request.path}?{remembered}')
+
         properties = Property.objects.select_related('location').all()
 
         selected_property = None

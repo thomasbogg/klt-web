@@ -1720,6 +1720,49 @@ class StaffHomeViewTests(TestCase):
         self.assertIsNone(response.context['selected_property'])
         self.assertEqual(len(response.context['calendars']), 2)
 
+    def test_bare_navigation_back_to_home_restores_the_last_real_filter(self):
+        # 2026-09-03, per Thomas: clicking the nav bar's bare "Home" link used to always reset to
+        # the true defaults, discarding whatever a staffer had just filtered to.
+        self.client.get(self.url, {'property': self.property_a.pk})
+
+        response = self.client.get(self.url)  # bare - no query string, same as clicking nav Home
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, f'{self.url}?property={self.property_a.pk}')
+        response = self.client.get(response.url)
+        self.assertEqual(response.context['selected_property'], self.property_a)
+
+    def test_a_fresh_real_query_string_overwrites_the_remembered_filter(self):
+        self.client.get(self.url, {'property': self.property_a.pk})
+        self.client.get(self.url, {'property': self.property_b.pk})
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, f'{self.url}?property={self.property_b.pk}')
+
+    def test_resetting_the_filter_via_the_form_is_remembered_too(self):
+        # A real, filter-resetting submission (e.g. the property <select> set back to "All
+        # properties") is itself a real query string, not an empty one - it must overwrite the
+        # remembered filter exactly like any other change, not be treated as "no navigation info".
+        self.client.get(self.url, {'property': self.property_a.pk})
+        self.client.get(self.url, {'property': '', 'status': 'Valid'})
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 302)
+        response = self.client.get(response.url)
+        self.assertIsNone(response.context['selected_property'])
+
+    def test_no_remembered_filter_yet_shows_true_defaults(self):
+        # A brand new session (no prior filtered visit at all) must behave exactly as before -
+        # covered implicitly by every other test in this class using self.client.get(self.url)
+        # first, but asserted explicitly here as the base case this feature must never break.
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.context['selected_property'])
+        self.assertEqual(response.context['status_filter'], 'Valid')
+
     def test_includes_inline_booking_lookup_form(self):
         response = self.client.get(self.url)
         self.assertContains(response, f'action="{reverse("staff:booking_lookup")}"')
