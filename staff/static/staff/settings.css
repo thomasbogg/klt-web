@@ -60,6 +60,7 @@
 #settings-panel-staff:checked ~ .staff-settings-content #settings-pane-staff,
 #settings-panel-people:checked ~ .staff-settings-content #settings-pane-people,
 #settings-panel-payments:checked ~ .staff-settings-content #settings-pane-payments,
+#settings-panel-emails:checked ~ .staff-settings-content #settings-pane-emails,
 #settings-panel-roles:checked ~ .staff-settings-content #settings-pane-roles {
     display: flex;
 }
@@ -69,6 +70,7 @@
 #settings-panel-staff:checked ~ .staff-settings-sidebar label[for="settings-panel-staff"],
 #settings-panel-people:checked ~ .staff-settings-sidebar label[for="settings-panel-people"],
 #settings-panel-payments:checked ~ .staff-settings-sidebar label[for="settings-panel-payments"],
+#settings-panel-emails:checked ~ .staff-settings-sidebar label[for="settings-panel-emails"],
 #settings-panel-roles:checked ~ .staff-settings-sidebar label[for="settings-panel-roles"] {
     background: var(--primary-color);
     color: #fff;
@@ -534,4 +536,21 @@
    title field growing to fill the space (staff-input-flex). */
 .staff-washing-materials-list {
     width: 100%;
+}
+
+.staff-email-template-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px 0;
+    border-top: 1px solid #eee;
+}
+
+.staff-email-template-row:first-of-type {
+    border-top: none;
+}
+
+.staff-email-template-placeholders {
+    font-family: monospace;
+    font-size: 0.8rem;
 }

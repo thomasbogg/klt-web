@@ -25,6 +25,33 @@ def staff_page_required(field_name):
     return decorator
 
 
+def can_send_emails(user):
+    """Whether `user` may trigger a guest/owner-facing email send (communications app) - shared by
+    staff_email_action_required below (the hard gate on the actual send view) and the Next step(s)
+    panel (staff/views.py::StaffBookingDetailView, to decide whether to even show a "Send now"
+    button), so the two can never disagree about who's allowed to send."""
+    if not user.email.lower().endswith('@algarvebeachapartments.com'):
+        return False
+    profile = getattr(user, 'staff_profile', None)
+    return bool(profile and profile.role and profile.role.can_send_emails)
+
+
+def staff_email_action_required(view_func):
+    """Gates any guest/owner-facing email dispatch action (communications app) - deliberately NOT
+    staff_page_required, and deliberately does not give superusers a bypass the way every other
+    decorator here does. Sending real mail to a guest/owner is a higher-stakes action than viewing
+    an internal page, and per Thomas (2026-09-04) the primary gate is identity, not role: only a
+    login on the @algarvebeachapartments.com domain may trigger a send at all, and even then only
+    with StaffRole.can_send_emails also set. Composes staff_member_required same as
+    staff_page_required, so an unauthenticated/non-staff request behaves exactly as it always has."""
+    @wraps(view_func)
+    def check(request, *args, **kwargs):
+        if not can_send_emails(request.user):
+            raise PermissionDenied
+        return view_func(request, *args, **kwargs)
+    return staff_member_required(check)
+
+
 def superuser_required(view_func):
     """Gates a view to superusers only - no StaffRole field involved at all, unlike
     staff_page_required. For pages/actions that are deliberately not exposed to any role, however

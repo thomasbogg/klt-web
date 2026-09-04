@@ -27,6 +27,29 @@ TEST: bool = os.getenv('TEST', 'False').lower() == 'true'
 WEBSITE_LINK: str = 'https://www.algarvebeachapartments.com/'
 KLT_WEBHOOK_URL: str = 'https://klt-hooks.up.railway.app/'
 
+# Base URL for absolute links inside outbound emails (communications app) - klt-web isn't deployed
+# yet, so this has no real production value to default to. Set SITE_BASE_URL in the environment
+# once a real domain exists; falls back to a local dev URL so emails render sensibly during
+# COMMS_DRY_RUN testing before that.
+SITE_BASE_URL: str = os.getenv('SITE_BASE_URL', 'http://localhost:8000')
+
+##################################################
+# COMMUNICATIONS (transactional email) SETTINGS
+##################################################
+
+# Renders and logs every outbound email instead of actually calling the Gmail API, while still
+# marking the row sent - lets the whole communications app be built/demoed/tested with zero
+# dependency on real Google Workspace credentials or a live deploy. Default True (safe) while
+# klt-web itself isn't deployed anywhere; flip explicitly via the environment once Thomas confirms
+# Workspace domain-wide delegation is set up and real sending should begin.
+COMMS_DRY_RUN: bool = os.getenv('COMMS_DRY_RUN', 'True').lower() == 'true'
+
+# "From" identity for a cron-triggered send with no logged-in staff member to attribute it to
+# (a manual "Send now" click always sends as whichever staff member clicked it instead). Default
+# is a recommendation pending Thomas's sign-off, not a confirmed decision - see the communications
+# app's own project-memory note.
+COMMS_AUTOMATED_SENDER_EMAIL: str = os.getenv('COMMS_AUTOMATED_SENDER_EMAIL', 'team@algarvebeachapartments.com')
+
 # Default language
 DEFAULT_LANGUAGE = 'EN-GB'
 

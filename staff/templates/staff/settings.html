@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
     <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=5">
-    <link rel="stylesheet" href="{% static 'staff/settings.css' %}?v=12">
+    <link rel="stylesheet" href="{% static 'staff/settings.css' %}?v=13">
     <script src="{% static 'staff/settings.js' %}" defer></script>
 </head>
 <body>
@@ -38,6 +38,7 @@
             {% endif %}
             <input type="radio" name="settings-panel" id="settings-panel-people" class="staff-settings-tab-radio" {% if active_panel == 'people' %}checked{% endif %}>
             <input type="radio" name="settings-panel" id="settings-panel-payments" class="staff-settings-tab-radio" {% if active_panel == 'payments' %}checked{% endif %}>
+            <input type="radio" name="settings-panel" id="settings-panel-emails" class="staff-settings-tab-radio" {% if active_panel == 'emails' %}checked{% endif %}>
             {% if request.user.is_superuser %}
             <input type="radio" name="settings-panel" id="settings-panel-roles" class="staff-settings-tab-radio" {% if active_panel == 'roles' %}checked{% endif %}>
             {% endif %}
@@ -50,6 +51,7 @@
                 {% endif %}
                 <label for="settings-panel-people" class="staff-settings-tab-label">People</label>
                 <label for="settings-panel-payments" class="staff-settings-tab-label">Payments</label>
+                <label for="settings-panel-emails" class="staff-settings-tab-label">Emails</label>
                 {% if request.user.is_superuser %}
                 <label for="settings-panel-roles" class="staff-settings-tab-label">Roles</label>
                 {% endif %}
@@ -984,6 +986,48 @@
                     </div>
                 </section>
 
+                <section class="staff-settings-pane" id="settings-pane-emails">
+                    <div class="staff-panel">
+                        <h2 class="staff-panel-title">Email templates</h2>
+                        <p class="staff-settings-hint">
+                            Subject/body use plain <code>{% templatetag openvariable %} placeholder {% templatetag closevariable %}</code> syntax - each template's available placeholders are listed underneath it.
+                            "Days offset" is relative to the template's own trigger date (arrival, departure, hold expiry) - negative sends before it, positive after; ignored for
+                            an event-triggered template (a booking/payment confirmation), which sends immediately regardless of what's entered here.
+                        </p>
+                        {% for template in email_templates %}
+                        <div class="staff-email-template-row">
+                            <div class="staff-field-row">
+                                <label class="staff-checkbox-label">
+                                    <input type="checkbox" name="active" form="email-template-form-{{ template.pk }}" {% if template.active %}checked{% endif %}>
+                                    <strong>{{ template.name }}</strong> ({{ template.get_audience_display }})
+                                </label>
+                                <label class="staff-field">Days offset
+                                    <input type="text" name="offset_days" form="email-template-form-{{ template.pk }}" class="staff-input staff-input-small" value="{{ template.offset_days }}">
+                                </label>
+                            </div>
+                            <label class="staff-field">Subject
+                                <input type="text" name="subject" form="email-template-form-{{ template.pk }}" class="staff-input" value="{{ template.subject }}">
+                            </label>
+                            <label class="staff-field">Body
+                                <textarea name="body" form="email-template-form-{{ template.pk }}" class="staff-input" rows="8">{{ template.body }}</textarea>
+                            </label>
+                            <p class="staff-settings-hint staff-email-template-placeholders">Placeholders: {{ template.placeholder_hint }}</p>
+                            <button type="submit" form="email-template-form-{{ template.pk }}" class="staff-button staff-button-small">Save</button>
+                            {% if template.updated_by %}
+                            <span class="staff-settings-hint">Last edited {{ template.updated_at|date:'d M Y H:i' }} by {{ template.updated_by.get_full_name|default:template.updated_by.email }}</span>
+                            {% endif %}
+                        </div>
+                        <form method="post" id="email-template-form-{{ template.pk }}">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_email_template">
+                            <input type="hidden" name="template_id" value="{{ template.pk }}">
+                        </form>
+                        {% empty %}
+                        <p class="staff-empty">No email templates seeded yet.</p>
+                        {% endfor %}
+                    </div>
+                </section>
+
                 {% if request.user.is_superuser %}
                 <section class="staff-settings-pane" id="settings-pane-roles">
                     <div class="staff-panel">
@@ -998,6 +1042,7 @@
                                     <th title="{{ label }}">{{ label }}</th>
                                     {% endfor %}
                                     <th title="Assignable as a cleaner on the cleaning rota/calendar - independent of page access">Cleaning staff</th>
+                                    <th title="Can trigger a guest/owner email send (Booking View's Next steps panel) - also requires an @algarvebeachapartments.com login regardless of this flag">Can send emails</th>
                                     <th title="Number of staff accounts currently holding this role">Users</th>
                                     <th></th>
                                 </tr>
@@ -1010,6 +1055,7 @@
                                     <td><input type="checkbox" name="{{ field }}" form="role-form-{{ role.pk }}" {% if role|get_attr:field %}checked{% endif %}></td>
                                     {% endfor %}
                                     <td><input type="checkbox" name="is_cleaning_staff" form="role-form-{{ role.pk }}" {% if role.is_cleaning_staff %}checked{% endif %}></td>
+                                    <td><input type="checkbox" name="can_send_emails" form="role-form-{{ role.pk }}" {% if role.can_send_emails %}checked{% endif %}></td>
                                     <td class="staff-property-count-cell">{{ role.user_count }}</td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="role-form-{{ role.pk }}" class="staff-button staff-button-small">Save</button>
@@ -1022,7 +1068,7 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="{{ permission_fields|length|add:4 }}" class="staff-empty">No roles yet.</td></tr>
+                                <tr><td colspan="{{ permission_fields|length|add:5 }}" class="staff-empty">No roles yet.</td></tr>
                                 {% endfor %}
                                 <tr class="staff-price-row-new">
                                     <td><input type="text" name="name" form="role-form-new" class="staff-input"></td>
@@ -1030,6 +1076,7 @@
                                     <td><input type="checkbox" name="{{ field }}" form="role-form-new"></td>
                                     {% endfor %}
                                     <td><input type="checkbox" name="is_cleaning_staff" form="role-form-new"></td>
+                                    <td><input type="checkbox" name="can_send_emails" form="role-form-new"></td>
                                     <td></td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="role-form-new" class="staff-button staff-button-small">Add</button>

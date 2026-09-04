@@ -200,6 +200,9 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
         # panel - see Departure's own docstring.
         Departure.objects.create(booking=booking)
 
+        from communications.services.scheduling import create_scheduled_emails_for_booking
+        create_scheduled_emails_for_booking(booking)
+
     return booking
 
 

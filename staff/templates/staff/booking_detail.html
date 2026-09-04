@@ -321,6 +321,32 @@
                 <section class="staff-panel staff-panel-highlight">
                     <h2 class="staff-panel-title">Next step(s)</h2>
                     <p class="staff-next-step">{{ next_step }}</p>
+                    {% if scheduled_emails %}
+                    <ul class="staff-scheduled-emails">
+                        {% for scheduled_email in scheduled_emails %}
+                        <li class="staff-scheduled-email staff-scheduled-email-{{ scheduled_email.status }}">
+                            <span class="staff-scheduled-email-name">{{ scheduled_email.template.name }}</span>
+                            <span class="staff-scheduled-email-date">{{ scheduled_email.scheduled_for }}</span>
+                            {% if scheduled_email.status == 'pending' %}
+                                {% if can_send_emails %}
+                                <form method="post" action="{% url 'staff:booking_email_send' reference=booking.reference pk=scheduled_email.pk %}" class="staff-scheduled-email-send">
+                                    {% csrf_token %}
+                                    <button type="submit" class="staff-button staff-button-small">Send now</button>
+                                </form>
+                                {% else %}
+                                <span class="staff-scheduled-email-status">Pending</span>
+                                {% endif %}
+                            {% elif scheduled_email.status == 'sent' %}
+                                <span class="staff-scheduled-email-status">Sent {{ scheduled_email.sent_at|date:'d M Y' }}{% if scheduled_email.sent_by %} by {{ scheduled_email.sent_by.get_full_name|default:scheduled_email.sent_by.email }}{% else %} (automated){% endif %}</span>
+                            {% elif scheduled_email.status == 'skipped' %}
+                                <span class="staff-scheduled-email-status" title="{{ scheduled_email.error_message }}">Skipped</span>
+                            {% else %}
+                                <span class="staff-scheduled-email-status" title="{{ scheduled_email.error_message }}">Failed</span>
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
                 </section>
 
                 {% if not is_platform_booking %}

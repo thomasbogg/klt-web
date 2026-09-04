@@ -479,6 +479,48 @@ body {
     margin: 0;
 }
 
+.staff-scheduled-emails {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.staff-scheduled-email {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.9rem;
+    padding: 6px 0;
+    border-top: 1px solid #eee;
+}
+
+.staff-scheduled-email-name {
+    flex: 1 1 auto;
+}
+
+.staff-scheduled-email-date {
+    color: #777;
+    white-space: nowrap;
+}
+
+.staff-scheduled-email-status {
+    color: #777;
+    white-space: nowrap;
+    font-size: 0.85rem;
+}
+
+.staff-scheduled-email-skipped .staff-scheduled-email-status,
+.staff-scheduled-email-failed .staff-scheduled-email-status {
+    color: #b23b3b;
+}
+
+.staff-scheduled-email-sent .staff-scheduled-email-status {
+    color: #2f7a3f;
+}
+
 .staff-lookup-form {
     display: flex;
     flex-direction: column;

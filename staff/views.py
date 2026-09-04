@@ -33,6 +33,9 @@ from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_deposit_waiver, create_booking, create_owner_booking, extras_summary,
     parsed_arrival_departure_time, parsed_travel_method, sync_ical_link, valid_flight_number,
 )
+from communications.models import EmailTemplate, ScheduledEmail
+from communications.registry import PLACEHOLDER_KEYS
+from communications.services.sending import send_scheduled_email
 from guests.models import Guest
 from libraries.utils import logerror
 from properties.models import (
@@ -50,7 +53,7 @@ from staff.monthly_reports import (
     monthly_extras_rows, monthly_management_rows, monthly_revenue_rows, monthly_stays_rows,
     revenue_trend_rows, stays_trend_rows,
 )
-from staff.permissions import staff_page_required, superuser_required
+from staff.permissions import can_send_emails, staff_email_action_required, staff_page_required, superuser_required
 from staff.reports import REPORT_COLUMNS, booking_report_rows, report_totals
 from staff.utils import (
     AMENITY_BOOLEAN_FIELDS, CLOSED_STATUSES, ENQUIRY_STATUS_GROUPS, ENQUIRY_STATUSES, GUEST_LETTERS,
@@ -824,7 +827,7 @@ class StaffSettingsView(View):
     commission percentages that nothing else in the app reads yet - a deliberate starting point,
     not a finished payout system."""
     template_name = 'staff/settings.html'
-    PANELS = ('bookings', 'extras', 'staff', 'people', 'payments', 'roles')
+    PANELS = ('bookings', 'extras', 'staff', 'people', 'payments', 'emails', 'roles')
     SUPERUSER_ONLY_PANELS = ('staff', 'roles')
     SUPERUSER_ONLY_ACTIONS = (
         'add_staff_user', 'update_staff_user', 'add_role', 'update_role', 'delete_role',
@@ -865,6 +868,7 @@ class StaffSettingsView(View):
         'add_washing_material': 'people',
         'delete_washing_material': 'people',
         'update_payment_settings': 'payments',
+        'update_email_template': 'emails',
     }
 
     def _available_panels(self, request):
@@ -922,6 +926,7 @@ class StaffSettingsView(View):
             'add_washing_material': self._add_washing_material,
             'delete_washing_material': self._delete_washing_material,
             'update_payment_settings': self._update_payment_settings,
+            'update_email_template': self._update_email_template,
         }.get(action)
         if handler is not None:
             handler(request)
@@ -932,6 +937,7 @@ class StaffSettingsView(View):
         return {
             'active_panel': active_panel,
             'booking_settings': BookingSettings.load(),
+            'email_templates': self._email_templates_with_placeholder_hints(),
             'checkin_settings': CheckinSettings.load(),
             'booking_conditions': BookingCondition.objects.all(),
             'faqs': FAQ.objects.select_related('location').all(),
@@ -972,6 +978,16 @@ class StaffSettingsView(View):
                 Q(booking_company=company) | Q(cleaning_company=company)
             ).distinct().count()
         return companies
+
+    def _email_templates_with_placeholder_hints(self):
+        # placeholder_hint is documentation only, read straight from communications/registry.py's
+        # PLACEHOLDER_KEYS (a static list kept in sync with what each slug's context() callable
+        # actually produces - see that dict's own comment for why it can't be introspected live)
+        # so staff editing a template's subject/body know exactly which {{ }} placeholders exist.
+        templates = list(EmailTemplate.objects.order_by('name'))
+        for template in templates:
+            template.placeholder_hint = ', '.join(f'{{{{ {key} }}}}' for key in PLACEHOLDER_KEYS.get(template.slug, ()))
+        return templates
 
     # --- Bookings ---
 
@@ -1296,6 +1312,7 @@ class StaffSettingsView(View):
         for field_name, _label in STAFF_PAGE_PERMISSION_FIELDS:
             setattr(role, field_name, post.get(field_name) == 'on')
         role.is_cleaning_staff = post.get('is_cleaning_staff') == 'on'
+        role.can_send_emails = post.get('can_send_emails') == 'on'
         try:
             role.full_clean()
         except ValidationError as error:
@@ -1314,6 +1331,7 @@ class StaffSettingsView(View):
         for field_name, _label in STAFF_PAGE_PERMISSION_FIELDS:
             setattr(role, field_name, post.get(field_name) == 'on')
         role.is_cleaning_staff = post.get('is_cleaning_staff') == 'on'
+        role.can_send_emails = post.get('can_send_emails') == 'on'
         try:
             role.full_clean()
         except ValidationError as error:
@@ -1590,6 +1608,43 @@ class StaffSettingsView(View):
             return
         settings.save()
         messages.success(request, "Payment settings updated.")
+
+    # --- Emails ---
+
+    def _update_email_template(self, request):
+        # No add/delete here, deliberately - the set of valid slugs is fixed in code
+        # (communications/registry.py::EMAIL_TYPES), staff can only edit an existing row's copy/
+        # timing/active state, not invent a new slug with no matching trigger/eligibility logic.
+        post = request.POST
+        template = EmailTemplate.objects.filter(pk=post.get('template_id')).first()
+        if template is None:
+            messages.error(request, "That email template no longer exists.")
+            return
+        subject = post.get('subject', '').strip()
+        body = post.get('body', '').strip()
+        if not subject or not body:
+            messages.error(request, "An email template needs both a subject and a body.")
+            return
+        offset_days_raw = post.get('offset_days', '').strip()
+        try:
+            offset_days = int(offset_days_raw) if offset_days_raw else None
+        except ValueError:
+            offset_days = None
+        if offset_days is None:
+            messages.error(request, "Days offset must be a whole number (negative for before the date, positive for after).")
+            return
+        template.subject = subject
+        template.body = body
+        template.offset_days = offset_days
+        template.active = post.get('active') == 'on'
+        template.updated_by = request.user
+        try:
+            template.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return
+        template.save()
+        messages.success(request, "Email template updated.")
 
 
 @method_decorator(staff_page_required('can_view_properties'), name='dispatch')
@@ -2137,7 +2192,7 @@ class StaffBookingDetailView(View):
 
     def get(self, request, reference, *args, **kwargs):
         booking = self._get_booking(reference)
-        return render(request, self.template_name, self._context(booking))
+        return render(request, self.template_name, self._context(request, booking))
 
     def post(self, request, reference, *args, **kwargs):
         booking = self._get_booking(reference)
@@ -2166,7 +2221,7 @@ class StaffBookingDetailView(View):
             'assigned_ids': set(task.assigned_to.values_list('pk', flat=True)),
         }
 
-    def _context(self, booking):
+    def _context(self, request, booking):
         charge = getattr(booking, 'charges', None)
         platform_payout = getattr(booking, 'platform_payout', None)
         balance_payment = getattr(booking, 'balance_payment', None)
@@ -2198,6 +2253,8 @@ class StaffBookingDetailView(View):
             'can_uncancel': booking.enquiry_status in REVIVABLE_STATUSES,
             'extras': extras_summary(booking),
             'next_step': next_step_hint(booking, charge, balance_payment),
+            'scheduled_emails': booking.scheduled_emails.select_related('template', 'sent_by').order_by('scheduled_for'),
+            'can_send_emails': can_send_emails(request.user),
             'deductions': booking.deductions.all(),
             'memo': Memo.objects.filter(cleaning_task__booking=booking).prefetch_related('ad_hoc_services').first(),
             'owner_payout': compute_owner_payout(booking),
@@ -3361,6 +3418,38 @@ class StaffFinanceMemoSendView(View):
         if redirect_date:
             redirect_url = f"{redirect_url}?date={redirect_date}"
         return redirect(redirect_url)
+
+
+@method_decorator(staff_email_action_required, name='dispatch')
+class StaffBookingEmailSendView(View):
+    """"Send now" on one ScheduledEmail row in the Booking View's Next step(s) panel - jumps it
+    ahead of its scheduled date. Actually dispatches a real email via communications/services/
+    sending.py::send_scheduled_email(), unlike StaffFinanceMemoSendView above (which only ever
+    records who/when - this project genuinely had no outbound email until the communications app).
+    Eligibility (is this email still actually needed) is rechecked live INSIDE
+    send_scheduled_email() itself, not here - see ScheduledEmail's own docstring for why a manual
+    jump-ahead must be exactly as safe as the cron: an earlier draft of this feature only checked
+    row status here, which would have let staff fire a since-become-stale email (e.g. a balance
+    reminder after the balance was already paid)."""
+
+    def post(self, request, reference, pk, *args, **kwargs):
+        scheduled_email = ScheduledEmail.objects.select_related('booking', 'template').filter(
+            pk=pk, booking__reference__iexact=reference,
+        ).first()
+        if scheduled_email is None:
+            messages.error(request, "That email no longer exists.")
+        elif scheduled_email.status != ScheduledEmail.Status.PENDING:
+            messages.error(request, "That email has already been sent.")
+        else:
+            send_scheduled_email(scheduled_email, actor=request.user)
+            scheduled_email.refresh_from_db()
+            if scheduled_email.status == ScheduledEmail.Status.SKIPPED:
+                messages.warning(request, f"Skipped - no longer needed: {scheduled_email.error_message}")
+            elif scheduled_email.status == ScheduledEmail.Status.FAILED:
+                messages.error(request, f"Could not send: {scheduled_email.error_message}")
+            else:
+                messages.success(request, "Email sent.")
+        return redirect('staff:booking_detail', reference=reference)
 
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')

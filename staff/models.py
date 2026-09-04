@@ -112,6 +112,14 @@ class StaffRole(models.Model):
     # flag rather than reuse - check-in duty is a different pool of people from cleaning staff
     # (Thomas: "the check-ins manager needs to see these distinctly").
     is_checkin_staff = models.BooleanField(default=False)
+    # Action gate for the communications app's "Send now" button (staff/permissions.py::
+    # staff_email_action_required) - also excluded from STAFF_PAGE_PERMISSION_FIELDS, same
+    # reasoning as is_cleaning_staff/is_checkin_staff above: this isn't about seeing a page, it's
+    # about being allowed to trigger real outbound mail to a guest/owner. Deliberately NOT
+    # sufficient on its own - staff_email_action_required also hard-requires an
+    # @algarvebeachapartments.com login email even for a superuser, since sending is a
+    # higher-stakes action than viewing an internal page (2026-09-04, per Thomas).
+    can_send_emails = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'staff_roles'
