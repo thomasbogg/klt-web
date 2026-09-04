@@ -299,6 +299,21 @@
     flex: 0 0 auto;
 }
 
+.staff-rate-card-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin: 6px 0 14px;
+}
+
+/* Overrides .staff-show-more-link's own margin (0 0 12px, sized for sitting alone above a list) -
+   inside this flex toolbar, spacing between it and the Platform rates button is the container's
+   gap to own, not the link's - see the CSS specificity gotchas memory for why the container rule
+   needs the explicit override rather than relying on the component's own margin. */
+.staff-rate-card-toolbar .staff-show-more-link {
+    margin: 0;
+}
+
 .staff-price-table {
     width: 100%;
     border-collapse: collapse;

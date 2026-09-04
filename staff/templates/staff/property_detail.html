@@ -8,7 +8,7 @@
     <title>{{ property }} | Staff</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
-    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=6">
+    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=7">
     <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
     <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
     <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
@@ -256,14 +256,16 @@
                     <div class="staff-panel-column">
                         <div class="staff-panel">
                             <h2 class="staff-panel-title">Rate card</h2>
-                            <a href="{% url 'staff:property_platform_rates' property.pk %}" target="platform-rates-{{ property.pk }}" class="staff-button staff-button-small" data-popup-link>Platform rates</a>
-                            {% if historic_price_count %}
-                            {% if show_historic %}
-                            <a href="?panel=rates" class="staff-show-more-link">Hide historic prices</a>
-                            {% else %}
-                            <a href="?panel=rates&show_historic=1" class="staff-show-more-link">Show {{ historic_price_count }} historic price row{{ historic_price_count|pluralize }}</a>
-                            {% endif %}
-                            {% endif %}
+                            <div class="staff-rate-card-toolbar">
+                                <a href="{% url 'staff:property_platform_rates' property.pk %}" target="platform-rates-{{ property.pk }}" class="staff-button staff-button-small" data-popup-link>Platform rates</a>
+                                {% if historic_price_count %}
+                                {% if show_historic %}
+                                <a href="?panel=rates" class="staff-show-more-link">Hide historic prices</a>
+                                {% else %}
+                                <a href="?panel=rates&show_historic=1" class="staff-show-more-link">Show {{ historic_price_count }} historic price row{{ historic_price_count|pluralize }}</a>
+                                {% endif %}
+                                {% endif %}
+                            </div>
                             {% comment %}
                             Each row is directly editable - a <form> can't legally wrap several
                             <td>s in one <tr>, so the inputs live in the cells and are associated
