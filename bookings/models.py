@@ -713,6 +713,18 @@ class Charge(models.Model):
     # BookingSettings.load().gbp_conversion_rate directly.
     gbp_conversion_rate = models.DecimalField(max_digits=6, decimal_places=4, blank=True, null=True)
 
+    # Staff-applied one-click discount on a guest offer (staff/views.py::StaffGuestOfferCreateView,
+    # bookings/utils.py::create_booking()'s manual_discount_percent param) - a % of basic_rental,
+    # already folded into discount_total above at creation time so total_rental needs no special-
+    # casing. Kept here purely for display/audit (so a Booking Info page can show "manual discount:
+    # X%, reason" distinctly from the automatic Price-row weekly/monthly/last-minute discount that
+    # makes up the rest of discount_total) - NULL means no manual discount was applied.
+    manual_discount_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, blank=True, null=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+    )
+    manual_discount_reason = models.CharField(max_length=255, blank=True)
+
     @property
     def total_rental(self):
         """basic_rental adjusted by discount/extra-guest - the actual rental amount charged, as

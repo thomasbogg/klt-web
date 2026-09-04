@@ -1,0 +1,90 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New owner reservation | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
+    <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
+    <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">New owner reservation</h1>
+            <a href="{% url 'staff:booking_lookup' %}" class="staff-header-link">&larr; Bookings</a>
+        </header>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="staff-panel">
+            <p>For an owner who'd rather staff book their own stay - no payment is taken, same as
+                a reservation the owner makes themselves in the Owner Suite.</p>
+
+            <form method="post" class="staff-form">
+                {% csrf_token %}
+
+                <div class="staff-field">
+                    <label>Property
+                        <select name="property_id" class="staff-input">
+                            <option value="">Select a property&hellip;</option>
+                            {% for location_label, location_properties in property_groups %}
+                            <optgroup label="{{ location_label }}">
+                                {% for property in location_properties %}
+                                <option value="{{ property.pk }}" {% if selected_property_id == property.pk|stringformat:'s' %}selected{% endif %}>
+                                    {{ property }}{% if property.owner %} ({{ property.owner }}){% else %} - no owner on file{% endif %}
+                                </option>
+                                {% endfor %}
+                            </optgroup>
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+
+                <div class="staff-field-row staff-date-future-only">
+                    <label class="staff-field">Arrival
+                        <input type="text" name="arrival_date" class="staff-input staff-date-input staff-date-start" autocomplete="off" value="{{ arrival_date }}">
+                    </label>
+                    <label class="staff-field">Departure
+                        <input type="text" name="departure_date" class="staff-input staff-date-input staff-date-end" autocomplete="off" value="{{ departure_date }}">
+                    </label>
+                </div>
+
+                <div class="staff-field-row">
+                    <label class="staff-field">Adults
+                        <input type="number" name="adults" min="0" value="{{ adults }}" class="staff-input">
+                    </label>
+                    <label class="staff-field">Children
+                        <input type="number" name="children" min="0" value="{{ children }}" class="staff-input">
+                    </label>
+                    <label class="staff-field">Babies
+                        <input type="number" name="babies" min="0" value="{{ babies }}" class="staff-input">
+                    </label>
+                </div>
+
+                <div class="staff-field-row">
+                    <label class="staff-checkbox-label">
+                        <input type="checkbox" name="clean" {% if clean_checked %}checked{% endif %}> Requires clean after departure
+                    </label>
+                    <label class="staff-checkbox-label">
+                        <input type="checkbox" name="meet_greet" {% if meet_greet_checked %}checked{% endif %}> Requires meet &amp; greet on arrival
+                    </label>
+                </div>
+
+                <button type="submit" class="staff-button">Reserve dates</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,54 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offer created | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_create.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Offer created</h1>
+            <a href="{% url 'staff:booking_detail' booking.reference %}" class="staff-header-link">View booking &rarr;</a>
+        </header>
+
+        <div class="staff-panel">
+            <p class="staff-message staff-message-success">
+                Reference {{ booking.reference }} for {{ booking.property }},
+                {{ booking.arrival_date|date:'d M Y' }} to {{ booking.departure_date|date:'d M Y' }}.
+                The payment hold has already started ({{ booking.hold_expires_at|date:'d M Y, H:i' }}) -
+                send this to the guest soon.
+            </p>
+
+            <div class="staff-field">
+                <label>Link for the guest (skips straight to the guest-list step)
+                    <input type="text" value="{{ offer_url }}" readonly class="staff-input" id="offer-url">
+                </label>
+            </div>
+
+            <table class="staff-price-table">
+                <tbody>
+                    <tr><th>Basic rental</th><td>&euro;{{ charge.basic_rental }}</td></tr>
+                    <tr><th>Discount</th><td>&euro;{{ charge.discount_total }}{% if charge.manual_discount_percent %} (includes a manual {{ charge.manual_discount_percent }}% - {{ charge.manual_discount_reason }}){% endif %}</td></tr>
+                    <tr><th>Extra guest total</th><td>&euro;{{ charge.extra_guest_total }}</td></tr>
+                    <tr><th>Rental total</th><td>&euro;{{ charge.total_rental }}</td></tr>
+                    <tr><th>Admin fee</th><td>&euro;{{ charge.admin }}</td></tr>
+                    <tr><th>Due at booking</th><td>&euro;{{ charge.due_at_booking }}</td></tr>
+                    <tr><th>Due at balance</th><td>&euro;{{ charge.due_at_balance }}{% if charge.balance_due_date %} (by {{ charge.balance_due_date }}){% endif %}</td></tr>
+                </tbody>
+            </table>
+
+            <p class="staff-hint">No confirmation email is sent automatically - copy the link and
+                breakdown above and send it to the guest yourself.</p>
+
+            <a href="{% url 'staff:booking_create_offer' %}" class="staff-header-link">Create another offer</a>
+        </div>
+    </div>
+</body>
+</html>

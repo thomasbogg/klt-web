@@ -532,6 +532,29 @@ class BookingFormMixin:
         booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
 
 
+class BookingOfferOpenView(View):
+    """Activates a staff-generated guest-offer link (staff/views.py::StaffGuestOfferCreateView) -
+    sets pending_booking_reference exactly like ReserveView.post() does for a self-service
+    booking, so every existing session-gated check downstream (BookingDetailsView.post,
+    BookingPaymentCancelView) treats this guest's browser as the booking's owner, letting them
+    land straight on the guest-list step without ever seeing the name/email/phone/country form.
+
+    Deliberately scoped to enquiry_source='Staff offer' bookings only, NOT a bare reference
+    lookup - pending_booking_reference exists specifically so that "anyone who happened to see
+    someone else's reference" (it appears in URLs, browser history, screenshots) can't grief a
+    live reservation, e.g. cancel it via BookingPaymentCancelView (see that view's own docstring).
+    An unscoped version of this view would turn every ordinary booking's already-bearer-readable
+    reference into a bearer-*cancellable* one too - ordinary Website/Owner Suite bookings must
+    never be activatable this way, only the staff-offer bookings this view exists for."""
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference, enquiry_source='Staff offer').first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        request.session['pending_booking_reference'] = reference
+        return redirect('bookings:details', reference=reference)
+
+
 class BookingDetailsView(BookingFormMixin, View):
     """Booking-details step shown right after a reservation is created, before payment - the
     guest-list section (first/last name + age per party member) plus, for a collapsed (single-

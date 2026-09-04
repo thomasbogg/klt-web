@@ -28,6 +28,13 @@
             <input type="text" name="reference" id="reference" class="staff-input" placeholder="e.g. DDPP-3QSK" autofocus>
             <button type="submit" class="staff-button staff-button-primary">Open booking</button>
         </form>
+
+        <p class="staff-lookup-new-reservation">
+            + New reservation:
+            <a href="{% url 'staff:booking_create_owner' %}">for an owner</a>
+            &middot;
+            <a href="{% url 'staff:booking_create_offer' %}">for a guest (offer)</a>
+        </p>
     </div>
 </body>
 </html>

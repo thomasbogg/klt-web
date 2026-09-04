@@ -1666,6 +1666,161 @@ class StaffBookingLookupViewTests(TestCase):
         self.assertTrue(any('No booking found' in str(m) for m in messages))
 
 
+class StaffOwnerBookingCreateViewTests(TestCase):
+    """staff/bookings/new/owner/ - staff equivalent of owners/views.py::OwnerBookingCreateView,
+    reusing create_owner_booking() unchanged with an unrestricted property picker."""
+
+    def setUp(self):
+        User.objects.create_user(username='staffownercreator', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='staffownercreator', password='pw')
+        self.owner = make_owner()
+        self.property = Property.objects.create(
+            title='Staff Owner Create Property', short_title='STAFFOWNERCREATE', owner=self.owner,
+        )
+        self.no_owner_property = Property.objects.create(title='No Owner Property', short_title='NOOWNERPROP')
+        self.url = reverse('staff:booking_create_owner')
+
+    def test_requires_can_view_bookings(self):
+        User.objects.create_user(username='roleless_owner_create', password='pw', is_staff=True)
+        self.client.login(username='roleless_owner_create', password='pw')
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 403)
+
+    def test_get_renders_the_empty_form(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, str(self.property))
+
+    def test_creates_a_booking_for_any_property_regardless_of_owner(self):
+        arrival = date.today() + timedelta(days=90)
+        departure = arrival + timedelta(days=5)
+        response = self.client.post(self.url, {
+            'property_id': self.property.pk,
+            'arrival_date': arrival.isoformat(), 'departure_date': departure.isoformat(),
+            'adults': '2', 'children': '0', 'babies': '0',
+        })
+        booking = Booking.objects.get(property=self.property, arrival_date=arrival)
+        self.assertRedirects(response, reverse('staff:booking_detail', kwargs={'reference': booking.reference}))
+        self.assertTrue(booking.is_owner)
+        self.assertFalse(hasattr(booking, 'charges'))  # never charged, same as the Owner Suite version
+
+    def test_rejects_a_property_with_no_owner(self):
+        arrival = date.today() + timedelta(days=90)
+        departure = arrival + timedelta(days=5)
+        response = self.client.post(self.url, {
+            'property_id': self.no_owner_property.pk,
+            'arrival_date': arrival.isoformat(), 'departure_date': departure.isoformat(),
+            'adults': '2', 'children': '0', 'babies': '0',
+        })
+        self.assertEqual(response.status_code, 200)
+        page_messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('no owner on file' in m for m in page_messages))
+        self.assertFalse(Booking.objects.filter(property=self.no_owner_property).exists())
+
+    def test_rejects_overlapping_dates(self):
+        arrival = date.today() + timedelta(days=90)
+        departure = arrival + timedelta(days=5)
+        Booking.objects.create(
+            property=self.property, guest=Guest.objects.create(last_name='Existing', email='staff-owner-existing@example.com'),
+            arrival_date=arrival, departure_date=departure, is_owner=True,
+            enquiry_status='Booking confirmed', enquiry_source='Owner Suite',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.post(self.url, {
+            'property_id': self.property.pk,
+            'arrival_date': arrival.isoformat(), 'departure_date': departure.isoformat(),
+            'adults': '2', 'children': '0', 'babies': '0',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(list(response.context['messages']))
+
+    def test_missing_property_shows_error(self):
+        response = self.client.post(self.url, {
+            'property_id': '', 'arrival_date': '2028-01-01', 'departure_date': '2028-01-05',
+        })
+        self.assertEqual(response.status_code, 200)
+        page_messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('choose a property' in m.lower() for m in page_messages))
+
+
+class StaffGuestOfferCreateViewTests(TestCase):
+    """staff/bookings/new/offer/ - property/dates/guests + a live price preview, a manual %
+    discount, then create_booking(enquiry_source='Staff offer', ...)."""
+
+    def setUp(self):
+        User.objects.create_user(username='staffoffercreator', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='staffoffercreator', password='pw')
+        self.property = Property.objects.create(title='Staff Offer Property', short_title='STAFFOFFERPROP')
+        self.far_future = date.today() + timedelta(days=300)
+        Price.objects.create(
+            property=self.property, start_date=self.far_future - timedelta(days=30),
+            end_date=self.far_future + timedelta(days=30), rate=Decimal('100.00'),
+        )
+        self.url = reverse('staff:booking_create_offer')
+
+    def _post(self, **overrides):
+        data = {
+            'action': 'create',
+            'property_id': self.property.pk,
+            'start_date': self.far_future.isoformat(),
+            'end_date': (self.far_future + timedelta(days=5)).isoformat(),
+            'adults': '2', 'children': '0', 'babies': '0',
+            'discount_percent': '', 'discount_reason': '',
+            'first_name': 'Test', 'last_name': 'Guest', 'email': 'staff-offer-guest@example.com',
+            'phone': '', 'country': 'GB',
+        }
+        data.update(overrides)
+        return self.client.post(self.url, data)
+
+    def test_requires_can_view_bookings(self):
+        User.objects.create_user(username='roleless_offer_create', password='pw', is_staff=True)
+        self.client.login(username='roleless_offer_create', password='pw')
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 403)
+
+    def test_get_renders_the_empty_form(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, str(self.property))
+
+    def test_preview_does_not_create_a_booking(self):
+        response = self._post(action='preview')
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.context['pricing'])
+        self.assertFalse(Booking.objects.filter(property=self.property).exists())
+
+    def test_create_creates_a_staff_offer_booking(self):
+        response = self._post()
+        booking = Booking.objects.get(property=self.property, arrival_date=self.far_future)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(booking.enquiry_source, 'Staff offer')
+        self.assertEqual(booking.enquiry_status, 'Awaiting payment')
+        self.assertIsNotNone(booking.hold_expires_at)
+        self.assertContains(response, booking.reference)
+
+    def test_create_applies_manual_discount(self):
+        self._post(discount_percent='10', discount_reason='Loyal returning guest')
+        booking = Booking.objects.get(property=self.property, arrival_date=self.far_future)
+        charge = booking.charges
+        self.assertEqual(charge.manual_discount_percent, Decimal('10'))
+        self.assertEqual(charge.manual_discount_reason, 'Loyal returning guest')
+        # 5 nights @ 100 = 500 basic; 10% manual discount = 50.
+        self.assertEqual(charge.discount_total, Decimal('50.00'))
+
+    def test_create_generates_a_working_offer_link(self):
+        response = self._post()
+        booking = Booking.objects.get(property=self.property, arrival_date=self.far_future)
+        offer_url = reverse('bookings:offer_open', kwargs={'reference': booking.reference})
+        self.assertContains(response, offer_url)
+
+    def test_missing_guest_details_shows_error_without_creating(self):
+        response = self._post(last_name='', email='')
+        self.assertEqual(response.status_code, 200)
+        page_messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('last name' in m.lower() for m in page_messages))
+        self.assertFalse(Booking.objects.filter(property=self.property).exists())
+
+
 class BookingStageTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Stage Test Property', short_title='STAGETEST')

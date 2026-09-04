@@ -1,0 +1,142 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New guest offer | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_create.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
+    <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
+    <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">New guest offer</h1>
+            <a href="{% url 'staff:booking_lookup' %}" class="staff-header-link">&larr; Bookings</a>
+        </header>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="staff-panel">
+            <p>For a guest who's already been corresponding with us before booking. Fill in the
+                stay and (if agreed) a discount, check the price below, then create the offer to
+                get a link - the guest skips straight past entering their own details, but the
+                payment hold timer starts as soon as you create it, not when they open the link.</p>
+
+            <form method="post" class="staff-form">
+                {% csrf_token %}
+
+                <div class="staff-field">
+                    <label>Property
+                        <select name="property_id" class="staff-input">
+                            <option value="">Select a property&hellip;</option>
+                            {% for location_label, location_properties in property_groups %}
+                            <optgroup label="{{ location_label }}">
+                                {% for property in location_properties %}
+                                <option value="{{ property.pk }}" {% if selected_property_id == property.pk|stringformat:'s' %}selected{% endif %}>{{ property }}</option>
+                                {% endfor %}
+                            </optgroup>
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+
+                <div class="staff-field-row staff-date-future-only">
+                    <label class="staff-field">Arrival
+                        <input type="text" name="start_date" class="staff-input staff-date-input staff-date-start" autocomplete="off" value="{{ start_date_raw }}">
+                    </label>
+                    <label class="staff-field">Departure
+                        <input type="text" name="end_date" class="staff-input staff-date-input staff-date-end" autocomplete="off" value="{{ end_date_raw }}">
+                    </label>
+                </div>
+
+                <div class="staff-field-row">
+                    <label class="staff-field">Adults
+                        <input type="number" name="adults" min="0" value="{{ adults }}" class="staff-input">
+                    </label>
+                    <label class="staff-field">Children
+                        <input type="number" name="children" min="0" value="{{ children }}" class="staff-input">
+                    </label>
+                    <label class="staff-field">Babies
+                        <input type="number" name="babies" min="0" value="{{ babies }}" class="staff-input">
+                    </label>
+                </div>
+
+                <div class="staff-field-row">
+                    <label class="staff-field">Discount %
+                        <input type="text" name="discount_percent" value="{{ discount_percent_raw }}" class="staff-input" placeholder="e.g. 10">
+                    </label>
+                    <label class="staff-field">Discount reason
+                        <input type="text" name="discount_reason" value="{{ discount_reason }}" class="staff-input" placeholder="e.g. returning guest, price-matched a competitor">
+                    </label>
+                </div>
+
+                <button type="submit" name="action" value="preview" class="staff-button staff-button-small">Preview price</button>
+
+                {% if pricing %}
+                <table class="staff-price-table">
+                    <tbody>
+                        <tr><th>Basic rental</th><td>&euro;{{ pricing.basic_total }}</td></tr>
+                        <tr><th>Discount</th><td>&euro;{{ pricing.discount_total }} total, of which &euro;{{ pricing.manual_discount_amount }} is the manual discount above</td></tr>
+                        <tr><th>Extra guest total</th><td>&euro;{{ pricing.extra_guest_total }}</td></tr>
+                        <tr><th>Rental total</th><td>&euro;{{ pricing.rental_total }}</td></tr>
+                        {% if costs %}
+                        <tr><th>Admin fee</th><td>&euro;{{ costs.admin_fee }}</td></tr>
+                        <tr><th>Due at booking</th><td>&euro;{{ costs.due_at_booking }}</td></tr>
+                        <tr><th>Due at balance</th><td>&euro;{{ costs.due_at_balance }}{% if costs.balance_due_date %} (by {{ costs.balance_due_date }}){% endif %}</td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+                {% elif selected_property_id %}
+                <p class="staff-message staff-message-error">Pricing isn't available for these dates - check the property and dates, then preview again.</p>
+                {% endif %}
+
+                <h2 class="staff-panel-title">Guest details</h2>
+                <p class="staff-hint">The guest never fills these in themselves - their offer link skips straight past this step.</p>
+
+                <div class="staff-field-row">
+                    <label class="staff-field">First name
+                        <input type="text" name="first_name" value="{{ first_name }}" class="staff-input">
+                    </label>
+                    <label class="staff-field">Last name
+                        <input type="text" name="last_name" value="{{ last_name }}" class="staff-input">
+                    </label>
+                </div>
+                <div class="staff-field-row">
+                    <label class="staff-field">Email
+                        <input type="email" name="email" value="{{ email }}" class="staff-input">
+                    </label>
+                    <label class="staff-field">Phone
+                        <input type="text" name="phone" value="{{ phone }}" class="staff-input">
+                    </label>
+                </div>
+                <div class="staff-field">
+                    <label>Country
+                        <select name="country" class="staff-input">
+                            <option value="">Select a country&hellip;</option>
+                            {% for code, name in countries %}
+                            <option value="{{ code }}" {% if country == code %}selected{% endif %}>{{ name }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <span class="staff-hint">Drives the security-deposit country gating, same as the public reservation form - get this right, it isn't re-checked later.</span>
+                </div>
+
+                <button type="submit" name="action" value="create" class="staff-button">Create offer &amp; get link</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

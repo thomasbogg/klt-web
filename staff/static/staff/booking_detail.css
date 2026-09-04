@@ -494,6 +494,13 @@ body {
     color: #666;
 }
 
+.staff-lookup-new-reservation {
+    margin-top: 18px;
+    font-size: 0.85rem;
+    color: #666;
+    text-align: center;
+}
+
 .staff-task-history-stub {
     display: inline-flex;
     align-items: center;

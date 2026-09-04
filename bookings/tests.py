@@ -651,6 +651,39 @@ class RecalculateCostsForPartyTests(TestCase):
         result = recalculate_costs_for_party(self.booking, [30, 32, 10])
         self.assertEqual(result, (None, None, None))
 
+    def test_manual_discount_survives_an_unchanged_party_confirmation(self):
+        # Regression guard: found 2026-09-04 while manually verifying the staff-offer feature -
+        # this used to recompute discount_total from the automatic Price-row discount alone,
+        # silently dropping a staff-granted manual_discount_percent (and flagging 'changed' for
+        # an otherwise-identical party, forcing an unnecessary price-changed interstitial too).
+        # basic_rental 700 (7n@100), extra_guest_total 35 (1 child @5/night*7 - matches the
+        # unmodified [30,32,10] party this setUp's booking already has), 10% manual discount on
+        # basic_rental = 70 -> total_rental = 700 - 70 + 35 = 665, matching what a fresh recompute
+        # of this exact same party will also produce.
+        self.booking.charges.manual_discount_percent = Decimal('10')
+        self.booking.charges.discount_total = Decimal('70.00')
+        self.booking.charges.basic_rental = Decimal('700.00')
+        self.booking.charges.extra_guest_total = Decimal('35.00')
+        self.booking.charges.save()
+
+        new_guests, new_costs, changed = recalculate_costs_for_party(self.booking, [30, 32, 10])
+        self.assertFalse(changed)
+        self.assertEqual(new_costs['discount_total'], Decimal('70.00'))
+
+    def test_manual_discount_reapplied_to_a_genuinely_changed_party(self):
+        self.booking.charges.manual_discount_percent = Decimal('10')
+        self.booking.charges.discount_total = Decimal('70.00')
+        self.booking.charges.basic_rental = Decimal('700.00')
+        self.booking.charges.extra_guest_total = Decimal('35.00')
+        self.booking.charges.save()
+
+        # Child (10) reclassified as an adult (15) - basic_rental rises to 700 (7n@100, unchanged
+        # since only extra_adult_rate applies for the 3rd adult), extra_guest_total +70.
+        new_guests, new_costs, changed = recalculate_costs_for_party(self.booking, [30, 32, 15])
+        self.assertTrue(changed)
+        self.assertEqual(new_costs['discount_total'], Decimal('70.00'))  # still 10% of the 700 basic
+        self.assertEqual(new_costs['rental_total'], Decimal('700.00') - Decimal('70.00') + Decimal('70.00'))
+
 
 class RecalculateBalanceForPartyTests(TestCase):
     """Same fixture as RecalculateCostsForPartyTests, but exercising the balance-stage variant -
@@ -712,6 +745,20 @@ class RecalculateBalanceForPartyTests(TestCase):
         self.booking.property.prices.all().delete()
         result = recalculate_balance_for_party(self.booking, [30, 32, 10])
         self.assertEqual(result, (None, None, None))
+
+    def test_manual_discount_survives_an_unchanged_party_confirmation(self):
+        # Same regression as RecalculateCostsForPartyTests' own version, for the balance stage -
+        # see that test's comment for how these numbers (700/70/35 -> 665 total_rental) line up
+        # with a fresh recompute of this exact same [30, 32, 10] party.
+        self.charge.manual_discount_percent = Decimal('10')
+        self.charge.discount_total = Decimal('70.00')
+        self.charge.basic_rental = Decimal('700.00')
+        self.charge.extra_guest_total = Decimal('35.00')
+        self.charge.save()
+
+        new_guests, new_costs, changed = recalculate_balance_for_party(self.booking, [30, 32, 10])
+        self.assertFalse(changed)
+        self.assertEqual(new_costs['discount_total'], Decimal('70.00'))
 
 
 class CreateBookingTests(TestCase):
@@ -813,6 +860,143 @@ class CreateBookingTests(TestCase):
             self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
         )
         self.assertEqual(booking.charges.security, Decimal('0.00'))
+
+    def test_manual_discount_percent_folds_into_discount_total(self):
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+            manual_discount_percent=Decimal('10'), manual_discount_reason='Loyal returning guest',
+        )
+        charge = booking.charges
+        # 5 nights @ 100 = 500 basic; 10% manual discount = 50, on top of a 0 automatic discount.
+        self.assertEqual(charge.discount_total, Decimal('50.00'))
+        self.assertEqual(charge.total_rental, Decimal('450.00'))
+
+    def test_manual_discount_reason_and_percent_stored_on_charge(self):
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+            manual_discount_percent=Decimal('15'), manual_discount_reason='Price-matched a competitor',
+        )
+        self.assertEqual(booking.charges.manual_discount_percent, Decimal('15'))
+        self.assertEqual(booking.charges.manual_discount_reason, 'Price-matched a competitor')
+
+    def test_no_manual_discount_preserves_existing_behavior(self):
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+        )
+        charge = booking.charges
+        self.assertEqual(charge.discount_total, Decimal('0'))
+        self.assertIsNone(charge.manual_discount_percent)
+        self.assertEqual(charge.manual_discount_reason, '')
+        self.assertEqual(booking.enquiry_source, 'Website')
+
+    def test_enquiry_source_param_overrides_default(self):
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+            enquiry_source='Staff offer',
+        )
+        self.assertEqual(booking.enquiry_source, 'Staff offer')
+
+
+class BookingOfferOpenViewTests(TestCase):
+    """bookings:offer_open - staff/views.py::StaffGuestOfferCreateView's activation link. Scoped
+    to enquiry_source='Staff offer' only - see BookingOfferOpenView's own docstring for why an
+    ordinary booking's reference must never be able to activate pending_booking_reference this
+    way (it would turn every bearer-readable reference into a bearer-cancellable one too)."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property OO', short_title='TESTOO')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Ana', last_name='Silva', email='ana-oo@example.com')
+        self.start = date.today() + timedelta(days=60)
+        self.end = self.start + timedelta(days=7)
+        Price.objects.create(
+            property=self.property, start_date=self.start, end_date=self.end + timedelta(days=60),
+            rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+        )
+
+        self.offer_booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Awaiting payment', enquiry_source='Staff offer',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+            hold_expires_at=timezone.now() + timedelta(minutes=20),
+        )
+        Charge.objects.create(booking=self.offer_booking, basic_rental=Decimal('700.00'))
+        Payment.objects.create(booking=self.offer_booking, provider='revolut', status='pending')
+
+        self.ordinary_booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start + timedelta(days=30),
+            departure_date=self.end + timedelta(days=30), is_owner=False,
+            enquiry_status='Awaiting payment', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+            hold_expires_at=timezone.now() + timedelta(minutes=20),
+        )
+        Charge.objects.create(booking=self.ordinary_booking, basic_rental=Decimal('700.00'))
+        Payment.objects.create(booking=self.ordinary_booking, provider='revolut', status='pending')
+
+    def test_activation_sets_session_and_redirects_to_details(self):
+        url = reverse('bookings:offer_open', kwargs={'reference': self.offer_booking.reference})
+        response = self.client.get(url)
+        self.assertRedirects(response, reverse('bookings:details', kwargs={'reference': self.offer_booking.reference}))
+        self.assertEqual(self.client.session.get('pending_booking_reference'), self.offer_booking.reference)
+
+    def test_404s_for_a_reference_not_from_a_staff_offer(self):
+        url = reverse('bookings:offer_open', kwargs={'reference': self.ordinary_booking.reference})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 404)
+        self.assertNotIn('pending_booking_reference', self.client.session)
+
+    def test_unknown_reference_404s(self):
+        url = reverse('bookings:offer_open', kwargs={'reference': 'NOPE-NOPE'})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 404)
+
+    def test_fresh_browser_can_submit_guest_list_after_activation(self):
+        # The actual end-to-end regression this feature exists to prevent: a client with no prior
+        # session at all opens the offer link, then submits the guest-list form - it must SAVE,
+        # not silently redirect to /pay/ the way BookingDetailsView.post() would for any other
+        # session-less request (see BookingDetailsViewTests.test_post_without_matching_session_
+        # is_rejected for the un-activated version of this exact check).
+        open_url = reverse('bookings:offer_open', kwargs={'reference': self.offer_booking.reference})
+        self.client.get(open_url)
+        details_url = reverse('bookings:details', kwargs={'reference': self.offer_booking.reference})
+        self.client.post(details_url, {
+            'first_name[]': ['Ana', 'Joao'], 'last_name[]': ['Silva', 'Silva'], 'age[]': ['30', '32'],
+        })
+        self.assertEqual(self.offer_booking.party.count(), 2)
+
+    def test_confirming_an_unchanged_party_does_not_drop_the_manual_discount(self):
+        # Found via manual end-to-end verification, not caught by the test above alone: a
+        # discounted staff offer whose guest confirms the exact party staff already set up used to
+        # trigger an unwanted price-changed interstitial and, worse, would have silently reset
+        # discount_total to the automatic-only amount (0 here) once confirmed - see
+        # bookings/utils.py::_apply_manual_discount()'s own docstring.
+        charge = self.offer_booking.charges
+        charge.manual_discount_percent = Decimal('10')
+        charge.basic_rental = Decimal('700.00')
+        charge.discount_total = Decimal('70.00')
+        charge.extra_guest_total = Decimal('0')
+        charge.save()
+
+        self.client.get(reverse('bookings:offer_open', kwargs={'reference': self.offer_booking.reference}))
+        details_url = reverse('bookings:details', kwargs={'reference': self.offer_booking.reference})
+        response = self.client.post(details_url, {
+            'first_name[]': ['Ana', 'Joao'], 'last_name[]': ['Silva', 'Silva'], 'age[]': ['30', '32'],
+        })
+        self.assertEqual(self.offer_booking.party.count(), 2)  # saved immediately, no interstitial
+        charge.refresh_from_db()
+        self.assertEqual(charge.discount_total, Decimal('70.00'))  # discount preserved, not wiped
 
 
 

@@ -14,6 +14,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
+from django_countries import countries as country_choices
 
 import env_settings
 from availability.utils import get_property_calendar
@@ -29,7 +30,7 @@ from finance.services import (
     payouts_due_in_range, sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
-    FLIGHT_NUMBER_HINT, compute_deposit_waiver, extras_summary,
+    FLIGHT_NUMBER_HINT, compute_deposit_waiver, create_booking, create_owner_booking, extras_summary,
     parsed_arrival_departure_time, parsed_travel_method, sync_ical_link, valid_flight_number,
 )
 from guests.models import Guest
@@ -39,7 +40,9 @@ from properties.models import (
     Owner, Platform, Price, Property, PropertyImage, PropertyOwnership, PropertyPlatformID,
     PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
-from properties.utils import apply_price_bulk_plan, build_price_bulk_plan, gross_up_for_commission
+from properties.utils import (
+    apply_price_bulk_plan, build_price_bulk_plan, get_stay_total_price, gross_up_for_commission,
+)
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.monthly_reports import (
     EXTRAS_METRICS, REVENUE_GROUPS, bookings_trend_rows, commissions_trend_rows, extras_trend_rows,
@@ -173,6 +176,195 @@ class StaffBookingLookupView(View):
             return redirect('staff:booking_detail', reference=reference)
         messages.error(request, f'No booking found for reference "{reference}".')
         return render(request, self.template_name, {})
+
+
+@method_decorator(staff_page_required('can_view_bookings'), name='dispatch')
+class StaffOwnerBookingCreateView(View):
+    """Staff-side equivalent of owners/views.py::OwnerBookingCreateView, for an owner who's "too
+    busy" to use their own Owner Suite - same create_owner_booking() call, unchanged, just with
+    an unrestricted property picker instead of one scoped to a single owner's own properties (the
+    owner here is derived from property.owner, not a logged-in owner session). No Charge/Payment
+    at all, same as the Owner Suite version - an owner stay is never charged. No automated
+    confirmation email - this codebase has no outbound email anywhere yet (see e.g.
+    StaffFinanceMemoSendView's own docstring) - so success just shows a copy/paste summary for
+    staff to send the owner manually."""
+    template_name = 'staff/booking_create_owner.html'
+
+    def get(self, request, *args, **kwargs):
+        context = self._context()
+        context.update({
+            'arrival_date': '', 'departure_date': '', 'adults': '2', 'children': '0', 'babies': '0',
+            'clean_checked': True, 'meet_greet_checked': True,
+        })
+        return render(request, self.template_name, context)
+
+    def post(self, request, *args, **kwargs):
+        post = request.POST
+        context = self._context()
+        context.update({
+            'selected_property_id': post.get('property_id', ''),
+            'arrival_date': post.get('arrival_date', ''),
+            'departure_date': post.get('departure_date', ''),
+            'adults': post.get('adults', '2'),
+            'children': post.get('children', '0'),
+            'babies': post.get('babies', '0'),
+            'clean_checked': post.get('clean') == 'on',
+            'meet_greet_checked': post.get('meet_greet') == 'on',
+        })
+
+        property_id = post.get('property_id', '')
+        property = Property.objects.select_related('owner').filter(pk=property_id).first() if property_id.isdigit() else None
+        if property is None:
+            messages.error(request, "Please choose a property.")
+            return render(request, self.template_name, context)
+        if property.owner_id is None:
+            messages.error(request, "This property has no owner on file, so a staff-created owner booking isn't possible.")
+            return render(request, self.template_name, context)
+
+        arrival_date = _parsed_date(post.get('arrival_date'))
+        departure_date = _parsed_date(post.get('departure_date'))
+        if not arrival_date or not departure_date:
+            messages.error(request, "Please provide both an arrival and departure date.")
+            return render(request, self.template_name, context)
+
+        try:
+            booking = create_owner_booking(
+                property, property.owner, arrival_date, departure_date,
+                adults=_parsed_int(post.get('adults')) or 1,
+                children=_parsed_int(post.get('children')) or 0,
+                babies=_parsed_int(post.get('babies')) or 0,
+                clean=post.get('clean') == 'on', meet_greet=post.get('meet_greet') == 'on',
+            )
+        except ValidationError as error:
+            message = " ".join(error.messages) if hasattr(error, 'messages') else str(error)
+            messages.error(request, message)
+            return render(request, self.template_name, context)
+
+        messages.success(
+            request,
+            f"Reservation created for {property.owner}. No confirmation email is sent automatically yet - "
+            f"copy this to send it yourself: {property} from {arrival_date:%d %b %Y} to {departure_date:%d %b %Y}, "
+            f"{booking.adults} adult(s), {booking.children} child(ren), {booking.babies} baby/babies."
+        )
+        return redirect('staff:booking_detail', reference=booking.reference)
+
+    def _context(self):
+        return {'property_groups': properties_grouped_by_location(Property.objects.select_related('location').all())}
+
+
+@method_decorator(staff_page_required('can_view_bookings'), name='dispatch')
+class StaffGuestOfferCreateView(View):
+    """Staff picks property/dates/guests, sees the normally-calculated price with an optional
+    one-click % discount layered on top (Thomas: percent + a reason, not a flat amount), then gets
+    a link to send the guest manually (no email infra exists - same stopgap as
+    StaffOwnerBookingCreateView) that skips straight past name/email/phone/country entry, landing
+    right where a normal guest would be after that step - see bookings/views.py::
+    BookingOfferOpenView for how that's made safe (bare reference possession isn't enough; scoped
+    to enquiry_source='Staff offer' bookings only, so this doesn't turn every booking's reference
+    into a bearer-cancellable one). The payment hold timer starts the moment this view creates the
+    Booking, not when the guest opens the link (Thomas's explicit call, 2026-09-04) - reuses
+    create_booking()'s existing hold logic completely unchanged.
+
+    Same page/view handles both the live price preview (a plain re-render, 'action' != 'create')
+    and the actual creation ('action' == 'create') - mirrors ReserveView's GET-quote-then-POST
+    pattern from the public reserve page, just collapsed into one POST-only staff form since
+    there's no separate guest-facing quote step to keep in sync here."""
+    template_name = 'staff/booking_create_offer.html'
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name, self._context(request.GET))
+
+    def post(self, request, *args, **kwargs):
+        context = self._context(request.POST)
+        if request.POST.get('action') != 'create':
+            return render(request, self.template_name, context)
+
+        if context['property'] is None or context['pricing'] is None:
+            messages.error(request, "Choose a property and valid dates before creating an offer.")
+            return render(request, self.template_name, context)
+
+        last_name = request.POST.get('last_name', '').strip()
+        email = request.POST.get('email', '').strip()
+        if not last_name or not email:
+            messages.error(request, "The guest's last name and email are required.")
+            return render(request, self.template_name, context)
+
+        guest_data = {
+            'first_name': request.POST.get('first_name', '').strip(),
+            'last_name': last_name,
+            'email': email,
+            'phone': request.POST.get('phone', '').strip(),
+            'country': request.POST.get('country', '').strip() or None,
+        }
+        try:
+            booking = create_booking(
+                context['property'], guest_data, context['start_date'], context['end_date'],
+                context['guests'], enquiry_source='Staff offer',
+                manual_discount_percent=context['discount_percent'],
+                manual_discount_reason=request.POST.get('discount_reason', '').strip(),
+            )
+        except ValidationError as error:
+            message = " ".join(error.messages) if hasattr(error, 'messages') else str(error)
+            messages.error(request, message)
+            return render(request, self.template_name, context)
+
+        offer_url = request.build_absolute_uri(
+            reverse('bookings:offer_open', kwargs={'reference': booking.reference})
+        )
+        return render(request, 'staff/booking_create_offer_confirm.html', {
+            'booking': booking, 'offer_url': offer_url, 'charge': booking.charges,
+        })
+
+    def _context(self, params):
+        property_id = params.get('property_id', '')
+        property = Property.objects.select_related('owner').filter(pk=property_id).first() if property_id.isdigit() else None
+        start_date = _parsed_date(params.get('start_date'))
+        end_date = _parsed_date(params.get('end_date'))
+        adults = _parsed_int(params.get('adults')) or 0
+        children = _parsed_int(params.get('children')) or 0
+        babies = _parsed_int(params.get('babies')) or 0
+        guests = {'adults': adults, 'children': children, 'infants': babies}
+        discount_percent = _parsed_decimal(params.get('discount_percent'))
+
+        pricing = None
+        costs = None
+        if property is not None and start_date and end_date and end_date > start_date:
+            booking_settings = BookingSettings.load()
+            raw_pricing = get_stay_total_price(
+                property, start_date, end_date, guests,
+                monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
+            )
+            if raw_pricing is not None:
+                manual_discount_amount = Decimal('0.00')
+                if discount_percent:
+                    manual_discount_amount = (
+                        raw_pricing['basic_total'] * discount_percent / Decimal('100')
+                    ).quantize(Decimal('0.01'))
+                discount_total = raw_pricing['discount_total'] + manual_discount_amount
+                rental_total = raw_pricing['basic_total'] - discount_total + raw_pricing['extra_guest_total']
+                costs = booking_settings.compute_costs(rental_total, arrival_date=start_date)
+                pricing = {
+                    **raw_pricing, 'discount_total': discount_total,
+                    'manual_discount_amount': manual_discount_amount, 'rental_total': rental_total,
+                }
+
+        return {
+            'property_groups': properties_grouped_by_location(Property.objects.select_related('location').all()),
+            'countries': country_choices,
+            'selected_property_id': property_id,
+            'property': property,
+            'start_date': start_date, 'end_date': end_date,
+            'start_date_raw': params.get('start_date', ''), 'end_date_raw': params.get('end_date', ''),
+            'adults': params.get('adults', '2'), 'children': params.get('children', '0'),
+            'babies': params.get('babies', '0'),
+            'discount_percent': discount_percent, 'discount_percent_raw': params.get('discount_percent', ''),
+            'discount_reason': params.get('discount_reason', ''),
+            'first_name': params.get('first_name', ''), 'last_name': params.get('last_name', ''),
+            'email': params.get('email', ''), 'phone': params.get('phone', ''),
+            'country': params.get('country', ''),
+            'guests': guests,
+            'pricing': pricing, 'costs': costs,
+        }
 
 
 @method_decorator(staff_page_required('can_view_guests'), name='dispatch')

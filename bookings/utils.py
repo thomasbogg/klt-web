@@ -42,6 +42,22 @@ def generate_reference_candidate():
     return '-'.join(groups)
 
 
+def _apply_manual_discount(basic_total, discount_total, manual_discount_percent):
+    """discount_total with a staff-granted manual_discount_percent (if any) folded in as a % of
+    basic_total. Shared by create_booking() and both recalculate_*_for_party() below, so a manual
+    discount granted on a staff-offer booking (staff/views.py::StaffGuestOfferCreateView) survives
+    every later party-size recalculation - without this, the guest-list step's price-recalculation
+    would recompute discount_total from the automatic Price-row discount alone, silently dropping
+    the manual discount the moment a guest confirms an otherwise-unchanged party (2026-09-04, found
+    via manual end-to-end verification of the staff-offer feature, not requested independently)."""
+    if not manual_discount_percent:
+        return discount_total
+    manual_discount_amount = (
+        Decimal(basic_total) * Decimal(manual_discount_percent) / Decimal('100')
+    ).quantize(Decimal('0.01'))
+    return discount_total + manual_discount_amount
+
+
 def determine_payment_provider(arrival_date):
     """Which payment provider handles a booking's deposit, decided by arrival month, not guest
     choice. Nov-Mar arrivals go through Wise (a static pay page, no in-progress payment signal);
@@ -72,13 +88,24 @@ def payment_clearing_expiry(now, booking_settings):
     return add_business_days(now, booking_settings.payment_clearing_business_days)
 
 
-def create_booking(property, guest_data, start_date, end_date, guests, currency='EUR'):
+def create_booking(property, guest_data, start_date, end_date, guests, currency='EUR',
+                    enquiry_source='Website', manual_discount_percent=None, manual_discount_reason=''):
     """Create the Guest (if new), Booking, and locked-in Charge for a reservation, all-or-nothing.
 
     guest_data: dict with first_name, last_name, email, phone, country.
     guests: dict with adults/children/infants, as returned by availability.utils.guests_string_to_dict.
     currency: 'EUR' or 'GBP' - the quote currency the guest was viewing at booking time, recorded on
     the Charge for staff follow-up. The charge amounts themselves are always locked in EUR.
+
+    enquiry_source/manual_discount_percent/manual_discount_reason exist for
+    staff/views.py::StaffGuestOfferCreateView (a staff-created "offer" booking, enquiry_source=
+    'Staff offer') - defaults preserve the original guest-funnel behavior exactly (ReserveView,
+    the only other caller, never passes them). manual_discount_percent is a one-off % of
+    basic_total staff apply on top of the normal Price-row-driven discount (weekly/monthly/last-
+    minute) - folded straight into the Charge's discount_total (with manual_discount_reason stored
+    alongside purely for display/audit) so Charge.total_rental and everything that reads it need
+    no special-casing.
+
     Raises django.core.exceptions.ValidationError (from Booking.full_clean()) if the dates are no
     longer available. Returns the created Booking.
     """
@@ -107,7 +134,11 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
         )
         if pricing is None:
             raise ValidationError("Pricing is not available for the selected dates.")
-        rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
+
+        discount_total = _apply_manual_discount(
+            pricing['basic_total'], pricing['discount_total'], manual_discount_percent,
+        )
+        rental_total = pricing['basic_total'] - discount_total + pricing['extra_guest_total']
         costs = booking_settings.compute_costs(rental_total, arrival_date=start_date)
 
         provider = determine_payment_provider(start_date)
@@ -124,7 +155,7 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
             is_owner=False,
             enquiry_status='Awaiting payment',
             enquiry_date=date.today(),
-            enquiry_source='Website',
+            enquiry_source=enquiry_source,
             adults=guests.get('adults', 0),
             children=guests.get('children', 0),
             babies=guests.get('infants', 0),
@@ -146,7 +177,7 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
         Charge.objects.create(
             booking=booking,
             basic_rental=pricing['basic_total'],
-            discount_total=pricing['discount_total'],
+            discount_total=discount_total,
             extra_guest_total=pricing['extra_guest_total'],
             admin=costs['admin_fee'],
             security=security_deposit,
@@ -155,6 +186,8 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
             balance_due_date=costs['balance_due_date'],
             currency=currency,
             gbp_conversion_rate=booking_settings.gbp_conversion_rate,
+            manual_discount_percent=manual_discount_percent,
+            manual_discount_reason=manual_discount_reason,
         )
 
         Payment.objects.create(booking=booking, provider=provider)
@@ -265,7 +298,12 @@ def recalculate_costs_for_party(booking, ages):
     (None, None, None) if the stay can no longer be priced at all (e.g. a Price row was
     edited/removed since the reservation was made) - the same situation create_booking() raises
     ValidationError for; the caller must handle it explicitly instead. Writes nothing to the DB -
-    the caller (bookings/views.py::BookingDetailsView) decides whether/what to persist."""
+    the caller (bookings/views.py::BookingDetailsView) decides whether/what to persist.
+
+    Re-applies the booking's own Charge.manual_discount_percent (if any) on top of the freshly
+    recomputed automatic discount, same as create_booking() - see _apply_manual_discount()'s own
+    docstring for why this matters: without it, a staff-offer booking's discount would silently
+    vanish the moment a guest confirms their (even unchanged) party on the guest-list step."""
     from bookings.models import BookingSettings
     from properties.utils import get_stay_total_price
 
@@ -277,10 +315,13 @@ def recalculate_costs_for_party(booking, ages):
     )
     if pricing is None:
         return None, None, None
-    rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
+    discount_total = _apply_manual_discount(
+        pricing['basic_total'], pricing['discount_total'], booking.charges.manual_discount_percent,
+    )
+    rental_total = pricing['basic_total'] - discount_total + pricing['extra_guest_total']
     new_costs = booking_settings.compute_costs(rental_total, arrival_date=booking.arrival_date)
     new_costs['basic_rental'] = pricing['basic_total']
-    new_costs['discount_total'] = pricing['discount_total']
+    new_costs['discount_total'] = discount_total
     new_costs['extra_guest_total'] = pricing['extra_guest_total']
     changed = booking.charges.total_rental is None or new_costs['rental_total'] != booking.charges.total_rental
     return new_guests, new_costs, changed
@@ -290,6 +331,9 @@ def recalculate_balance_for_party(booking, ages):
     """Balance-stage equivalent of recalculate_costs_for_party(), for a two-stage booking whose
     deposit (due_at_booking) is already paid and collected - editing the guest list here can only
     move due_at_balance, never retroactively redefine what the deposit "should have been".
+
+    Also re-applies Charge.manual_discount_percent, same as recalculate_costs_for_party() - see
+    _apply_manual_discount()'s own docstring.
 
     Reuses get_stay_total_price()/BookingSettings.compute_costs() the same way for
     rental_total/admin_fee/subtotal (one formula, not duplicated), but then discards
@@ -316,10 +360,13 @@ def recalculate_balance_for_party(booking, ages):
         return None, None, None
 
     charge = booking.charges
-    rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
+    discount_total = _apply_manual_discount(
+        pricing['basic_total'], pricing['discount_total'], charge.manual_discount_percent,
+    )
+    rental_total = pricing['basic_total'] - discount_total + pricing['extra_guest_total']
     new_costs = booking_settings.compute_costs(rental_total, arrival_date=booking.arrival_date)
     new_costs['basic_rental'] = pricing['basic_total']
-    new_costs['discount_total'] = pricing['discount_total']
+    new_costs['discount_total'] = discount_total
     new_costs['extra_guest_total'] = pricing['extra_guest_total']
     new_costs['due_at_booking'] = charge.due_at_booking
     new_costs['due_at_balance'] = max(new_costs['subtotal'] - charge.due_at_booking, Decimal('0'))
