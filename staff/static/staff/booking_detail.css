@@ -250,6 +250,17 @@ body {
     gap: 10px;
 }
 
+/* Flex items default to min-width: auto (their own content's minimum), not 0 - so a row with
+   several fields (e.g. Property specification's Bedrooms/Bathrooms/Half baths trio) can refuse to
+   shrink below that combined minimum and overflow its container's actual width instead of sharing
+   it evenly, even though every field already has flex: 1. Classic flexbox gotcha, only visible
+   once a sibling card's width is no longer independently capped (property_detail.css, 2026-09-05)
+   made the overflow suddenly show up as a card-width mismatch instead of just being absorbed by
+   unused space. */
+.staff-field-row > .staff-field {
+    min-width: 0;
+}
+
 /* Owner booking/Self check-in and Meet & greet/Clean on departure sit in two stacked rows of
    checkboxes - without this, each label only takes its own text width, so differing label
    lengths between the rows (e.g. "Owner booking" vs "Meet & greet") leave the checkboxes
