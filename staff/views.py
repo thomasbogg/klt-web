@@ -1016,6 +1016,7 @@ class StaffSettingsView(View):
             'staff_users': User.objects.select_related('staff_profile__role').order_by('username'),
             'roles': StaffRole.objects.annotate(user_count=Count('profiles')).order_by('name'),
             'permission_fields': STAFF_PAGE_PERMISSION_FIELDS,
+            'language_choices': StaffProfile.Language.choices,
             # property_count (via the reverse FK's default accessor - Property.owner/accountant
             # have no related_name) drives the confirm-before-delete warning in settings.js, so
             # staff can see how many properties would be orphaned (SET_NULL, not blocked) before
@@ -1349,8 +1350,10 @@ class StaffSettingsView(View):
         user.set_unusable_password()
         user.save()
         role_id = post.get('role') or None
-        if role_id:
-            StaffProfile.objects.update_or_create(user=user, defaults={'role_id': role_id})
+        language = post.get('preferred_language')
+        if language not in StaffProfile.Language.values:
+            language = StaffProfile.Language.ENGLISH
+        StaffProfile.objects.update_or_create(user=user, defaults={'role_id': role_id, 'preferred_language': language})
         if send_staff_invite_email(request, user):
             messages.success(request, f'Staff account "{username}" created - an invite to set a password was sent to {email}.')
         else:
@@ -1386,8 +1389,11 @@ class StaffSettingsView(View):
         user.is_superuser = post.get('is_superuser') == 'on'
         user.is_active = post.get('is_active') == 'on'
         user.save()
+        language = post.get('preferred_language')
+        if language not in StaffProfile.Language.values:
+            language = StaffProfile.Language.ENGLISH
         StaffProfile.objects.update_or_create(
-            user=user, defaults={'role_id': post.get('role') or None}
+            user=user, defaults={'role_id': post.get('role') or None, 'preferred_language': language}
         )
         messages.success(request, f'"{user.username}" updated.')
 

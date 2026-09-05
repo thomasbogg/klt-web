@@ -3312,6 +3312,43 @@ class StaffAddStaffUserAndInviteTests(TestCase):
         sent_body = mock_send.call_args.kwargs['body']
         self.assertNotIn(' as ', sent_body)
 
+    def test_add_staff_user_defaults_to_english(self):
+        with patch('communications.services.sending.send_plain_email'):
+            self.client.post(self.url, {
+                'action': 'add_staff_user', 'username': 'englishdefault', 'email': 'en@example.com',
+            })
+        user = User.objects.get(username='englishdefault')
+        self.assertEqual(user.staff_profile.preferred_language, StaffProfile.Language.ENGLISH)
+
+    def test_add_staff_user_rejects_an_unrecognised_language(self):
+        with patch('communications.services.sending.send_plain_email'):
+            self.client.post(self.url, {
+                'action': 'add_staff_user', 'username': 'badlang', 'email': 'badlang@example.com',
+                'preferred_language': 'fr',
+            })
+        user = User.objects.get(username='badlang')
+        self.assertEqual(user.staff_profile.preferred_language, StaffProfile.Language.ENGLISH)
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_add_staff_user_with_portuguese_sends_the_invite_in_portuguese(self, mock_send):
+        self.client.post(self.url, {
+            'action': 'add_staff_user', 'username': 'portugueseuser', 'email': 'pt@example.com',
+            'role': self.role.pk, 'preferred_language': 'pt',
+        })
+        user = User.objects.get(username='portugueseuser')
+        self.assertEqual(user.staff_profile.preferred_language, 'pt')
+        self.assertIn('como Cleaning Staff', mock_send.call_args.kwargs['body'])
+        self.assertIn('convidado', mock_send.call_args.kwargs['subject'])
+
+    def test_update_staff_user_saves_preferred_language(self):
+        user = User.objects.create_user(username='langupdate', password='pw')
+        StaffProfile.objects.create(user=user, role=self.role)
+        self.client.post(self.url, {
+            'action': 'update_staff_user', 'user_id': user.pk, 'preferred_language': 'pt',
+        })
+        user.staff_profile.refresh_from_db()
+        self.assertEqual(user.staff_profile.preferred_language, 'pt')
+
     def test_add_staff_user_requires_username_and_email(self):
         before = User.objects.count()
         self.client.post(self.url, {'action': 'add_staff_user', 'username': 'onlyusername'})

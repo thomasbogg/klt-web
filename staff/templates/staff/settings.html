@@ -579,7 +579,7 @@
                         <h2 class="staff-panel-title">Staff accounts</h2>
                         <table class="staff-price-table">
                             <thead>
-                                <tr><th>Username</th><th>Email</th><th>Staff</th><th>Superuser</th><th>Active</th><th>Role</th><th>Password</th><th></th></tr>
+                                <tr><th>Username</th><th>Email</th><th>Staff</th><th>Superuser</th><th>Active</th><th>Role</th><th>Language</th><th>Password</th><th></th></tr>
                             </thead>
                             <tbody>
                                 {% for staff_user in staff_users %}
@@ -598,6 +598,13 @@
                                         </select>
                                     </td>
                                     <td>
+                                        <select name="preferred_language" form="user-form-{{ staff_user.pk }}" class="staff-input">
+                                            {% for value, label in language_choices %}
+                                            <option value="{{ value }}" {% if staff_user.staff_profile.preferred_language == value %}selected{% endif %}>{{ label }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </td>
+                                    <td>
                                         {% if staff_user.has_usable_password %}
                                         Set
                                         {% else %}
@@ -612,7 +619,7 @@
                                     <td><button type="submit" form="user-form-{{ staff_user.pk }}" class="staff-button staff-button-small">Save</button></td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="8" class="staff-empty">No staff accounts yet.</td></tr>
+                                <tr><td colspan="9" class="staff-empty">No staff accounts yet.</td></tr>
                                 {% endfor %}
                             </tbody>
                         </table>
@@ -646,13 +653,20 @@
                                         {% endfor %}
                                     </select>
                                 </label>
+                                <label class="staff-field">Language
+                                    <select name="preferred_language" class="staff-input">
+                                        {% for value, label in language_choices %}
+                                        <option value="{{ value }}">{{ label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
                             </div>
                             <label class="staff-checkbox-label">
                                 <input type="checkbox" name="is_superuser"> Superuser
                             </label>
                             <button type="submit" class="staff-button">Add staff account</button>
                         </form>
-                        <p class="staff-settings-hint">An invite email is sent to the address above with a link to set their own password - the email names the Role chosen here, if any.</p>
+                        <p class="staff-settings-hint">An invite email is sent to the address above with a link to set their own password - the email names the Role chosen here, if any, and is written in the Language chosen here (only the invite itself - the rest of the staff suite is still English-only).</p>
                     </div>
                 </section>
                 {% endif %}

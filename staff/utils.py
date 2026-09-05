@@ -868,6 +868,11 @@ def send_staff_invite_email(request, user):
     dropping that clause entirely for a role-less account (superuser-only, or a role not yet
     decided) rather than saying "no role" outright.
 
+    Sent in Portuguese when StaffProfile.preferred_language is 'pt' (per Thomas, 2026-09-06 -
+    several staff members speak mainly Portuguese with very limited English) - this is the only
+    place that setting is consumed so far, NOT a general translation of the staff suite itself
+    (a separately-scoped, much larger project - see the plan this was discussed alongside).
+
     Returns True/False for whether the send succeeded, so callers can flash an accurate message -
     does not raise, since a failed invite send shouldn't block the account from having been
     created (staff can always retry via "Resend invite")."""
@@ -877,20 +882,32 @@ def send_staff_invite_email(request, user):
     from django.utils.http import urlsafe_base64_encode
 
     from communications.services.sending import send_plain_email
+    from staff.models import StaffProfile
 
     uid = urlsafe_base64_encode(force_bytes(user.pk))
     token = default_token_generator.make_token(user)
     link = request.build_absolute_uri(reverse('staff:accept_invite', kwargs={'uidb64': uid, 'token': token}))
 
     profile = getattr(user, 'staff_profile', None)
-    role_clause = f" as {profile.role.name}" if profile and profile.role else ""
+    role_name = profile.role.name if profile and profile.role else None
 
-    subject = "You're invited to join the Algarve Beach Apartments team"
-    body = (
-        f"You've been invited to join the Algarve Beach Apartments staff team{role_clause}. "
-        f"Set your password to get started: {link} "
-        f"This link will expire in a few days - if it does, ask a superuser to resend your invite."
-    )
+    if profile and profile.preferred_language == StaffProfile.Language.PORTUGUESE:
+        role_clause = f" como {role_name}" if role_name else ""
+        subject = "Foi convidado(a) a juntar-se à equipa da Algarve Beach Apartments"
+        body = (
+            f"Foi convidado(a) a juntar-se à equipa da Algarve Beach Apartments{role_clause}. "
+            f"Defina a sua palavra-passe para começar: {link} "
+            f"Este link expira dentro de alguns dias - se isso acontecer, peça a um superuser "
+            f"para reenviar o convite."
+        )
+    else:
+        role_clause = f" as {role_name}" if role_name else ""
+        subject = "You're invited to join the Algarve Beach Apartments team"
+        body = (
+            f"You've been invited to join the Algarve Beach Apartments staff team{role_clause}. "
+            f"Set your password to get started: {link} "
+            f"This link will expire in a few days - if it does, ask a superuser to resend your invite."
+        )
     try:
         send_plain_email(
             from_email=env_settings.COMMS_AUTOMATED_SENDER_EMAIL, from_display_name='Algarve Beach Apartments',

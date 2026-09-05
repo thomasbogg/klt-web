@@ -135,9 +135,21 @@ class StaffProfile(models.Model):
     """Extends the built-in User with the one Role it holds (see StaffRole) - deliberately a
     single optional FK, not a many-to-many, per Thomas's explicit choice of one role per user.
     role is SET_NULL on delete: removing a Role just leaves its former holders with no role
-    (locked out of every page until reassigned), not a hard block on deleting the Role."""
+    (locked out of every page until reassigned), not a hard block on deleting the Role.
+
+    preferred_language (2026-09-06, per Thomas: several staff members speak mainly Portuguese
+    with very limited English) currently only picks the language of the account's own invite
+    email (staff.utils.send_staff_invite_email) - the staff suite's UI itself is still English-only,
+    a separately-scoped translation project. A fixed two-value choice, not freeform, per
+    [[feedback_klt_web_fixed_over_freeform_choices]] - the two languages this business actually
+    operates in."""
+    class Language(models.TextChoices):
+        ENGLISH = 'en', 'English'
+        PORTUGUESE = 'pt', 'Português'
+
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='staff_profile')
     role = models.ForeignKey(StaffRole, on_delete=models.SET_NULL, null=True, blank=True, related_name='profiles')
+    preferred_language = models.CharField(max_length=2, choices=Language.choices, default=Language.ENGLISH)
 
     class Meta:
         db_table = 'staff_profiles'
