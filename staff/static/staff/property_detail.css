@@ -146,35 +146,19 @@
     flex: 0 0 auto;
 }
 
-/* Scoped to property-page forms specifically (not .staff-inline-form, which deliberately wants
-   the full row width for the iCal/photo add-forms) - stops a lone text input from stretching
-   edge-to-edge of a wide pane, the same complaint that motivated the two-column split above.
-   Property info is the one form this is actually for - a long single column of narrow fields.
-   Amenities/SEF/Ownership are exempted just below - all three use the responsive field-row grid
-   instead, which wants the extra width rather than being boxed into 480px with the rest of the
-   (much wider) pane sitting empty next to it. Property specification joined that exemption list
-   2026-09-05: same field-row-grid shape as Amenities/SEF, and capping it while its neighbour card
-   below (Self check-in access codes, which needs its full width for the one-row add form) isn't
-   capped left the two stacked right-column cards' visible content ending at very different
-   widths - caught live by Thomas.
-
-   The first attempt at that exemption (a bare `.staff-property-specification-form` class) never
-   actually took effect - a single-class selector (0,1,0) is lower specificity than this rule's
-   own `.staff-property-content .staff-form` (0,2,0), so the 480px cap kept silently winning
-   regardless of source order. `#pane-main .staff-property-specification-form` below matches the
-   ID-scoped pattern the other three exemptions already use, which is what actually gives them
-   enough specificity to win - same CSS-specificity-gotcha shape as this project's `.owner-*`
-   incidents (a component's own single class losing to a container-level selector). */
-.staff-property-content .staff-form {
-    max-width: 480px;
-}
-
-#pane-amenities .staff-form,
-#pane-sef .staff-form,
-#pane-ownership .staff-form,
-#pane-main .staff-property-specification-form {
-    max-width: none;
-}
+/* Historical note, 2026-09-05: this page used to cap Property info's form at 480px (a long single
+   column of narrow fields looked bad edge-to-edge at 1000px+ - see the two-column split above,
+   which was the fix for that). Amenities/SEF/Ownership/Property specification were exempted from
+   that cap one at a time as each turned out to want the pane's full width instead (all use the
+   responsive field-row grid, not a narrow single column) - Property info joined them last, per
+   Thomas, once every other card on this tab was already flush with its own right edge and it was
+   the only one still leaving a gap. With every .staff-form on this page now wanting full width,
+   the capping rule itself (and its growing exemption list, which had a real CSS-specificity trap -
+   a bare single-class exemption doesn't have enough specificity to beat a two-class rule
+   regardless of source order, silently losing exactly like this project's `.owner-*` incidents)
+   no longer did anything, so it's removed rather than kept as dead code. If a future form on this
+   page genuinely needs a narrower fixed width again, give it its own explicit max-width rather
+   than reviving this page-wide default. */
 
 /* Record handover's three fields (New owner / Effective date / the submit button) sit in one row
    rather than the page's usual stacked .staff-form, and (per Thomas) that row should span the
