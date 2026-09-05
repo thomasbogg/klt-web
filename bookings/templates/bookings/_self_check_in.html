@@ -1,0 +1,21 @@
+{% load bookings_extras %}
+{% if self_check_in %}
+<div class="details-section">
+    <h2 class="details-section-title">Self check-in</h2>
+    {% if self_check_in_instructions %}
+    <p class="details-note details-note-left">{{ self_check_in_instructions|linkify|linebreaksbr }}</p>
+    {% else %}
+    <p class="details-note details-note-left">Your check-in for this stay is self check-in, but we haven't added the access instructions yet - please contact us ahead of arrival.</p>
+    {% endif %}
+    {% if access_codes %}
+    <ul class="details-list">
+        {% for access_code in access_codes %}
+        <li>
+            <strong>{{ access_code.label }}:</strong>
+            {% if codes_revealed %}{{ access_code.code }}{% else %}Code revealed {{ code_reveal_days }} day{{ code_reveal_days|pluralize }} before your check-in date.{% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</div>
+{% endif %}

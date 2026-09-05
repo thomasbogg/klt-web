@@ -15,8 +15,8 @@ from bookings.models import (
     WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
-    FLIGHT_NUMBER_HINT, create_owner_booking, parsed_arrival_departure_time, parsed_travel_method,
-    valid_flight_number,
+    FLIGHT_NUMBER_HINT, compute_effective_self_check_in, create_owner_booking,
+    parsed_arrival_departure_time, parsed_travel_method, valid_flight_number,
 )
 from bookings.views import BookingFormMixin
 from finance.models import Memo, PayoutRecord
@@ -568,6 +568,9 @@ class OwnerBookingDetailView(BookingFormMixin, View):
         # Unlike the guest-facing Manage Booking hub (which never lets a guest touch this),
         # meet_greet IS owner-editable here - see this view's own docstring.
         arrival.meet_greet = post.get('meet_greet') == 'on'
+        computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.time)
+        if computed_self_check_in is not None:
+            arrival.self_check_in = computed_self_check_in
         arrival.save()
 
         departure, _ = Departure.objects.get_or_create(booking=booking, defaults={'clean': True})

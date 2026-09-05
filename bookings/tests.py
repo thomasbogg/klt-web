@@ -16,16 +16,17 @@ from bookings.models import (
 from bookings.payouts import compute_owner_payout
 from staff.models import OwnerPayment
 from bookings.utils import (
-    add_business_days, compute_deposit_waiver, compute_tourist_tax, create_booking, create_owner_booking,
-    determine_payment_provider, expire_stale_holds, extras_summary, guest_counts_by_age,
-    guest_for_owner, has_completed_previous_stay, payment_clearing_expiry,
-    recalculate_balance_for_party, recalculate_costs_for_party, sync_ical_link,
+    add_business_days, compute_deposit_waiver, compute_effective_self_check_in, compute_tourist_tax,
+    create_booking, create_owner_booking, determine_payment_provider, expire_stale_holds,
+    extras_summary, guest_counts_by_age, guest_for_owner, has_completed_previous_stay,
+    payment_clearing_expiry, recalculate_balance_for_party, recalculate_costs_for_party,
+    sync_ical_link,
 )
 from bookings.templatetags.bookings_extras import linkify
 from guests.models import Guest
 from properties.models import (
     Amenity, Location, LocationRules, ManagementCompany, Owner, Platform, Price, Property,
-    PropertySpec, WashingMaterial, iCalLink,
+    PropertyAccessCode, PropertySpec, WashingMaterial, iCalLink,
 )
 
 
@@ -2989,6 +2990,60 @@ class BookingManageGuestRegistrationsViewTests(TestCase):
         self.assertFalse(rows_by_guest[self.lead.pk]['registration'].has_nif)
 
 
+class ComputeEffectiveSelfCheckInTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property CESC', short_title='TESTCESC')
+
+    def test_no_booking_company_returns_none(self):
+        self.assertIsNone(compute_effective_self_check_in(self.property, None))
+
+    def test_company_with_no_check_in_method_returns_none(self):
+        self.property.booking_company = ManagementCompany.objects.create(name='No Policy Co')
+        self.assertIsNone(compute_effective_self_check_in(self.property, time(12, 0)))
+
+    def test_always_self_check_in_returns_true_regardless_of_time(self):
+        self.property.booking_company = ManagementCompany.objects.create(
+            name='Always Self Co', check_in_method=ManagementCompany.CheckInMethod.SELF_CHECK_IN,
+        )
+        self.assertTrue(compute_effective_self_check_in(self.property, None))
+        self.assertTrue(compute_effective_self_check_in(self.property, time(3, 0)))
+
+    def test_always_in_person_returns_false_regardless_of_time(self):
+        self.property.booking_company = ManagementCompany.objects.create(
+            name='Always In Person Co', check_in_method=ManagementCompany.CheckInMethod.IN_PERSON,
+        )
+        self.assertFalse(compute_effective_self_check_in(self.property, None))
+        self.assertFalse(compute_effective_self_check_in(self.property, time(23, 0)))
+
+    def test_mixed_at_or_after_cutoff_is_self_check_in(self):
+        self.property.booking_company = ManagementCompany.objects.create(
+            name='Mixed Co', check_in_method=ManagementCompany.CheckInMethod.MIXED,
+            self_check_in_after=time(14, 0),
+        )
+        self.assertTrue(compute_effective_self_check_in(self.property, time(14, 0)))
+        self.assertTrue(compute_effective_self_check_in(self.property, time(20, 0)))
+
+    def test_mixed_before_cutoff_is_not_self_check_in(self):
+        self.property.booking_company = ManagementCompany.objects.create(
+            name='Mixed Co Early', check_in_method=ManagementCompany.CheckInMethod.MIXED,
+            self_check_in_after=time(14, 0),
+        )
+        self.assertFalse(compute_effective_self_check_in(self.property, time(9, 0)))
+
+    def test_mixed_with_no_arrival_time_yet_returns_none(self):
+        self.property.booking_company = ManagementCompany.objects.create(
+            name='Mixed Co No Time', check_in_method=ManagementCompany.CheckInMethod.MIXED,
+            self_check_in_after=time(14, 0),
+        )
+        self.assertIsNone(compute_effective_self_check_in(self.property, None))
+
+    def test_mixed_with_no_cutoff_configured_returns_none(self):
+        self.property.booking_company = ManagementCompany.objects.create(
+            name='Mixed Co No Cutoff', check_in_method=ManagementCompany.CheckInMethod.MIXED,
+        )
+        self.assertIsNone(compute_effective_self_check_in(self.property, time(14, 0)))
+
+
 class ComputeDepositWaiverTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Test Property CDW', short_title='TESTCDW')
@@ -3442,6 +3497,25 @@ class BookingManageArrivalDepartureViewTests(TestCase):
         self.booking.refresh_from_db()
         self.assertTrue(self.booking.arrival.self_check_in)
         self.assertFalse(self.booking.arrival.meet_greet)
+
+    def test_mixed_policy_company_derives_self_check_in_from_guests_own_arrival_time(self):
+        # Unlike test_check_in_no_longer_guest_settable above (no booking_company at all - fully
+        # manual), a property whose company has a MIXED check-in policy DOES let the guest's own
+        # arrival-time answer determine self_check_in, per Thomas 2026-09-05.
+        company = ManagementCompany.objects.create(
+            name='Guest Mixed Co', check_in_method=ManagementCompany.CheckInMethod.MIXED,
+            self_check_in_after=time(14, 0),
+        )
+        self.property.booking_company = company
+        self.property.save(update_fields=['booking_company'])
+
+        self.client.post(self.url, {'arrival_method': 'flight_faro', 'arrival_time': '16:00'})
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.arrival.self_check_in)
+
+        self.client.post(self.url, {'arrival_method': 'flight_faro', 'arrival_time': '09:00'})
+        self.booking.refresh_from_db()
+        self.assertFalse(self.booking.arrival.self_check_in)
 
     def test_second_post_never_resets_staff_set_ops_fields(self):
         Departure.objects.create(booking=self.booking, clean=True)
@@ -3950,6 +4024,105 @@ class BookingManageLocationViewTests(TestCase):
             '<a href="https://maps.app.goo.gl/xyz789" target="_blank" rel="noopener noreferrer">',
         )
 
+    def test_no_arrival_row_hides_self_check_in_section(self):
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Self check-in')
+
+    def test_arrival_not_marked_self_check_in_hides_section(self):
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Self check-in')
+
+    def test_self_check_in_shows_property_instructions(self):
+        self.property.self_check_in_instructions = 'Key safe code: 4821. Located left of the front door.'
+        self.property.save(update_fields=['self_check_in_instructions'])
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Self check-in')
+        self.assertContains(response, 'Key safe code: 4821.')
+
+    def test_self_check_in_with_no_instructions_yet_shows_fallback(self):
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertContains(response, "haven't added the access instructions yet")
+
+    def test_self_check_in_shows_even_with_no_location_assigned(self):
+        # Access instructions must never depend on whether a property has a Location assigned -
+        # they're an unrelated fact about the property itself.
+        self.property.location = None
+        self.property.self_check_in_instructions = 'Key safe code: 4821.'
+        self.property.save(update_fields=['location', 'self_check_in_instructions'])
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Key safe code: 4821.')
+        self.assertContains(response, "aren't available yet")
+
+    def test_another_bookings_self_check_in_instructions_never_leak(self):
+        # A different property's instructions must never appear just because self_check_in_instructions
+        # exists somewhere in the DB - it's always this booking's own property.self_check_in_instructions.
+        other_property = Property.objects.create(
+            title='Other Property LOC', short_title='OTHERLOC',
+            self_check_in_instructions='Other property secret code: 9999.',
+        )
+        self.assertNotEqual(other_property.pk, self.property.pk)
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertNotContains(response, '9999')
+
+    def test_self_check_in_section_appears_after_directions(self):
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        content = response.content.decode()
+        self.assertLess(content.index('Directions'), content.index('Self check-in'))
+
+    def test_access_code_hidden_outside_reveal_window(self):
+        # self.booking arrives in 200 days (see setUp) - well outside the default 2-day window.
+        PropertyAccessCode.objects.create(property=self.property, label='Apartment door', code='4821')
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Apartment door')
+        self.assertNotContains(response, '4821')
+        self.assertContains(response, 'Code revealed 2 days before your check-in date.')
+
+    def test_access_code_shown_inside_reveal_window(self):
+        near_start = date.today() + timedelta(days=1)
+        near_booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=near_start,
+            departure_date=near_start + timedelta(days=3),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Payment.objects.create(booking=near_booking, provider='revolut', status='paid')
+        PropertyAccessCode.objects.create(property=self.property, label='Apartment door', code='4821')
+        Arrival.objects.create(booking=near_booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(reverse('bookings:manage_location', kwargs={'reference': near_booking.reference}))
+        self.assertContains(response, '4821')
+        self.assertNotContains(response, 'Code revealed')
+
+    def test_access_code_reveal_window_is_configurable(self):
+        settings = BookingSettings.load()
+        settings.self_check_in_code_reveal_days = 30
+        settings.save(update_fields=['self_check_in_code_reveal_days'])
+        # self.booking arrives in 200 days - still outside even a 30-day window.
+        PropertyAccessCode.objects.create(property=self.property, label='Apartment door', code='4821')
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertNotContains(response, '4821')
+        self.assertContains(response, 'Code revealed 30 days before your check-in date.')
+
+    def test_multiple_access_codes_all_shown(self):
+        PropertyAccessCode.objects.create(property=self.property, label='Building gate', code='1111', order=0)
+        PropertyAccessCode.objects.create(property=self.property, label='Apartment door', code='2222', order=1)
+        near_start = date.today() + timedelta(days=1)
+        self.booking.arrival_date = near_start
+        self.booking.save(update_fields=['arrival_date'])
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Building gate')
+        self.assertContains(response, '1111')
+        self.assertContains(response, 'Apartment door')
+        self.assertContains(response, '2222')
+
 
 class BookingManageFAQViewTests(TestCase):
     def setUp(self):
@@ -4069,6 +4242,16 @@ class SyncIcalLinkTests(TestCase):
         self.assertEqual(summary['events'][0]['result'], 'created')
         self.assertEqual(summary['events'][0]['booking'], booking)
         self.assertFalse(booking.is_owner)
+
+    def test_created_booking_applies_property_check_in_policy(self):
+        company = ManagementCompany.objects.create(
+            name='Sync Self Check-in Co', check_in_method=ManagementCompany.CheckInMethod.SELF_CHECK_IN,
+        )
+        self.property.booking_company = company
+        self.property.save(update_fields=['booking_company'])
+        sync_ical_link(self.link, _ics_feed([('uid-1', self.start, self.end)]))
+        booking = Booking.objects.get(ical_uid='uid-1')
+        self.assertTrue(booking.arrival.self_check_in)
 
     def test_is_owner_link_marks_imported_bookings_as_owner_bookings(self):
         """properties.models.iCalLink.is_owner_link is the source of truth for a feed the owner

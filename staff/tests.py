@@ -20,8 +20,8 @@ from finance.models import AdHocService
 from guests.models import Guest
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
-    Owner, Platform, Price, Property, PropertyImage, PropertyOwnership, PropertyPlatformID,
-    PropertySpec, SEFDetail, WashingMaterial, iCalLink,
+    Owner, Platform, Price, Property, PropertyAccessCode, PropertyImage, PropertyOwnership,
+    PropertyPlatformID, PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
 from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
 from staff.monthly_reports import (
@@ -880,6 +880,58 @@ class StaffBookingDetailArrivalDepartureTests(TestCase):
         self.booking.refresh_from_db()
         self.assertFalse(self.booking.arrival.self_check_in)
 
+    def test_always_self_check_in_company_overrides_unchecked_box(self):
+        company = ManagementCompany.objects.create(
+            name='Always Self Check-in Co', check_in_method=ManagementCompany.CheckInMethod.SELF_CHECK_IN,
+        )
+        self.property.booking_company = company
+        self.property.save(update_fields=['booking_company'])
+        response = self.client.post(self.url, {'action': 'update_booking'})
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.arrival.self_check_in)
+
+    def test_always_in_person_company_overrides_checked_box(self):
+        company = ManagementCompany.objects.create(
+            name='Always In Person Co', check_in_method=ManagementCompany.CheckInMethod.IN_PERSON,
+        )
+        self.property.booking_company = company
+        self.property.save(update_fields=['booking_company'])
+        response = self.client.post(self.url, {'action': 'update_booking', 'self_check_in': 'on'})
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertFalse(self.booking.arrival.self_check_in)
+
+    def test_mixed_company_derives_self_check_in_from_arrival_time(self):
+        company = ManagementCompany.objects.create(
+            name='Mixed Co', check_in_method=ManagementCompany.CheckInMethod.MIXED,
+            self_check_in_after=time(14, 0),
+        )
+        self.property.booking_company = company
+        self.property.save(update_fields=['booking_company'])
+
+        response = self.client.post(self.url, {'action': 'update_booking', 'arrival_time': '16:00'})
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.arrival.self_check_in)
+
+        response = self.client.post(self.url, {'action': 'update_booking', 'arrival_time': '10:00'})
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertFalse(self.booking.arrival.self_check_in)
+
+    def test_mixed_company_with_no_arrival_time_yet_leaves_manual_value(self):
+        company = ManagementCompany.objects.create(
+            name='Mixed Co No Time', check_in_method=ManagementCompany.CheckInMethod.MIXED,
+            self_check_in_after=time(14, 0),
+        )
+        self.property.booking_company = company
+        self.property.save(update_fields=['booking_company'])
+        response = self.client.post(self.url, {'action': 'update_booking', 'self_check_in': 'on'})
+        self.assertRedirects(response, self.url)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.arrival.self_check_in)
+
     def test_update_booking_unchecked_boxes_are_false_not_untouched(self):
         # self_check_in isn't gated behind the Owner-booking row, so it always reflects the
         # checkbox's real state, including "omitted means unchecked". meet_greet/clean live inside
@@ -1660,10 +1712,14 @@ class StaffBookingLookupViewTests(TestCase):
         self.assertRedirects(response, reverse('staff:booking_detail', kwargs={'reference': self.booking.reference}))
 
     def test_unknown_reference_shows_error(self):
-        response = self.client.post(reverse('staff:booking_lookup'), {'reference': 'NOPE-NOPE'})
-        self.assertEqual(response.status_code, 200)
+        response = self.client.post(reverse('staff:booking_lookup'), {'reference': 'NOPE-NOPE'}, follow=True)
+        self.assertRedirects(response, reverse('staff:home'))
         messages = list(response.context['messages'])
         self.assertTrue(any('No booking found' in str(m) for m in messages))
+
+    def test_get_redirects_to_home(self):
+        response = self.client.get(reverse('staff:booking_lookup'))
+        self.assertRedirects(response, reverse('staff:home'))
 
 
 class StaffOwnerBookingCreateViewTests(TestCase):
@@ -2065,6 +2121,46 @@ class StaffHomeViewTests(TestCase):
         self.assertContains(response, 'name="reference"')
 
 
+class StaffGuestSearchViewTests(TestCase):
+    """The "returning guest?" typeahead behind StaffGuestOfferCreateView's guest-details fields -
+    JSON only, no page of its own."""
+
+    def setUp(self):
+        User.objects.create_user(username='guestsearcher', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='guestsearcher', password='pw')
+        self.url = reverse('staff:booking_guest_search')
+        self.guest = Guest.objects.create(
+            first_name='Returning', last_name='Visitor', email='returning-visitor@example.com',
+            phone='+351123456789', country='PT',
+        )
+
+    def test_matches_by_last_name(self):
+        response = self.client.get(self.url, {'q': 'Visitor'})
+        results = response.json()['results']
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['email'], 'returning-visitor@example.com')
+        self.assertEqual(results[0]['first_name'], 'Returning')
+        self.assertEqual(results[0]['country'], 'PT')
+
+    def test_matches_by_email(self):
+        response = self.client.get(self.url, {'q': 'returning-visitor'})
+        self.assertEqual(len(response.json()['results']), 1)
+
+    def test_short_query_returns_nothing(self):
+        response = self.client.get(self.url, {'q': 'R'})
+        self.assertEqual(response.json()['results'], [])
+
+    def test_no_match_returns_empty_list(self):
+        response = self.client.get(self.url, {'q': 'NoSuchGuestAtAll'})
+        self.assertEqual(response.json()['results'], [])
+
+    def test_requires_can_view_bookings(self):
+        User.objects.create_user(username='no_bookings_access', password='pw', is_staff=True)
+        self.client.login(username='no_bookings_access', password='pw')
+        response = self.client.get(self.url, {'q': 'Visitor'})
+        self.assertEqual(response.status_code, 403)
+
+
 class StaffGuestListViewTests(TestCase):
     def setUp(self):
         User.objects.create_user(username='guests_staffer', password='pw', is_staff=True, is_superuser=True)
@@ -2450,6 +2546,7 @@ class StaffPropertyDetailViewTests(TestCase):
             'location': self.location.pk, 'accountant': self.accountant.pk, 'al_number': '9999',
             'booking_company': self.management_company.pk,
             'standard_cleaning_fee': '90.00',
+            'self_check_in_instructions': 'Key safe code: 4821.',
         })
         self.assertRedirects(response, f'{self.url}?panel=main')
         self.property.refresh_from_db()
@@ -2458,6 +2555,7 @@ class StaffPropertyDetailViewTests(TestCase):
         self.assertEqual(self.property.booking_company_id, self.management_company.pk)
         self.assertIsNone(self.property.cleaning_company_id)
         self.assertEqual(self.property.standard_cleaning_fee, Decimal('90.00'))
+        self.assertEqual(self.property.self_check_in_instructions, 'Key safe code: 4821.')
 
     def test_update_property_info_saves_platform_listing_ids(self):
         airbnb = Platform.objects.get_or_create(name='Airbnb')[0]
@@ -2501,6 +2599,31 @@ class StaffPropertyDetailViewTests(TestCase):
         })
         self.property.refresh_from_db()
         self.assertEqual(self.property.title, 'Detail Property')
+
+    def test_add_access_code_creates_row(self):
+        response = self.client.post(self.url, {
+            'action': 'add_access_code', 'label': 'Building gate', 'code': '1234',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=main')
+        code = PropertyAccessCode.objects.get(property=self.property)
+        self.assertEqual(code.label, 'Building gate')
+        self.assertEqual(code.code, '1234')
+
+    def test_add_access_code_requires_both_fields(self):
+        self.client.post(self.url, {'action': 'add_access_code', 'label': 'Building gate', 'code': ''})
+        self.assertFalse(PropertyAccessCode.objects.filter(property=self.property).exists())
+
+    def test_delete_access_code_removes_row(self):
+        code = PropertyAccessCode.objects.create(property=self.property, label='Apartment door', code='4821')
+        response = self.client.post(self.url, {'action': 'delete_access_code', 'access_code_id': code.pk})
+        self.assertRedirects(response, f'{self.url}?panel=main')
+        self.assertFalse(PropertyAccessCode.objects.filter(pk=code.pk).exists())
+
+    def test_delete_access_code_scoped_to_this_property(self):
+        other_property = Property.objects.create(title='Other Access Code Property', short_title='OTHERACCESS')
+        other_code = PropertyAccessCode.objects.create(property=other_property, label='Gate', code='0000')
+        self.client.post(self.url, {'action': 'delete_access_code', 'access_code_id': other_code.pk})
+        self.assertTrue(PropertyAccessCode.objects.filter(pk=other_code.pk).exists())
 
     def test_update_specification_saves_fields(self):
         self.client.post(self.url, {

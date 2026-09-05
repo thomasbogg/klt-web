@@ -20,9 +20,10 @@ from bookings.models import (
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, booking_confirmation_context, cancel_booking_hold,
-    compute_tourist_tax, extras_summary, guest_counts_by_age, mid_stay_clean_window,
-    parsed_arrival_departure_time, parsed_travel_method, recalculate_balance_for_party,
-    recalculate_costs_for_party, reservation_retry_url, valid_flight_number,
+    compute_effective_self_check_in, compute_tourist_tax, extras_summary, guest_counts_by_age,
+    mid_stay_clean_window, parsed_arrival_departure_time, parsed_travel_method,
+    recalculate_balance_for_party, recalculate_costs_for_party, reservation_retry_url,
+    valid_flight_number,
 )
 from libraries.banking.revolut import Revolut
 
@@ -1288,9 +1289,12 @@ def _save_arrival(booking, data):
     arrival.hiring_car = data['hiring_car']
     arrival.time = parsed_arrival_departure_time(data['time'])
     arrival.details = data['details']
-    arrival.save(update_fields=[
-        'method', 'flight_number', 'travelling_from', 'hiring_car', 'time', 'details',
-    ])
+    update_fields = ['method', 'flight_number', 'travelling_from', 'hiring_car', 'time', 'details']
+    computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.time)
+    if computed_self_check_in is not None:
+        arrival.self_check_in = computed_self_check_in
+        update_fields.append('self_check_in')
+    arrival.save(update_fields=update_fields)
 
 
 def _save_departure(booking, data):
@@ -1937,7 +1941,21 @@ class BookingManageLocationView(View):
     house rules (quiet/pool hours) for the guest's own booked property, previously only visible on
     the separate public Location page (which a guest may never have seen, since search results
     land straight on the property page). Read-only, same no-side-effect GET as
-    BookingManageAmenitiesView."""
+    BookingManageAmenitiesView.
+
+    Self check-in instructions (2026-09-05, per Thomas): Property.self_check_in_instructions is
+    only ever surfaced here, and only when this specific booking's own Arrival.self_check_in is
+    True - this now follows the property's booking_company check-in policy automatically where one
+    is set (see bookings/utils.py::compute_effective_self_check_in), falling back to a fully
+    manual staff-set flag otherwise. A booking with no Arrival row yet (get_or_create'd lazily
+    elsewhere - see bookings/views.py::_save_arrival) has never been marked self check-in, same as
+    an explicit False.
+
+    The access code(s) themselves (properties.models.PropertyAccessCode) are withheld from the
+    response until BookingSettings.self_check_in_code_reveal_days before arrival - deliberately
+    separate from the surrounding self_check_in_instructions prose (always shown once self check-in
+    applies at all), so a guest can read the general "how this works" text well ahead of arrival
+    while the actual code value stays hidden until closer to the date."""
     template_name = 'bookings/manage_location.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -1947,8 +1965,27 @@ class BookingManageLocationView(View):
         if not is_paid(booking):
             return redirect('bookings:details', reference=reference)
 
+        arrival = Arrival.objects.filter(booking=booking).first()
+        self_check_in = bool(arrival and arrival.self_check_in)
+
+        access_codes = []
+        codes_revealed = False
+        reveal_days = None
+        if self_check_in:
+            reveal_days = BookingSettings.load().self_check_in_code_reveal_days
+            days_until_arrival = (booking.arrival_date - timezone.now().date()).days
+            codes_revealed = days_until_arrival <= reveal_days
+            access_codes = list(booking.property.access_codes.all())
+
         context = _manage_nav_context(booking, 'location')
-        context.update({'booking': booking, 'location': booking.property.location})
+        context.update({
+            'booking': booking, 'location': booking.property.location,
+            'self_check_in': self_check_in,
+            'self_check_in_instructions': booking.property.self_check_in_instructions if self_check_in else '',
+            'access_codes': access_codes,
+            'codes_revealed': codes_revealed,
+            'code_reveal_days': reveal_days,
+        })
         return render(request, self.template_name, context)
 
 

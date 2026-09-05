@@ -30,8 +30,9 @@ from finance.services import (
     payouts_due_in_range, sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
-    FLIGHT_NUMBER_HINT, compute_deposit_waiver, create_booking, create_owner_booking, extras_summary,
-    parsed_arrival_departure_time, parsed_travel_method, sync_ical_link, valid_flight_number,
+    FLIGHT_NUMBER_HINT, compute_deposit_waiver, compute_effective_self_check_in, create_booking,
+    create_owner_booking, extras_summary, parsed_arrival_departure_time, parsed_travel_method,
+    sync_ical_link, valid_flight_number,
 )
 from communications.models import EmailTemplate, ScheduledEmail
 from communications.registry import PLACEHOLDER_KEYS
@@ -40,8 +41,8 @@ from guests.models import Guest
 from libraries.utils import logerror
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
-    Owner, Platform, Price, Property, PropertyImage, PropertyOwnership, PropertyPlatformID,
-    PropertySpec, SEFDetail, WashingMaterial, iCalLink,
+    Owner, Platform, Price, Property, PropertyAccessCode, PropertyImage, PropertyOwnership,
+    PropertyPlatformID, PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
 from properties.utils import (
     apply_price_bulk_plan, build_price_bulk_plan, get_stay_total_price, gross_up_for_commission,
@@ -166,19 +167,19 @@ class StaffHomeView(View):
 
 @method_decorator(staff_page_required('can_view_bookings'), name='dispatch')
 class StaffBookingLookupView(View):
-    """A single reference lookup, not a search - for quickly opening a known booking without
-    going through the Home reservation list (see StaffHomeView)."""
-    template_name = 'staff/booking_lookup.html'
+    """No standalone page any more - this is just the POST target for Home's own "Search by
+    reference" box (see StaffHomeView / home.html), kept as its own view/URL since Home already
+    redirects here on other filter changes. A bare GET (e.g. an old bookmark) just bounces to Home."""
 
     def get(self, request, *args, **kwargs):
-        return render(request, self.template_name, {})
+        return redirect('staff:home')
 
     def post(self, request, *args, **kwargs):
         reference = request.POST.get('reference', '').strip()
         if Booking.objects.filter(reference__iexact=reference).exists():
             return redirect('staff:booking_detail', reference=reference)
         messages.error(request, f'No booking found for reference "{reference}".')
-        return render(request, self.template_name, {})
+        return redirect('staff:home')
 
 
 @method_decorator(staff_page_required('can_view_bookings'), name='dispatch')
@@ -368,6 +369,36 @@ class StaffGuestOfferCreateView(View):
             'guests': guests,
             'pricing': pricing, 'costs': costs,
         }
+
+
+@method_decorator(staff_page_required('can_view_bookings'), name='dispatch')
+class StaffGuestSearchView(View):
+    """JSON typeahead backing the "returning guest?" search on StaffGuestOfferCreateView's form -
+    same name/email/phone match as StaffGuestListView's free-text search, just returning JSON
+    instead of a page. Gated by can_view_bookings (not can_view_guests) since it's reachable only
+    from the offer-creation form, not the Guests page itself. Doesn't identify a chosen guest to
+    the create view in any way (no guest_id posted back) - it only pre-fills the same first_name/
+    last_name/email/phone/country fields staff could type by hand, and create_booking()'s own
+    email-based lookup is what actually reuses the existing Guest row on submission."""
+
+    def get(self, request, *args, **kwargs):
+        query = request.GET.get('q', '').strip()
+        if len(query) < 2:
+            return JsonResponse({'results': []})
+        guests = Guest.objects.filter(
+            Q(first_name__icontains=query) | Q(last_name__icontains=query) | Q(email__icontains=query)
+        ).order_by('last_name', 'first_name')[:10]
+        return JsonResponse({'results': [
+            {
+                'first_name': guest.first_name,
+                'last_name': guest.last_name,
+                'email': guest.email,
+                'phone': guest.phone,
+                'country': str(guest.country) if guest.country else '',
+                'label': f"{guest} — {guest.email}",
+            }
+            for guest in guests
+        ]})
 
 
 @method_decorator(staff_page_required('can_view_guests'), name='dispatch')
@@ -1006,6 +1037,7 @@ class StaffSettingsView(View):
             'extras_edit_cutoff_days_before_arrival', 'monthly_discount_min_nights',
             'revolut_hold_minutes', 'revolut_hold_extension_minutes',
             'payment_clearing_business_days', 'adult_min_age', 'child_min_age',
+            'self_check_in_code_reveal_days',
         ):
             value = _parsed_int(post.get(field))
             if value is not None:
@@ -1676,6 +1708,8 @@ class StaffPropertyDetailView(View):
     ACTION_PANELS = {
         'update_property_info': 'main',
         'update_specification': 'main',
+        'add_access_code': 'main',
+        'delete_access_code': 'main',
         'update_amenities': 'amenities',
         'update_sef': 'sef',
         'update_price': 'rates',
@@ -1709,6 +1743,8 @@ class StaffPropertyDetailView(View):
         handler = {
             'update_property_info': self._update_property_info,
             'update_specification': self._update_specification,
+            'add_access_code': self._add_access_code,
+            'delete_access_code': self._delete_access_code,
             'update_amenities': self._update_amenities,
             'update_sef': self._update_sef,
             'update_price': self._update_price,
@@ -1756,6 +1792,7 @@ class StaffPropertyDetailView(View):
             'show_historic': show_historic,
             'historic_price_count': historic_price_count,
             'ownership_history': property.ownership_history.all(),
+            'access_codes': property.access_codes.all(),
         }
         context.update(_property_form_context())
         return context
@@ -1776,6 +1813,7 @@ class StaffPropertyDetailView(View):
         fee = _parsed_decimal(post.get('standard_cleaning_fee'))
         if fee is not None:
             property.standard_cleaning_fee = fee
+        property.self_check_in_instructions = post.get('self_check_in_instructions', '').strip()
         try:
             property.full_clean()
         except ValidationError as error:
@@ -1784,6 +1822,22 @@ class StaffPropertyDetailView(View):
         property.save()
         _save_platform_ids(request, property)
         messages.success(request, "Property info updated.")
+
+    def _add_access_code(self, request, property):
+        label = request.POST.get('label', '').strip()
+        code = request.POST.get('code', '').strip()
+        if not label or not code:
+            messages.error(request, "Both a label and a code are required.")
+            return
+        PropertyAccessCode.objects.create(
+            property=property, label=label, code=code,
+            order=property.access_codes.count(),
+        )
+        messages.success(request, "Access code added.")
+
+    def _delete_access_code(self, request, property):
+        PropertyAccessCode.objects.filter(property=property, pk=request.POST.get('access_code_id')).delete()
+        messages.success(request, "Access code deleted.")
 
     def _update_specification(self, request, property):
         specs, _ = PropertySpec.objects.get_or_create(property=property)
@@ -2458,7 +2512,14 @@ class StaffBookingDetailView(View):
             arrival.hiring_car = post.get('arrival_hiring_car') == 'on'
             arrival.time = parsed_arrival_departure_time(post.get('arrival_time'))
             arrival.details = post.get('arrival_details', '').strip()[:140]
-            arrival.self_check_in = post.get('self_check_in') == 'on'
+            # A property whose booking_company has a check-in policy set overrides whatever this
+            # checkbox was posted as - see compute_effective_self_check_in's own docstring. Only a
+            # property with no such policy leaves this fully staff-manual, same as always.
+            computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.time)
+            arrival.self_check_in = (
+                computed_self_check_in if computed_self_check_in is not None
+                else post.get('self_check_in') == 'on'
+            )
             # Only touched when the Owner-booking row was actually enabled for this submission -
             # arrival_departure.js disables (not just hides) every field in that row while it's
             # collapsed, so a disabled checkbox is omitted from the POST body entirely per the

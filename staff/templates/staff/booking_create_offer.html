@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
     <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
     <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
+    <script src="{% static 'staff/guest_search.js' %}" defer></script>
 </head>
 <body>
     <div class="staff-page">
@@ -18,7 +19,7 @@
 
         <header class="staff-header">
             <h1 class="staff-page-title">New guest offer</h1>
-            <a href="{% url 'staff:booking_lookup' %}" class="staff-header-link">&larr; Bookings</a>
+            <a href="{% url 'staff:home' %}" class="staff-header-link">&larr; Home</a>
         </header>
 
         {% if messages %}
@@ -105,6 +106,16 @@
 
                 <h2 class="staff-panel-title">Guest details</h2>
                 <p class="staff-hint">The guest never fills these in themselves - their offer link skips straight past this step.</p>
+
+                <div class="staff-field staff-guest-search">
+                    <label for="guest-search">Returning guest? Search by name or email
+                        <input type="text" id="guest-search" class="staff-input" autocomplete="off"
+                               placeholder="Start typing to find an existing guest&hellip;"
+                               data-search-url="{% url 'staff:booking_guest_search' %}">
+                    </label>
+                    <ul id="guest-search-results" class="staff-guest-search-results" hidden></ul>
+                    <span class="staff-hint">Picking a result fills in the fields below - still yours to edit before creating the offer.</span>
+                </div>
 
                 <div class="staff-field-row">
                     <label class="staff-field">First name

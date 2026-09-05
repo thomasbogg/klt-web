@@ -62,6 +62,14 @@ class BookingSettings(models.Model):
         validators=[MinValueValidator(Decimal('0'))],
         help_text="Fixed refundable security deposit. Collected in cash at check-in, separate from the online rental/admin payment split."
     )
+    self_check_in_code_reveal_days = models.PositiveIntegerField(
+        default=2,
+        help_text="How many days before arrival a self-check-in guest's access code(s) become "
+                  "visible on their Manage Booking hub's Location & Arrival page. Before then, a "
+                  "placeholder message is shown instead of the real code(s) - the surrounding "
+                  "instructions (Property.self_check_in_instructions) are unaffected, only the "
+                  "PropertyAccessCode values themselves are withheld."
+    )
     monthly_discount_min_nights = models.PositiveIntegerField(
         default=28,
         help_text="Minimum number of nights a stay must be for a property's monthly discount to apply."

@@ -1,4 +1,30 @@
-.staff-hint {
-    font-size: 0.75rem;
-    color: #999;
+.staff-guest-search {
+    position: relative;
+}
+
+.staff-guest-search-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    margin: 4px 0 0;
+    padding: 4px 0;
+    list-style: none;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    box-shadow: var(--primary-box-shadow);
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.staff-guest-search-result {
+    padding: 8px 14px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.staff-guest-search-result:hover {
+    background: var(--background-color);
 }

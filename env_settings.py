@@ -45,10 +45,12 @@ SITE_BASE_URL: str = os.getenv('SITE_BASE_URL', 'http://localhost:8000')
 COMMS_DRY_RUN: bool = os.getenv('COMMS_DRY_RUN', 'True').lower() == 'true'
 
 # "From" identity for a cron-triggered send with no logged-in staff member to attribute it to
-# (a manual "Send now" click always sends as whichever staff member clicked it instead). Default
-# is a recommendation pending Thomas's sign-off, not a confirmed decision - see the communications
-# app's own project-memory note.
-COMMS_AUTOMATED_SENDER_EMAIL: str = os.getenv('COMMS_AUTOMATED_SENDER_EMAIL', 'team@algarvebeachapartments.com')
+# (a manual "Send now" click always sends as whichever staff member clicked it instead). Confirmed
+# by Thomas 2026-09-05: thomas@algarvebeachapartments.com for now: he'll eventually introduce
+# booking@algarvebeachapartments.com for the main guest-reservation flow up to arrival, plus
+# further per-category addresses mirroring klt-management-software's existing correspondence/
+# forking (guest/owner/internal/accountancy) - not built yet, single address is correct until then.
+COMMS_AUTOMATED_SENDER_EMAIL: str = os.getenv('COMMS_AUTOMATED_SENDER_EMAIL', 'thomas@algarvebeachapartments.com')
 
 # Default language
 DEFAULT_LANGUAGE = 'EN-GB'

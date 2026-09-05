@@ -2,6 +2,15 @@
     {% if staff_nav_permissions.can_view_home %}
     <a href="{% url 'staff:home' %}" class="staff-nav-link">Home</a>
     {% endif %}
+    {% if staff_nav_permissions.can_view_bookings %}
+    <details class="staff-nav-dropdown">
+        <summary class="staff-nav-link staff-nav-dropdown-toggle">Reserve</summary>
+        <div class="staff-nav-dropdown-menu">
+            <a href="{% url 'staff:booking_create_offer' %}" class="staff-nav-dropdown-item">Guest offer</a>
+            <a href="{% url 'staff:booking_create_owner' %}" class="staff-nav-dropdown-item">Owner booking</a>
+        </div>
+    </details>
+    {% endif %}
     {% if staff_nav_permissions.can_view_checkins_calendar %}
     <a href="{% url 'staff:checkins_calendar' %}" class="staff-nav-link">Check-ins</a>
     {% endif %}

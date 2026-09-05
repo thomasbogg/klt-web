@@ -437,6 +437,21 @@ class OwnerBookingsTests(TestCase):
         self.assertEqual(self.upcoming_booking.arrival.flight_number, 'TP1234')
         self.assertFalse(self.upcoming_booking.departure.clean)  # 'clean' checkbox omitted = unchecked
 
+    def test_save_arrival_departure_applies_property_check_in_policy(self):
+        company = ManagementCompany.objects.create(
+            name='Owner Suite Self Check-in Co',
+            check_in_method=ManagementCompany.CheckInMethod.SELF_CHECK_IN,
+        )
+        self.property.booking_company = company
+        self.property.save(update_fields=['booking_company'])
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {'action': 'save_arrival_departure', 'arrival_method': 'flight_faro'},
+        )
+        self.upcoming_booking.refresh_from_db()
+        self.assertTrue(self.upcoming_booking.arrival.self_check_in)
+
     def test_save_arrival_departure_saves_guest_details_when_meet_greet_is_on(self):
         self.client.login(username='staysowner', password='pw')
         self.client.post(

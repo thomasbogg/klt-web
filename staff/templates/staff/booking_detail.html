@@ -78,6 +78,9 @@
                                 <input type="checkbox" name="self_check_in" {% if arrival.self_check_in %}checked{% endif %}> Self check-in
                             </label>
                         </div>
+                        {% if booking.property.booking_company.check_in_method %}
+                        <span class="staff-hint">Auto-managed by {{ booking.property.booking_company }}'s check-in policy ({{ booking.property.booking_company.get_check_in_method_display }}) - overwritten on save regardless of this checkbox.</span>
+                        {% endif %}
                         <div class="staff-field-row details-section-hidden" data-owner-row>
                             <label class="staff-checkbox-label">
                                 <input type="checkbox" name="meet_greet" {% if arrival.meet_greet %}checked{% endif %}> Meet &amp; greet

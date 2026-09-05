@@ -736,7 +736,15 @@ def sync_ical_link(link, ics_text):
         # until staff happened to open and save its detail page, leaving the check-ins calendar
         # popup showing blank Method/Time in the meantime (found 2026-09-02, see
         # sync_arrival_departure_legacy_data.py for the one-off backfill this gap needed).
-        Arrival.objects.create(booking=booking, self_check_in=False, meet_greet=True)
+        # No arrival time exists yet for a platform-synced booking (there's no guest-facing save
+        # step to ever collect one), so a MIXED company policy can't resolve here - only a hard
+        # SELF_CHECK_IN/IN_PERSON policy can, same "None means leave the default" contract as
+        # every other compute_effective_self_check_in() call site.
+        computed_self_check_in = compute_effective_self_check_in(link.property, None)
+        Arrival.objects.create(
+            booking=booking, self_check_in=computed_self_check_in if computed_self_check_in is not None else False,
+            meet_greet=True,
+        )
         Departure.objects.create(booking=booking, clean=True)
         summary['created'] += 1
         summary['events'].append(
@@ -793,3 +801,32 @@ def parsed_arrival_departure_time(raw):
         return datetime.strptime(raw, '%H:%M').time()
     except ValueError:
         return None
+
+
+def compute_effective_self_check_in(property, arrival_time):
+    """Derives Arrival.self_check_in from property.booking_company's check-in policy (2026-09-05,
+    per Thomas), given the guest's currently-known arrival time (may be None if not supplied yet).
+
+    Returns True/False when the policy determines an answer, or None when there's nothing to
+    apply - no booking_company, one with check_in_method unset, or a MIXED policy that can't yet
+    be evaluated (no self_check_in_after cutoff configured, or no arrival time known yet). None
+    means "leave Arrival.self_check_in exactly as it already is" - every call site treats it that
+    way, preserving today's fully-manual behavior for any property whose company has no check-in
+    policy configured at all.
+
+    Called every time Arrival is saved (guest's own Manage Booking hub, Owner Suite, and the staff
+    Booking Info panel) so a MIXED policy keeps re-evaluating as the guest's own answers (arrival
+    time) change, and a hard SELF_CHECK_IN/IN_PERSON company policy always wins over whatever a
+    staff member ticks on the checkbox - deliberate per Thomas, not a bug."""
+    from properties.models import ManagementCompany
+
+    company = property.booking_company
+    if company is None or not company.check_in_method:
+        return None
+    if company.check_in_method == ManagementCompany.CheckInMethod.SELF_CHECK_IN:
+        return True
+    if company.check_in_method == ManagementCompany.CheckInMethod.IN_PERSON:
+        return False
+    if not company.self_check_in_after or not arrival_time:
+        return None
+    return arrival_time >= company.self_check_in_after

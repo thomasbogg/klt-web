@@ -362,6 +362,14 @@ class Property(models.Model):
     # just a backstop.
     ical_export_token = models.CharField(max_length=64, unique=True, blank=True, null=True)
 
+    # Door codes, key safe location, smart-lock app steps, etc. - deliberately separate from
+    # PropertySpec.description (public marketing copy shown on the property's public listing
+    # page): this is only ever rendered in a guest's own Manage Booking hub (Location & Arrival),
+    # gated the same way as the rest of that hub (a valid booking reference, is_paid), and only
+    # when that booking's own Arrival.self_check_in is True - never public, never shown to a
+    # meet-and-greet guest who has no reason to know it.
+    self_check_in_instructions = models.TextField(blank=True, default='')
+
     @property
     def slug(self):
         return self.short_title.lower().replace(" ", "-")
@@ -379,6 +387,28 @@ class Property(models.Model):
             self.ical_export_token = secrets.token_urlsafe(32)
         super().save(*args, **kwargs)
         Amenity.objects.get_or_create(property=self)
+
+
+class PropertyAccessCode(models.Model):
+    """One named self-check-in access code for a property (e.g. "Building gate", "Apartment
+    door") - a property may need more than one. Kept as its own row per code, separate from
+    Property.self_check_in_instructions (the surrounding free-text prose - key safe location,
+    what to do with the key, etc.), specifically so the code VALUE can be withheld from a guest's
+    Manage Booking hub until bookings.models.BookingSettings.self_check_in_code_reveal_days before
+    arrival while the rest of the instructions stay visible throughout."""
+    property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='access_codes')
+    label = models.CharField(max_length=100, help_text='e.g. "Building gate", "Apartment door"')
+    code = models.CharField(max_length=100)
+    order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        db_table = 'property_access_codes'
+        ordering = ['order', 'pk']
+        verbose_name = 'Property Access Code'
+        verbose_name_plural = 'Property Access Codes'
+
+    def __str__(self):
+        return f"{self.property.title} - {self.label}"
 
 
 class PropertyImage(models.Model):

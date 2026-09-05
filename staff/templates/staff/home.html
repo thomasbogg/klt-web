@@ -17,6 +17,14 @@
             <h1 class="staff-page-title">Home</h1>
         </header>
 
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
         <div class="staff-home-filters">
             <form method="get" class="staff-home-filter-group">
                 <label class="staff-field">Property

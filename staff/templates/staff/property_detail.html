@@ -129,6 +129,10 @@
                                 <label class="staff-field">iCal export token
                                     <input type="text" class="staff-input" value="{{ property.ical_export_token }}" readonly>
                                 </label>
+                                <label class="staff-field">Self check-in instructions
+                                    <textarea name="self_check_in_instructions" class="staff-input" rows="4">{{ property.self_check_in_instructions }}</textarea>
+                                </label>
+                                <span class="staff-hint">Key safe location, what to do with the key, etc. - leave the code(s) themselves out of this text, they're entered separately below so they can be withheld until closer to arrival. Only ever shown to a guest whose own booking is marked self check-in, in their Manage Booking hub - never on the public property page.</span>
                                 <button type="submit" class="staff-button">Update</button>
                             </form>
                         </div>
@@ -187,6 +191,37 @@
                                     <textarea name="description" class="staff-input" rows="4">{{ specs.description|default:'' }}</textarea>
                                 </label>
                                 <button type="submit" class="staff-button">Update</button>
+                            </form>
+                        </div>
+
+                        <div class="staff-panel">
+                            <h2 class="staff-panel-title">Self check-in access codes</h2>
+                            <p class="staff-hint">Kept separate from the instructions above so the code value itself can be withheld from a guest's Manage Booking hub until Settings &gt; Bookings' reveal window is reached - the instructions text still shows throughout.</p>
+                            {% for access_code in access_codes %}
+                            <div class="staff-field-row">
+                                <span class="staff-field">{{ access_code.label }}: {{ access_code.code }}</span>
+                                <form method="post" class="staff-inline-delete">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="delete_access_code">
+                                    <input type="hidden" name="access_code_id" value="{{ access_code.pk }}">
+                                    <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                                </form>
+                            </div>
+                            {% empty %}
+                            <p class="staff-empty">No access codes yet.</p>
+                            {% endfor %}
+                            <form method="post" class="staff-form">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="add_access_code">
+                                <div class="staff-field-row">
+                                    <label class="staff-field">Label
+                                        <input type="text" name="label" class="staff-input" placeholder="e.g. Building gate">
+                                    </label>
+                                    <label class="staff-field">Code
+                                        <input type="text" name="code" class="staff-input">
+                                    </label>
+                                </div>
+                                <button type="submit" class="staff-button staff-button-small">+ Add code</button>
                             </form>
                         </div>
                     </div>
