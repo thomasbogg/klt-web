@@ -115,6 +115,14 @@
     .staff-property-main-columns {
         grid-template-columns: 1fr 1fr;
     }
+
+    /* Without this, grid auto-flow drops this third card into column 1 (under the taller
+       Property info card), leaving an empty gap beside it under the shorter Property
+       specification card - explicitly placing it in column 2 keeps the tab compact on open,
+       per Thomas 2026-09-05. */
+    .staff-property-access-codes-card {
+        grid-column: 2;
+    }
 }
 
 /* Scoped to property-page forms specifically (not .staff-inline-form, which deliberately wants
