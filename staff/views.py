@@ -834,16 +834,18 @@ class StaffSettingsView(View):
     Django-admin-only territory into one CSS-only tabbed page (same radio-input sidebar
     technique as StaffPropertyDetailView). Bookings/Extras wrap the existing BookingSettings/
     ExtrasSettings singletons (plus Extras' three admin-only catalog lists, each following the
-    Rate card's inline-edit-plus-blank-bottom-row table pattern). Staff is basic Django User
-    management (list/add accounts, toggle is_staff/is_superuser/is_active, assign the one
-    StaffRole each account holds) - password resets still punt to Django admin. Roles is the
-    real role/permission model this app was missing until 2026-08-26 (see staff.models.StaffRole/
-    StaffProfile, staff.permissions.staff_page_required): superusers define named roles and
-    toggle, per role, which top-level staff pages it can see (page-level and visibility-only by
-    design, not per-panel or view/edit-split - see STAFF_PAGE_PERMISSION_FIELDS). Staff and Roles
-    are BOTH superuser-only regardless of can_view_settings - see PANELS/_available_panels() and
-    the {% if request.user.is_superuser %} wrap around both panels' content in settings.html;
-    `can_view_settings` alone only grants Bookings/Extras/People/Payments. People gives
+    Rate card's inline-edit-plus-blank-bottom-row table pattern). Staff is one merged tab (2026-09-06,
+    per Thomas - previously two separate tabs) holding Roles above Staff accounts, since assigning a
+    role to an account reads more naturally once the roles it can pick from are already on screen:
+    Roles is the real role/permission model this app was missing until 2026-08-26 (see
+    staff.models.StaffRole/StaffProfile, staff.permissions.staff_page_required) - superusers define
+    named roles and toggle, per role, which top-level staff pages it can see (page-level and
+    visibility-only by design, not per-panel or view/edit-split - see STAFF_PAGE_PERMISSION_FIELDS);
+    Staff accounts is basic Django User management (list/add accounts, toggle is_staff/is_superuser/
+    is_active, assign the one StaffRole each account holds) - password resets still punt to Django
+    admin. The whole merged tab is superuser-only regardless of can_view_settings - see PANELS/
+    _available_panels() and the {% if request.user.is_superuser %} wrap around the panel's content in
+    settings.html; `can_view_settings` alone only grants Bookings/Extras/People/Payments. People gives
     Owner/Accountant/Management company full CRUD (previously select-only on the Property forms,
     see StaffQuickAddView) via the same inline-edit-plus-blank-bottom-row table pattern as Extras'
     catalog lists - Management company's table shows the head contact inline, with the other four
@@ -858,8 +860,8 @@ class StaffSettingsView(View):
     commission percentages that nothing else in the app reads yet - a deliberate starting point,
     not a finished payout system."""
     template_name = 'staff/settings.html'
-    PANELS = ('bookings', 'extras', 'staff', 'people', 'payments', 'emails', 'roles')
-    SUPERUSER_ONLY_PANELS = ('staff', 'roles')
+    PANELS = ('bookings', 'extras', 'staff', 'people', 'payments', 'emails')
+    SUPERUSER_ONLY_PANELS = ('staff',)
     SUPERUSER_ONLY_ACTIONS = (
         'add_staff_user', 'update_staff_user', 'add_role', 'update_role', 'delete_role',
     )
@@ -884,9 +886,9 @@ class StaffSettingsView(View):
         'delete_request_type': 'extras',
         'add_staff_user': 'staff',
         'update_staff_user': 'staff',
-        'add_role': 'roles',
-        'update_role': 'roles',
-        'delete_role': 'roles',
+        'add_role': 'staff',
+        'update_role': 'staff',
+        'delete_role': 'staff',
         'add_owner': 'people',
         'update_owner': 'people',
         'delete_owner': 'people',
@@ -903,10 +905,11 @@ class StaffSettingsView(View):
     }
 
     def _available_panels(self, request):
-        # Staff and Roles are the meta-configuration surface itself (who can see what) - kept
-        # superuser-only regardless of can_view_settings, which only ever grants Bookings/Extras/
-        # People/Payments. Filtering here (not just hiding the tab controls in the template) is
-        # what stops ?panel=staff URL-tampering from landing a non-superuser on that tab.
+        # Staff (which also holds Roles - see the class docstring) is the meta-configuration
+        # surface itself (who can see what) - kept superuser-only regardless of can_view_settings,
+        # which only ever grants Bookings/Extras/People/Payments. Filtering here (not just hiding
+        # the tab controls in the template) is what stops ?panel=staff URL-tampering from landing a
+        # non-superuser on that tab.
         if request.user.is_superuser:
             return self.PANELS
         return tuple(panel for panel in self.PANELS if panel not in self.SUPERUSER_ONLY_PANELS)

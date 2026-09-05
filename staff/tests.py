@@ -195,7 +195,7 @@ class StaffRolePermissionTests(TestCase):
         self.assertNotContains(response, reverse('staff:location_list'))
         self.assertNotContains(response, reverse('staff:settings'))
 
-    def test_can_view_settings_does_not_grant_staff_or_roles_panels(self):
+    def test_can_view_settings_does_not_grant_the_staff_and_roles_panel(self):
         self.role.can_view_settings = True
         self.role.save()
         self.client.login(username='guestsonly', password='pw')
@@ -204,22 +204,27 @@ class StaffRolePermissionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Booking settings')
         self.assertNotContains(response, 'Staff accounts')
-        self.assertNotContains(response, 'id="settings-pane-roles"')
+        self.assertNotContains(response, 'staff-roles-table')
 
         # ?panel= tampering must not leak the panel's HTML either, not just fail to mark it active.
         tampered = self.client.get(reverse('staff:settings') + '?panel=staff')
         self.assertNotContains(tampered, 'Staff accounts')
+        self.assertNotContains(tampered, 'staff-roles-table')
 
         # Direct POST of a superuser-only action must be rejected outright, independent of nav/UI.
         post_response = self.client.post(reverse('staff:settings'), {'action': 'add_role', 'name': 'Sneaky'})
         self.assertEqual(post_response.status_code, 403)
         self.assertFalse(StaffRole.objects.filter(name='Sneaky').exists())
 
-    def test_superuser_sees_staff_and_roles_panels(self):
+    def test_superuser_sees_the_merged_staff_and_roles_panel(self):
         self.client.login(username='rolessuperuser', password='pw')
         response = self.client.get(reverse('staff:settings'))
         self.assertContains(response, 'Staff accounts')
-        self.assertContains(response, 'id="settings-pane-roles"')
+        self.assertContains(response, 'staff-roles-table')
+        # Roles must render above Staff accounts within the merged panel (per Thomas, 2026-09-06 -
+        # assigning a role reads more naturally once the roles it can pick from are already visible).
+        content = response.content.decode()
+        self.assertLess(content.index('>Roles<'), content.index('Staff accounts'))
 
 
 class StaffBookingDetailViewTests(TestCase):

@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
     <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=12">
-    <link rel="stylesheet" href="{% static 'staff/settings.css' %}?v=13">
+    <link rel="stylesheet" href="{% static 'staff/settings.css' %}?v=14">
     <script src="{% static 'staff/settings.js' %}" defer></script>
 </head>
 <body>
@@ -39,22 +39,16 @@
             <input type="radio" name="settings-panel" id="settings-panel-people" class="staff-settings-tab-radio" {% if active_panel == 'people' %}checked{% endif %}>
             <input type="radio" name="settings-panel" id="settings-panel-payments" class="staff-settings-tab-radio" {% if active_panel == 'payments' %}checked{% endif %}>
             <input type="radio" name="settings-panel" id="settings-panel-emails" class="staff-settings-tab-radio" {% if active_panel == 'emails' %}checked{% endif %}>
-            {% if request.user.is_superuser %}
-            <input type="radio" name="settings-panel" id="settings-panel-roles" class="staff-settings-tab-radio" {% if active_panel == 'roles' %}checked{% endif %}>
-            {% endif %}
 
             <nav class="staff-settings-sidebar">
                 <label for="settings-panel-bookings" class="staff-settings-tab-label">Bookings</label>
                 <label for="settings-panel-extras" class="staff-settings-tab-label">Extras</label>
                 {% if request.user.is_superuser %}
-                <label for="settings-panel-staff" class="staff-settings-tab-label">Staff</label>
+                <label for="settings-panel-staff" class="staff-settings-tab-label">Staff &amp; Roles</label>
                 {% endif %}
                 <label for="settings-panel-people" class="staff-settings-tab-label">People</label>
                 <label for="settings-panel-payments" class="staff-settings-tab-label">Payments</label>
                 <label for="settings-panel-emails" class="staff-settings-tab-label">Emails</label>
-                {% if request.user.is_superuser %}
-                <label for="settings-panel-roles" class="staff-settings-tab-label">Roles</label>
-                {% endif %}
             </nav>
 
             <div class="staff-settings-content">
@@ -513,6 +507,74 @@
 
                 {% if request.user.is_superuser %}
                 <section class="staff-settings-pane" id="settings-pane-staff">
+                    <div class="staff-panel">
+                        <h2 class="staff-panel-title">Roles</h2>
+                        <p class="staff-settings-hint">Controls which top-level staff pages a non-superuser account can see. Page-level only - a role that can see Settings sees Bookings/Extras/People/Payments, never this Staff &amp; Roles tab (superuser-only, always). Superusers always have full access regardless of role.</p>
+                        <div class="staff-table-scroll">
+                        <table class="staff-price-table staff-roles-table{% if not roles %} staff-price-table-empty{% endif %}">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    {% for field, label in permission_fields %}
+                                    <th class="staff-roles-checkbox-col" title="{{ label }}">{{ label }}</th>
+                                    {% endfor %}
+                                    <th class="staff-roles-checkbox-col" title="Assignable as a cleaner on the cleaning rota/calendar - independent of page access">Cleaning staff</th>
+                                    <th class="staff-roles-checkbox-col" title="Can trigger a guest/owner email send (Booking View's Next steps panel) - also requires an @algarvebeachapartments.com login regardless of this flag">Can send emails</th>
+                                    <th class="staff-roles-count-col" title="Number of staff accounts currently holding this role">Users</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for role in roles %}
+                                <tr>
+                                    <td><input type="text" name="name" form="role-form-{{ role.pk }}" value="{{ role.name }}" class="staff-input"></td>
+                                    {% for field, label in permission_fields %}
+                                    <td class="staff-roles-checkbox-col"><input type="checkbox" name="{{ field }}" form="role-form-{{ role.pk }}" {% if role|get_attr:field %}checked{% endif %}></td>
+                                    {% endfor %}
+                                    <td class="staff-roles-checkbox-col"><input type="checkbox" name="is_cleaning_staff" form="role-form-{{ role.pk }}" {% if role.is_cleaning_staff %}checked{% endif %}></td>
+                                    <td class="staff-roles-checkbox-col"><input type="checkbox" name="can_send_emails" form="role-form-{{ role.pk }}" {% if role.can_send_emails %}checked{% endif %}></td>
+                                    <td class="staff-roles-count-col staff-property-count-cell">{{ role.user_count }}</td>
+                                    <td class="staff-price-row-actions">
+                                        <button type="submit" form="role-form-{{ role.pk }}" class="staff-button staff-button-small">Save</button>
+                                        <form method="post" class="staff-inline-delete staff-confirm-delete" data-property-count="{{ role.user_count }}" data-count-noun-singular="user" data-count-noun-plural="users" data-entity-label="{{ role }}" data-role-label="role">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="delete_role">
+                                            <input type="hidden" name="role_id" value="{{ role.pk }}">
+                                            <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="{{ permission_fields|length|add:5 }}" class="staff-empty">No roles yet.</td></tr>
+                                {% endfor %}
+                                <tr class="staff-price-row-new">
+                                    <td><input type="text" name="name" form="role-form-new" class="staff-input"></td>
+                                    {% for field, label in permission_fields %}
+                                    <td class="staff-roles-checkbox-col"><input type="checkbox" name="{{ field }}" form="role-form-new"></td>
+                                    {% endfor %}
+                                    <td class="staff-roles-checkbox-col"><input type="checkbox" name="is_cleaning_staff" form="role-form-new"></td>
+                                    <td class="staff-roles-checkbox-col"><input type="checkbox" name="can_send_emails" form="role-form-new"></td>
+                                    <td class="staff-roles-count-col"></td>
+                                    <td class="staff-price-row-actions">
+                                        <button type="submit" form="role-form-new" class="staff-button staff-button-small">Add</button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        </div>
+                        {% for role in roles %}
+                        <form method="post" id="role-form-{{ role.pk }}">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_role">
+                            <input type="hidden" name="role_id" value="{{ role.pk }}">
+                        </form>
+                        {% endfor %}
+                        <form method="post" id="role-form-new">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="add_role">
+                        </form>
+                    </div>
+
                     <div class="staff-panel">
                         <h2 class="staff-panel-title">Staff accounts</h2>
                         <table class="staff-price-table">
@@ -1030,78 +1092,6 @@
                         {% endfor %}
                     </div>
                 </section>
-
-                {% if request.user.is_superuser %}
-                <section class="staff-settings-pane" id="settings-pane-roles">
-                    <div class="staff-panel">
-                        <h2 class="staff-panel-title">Roles</h2>
-                        <p class="staff-settings-hint">Controls which top-level staff pages a non-superuser account can see. Page-level only - a role that can see Settings sees Bookings/Extras/People/Payments, never Staff or Roles (superuser-only, always). Superusers always have full access regardless of role.</p>
-                        <div class="staff-table-scroll">
-                        <table class="staff-price-table staff-roles-table{% if not roles %} staff-price-table-empty{% endif %}">
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    {% for field, label in permission_fields %}
-                                    <th title="{{ label }}">{{ label }}</th>
-                                    {% endfor %}
-                                    <th title="Assignable as a cleaner on the cleaning rota/calendar - independent of page access">Cleaning staff</th>
-                                    <th title="Can trigger a guest/owner email send (Booking View's Next steps panel) - also requires an @algarvebeachapartments.com login regardless of this flag">Can send emails</th>
-                                    <th title="Number of staff accounts currently holding this role">Users</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for role in roles %}
-                                <tr>
-                                    <td><input type="text" name="name" form="role-form-{{ role.pk }}" value="{{ role.name }}" class="staff-input"></td>
-                                    {% for field, label in permission_fields %}
-                                    <td><input type="checkbox" name="{{ field }}" form="role-form-{{ role.pk }}" {% if role|get_attr:field %}checked{% endif %}></td>
-                                    {% endfor %}
-                                    <td><input type="checkbox" name="is_cleaning_staff" form="role-form-{{ role.pk }}" {% if role.is_cleaning_staff %}checked{% endif %}></td>
-                                    <td><input type="checkbox" name="can_send_emails" form="role-form-{{ role.pk }}" {% if role.can_send_emails %}checked{% endif %}></td>
-                                    <td class="staff-property-count-cell">{{ role.user_count }}</td>
-                                    <td class="staff-price-row-actions">
-                                        <button type="submit" form="role-form-{{ role.pk }}" class="staff-button staff-button-small">Save</button>
-                                        <form method="post" class="staff-inline-delete staff-confirm-delete" data-property-count="{{ role.user_count }}" data-count-noun-singular="user" data-count-noun-plural="users" data-entity-label="{{ role }}" data-role-label="role">
-                                            {% csrf_token %}
-                                            <input type="hidden" name="action" value="delete_role">
-                                            <input type="hidden" name="role_id" value="{{ role.pk }}">
-                                            <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
-                                        </form>
-                                    </td>
-                                </tr>
-                                {% empty %}
-                                <tr><td colspan="{{ permission_fields|length|add:5 }}" class="staff-empty">No roles yet.</td></tr>
-                                {% endfor %}
-                                <tr class="staff-price-row-new">
-                                    <td><input type="text" name="name" form="role-form-new" class="staff-input"></td>
-                                    {% for field, label in permission_fields %}
-                                    <td><input type="checkbox" name="{{ field }}" form="role-form-new"></td>
-                                    {% endfor %}
-                                    <td><input type="checkbox" name="is_cleaning_staff" form="role-form-new"></td>
-                                    <td><input type="checkbox" name="can_send_emails" form="role-form-new"></td>
-                                    <td></td>
-                                    <td class="staff-price-row-actions">
-                                        <button type="submit" form="role-form-new" class="staff-button staff-button-small">Add</button>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                        </div>
-                        {% for role in roles %}
-                        <form method="post" id="role-form-{{ role.pk }}">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="update_role">
-                            <input type="hidden" name="role_id" value="{{ role.pk }}">
-                        </form>
-                        {% endfor %}
-                        <form method="post" id="role-form-new">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="add_role">
-                        </form>
-                    </div>
-                </section>
-                {% endif %}
             </div>
         </div>
     </div>

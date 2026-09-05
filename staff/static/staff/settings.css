@@ -60,8 +60,7 @@
 #settings-panel-staff:checked ~ .staff-settings-content #settings-pane-staff,
 #settings-panel-people:checked ~ .staff-settings-content #settings-pane-people,
 #settings-panel-payments:checked ~ .staff-settings-content #settings-pane-payments,
-#settings-panel-emails:checked ~ .staff-settings-content #settings-pane-emails,
-#settings-panel-roles:checked ~ .staff-settings-content #settings-pane-roles {
+#settings-panel-emails:checked ~ .staff-settings-content #settings-pane-emails {
     display: flex;
 }
 
@@ -70,8 +69,7 @@
 #settings-panel-staff:checked ~ .staff-settings-sidebar label[for="settings-panel-staff"],
 #settings-panel-people:checked ~ .staff-settings-sidebar label[for="settings-panel-people"],
 #settings-panel-payments:checked ~ .staff-settings-sidebar label[for="settings-panel-payments"],
-#settings-panel-emails:checked ~ .staff-settings-sidebar label[for="settings-panel-emails"],
-#settings-panel-roles:checked ~ .staff-settings-sidebar label[for="settings-panel-roles"] {
+#settings-panel-emails:checked ~ .staff-settings-sidebar label[for="settings-panel-emails"] {
     background: var(--primary-color);
     color: #fff;
 }
@@ -399,25 +397,28 @@
 }
 
 /* Roles' STAFF_PAGE_PERMISSION_FIELDS checkbox columns push the table wide, same reasoning as
-   .staff-owners-table above - Name (1), N page checkboxes (2 to N+1), Users count (N+2), actions
-   (last). N = len(STAFF_PAGE_PERMISSION_FIELDS) in staff/utils.py, currently 7 (Home/Bookings/
-   Guests/Properties/Locations/Settings/Cleaning rota) - these nth-child ranges are hardcoded to
-   that count and MUST be updated together whenever a permission field is added or removed (this
-   drifted out of sync once already when Cleaning rota was added, overlapping the Users column -
-   fixed 2026-08-26). */
+   .staff-owners-table above. This USED to be nth-child ranges hardcoded to the field count (N=7
+   at the time) - that drifted out of sync twice (Cleaning rota overlapping Users, fixed
+   2026-08-26; Check-ins calendar/Finance/Reports overlapping everything from Users onward,
+   found live 2026-09-06 when the columns visibly piled on top of each other). Switched to classes
+   applied directly in settings.html's {% for field, label in permission_fields %} loop
+   (.staff-roles-checkbox-col / .staff-roles-count-col) instead of position-counting, so adding or
+   removing a permission field can never desync this CSS again - only Name (:first-child) and
+   actions (:last-child) still rely on position, and neither one moves when the field count
+   changes. */
 .staff-roles-table {
     table-layout: fixed;
 }
 
-.staff-roles-table th:nth-child(1), .staff-roles-table td:nth-child(1) { width: 160px; }
+.staff-roles-table th:first-child, .staff-roles-table td:first-child { width: 160px; }
 
-.staff-roles-table th:nth-child(n+2):nth-child(-n+8),
-.staff-roles-table td:nth-child(n+2):nth-child(-n+8) {
+.staff-roles-table th.staff-roles-checkbox-col,
+.staff-roles-table td.staff-roles-checkbox-col {
     width: 95px;
     text-align: center;
 }
 
-.staff-roles-table th:nth-child(n+2):nth-child(-n+8) {
+.staff-roles-table th.staff-roles-checkbox-col {
     white-space: normal;
     font-size: 0.68rem;
     line-height: 1.2;
@@ -425,21 +426,21 @@
     vertical-align: bottom;
 }
 
-.staff-roles-table td:nth-child(n+2):nth-child(-n+8) input[type="checkbox"] {
+.staff-roles-table td.staff-roles-checkbox-col input[type="checkbox"] {
     margin: 0 auto;
     display: block;
 }
 
 /* Same header-text-align/vertical-align gap as .staff-owners-table th:nth-child(12), same fix -
-   Roles' own boolean-column headers (th:nth-child(n+2):nth-child(-n+8) above) are already
+   Roles' own boolean-column headers (.staff-roles-checkbox-col above) are already
    vertical-align:bottom, which this needs to match. */
-.staff-roles-table th:nth-child(9),
-.staff-roles-table td:nth-child(9) {
+.staff-roles-table th.staff-roles-count-col,
+.staff-roles-table td.staff-roles-count-col {
     width: 70px;
     text-align: center;
 }
 
-.staff-roles-table th:nth-child(9) {
+.staff-roles-table th.staff-roles-count-col {
     vertical-align: bottom;
 }
 
