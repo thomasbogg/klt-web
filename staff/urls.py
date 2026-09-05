@@ -12,6 +12,7 @@ urlpatterns = [
     # deferred pending a decision on unified vs. separate staff/owner login pages, see the 2026-
     # 09-03 memory note.
     path('logout/', auth_views.LogoutView.as_view(next_page='admin:login'), name='logout'),
+    path('invite/<uidb64>/<token>/', views.StaffAcceptInviteView.as_view(), name='accept_invite'),
     path('', views.StaffHomeView.as_view(), name='home'),
     path('bookings/', views.StaffBookingLookupView.as_view(), name='booking_lookup'),
     path('bookings/new/owner/', views.StaffOwnerBookingCreateView.as_view(), name='booking_create_owner'),

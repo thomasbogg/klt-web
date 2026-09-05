@@ -130,6 +130,13 @@ body {
     color: #999;
 }
 
+/* Centers the single-panel Accept Invite page (staff/accept_invite.html) - there's no nav bar or
+   other content on that page to anchor against (an unauthenticated new hire can't see the nav). */
+.staff-invite-page {
+    max-width: 480px;
+    margin: 60px auto;
+}
+
 .staff-header-link {
     font-family: var(--secondary-font);
     font-size: 0.85rem;

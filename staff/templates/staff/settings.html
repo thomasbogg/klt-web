@@ -579,7 +579,7 @@
                         <h2 class="staff-panel-title">Staff accounts</h2>
                         <table class="staff-price-table">
                             <thead>
-                                <tr><th>Username</th><th>Email</th><th>Staff</th><th>Superuser</th><th>Active</th><th>Role</th><th></th></tr>
+                                <tr><th>Username</th><th>Email</th><th>Staff</th><th>Superuser</th><th>Active</th><th>Role</th><th>Password</th><th></th></tr>
                             </thead>
                             <tbody>
                                 {% for staff_user in staff_users %}
@@ -597,10 +597,22 @@
                                             {% endfor %}
                                         </select>
                                     </td>
+                                    <td>
+                                        {% if staff_user.has_usable_password %}
+                                        Set
+                                        {% else %}
+                                        <form method="post" class="staff-inline-delete">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="resend_staff_invite">
+                                            <input type="hidden" name="user_id" value="{{ staff_user.pk }}">
+                                            <button type="submit" class="staff-button staff-button-small">Resend invite</button>
+                                        </form>
+                                        {% endif %}
+                                    </td>
                                     <td><button type="submit" form="user-form-{{ staff_user.pk }}" class="staff-button staff-button-small">Save</button></td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="7" class="staff-empty">No staff accounts yet.</td></tr>
+                                <tr><td colspan="8" class="staff-empty">No staff accounts yet.</td></tr>
                                 {% endfor %}
                             </tbody>
                         </table>
@@ -611,7 +623,7 @@
                             <input type="hidden" name="user_id" value="{{ staff_user.pk }}">
                         </form>
                         {% endfor %}
-                        <p class="staff-settings-hint">Password resets aren't handled here - use <a href="/admin/auth/user/" target="_blank" rel="noopener">Django admin</a> for that. Superusers always have full access regardless of Role - the Role picker above only matters for non-superuser accounts.</p>
+                        <p class="staff-settings-hint">A new account sets its own password via the invite email sent when it's created - use "Resend invite" if their link expired or the email never arrived. Resetting an existing, already-set password still isn't handled here - use <a href="/admin/auth/user/" target="_blank" rel="noopener">Django admin</a> for that. Superusers always have full access regardless of Role - the Role picker above only matters for non-superuser accounts.</p>
                     </div>
 
                     <div class="staff-panel">
@@ -626,8 +638,13 @@
                                 <label class="staff-field">Email
                                     <input type="email" name="email" class="staff-input" autocomplete="off">
                                 </label>
-                                <label class="staff-field">Password
-                                    <input type="password" name="password" class="staff-input" autocomplete="new-password">
+                                <label class="staff-field">Role
+                                    <select name="role" class="staff-input">
+                                        <option value="">&mdash; No role &mdash;</option>
+                                        {% for role in roles %}
+                                        <option value="{{ role.pk }}">{{ role.name }}</option>
+                                        {% endfor %}
+                                    </select>
                                 </label>
                             </div>
                             <label class="staff-checkbox-label">
@@ -635,7 +652,7 @@
                             </label>
                             <button type="submit" class="staff-button">Add staff account</button>
                         </form>
-                        <p class="staff-settings-hint">Assign a Role from the table above after creating the account.</p>
+                        <p class="staff-settings-hint">An invite email is sent to the address above with a link to set their own password - the email names the Role chosen here, if any.</p>
                     </div>
                 </section>
                 {% endif %}

@@ -4,12 +4,15 @@ from unittest.mock import Mock, patch
 
 import requests
 from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment, Booking, BookingCondition,
@@ -3267,6 +3270,146 @@ class StaffLocationDetailViewTests(TestCase):
     def test_save_redirects_back_to_the_panel_it_came_from(self):
         response = self.client.post(self.url, {'action': 'update_rules', 'pool_rules': 'x'})
         self.assertRedirects(response, f'{self.url}?panel=rules')
+
+
+class StaffAddStaffUserAndInviteTests(TestCase):
+    """_add_staff_user/_resend_staff_invite (staff/views.py) + StaffAcceptInviteView - the
+    2026-09-06 switch from a superuser-chosen password to an emailed self-service invite link."""
+
+    def setUp(self):
+        User.objects.create_user(username='invite_superuser', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='invite_superuser', password='pw')
+        self.url = reverse('staff:settings')
+        self.role = StaffRole.objects.create(name='Cleaning Staff', is_cleaning_staff=True)
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_add_staff_user_creates_account_with_unusable_password(self, mock_send):
+        self.client.post(self.url, {
+            'action': 'add_staff_user', 'username': 'newhire', 'email': 'newhire@example.com',
+        })
+        user = User.objects.get(username='newhire')
+        self.assertFalse(user.has_usable_password())
+        self.assertTrue(user.is_staff)
+        self.assertFalse(user.is_superuser)
+        self.assertTrue(mock_send.called)
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_add_staff_user_assigns_role_and_names_it_in_the_invite(self, mock_send):
+        self.client.post(self.url, {
+            'action': 'add_staff_user', 'username': 'newcleaner', 'email': 'newcleaner@example.com',
+            'role': self.role.pk,
+        })
+        user = User.objects.get(username='newcleaner')
+        self.assertEqual(user.staff_profile.role, self.role)
+        sent_body = mock_send.call_args.kwargs['body']
+        self.assertIn('as Cleaning Staff', sent_body)
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_add_staff_user_with_no_role_omits_role_clause(self, mock_send):
+        self.client.post(self.url, {
+            'action': 'add_staff_user', 'username': 'noroleuser', 'email': 'norole@example.com',
+        })
+        sent_body = mock_send.call_args.kwargs['body']
+        self.assertNotIn(' as ', sent_body)
+
+    def test_add_staff_user_requires_username_and_email(self):
+        before = User.objects.count()
+        self.client.post(self.url, {'action': 'add_staff_user', 'username': 'onlyusername'})
+        self.assertEqual(User.objects.count(), before)
+
+    def test_add_staff_user_rejects_duplicate_username(self):
+        User.objects.create_user(username='taken', password='pw')
+        before = User.objects.count()
+        self.client.post(self.url, {'action': 'add_staff_user', 'username': 'taken', 'email': 'x@example.com'})
+        self.assertEqual(User.objects.count(), before)
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_add_staff_user_can_be_created_as_superuser(self, mock_send):
+        self.client.post(self.url, {
+            'action': 'add_staff_user', 'username': 'newsuperuser', 'email': 'newsuper@example.com',
+            'is_superuser': 'on',
+        })
+        self.assertTrue(User.objects.get(username='newsuperuser').is_superuser)
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_resend_staff_invite_for_account_without_a_password_yet(self, mock_send):
+        user = User.objects.create_user(username='pending', email='pending@example.com')
+        user.set_unusable_password()
+        user.save()
+        self.client.post(self.url, {'action': 'resend_staff_invite', 'user_id': user.pk})
+        self.assertTrue(mock_send.called)
+
+    def test_resend_staff_invite_rejects_account_with_a_password_already_set(self):
+        user = User.objects.create_user(username='already_set', password='pw', email='set@example.com')
+        with patch('communications.services.sending.send_plain_email') as mock_send:
+            self.client.post(self.url, {'action': 'resend_staff_invite', 'user_id': user.pk})
+        self.assertFalse(mock_send.called)
+
+    def test_resend_staff_invite_rejects_account_with_no_email(self):
+        user = User.objects.create_user(username='no_email')
+        user.set_unusable_password()
+        user.save()
+        with patch('communications.services.sending.send_plain_email') as mock_send:
+            self.client.post(self.url, {'action': 'resend_staff_invite', 'user_id': user.pk})
+        self.assertFalse(mock_send.called)
+
+    def test_resend_staff_invite_is_superuser_only(self):
+        limited_role = StaffRole.objects.create(name='Settings Viewer', can_view_settings=True)
+        limited_user = User.objects.create_user(username='limited', password='pw', is_staff=True)
+        StaffProfile.objects.create(user=limited_user, role=limited_role)
+        target = User.objects.create_user(username='invitee', email='invitee@example.com')
+        target.set_unusable_password()
+        target.save()
+
+        self.client.logout()
+        self.client.login(username='limited', password='pw')
+        response = self.client.post(self.url, {'action': 'resend_staff_invite', 'user_id': target.pk})
+        self.assertEqual(response.status_code, 403)
+
+
+class StaffAcceptInviteViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='invitee2', email='invitee2@example.com', is_staff=True)
+        self.user.set_unusable_password()
+        self.user.save()
+        # Gives the redirect-to-home test somewhere it's actually allowed to land - a role-less
+        # staff user gets PermissionDenied on Home by design (staff_page_required), same as any
+        # other freshly-invited account before a superuser assigns it a role.
+        role = StaffRole.objects.create(name='Invitee Role', can_view_home=True)
+        StaffProfile.objects.create(user=self.user, role=role)
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+        token = default_token_generator.make_token(self.user)
+        self.url = reverse('staff:accept_invite', kwargs={'uidb64': uid, 'token': token})
+
+    def test_valid_link_shows_the_set_password_form(self):
+        response = self.client.get(self.url, follow=True)
+        self.assertContains(response, 'Set your password')
+
+    def test_invalid_token_shows_expired_message(self):
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+        bad_url = reverse('staff:accept_invite', kwargs={'uidb64': uid, 'token': 'bad-token'})
+        response = self.client.get(bad_url)
+        self.assertContains(response, 'expired')
+
+    def test_setting_a_password_logs_the_user_in_and_makes_it_usable(self):
+        get_response = self.client.get(self.url, follow=True)
+        response = self.client.post(get_response.request['PATH_INFO'], {
+            'new_password1': 'a-genuinely-strong-pw-98x',
+            'new_password2': 'a-genuinely-strong-pw-98x',
+        }, follow=True)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.has_usable_password())
+        self.assertIn('_auth_user_id', self.client.session)
+        self.assertRedirects(response, reverse('staff:home'))
+
+    def test_mismatched_passwords_rejected(self):
+        get_response = self.client.get(self.url, follow=True)
+        self.client.post(get_response.request['PATH_INFO'], {
+            'new_password1': 'a-genuinely-strong-pw-98x',
+            'new_password2': 'does-not-match-99y',
+        })
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.has_usable_password())
 
 
 class StaffSettingsViewTests(TestCase):

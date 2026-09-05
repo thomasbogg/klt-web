@@ -3,6 +3,8 @@ from decimal import Decimal, InvalidOperation
 
 import requests
 from django.contrib import messages
+from django.contrib.auth import login
+from django.contrib.auth import views as auth_views
 from django.contrib.auth.models import User
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
@@ -10,7 +12,7 @@ from django.db.models import Count, ProtectedError, Q, Sum
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.template.loader import render_to_string
-from django.urls import reverse
+from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
@@ -62,10 +64,34 @@ from staff.utils import (
     STAGE_TABS, STATUS_BUCKETS, apply_manual_checkin_time, apply_manual_task_date,
     batch_cleaning_task_valid_ranges, booking_stage, checkin_valid_range, cleaning_task_valid_range,
     compute_arrival_eta, next_step_hint, properties_grouped_by_location, property_last_clean_before,
-    reservation_rows,
+    reservation_rows, send_staff_invite_email,
 )
 from staff.utils import last_day_of_month as _last_day_of_month
 from staff.utils import parsed_date as _parsed_date
+
+
+class StaffAcceptInviteView(auth_views.PasswordResetConfirmView):
+    """Where a newly-invited staff account lands to choose its own password (see
+    StaffSettingsView._add_staff_user, which creates the account with set_unusable_password()
+    instead of a superuser-chosen one, then emails this link - staff/utils.py::
+    send_staff_invite_email). Deliberately just Django's own PasswordResetConfirmView pointed at a
+    custom URL/template rather than a hand-rolled token scheme - same uidb64/token validation,
+    same two-step "swap the real token for a placeholder after the first valid GET" flow (see that
+    view's own dispatch()), same SetPasswordForm with AUTH_PASSWORD_VALIDATORS applied. Not behind
+    staff_page_required or any login gate - the whole point is an account that can't log in yet.
+
+    Logs the user in immediately on a successful password set (ModelBackend explicitly, since
+    there's no request.user session yet for Django's normal authenticate() flow to have already
+    populated) rather than Django's default "send them to the login page" - a freshly-invited
+    account has no session and no reason to log in twice in a row."""
+    template_name = 'staff/accept_invite.html'
+    success_url = reverse_lazy('staff:home')
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        login(self.request, form.user, backend='django.contrib.auth.backends.ModelBackend')
+        messages.success(self.request, "Your password is set - welcome to the team!")
+        return response
 
 
 @method_decorator(staff_page_required('can_view_home'), name='dispatch')
@@ -863,7 +889,7 @@ class StaffSettingsView(View):
     PANELS = ('bookings', 'extras', 'staff', 'people', 'payments', 'emails')
     SUPERUSER_ONLY_PANELS = ('staff',)
     SUPERUSER_ONLY_ACTIONS = (
-        'add_staff_user', 'update_staff_user', 'add_role', 'update_role', 'delete_role',
+        'add_staff_user', 'update_staff_user', 'resend_staff_invite', 'add_role', 'update_role', 'delete_role',
     )
     ACTION_PANELS = {
         'update_booking_settings': 'bookings',
@@ -886,6 +912,7 @@ class StaffSettingsView(View):
         'delete_request_type': 'extras',
         'add_staff_user': 'staff',
         'update_staff_user': 'staff',
+        'resend_staff_invite': 'staff',
         'add_role': 'staff',
         'update_role': 'staff',
         'delete_role': 'staff',
@@ -945,6 +972,7 @@ class StaffSettingsView(View):
             'delete_request_type': self._delete_request_type,
             'add_staff_user': self._add_staff_user,
             'update_staff_user': self._update_staff_user,
+            'resend_staff_invite': self._resend_staff_invite,
             'add_role': self._add_role,
             'update_role': self._update_role,
             'delete_role': self._delete_role,
@@ -1301,24 +1329,52 @@ class StaffSettingsView(View):
     # --- Staff ---
 
     def _add_staff_user(self, request):
+        # No password field (2026-09-06, per Thomas) - a superuser no longer chooses one on the
+        # new account's behalf. The account is created with set_unusable_password() (so it simply
+        # can't log in yet, no separate is_active gate needed) and staff.utils.send_staff_invite_email
+        # emails the recipient a link to StaffAcceptInviteView to choose their own. Role is
+        # assignable right here too (previously only from the Staff accounts table after the fact)
+        # so the invite email can name it - see that function's own docstring.
         post = request.POST
         username = post.get('username', '').strip()
-        password = post.get('password', '')
-        if not username or not password:
-            messages.error(request, "A new staff account needs both a username and a password.")
+        email = post.get('email', '').strip()
+        if not username or not email:
+            messages.error(request, "A new staff account needs both a username and an email address.")
             return
         if User.objects.filter(username=username).exists():
             messages.error(request, f'A user named "{username}" already exists.')
             return
-        user = User.objects.create_user(
-            username=username,
-            email=post.get('email', '').strip(),
-            password=password,
-        )
-        user.is_staff = True
+        user = User(username=username, email=email, is_staff=True)
         user.is_superuser = post.get('is_superuser') == 'on'
+        user.set_unusable_password()
         user.save()
-        messages.success(request, f'Staff account "{username}" created.')
+        role_id = post.get('role') or None
+        if role_id:
+            StaffProfile.objects.update_or_create(user=user, defaults={'role_id': role_id})
+        if send_staff_invite_email(request, user):
+            messages.success(request, f'Staff account "{username}" created - an invite to set a password was sent to {email}.')
+        else:
+            messages.warning(
+                request,
+                f'Staff account "{username}" created, but the invite email could not be sent - '
+                f'use "Resend invite" once the issue is fixed.',
+            )
+
+    def _resend_staff_invite(self, request):
+        user = User.objects.filter(pk=request.POST.get('user_id')).first()
+        if user is None:
+            messages.error(request, "That user no longer exists.")
+            return
+        if user.has_usable_password():
+            messages.error(request, f'"{user.username}" has already set a password.')
+            return
+        if not user.email:
+            messages.error(request, f'"{user.username}" has no email address on file - add one first.')
+            return
+        if send_staff_invite_email(request, user):
+            messages.success(request, f'Invite resent to {user.email}.')
+        else:
+            messages.error(request, "Could not send the invite email - check the logs.")
 
     def _update_staff_user(self, request):
         user = User.objects.filter(pk=request.POST.get('user_id')).first()

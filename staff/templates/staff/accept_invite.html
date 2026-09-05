@@ -1,0 +1,50 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Set Your Password | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+</head>
+<body>
+    <div class="staff-page staff-invite-page">
+        <header class="staff-header">
+            <h1 class="staff-page-title">Algarve Beach Apartments</h1>
+        </header>
+
+        <div class="staff-panel">
+            {% if validlink %}
+            <h2 class="staff-panel-title">Set your password</h2>
+            <p class="staff-settings-hint">Choose a password to finish setting up your staff account.</p>
+            {% if form.errors %}
+            <div class="staff-messages">
+                {% for field in form %}
+                {% for error in field.errors %}
+                <p class="staff-message staff-message-error">{{ error }}</p>
+                {% endfor %}
+                {% endfor %}
+                {% for error in form.non_field_errors %}
+                <p class="staff-message staff-message-error">{{ error }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+            <form method="post" class="staff-form">
+                {% csrf_token %}
+                <label class="staff-field">New password
+                    <input type="password" name="new_password1" class="staff-input" autocomplete="new-password" required>
+                </label>
+                <label class="staff-field">Confirm password
+                    <input type="password" name="new_password2" class="staff-input" autocomplete="new-password" required>
+                </label>
+                <button type="submit" class="staff-button">Set password</button>
+            </form>
+            {% else %}
+            <h2 class="staff-panel-title">This invite link has expired</h2>
+            <p class="staff-settings-hint">Ask a superuser to resend your invite from Settings &gt; Staff &amp; Roles.</p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

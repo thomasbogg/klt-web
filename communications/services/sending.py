@@ -7,6 +7,20 @@ from communications.registry import EMAIL_TYPES
 from libraries.utils import logerror
 
 
+def send_plain_email(from_email, from_display_name, greeting_name, to_email, subject, body):
+    """Sends one ad-hoc plain email via the Gmail wrapper, respecting COMMS_DRY_RUN the same way
+    send_scheduled_email does below - for anything that needs a one-off transactional email outside
+    the Booking-anchored EMAIL_TYPES/ScheduledEmail system (e.g. staff account invites, see
+    staff/utils.py::send_staff_invite_email). send_scheduled_email does NOT call this - it has its
+    own booking/template-specific dry-run print and ScheduledEmail error-tracking, kept as-is here
+    rather than refactored onto this new helper. Exceptions from the real send propagate to the
+    caller, same as _send_via_gmail itself - there's no ScheduledEmail row here to mark failed."""
+    if env_settings.COMMS_DRY_RUN:
+        print(f"[DRY RUN] communications: to {to_email}\nSubject: {subject}\n{body}\n")
+        return
+    _send_via_gmail(from_email, from_display_name, greeting_name, to_email, subject, body)
+
+
 def send_scheduled_email(scheduled_email, actor=None):
     """The single function that ever actually sends a ScheduledEmail - both the manual "Send now"
     view (staff/views.py::StaffBookingEmailSendView) and the send_due_scheduled_emails cron command

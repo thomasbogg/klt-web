@@ -854,6 +854,55 @@ def last_day_of_month(day):
     return next_month - timedelta(days=next_month.day)
 
 
+def send_staff_invite_email(request, user):
+    """Sends `user` the link to set their own password (staff/views.py::
+    StaffSettingsView._add_staff_user creates the account with set_unusable_password() instead of
+    a superuser-chosen one; _resend_staff_invite calls this again for an account that hasn't set
+    one yet). Reuses Django's own password-reset token machinery (default_token_generator +
+    urlsafe_base64_encode(user.pk)) rather than inventing a separate invite-token scheme -
+    staff.views.StaffAcceptInviteView is itself just Django's PasswordResetConfirmView pointed at
+    a custom URL/template, so the same token this function generates is what that view validates.
+
+    Mentions the account's StaffRole by name when it has one (per Thomas, 2026-09-06 - the invite
+    should tell the recipient what part of the team they're joining, e.g. "as Cleaning Staff"),
+    dropping that clause entirely for a role-less account (superuser-only, or a role not yet
+    decided) rather than saying "no role" outright.
+
+    Returns True/False for whether the send succeeded, so callers can flash an accurate message -
+    does not raise, since a failed invite send shouldn't block the account from having been
+    created (staff can always retry via "Resend invite")."""
+    from django.contrib.auth.tokens import default_token_generator
+    from django.urls import reverse
+    from django.utils.encoding import force_bytes
+    from django.utils.http import urlsafe_base64_encode
+
+    from communications.services.sending import send_plain_email
+
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    link = request.build_absolute_uri(reverse('staff:accept_invite', kwargs={'uidb64': uid, 'token': token}))
+
+    profile = getattr(user, 'staff_profile', None)
+    role_clause = f" as {profile.role.name}" if profile and profile.role else ""
+
+    subject = "You're invited to join the Algarve Beach Apartments team"
+    body = (
+        f"You've been invited to join the Algarve Beach Apartments staff team{role_clause}. "
+        f"Set your password to get started: {link} "
+        f"This link will expire in a few days - if it does, ask a superuser to resend your invite."
+    )
+    try:
+        send_plain_email(
+            from_email=env_settings.COMMS_AUTOMATED_SENDER_EMAIL, from_display_name='Algarve Beach Apartments',
+            greeting_name=user.username, to_email=user.email, subject=subject, body=body,
+        )
+    except Exception as error:
+        from libraries.utils import logerror
+        logerror(f"staff: could not send invite email to {user.email}: {error}")
+        return False
+    return True
+
+
 def resync_checkin_times_for_settings_change():
     """Called from staff/signals.py on CheckinSettings' own post_save - a changed buffer/policy
     time is a staff-facing correctness issue (a wrong pickup/greet time on the calendar), not just
