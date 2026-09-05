@@ -592,11 +592,23 @@ def booking_confirmation_context(booking):
     # the Pay Balance button on a stay there's nothing left to buy toward), which would otherwise
     # double-count due_at_balance into 'Paid' for a cancelled-but-never-paid booking.
     balance_paid = balance_payment is not None and balance_payment.status == 'paid'
-    paid_amount = charge.due_at_booking + (charge.due_at_balance if balance_paid else 0)
+    subtotal = charge.total_rental + charge.admin
+    if charge.due_at_booking is None:
+        # No deposit/balance split was ever computed for this Charge - a platform-synced booking
+        # (payment happens on Airbnb/Booking.com/Vrbo itself, never through klt-web - see
+        # sync_ical_link()'s Booking creation, which never touches Charge at all) or one migrated
+        # from the legacy klt_main.db (migrate_klt_data.py::migrate_charges(), which has no
+        # equivalent legacy column to migrate this from). is_paid()/is_balance_paid() already
+        # treat a missing Payment/BalancePayment row the same way - "nothing tracked here, so
+        # nothing outstanding" - so paid_amount follows the same logic rather than crashing on
+        # None arithmetic or falsely showing this class of booking as having paid nothing.
+        paid_amount = subtotal
+    else:
+        paid_amount = charge.due_at_booking + (charge.due_at_balance if balance_paid else 0)
     return {
         'booking': booking,
         'charge': charge,
-        'subtotal': charge.total_rental + charge.admin,
+        'subtotal': subtotal,
         'nights': (booking.departure_date - booking.arrival_date).days,
         'costs_gbp': charge.costs_in_gbp(),
         'cancelled': cancelled,

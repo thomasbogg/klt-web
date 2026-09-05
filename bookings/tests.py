@@ -2490,6 +2490,20 @@ class BookingManageHubViewTests(TestCase):
         )
         self.assertContains(response, reverse('bookings:manage_extras', kwargs={'reference': self.booking.reference}))
 
+    def test_platform_synced_booking_with_no_deposit_split_renders_without_crashing(self):
+        # A platform-synced (sync_ical_link never creates/populates a deposit split - payment
+        # happens on the platform itself) or legacy-migrated (migrate_klt_data.py::migrate_charges
+        # has no equivalent legacy column) Charge has due_at_booking/due_at_balance = None and no
+        # Payment row at all. This crashed with a TypeError (None + int) until 2026-09-06 - a real
+        # live bug affecting ~90 real upcoming guest bookings, found from an actual staff screenshot.
+        self.booking.charges.due_at_booking = None
+        self.booking.charges.due_at_balance = None
+        self.booking.charges.save(update_fields=['due_at_booking', 'due_at_balance'])
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['paid_amount'], response.context['subtotal'])
+        self.assertIn('all payments have been received', _normalized_text(response))
+
 
 class BookingManageGuestAddViewTests(TestCase):
     def setUp(self):
