@@ -4149,6 +4149,26 @@ class BookingManageLocationViewTests(TestCase):
         self.assertNotContains(response, 'Front door')
         self.assertNotContains(response, '4821')
 
+    def test_postbox_path_and_propertys_own_navigation_prose_both_shown(self):
+        # The postbox preamble (how to get the key/fob) and the property's own
+        # self_check_in_instructions (which floor/corridor to walk once inside) describe two
+        # different, non-overlapping steps of the same check-in - both must appear together, not
+        # as alternatives (a real bug caught before any real content was backfilled: an earlier
+        # version showed only one or the other the moment a fork applied).
+        self.location.self_check_in_preferred_code = '1111'
+        self.location.self_check_in_preferred_instructions = 'Open postbox lockbox 1 for the key.'
+        self.location.save()
+        self.property.self_check_in_instructions = 'Take the lift to the 2nd floor, turn right.'
+        self.property.save(update_fields=['self_check_in_instructions'])
+        near_start = date.today() + timedelta(days=1)
+        self.booking.arrival_date = near_start
+        self.booking.save(update_fields=['arrival_date'])
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['postbox_path'], 'preferred')
+        self.assertContains(response, 'Open postbox lockbox 1 for the key.')
+        self.assertContains(response, 'Take the lift to the 2nd floor, turn right.')
+
     def test_postbox_fallback_path_shown_alongside_property_codes(self):
         self.location.self_check_in_preferred_code = '1111'
         self.location.self_check_in_preferred_instructions = 'Open postbox lockbox 1 for the key.'

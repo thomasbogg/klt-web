@@ -9,9 +9,10 @@
         <p class="details-note details-note-left">{{ postbox_location.self_check_in_preferred_instructions|linkify }}</p>
         {% elif postbox_path == 'fallback' %}
         <p class="details-note details-note-left">{{ postbox_location.self_check_in_fallback_instructions|linkify }}</p>
-        {% elif self_check_in_instructions %}
+        {% endif %}
+        {% if self_check_in_instructions %}
         <p class="details-note details-note-left">{{ self_check_in_instructions|linkify }}</p>
-        {% else %}
+        {% elif postbox_path is None %}
         <p class="details-note details-note-left">Your check-in for this stay is self check-in, but we haven't added the access instructions yet - please contact us ahead of arrival.</p>
         {% endif %}
         {% if postbox_path == 'preferred' %}

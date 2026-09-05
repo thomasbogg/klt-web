@@ -1959,11 +1959,14 @@ class BookingManageLocationView(View):
 
     Shared-postbox fork (2026-09-05, Quinta da Barracuda): when the property's Location has one
     configured (Location.self_check_in_preferred_code non-blank), bookings/utils.py::
-    resolve_shared_postbox_path decides whether this booking gets the Location-level preferred or
-    fallback instructions+code instead of the plain property-level ones - see that function's
-    docstring for the assignment rule. The property's own access codes still show on the fallback
-    path (the guest still needs their own front-door code after the gate fob) but not on the
-    preferred path (the postbox key makes the front-door code irrelevant)."""
+    resolve_shared_postbox_path decides whether this booking also gets the Location-level preferred
+    or fallback instructions+code shown ahead of the property's own self_check_in_instructions - the
+    two are layered, not exclusive (2026-09-05 fix: an earlier version replaced one with the other,
+    losing the property-specific building-navigation prose - e.g. "the door to your apartment is on
+    the 2nd floor, turn right out of the lift" - the moment a fork applied). The property's own
+    access codes still show on the fallback path (the guest still needs their own front-door code
+    after the gate fob) but not on the preferred path (the postbox key makes the front-door code
+    irrelevant)."""
     template_name = 'bookings/manage_location.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -1994,7 +1997,7 @@ class BookingManageLocationView(View):
         context.update({
             'booking': booking, 'location': location,
             'self_check_in': self_check_in,
-            'self_check_in_instructions': booking.property.self_check_in_instructions if (self_check_in and postbox_path is None) else '',
+            'self_check_in_instructions': booking.property.self_check_in_instructions if self_check_in else '',
             'access_codes': access_codes,
             'codes_revealed': codes_revealed,
             'code_reveal_days': reveal_days,
