@@ -136,6 +136,16 @@
     align-items: center;
 }
 
+/* Deliberately not .staff-form (which caps at 480px on this page - fine for the tall stacked
+   Property info/specification forms, wrong here) - Label/Code/button need to share the same full
+   content width as the blurb above and the delete rows above that, or the three visibly
+   misalign, per Thomas 2026-09-05. Same align-self/flex-none button treatment as the Record
+   handover row above. */
+.staff-access-code-add-row > .staff-button {
+    align-self: flex-end;
+    flex: 0 0 auto;
+}
+
 /* Scoped to property-page forms specifically (not .staff-inline-form, which deliberately wants
    the full row width for the iCal/photo add-forms) - stops a lone text input from stretching
    edge-to-edge of a wide pane, the same complaint that motivated the two-column split above.
