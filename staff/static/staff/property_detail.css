@@ -149,16 +149,22 @@
 /* Scoped to property-page forms specifically (not .staff-inline-form, which deliberately wants
    the full row width for the iCal/photo add-forms) - stops a lone text input from stretching
    edge-to-edge of a wide pane, the same complaint that motivated the two-column split above.
-   Amenities and SEF details are exempted just below - both use the responsive field-row grid
+   Property info is the one form this is actually for - a long single column of narrow fields.
+   Amenities/SEF/Ownership are exempted just below - all three use the responsive field-row grid
    instead, which wants the extra width rather than being boxed into 480px with the rest of the
-   (much wider) pane sitting empty next to it. */
+   (much wider) pane sitting empty next to it. Property specification joined that exemption list
+   2026-09-05: same field-row-grid shape as Amenities/SEF, and capping it while its neighbour card
+   below (Self check-in access codes, which needs its full width for the one-row add form) isn't
+   capped left the two stacked right-column cards' visible content ending at very different
+   widths - caught live by Thomas. */
 .staff-property-content .staff-form {
     max-width: 480px;
 }
 
 #pane-amenities .staff-form,
 #pane-sef .staff-form,
-#pane-ownership .staff-form {
+#pane-ownership .staff-form,
+.staff-property-specification-form {
     max-width: none;
 }
 
