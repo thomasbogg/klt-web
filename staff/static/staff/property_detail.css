@@ -101,9 +101,14 @@
     }
 }
 
-/* Property info + Property specification share the "Main info" tab - two cards side by side on
-   wide viewports (Thomas found a single 1000px+-wide column of text inputs hard to scan), one
-   column again once there's not enough room for both at a sane width. */
+/* Property info + [Property specification, Self check-in access codes] share the "Main info" tab
+   as two independently-stacking columns - two side by side on wide viewports (Thomas found a
+   single 1000px+-wide column of text inputs hard to scan), one column again once there's not
+   enough room for both at a sane width. Each side is its own flex column (.staff-property-main-
+   column) rather than every card being a direct grid child, specifically so the right column's
+   two shorter cards stack back-to-back regardless of how tall Property info is on the left - a
+   plain CSS grid here sizes each row by its tallest cell across both columns, which left a big
+   gap under the access-codes card the first time this shipped (caught live, 2026-09-05). */
 .staff-property-main-columns {
     display: grid;
     grid-template-columns: 1fr;
@@ -115,14 +120,12 @@
     .staff-property-main-columns {
         grid-template-columns: 1fr 1fr;
     }
+}
 
-    /* Without this, grid auto-flow drops this third card into column 1 (under the taller
-       Property info card), leaving an empty gap beside it under the shorter Property
-       specification card - explicitly placing it in column 2 keeps the tab compact on open,
-       per Thomas 2026-09-05. */
-    .staff-property-access-codes-card {
-        grid-column: 2;
-    }
+.staff-property-main-column {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
 }
 
 /* Scoped to property-page forms specifically (not .staff-inline-form, which deliberately wants
