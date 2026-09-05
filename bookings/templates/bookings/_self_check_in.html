@@ -3,7 +3,7 @@
 <div class="details-section">
     <h2 class="details-section-title">Self check-in</h2>
     {% if self_check_in_instructions %}
-    <p class="details-note details-note-left">{{ self_check_in_instructions|linkify|linebreaksbr }}</p>
+    <p class="details-note details-note-left">{{ self_check_in_instructions|linkify }}</p>
     {% else %}
     <p class="details-note details-note-left">Your check-in for this stay is self check-in, but we haven't added the access instructions yet - please contact us ahead of arrival.</p>
     {% endif %}
