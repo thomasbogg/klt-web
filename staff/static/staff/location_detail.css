@@ -75,14 +75,12 @@
     }
 }
 
-/* Same reasoning as property_detail.css's own .staff-property-content .staff-form rule: keeps a
-   lone stacked form from stretching edge-to-edge of a wide pane. Location specification uses the
-   full-width checkbox grid instead (see .staff-amenity-grid, reused as-is from
-   property_detail.css), so it's exempted the same way Amenities/SEF are on the Property page. */
-.staff-location-content .staff-form {
-    max-width: 480px;
-}
-
-#location-pane-main .staff-panel:last-child .staff-form {
-    max-width: none;
-}
+/* Historical note: this pane used to cap .staff-form at 480px (matching property_detail.css's
+   old rule, removed there 2026-09-05 for the same reason) with a last-child exemption for
+   Location specification's full-width checkbox grid. Adding the Self check-in path fork card
+   (2026-09-05, third panel in the same right-hand column) made that :last-child selector target
+   the wrong panel the moment a new one was appended after it - the exact CSS-specificity/
+   structural trap documented for this project (a sibling-position selector silently re-targets
+   when the DOM shape changes). Since every panel on this pane now wants full width anyway (two
+   more textareas + a checkbox grid vs. one lone stacked form), the cap and its exemption were
+   just deleted rather than patched again. */

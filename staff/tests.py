@@ -3223,6 +3223,28 @@ class StaffLocationDetailViewTests(TestCase):
         self.assertEqual(rules.quiet_hours_start.strftime('%H:%M'), '23:00')
         self.assertEqual(rules.pool_rules, 'No diving.')
 
+    def test_update_self_check_in_fork_saves_fields(self):
+        response = self.client.post(self.url, {
+            'action': 'update_self_check_in_fork',
+            'self_check_in_preferred_instructions': 'Open postbox lockbox 1 for the key.',
+            'self_check_in_preferred_code': '1111',
+            'self_check_in_fallback_instructions': 'Open postbox lockbox 2 for the gate fob.',
+            'self_check_in_fallback_code': '2222',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=main')
+        self.location.refresh_from_db()
+        self.assertEqual(self.location.self_check_in_preferred_instructions, 'Open postbox lockbox 1 for the key.')
+        self.assertEqual(self.location.self_check_in_preferred_code, '1111')
+        self.assertEqual(self.location.self_check_in_fallback_instructions, 'Open postbox lockbox 2 for the gate fob.')
+        self.assertEqual(self.location.self_check_in_fallback_code, '2222')
+
+    def test_update_self_check_in_fork_clears_fields_when_blank(self):
+        self.location.self_check_in_preferred_code = '1111'
+        self.location.save(update_fields=['self_check_in_preferred_code'])
+        self.client.post(self.url, {'action': 'update_self_check_in_fork'})
+        self.location.refresh_from_db()
+        self.assertEqual(self.location.self_check_in_preferred_code, '')
+
     def test_add_image_and_delete_image(self):
         upload = SimpleUploadedFile('test.jpg', b'fake-image-bytes', content_type='image/jpeg')
         self.client.post(self.url, {'action': 'add_image', 'image': upload, 'caption': 'View'})

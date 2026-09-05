@@ -604,12 +604,20 @@ class Arrival(models.Model):
     bookings/views.py::BookingManageArrivalDepartureView) - editable any time once the deposit is
     paid, no cutoff. method drives which of flight_number/time/travelling_from/hiring_car are
     relevant - travelling_from is only meaningful for DRIVING, hiring_car only for the two flight
-    methods. self_check_in/meet_greet are staff/ops-only - the guest-facing save path never
-    touches them (only supplies creation defaults via get_or_create so the row can exist before
-    staff have set anything); they're edited from the staff booking detail page's Booking Info
-    panel instead (see StaffBookingDetailView._update_booking()), same pattern as Departure.clean
-    below."""
+    methods. self_check_in is no longer purely staff-manual (2026-09-05): wherever this row is
+    saved - guest's own hub, Owner Suite, staff Booking Info panel, iCal sync - the value is
+    recomputed via bookings/utils.py::compute_effective_self_check_in() from the property's
+    booking_company check-in policy when one is configured, falling back to the posted/manual
+    value only when there's no policy to apply. meet_greet stays staff/ops-only - the guest-facing
+    save path never touches it (only supplies a creation default via get_or_create so the row can
+    exist before staff have set anything), same pattern as Departure.clean below."""
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='arrival')
+    # Used by bookings/utils.py::resolve_shared_postbox_path (Quinta da Barracuda shared-postbox
+    # self-check-in fork, 2026-09-05) as "who supplied arrival info first" - the earliest-created
+    # row for a given Location+night wins the preferred (postbox key) path. auto_now_add rather
+    # than a manual default so re-saving an existing Arrival (e.g. changing the arrival time)
+    # never resets a guest's place in the queue.
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
     method = models.CharField(max_length=20, choices=TravelMethod.choices, default=TravelMethod.FLIGHT_FARO)
     flight_number = models.CharField(max_length=50, blank=True, null=True)
     travelling_from = models.CharField(max_length=200, blank=True)

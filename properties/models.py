@@ -28,6 +28,20 @@ class Location(models.Model):
     # properties visually. Blank means "not curated yet" - the calendar falls back to an
     # auto-generated colour rather than requiring every location to have one set.
     color = models.CharField(max_length=7, blank=True)
+    # Shared-postbox self-check-in fork (2026-09-05, per Thomas, built for Quinta da Barracuda):
+    # some locations have a shared postbox with two lockboxes - one ("preferred") holding the
+    # actual apartment key directly, the other ("fallback") holding only a tethered condominium
+    # gate fob, requiring the guest to then use their own apartment's PropertyAccessCode front-
+    # door code. Only one self-check-in booking per night can use the preferred path; see
+    # bookings/utils.py::resolve_shared_postbox_path for the assignment rule. A blank
+    # self_check_in_preferred_code means this location has no fork configured at all - the plain
+    # per-property self_check_in_instructions/PropertyAccessCode flow applies unmodified, same as
+    # every other location. Flat fields rather than a separate model since the shape is fixed at
+    # exactly two paths, not an open-ended list.
+    self_check_in_preferred_instructions = models.TextField(blank=True, default='')
+    self_check_in_preferred_code = models.CharField(max_length=100, blank=True, default='')
+    self_check_in_fallback_instructions = models.TextField(blank=True, default='')
+    self_check_in_fallback_code = models.CharField(max_length=100, blank=True, default='')
 
     @property
     def slug(self):

@@ -2120,6 +2120,7 @@ class StaffLocationDetailView(View):
     ACTION_PANELS = {
         'update_location_info': 'main',
         'update_specification': 'main',
+        'update_self_check_in_fork': 'main',
         'update_rules': 'rules',
         'add_image': 'photos',
         'delete_image': 'photos',
@@ -2138,6 +2139,7 @@ class StaffLocationDetailView(View):
         handler = {
             'update_location_info': self._update_location_info,
             'update_specification': self._update_specification,
+            'update_self_check_in_fork': self._update_self_check_in_fork,
             'update_rules': self._update_rules,
             'add_image': self._add_image,
             'delete_image': self._delete_image,
@@ -2190,6 +2192,15 @@ class StaffLocationDetailView(View):
             setattr(specs, field, post.get(field) == 'on')
         specs.save()
         messages.success(request, "Location specification updated.")
+
+    def _update_self_check_in_fork(self, request, location):
+        post = request.POST
+        location.self_check_in_preferred_instructions = post.get('self_check_in_preferred_instructions', '').strip()
+        location.self_check_in_preferred_code = post.get('self_check_in_preferred_code', '').strip()
+        location.self_check_in_fallback_instructions = post.get('self_check_in_fallback_instructions', '').strip()
+        location.self_check_in_fallback_code = post.get('self_check_in_fallback_code', '').strip()
+        location.save()
+        messages.success(request, "Self check-in path fork updated.")
 
     def _update_rules(self, request, location):
         rules, _ = LocationRules.objects.get_or_create(location=location, defaults=LOCATION_RULES_DEFAULTS)

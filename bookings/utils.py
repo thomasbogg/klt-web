@@ -830,3 +830,50 @@ def compute_effective_self_check_in(property, arrival_time):
     if not company.self_check_in_after or not arrival_time:
         return None
     return arrival_time >= company.self_check_in_after
+
+
+def resolve_shared_postbox_path(booking):
+    """Assigns this booking's self-check-in to the 'preferred' or 'fallback' path at a Location
+    with a shared-postbox fork configured (2026-09-05, per Thomas, built for Quinta da Barracuda:
+    a shared postbox holds two lockboxes - one with the actual apartment key ("preferred"), the
+    other with only a tethered condominium gate fob ("fallback"), which still requires the guest's
+    own apartment's PropertyAccessCode front-door code). Only one self-check-in booking per night
+    at that Location can take the preferred path.
+
+    Assignment rule, verbatim per Thomas: whichever self-check-in booking supplied its arrival
+    information first (Arrival.created_at) gets the preferred path - EXCEPT a property with no
+    front-door code of its own (no PropertyAccessCode rows) can never fall back, so it always
+    wins preferred regardless of arrival order. Recomputed live on every read, never persisted or
+    cached - per Thomas, guests who submit arrival info early "wouldn't notice if the instructions
+    change slightly" as later bookings come in.
+
+    Returns:
+    - None if the fork doesn't apply to this booking at all (no self-check-in, no Location, or
+      the Location has no fork configured - a blank self_check_in_preferred_code means "no fork").
+    - 'preferred' / 'fallback' for the normal case.
+    - 'conflict' if two or more codeless properties collide on the same night at the same
+      Location - unresolvable automatically (there's only one physical key), needs a human."""
+    from bookings.models import Arrival, Booking
+
+    location = booking.property.location
+    if location is None or not location.self_check_in_preferred_code:
+        return None
+
+    arrival = Arrival.objects.filter(booking=booking).first()
+    if not arrival or not arrival.self_check_in:
+        return None
+
+    same_night = list(
+        Booking.objects.filter(
+            property__location=location,
+            arrival_date=booking.arrival_date,
+            arrival__self_check_in=True,
+        ).select_related('arrival', 'property').order_by('arrival__created_at', 'pk')
+    )
+    codeless = [b for b in same_night if not b.property.access_codes.exists()]
+
+    if len(codeless) >= 2:
+        return 'conflict' if booking.pk in {b.pk for b in codeless} else 'fallback'
+    if len(codeless) == 1:
+        return 'preferred' if booking.pk == codeless[0].pk else 'fallback'
+    return 'preferred' if same_night and booking.pk == same_night[0].pk else 'fallback'

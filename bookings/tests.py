@@ -20,7 +20,7 @@ from bookings.utils import (
     create_booking, create_owner_booking, determine_payment_provider, expire_stale_holds,
     extras_summary, guest_counts_by_age, guest_for_owner, has_completed_previous_stay,
     payment_clearing_expiry, recalculate_balance_for_party, recalculate_costs_for_party,
-    sync_ical_link,
+    resolve_shared_postbox_path, sync_ical_link,
 )
 from bookings.templatetags.bookings_extras import linkify
 from guests.models import Guest
@@ -4122,6 +4122,191 @@ class BookingManageLocationViewTests(TestCase):
         self.assertContains(response, '1111')
         self.assertContains(response, 'Apartment door')
         self.assertContains(response, '2222')
+
+    def test_no_postbox_fork_configured_is_unaffected(self):
+        # self.location has no self_check_in_preferred_code set - plain per-property flow.
+        PropertyAccessCode.objects.create(property=self.property, label='Front door', code='4821')
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertIsNone(response.context['postbox_path'])
+        self.assertContains(response, 'Front door')
+
+    def test_postbox_preferred_path_shown_and_property_codes_hidden(self):
+        self.location.self_check_in_preferred_code = '1111'
+        self.location.self_check_in_preferred_instructions = 'Open postbox lockbox 1 for the key.'
+        self.location.self_check_in_fallback_code = '2222'
+        self.location.self_check_in_fallback_instructions = 'Open postbox lockbox 2 for the gate fob.'
+        self.location.save()
+        PropertyAccessCode.objects.create(property=self.property, label='Front door', code='4821')
+        near_start = date.today() + timedelta(days=1)
+        self.booking.arrival_date = near_start
+        self.booking.save(update_fields=['arrival_date'])
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['postbox_path'], 'preferred')
+        self.assertContains(response, 'Open postbox lockbox 1 for the key.')
+        self.assertContains(response, '1111')
+        self.assertNotContains(response, 'Front door')
+        self.assertNotContains(response, '4821')
+
+    def test_postbox_fallback_path_shown_alongside_property_codes(self):
+        self.location.self_check_in_preferred_code = '1111'
+        self.location.self_check_in_preferred_instructions = 'Open postbox lockbox 1 for the key.'
+        self.location.self_check_in_fallback_code = '2222'
+        self.location.self_check_in_fallback_instructions = 'Open postbox lockbox 2 for the gate fob.'
+        self.location.save()
+        other_property = Property.objects.create(
+            title='Earlier Postbox Prop', short_title='EARLYPB', location=self.location,
+        )
+        near_start = date.today() + timedelta(days=1)
+        self.booking.arrival_date = near_start
+        self.booking.save(update_fields=['arrival_date'])
+        PropertyAccessCode.objects.create(property=self.property, label='Front door', code='4821')
+        earlier_booking = Booking.objects.create(
+            property=other_property, guest=self.guest, arrival_date=near_start,
+            departure_date=near_start + timedelta(days=3),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        earlier_arrival = Arrival.objects.create(booking=earlier_booking, self_check_in=True, meet_greet=False)
+        Arrival.objects.filter(pk=earlier_arrival.pk).update(created_at=timezone.now() - timedelta(minutes=10))
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['postbox_path'], 'fallback')
+        self.assertContains(response, 'Open postbox lockbox 2 for the gate fob.')
+        self.assertContains(response, '2222')
+        self.assertContains(response, 'Front door')
+        self.assertContains(response, '4821')
+
+    def test_postbox_conflict_shows_contact_us_message(self):
+        self.location.self_check_in_preferred_code = '1111'
+        self.location.save(update_fields=['self_check_in_preferred_code'])
+        near_start = date.today() + timedelta(days=1)
+        self.booking.arrival_date = near_start
+        self.booking.save(update_fields=['arrival_date'])
+        Arrival.objects.create(booking=self.booking, self_check_in=True, meet_greet=False)
+        other_property = Property.objects.create(
+            title='Other Codeless Postbox Prop', short_title='OTHERPB', location=self.location,
+        )
+        other_booking = Booking.objects.create(
+            property=other_property, guest=self.guest, arrival_date=near_start,
+            departure_date=near_start + timedelta(days=3),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Arrival.objects.create(booking=other_booking, self_check_in=True, meet_greet=False)
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['postbox_path'], 'conflict')
+        self.assertContains(response, 'scheduling clash')
+
+
+class ResolveSharedPostboxPathTests(TestCase):
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Test Location Postbox', street='1 Postbox Street', zip_code='8000-000', city='Faro',
+            coordinates='37.0,-7.9', map_link='https://maps.example.com/postbox',
+            self_check_in_preferred_code='1111', self_check_in_preferred_instructions='Open lockbox 1.',
+            self_check_in_fallback_code='2222', self_check_in_fallback_instructions='Open lockbox 2.',
+        )
+        self.guest = Guest.objects.create(last_name='Guest', email='postbox-resolver@example.com')
+        self.arrival_date = date.today() + timedelta(days=200)
+
+    def _booking(self, property, with_code=True, self_check_in=True, created_offset=0):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.arrival_date,
+            departure_date=self.arrival_date + timedelta(days=3),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        if with_code:
+            PropertyAccessCode.objects.create(property=property, label='Front door', code='9999')
+        arrival = Arrival.objects.create(booking=booking, self_check_in=self_check_in, meet_greet=False)
+        Arrival.objects.filter(pk=arrival.pk).update(
+            created_at=timezone.now() + timedelta(seconds=created_offset),
+        )
+        return booking
+
+    def test_no_location_returns_none(self):
+        property = Property.objects.create(title='No Location Prop PB', short_title='NOLOCPB')
+        booking = self._booking(property)
+        self.assertIsNone(resolve_shared_postbox_path(booking))
+
+    def test_location_without_fork_configured_returns_none(self):
+        plain_location = Location.objects.create(
+            title='Plain Location PB', street='2 Plain Street', zip_code='8000-001', city='Faro',
+            coordinates='37.0,-7.9', map_link='https://maps.example.com/plain-pb',
+        )
+        property = Property.objects.create(title='Plain Prop PB', short_title='PLAINPB', location=plain_location)
+        booking = self._booking(property)
+        self.assertIsNone(resolve_shared_postbox_path(booking))
+
+    def test_not_self_check_in_returns_none(self):
+        property = Property.objects.create(title='Not SCI Prop PB', short_title='NOTSCIPB', location=self.location)
+        booking = self._booking(property, self_check_in=False)
+        self.assertIsNone(resolve_shared_postbox_path(booking))
+
+    def test_no_arrival_row_returns_none(self):
+        property = Property.objects.create(title='No Arrival Prop PB', short_title='NOARRPB', location=self.location)
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.arrival_date,
+            departure_date=self.arrival_date + timedelta(days=3),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.assertIsNone(resolve_shared_postbox_path(booking))
+
+    def test_sole_self_check_in_booking_gets_preferred(self):
+        property = Property.objects.create(title='Sole Prop PB', short_title='SOLEPB', location=self.location)
+        booking = self._booking(property)
+        self.assertEqual(resolve_shared_postbox_path(booking), 'preferred')
+
+    def test_earliest_arrival_info_wins_preferred(self):
+        prop_a = Property.objects.create(title='Prop A PB', short_title='PROPAPB', location=self.location)
+        prop_b = Property.objects.create(title='Prop B PB', short_title='PROPBPB', location=self.location)
+        booking_a = self._booking(prop_a, created_offset=0)
+        booking_b = self._booking(prop_b, created_offset=10)
+        self.assertEqual(resolve_shared_postbox_path(booking_a), 'preferred')
+        self.assertEqual(resolve_shared_postbox_path(booking_b), 'fallback')
+
+    def test_codeless_property_always_wins_preferred_regardless_of_order(self):
+        prop_first = Property.objects.create(title='First Coded PB', short_title='FIRSTCPB', location=self.location)
+        prop_codeless = Property.objects.create(title='Codeless PB', short_title='CODELESSPB', location=self.location)
+        booking_first = self._booking(prop_first, with_code=True, created_offset=0)
+        booking_codeless = self._booking(prop_codeless, with_code=False, created_offset=10)
+        self.assertEqual(resolve_shared_postbox_path(booking_codeless), 'preferred')
+        self.assertEqual(resolve_shared_postbox_path(booking_first), 'fallback')
+
+    def test_two_codeless_properties_conflict(self):
+        prop_1 = Property.objects.create(title='Codeless 1 PB', short_title='CODELESS1PB', location=self.location)
+        prop_2 = Property.objects.create(title='Codeless 2 PB', short_title='CODELESS2PB', location=self.location)
+        booking_1 = self._booking(prop_1, with_code=False, created_offset=0)
+        booking_2 = self._booking(prop_2, with_code=False, created_offset=10)
+        self.assertEqual(resolve_shared_postbox_path(booking_1), 'conflict')
+        self.assertEqual(resolve_shared_postbox_path(booking_2), 'conflict')
+
+    def test_third_coded_booking_alongside_conflict_still_gets_fallback(self):
+        prop_1 = Property.objects.create(title='Codeless A PB', short_title='CODELESSAPB', location=self.location)
+        prop_2 = Property.objects.create(title='Codeless B PB', short_title='CODELESSBPB', location=self.location)
+        prop_3 = Property.objects.create(title='Coded C PB', short_title='CODEDCPB', location=self.location)
+        self._booking(prop_1, with_code=False, created_offset=0)
+        self._booking(prop_2, with_code=False, created_offset=10)
+        booking_3 = self._booking(prop_3, with_code=True, created_offset=20)
+        self.assertEqual(resolve_shared_postbox_path(booking_3), 'fallback')
+
+    def test_different_night_at_same_location_not_considered(self):
+        prop_a = Property.objects.create(title='Diff Night A PB', short_title='DIFFAPB', location=self.location)
+        prop_b = Property.objects.create(title='Diff Night B PB', short_title='DIFFBPB', location=self.location)
+        booking_a = self._booking(prop_a, created_offset=0)
+        other_date = self.arrival_date + timedelta(days=1)
+        booking_b = Booking.objects.create(
+            property=prop_b, guest=self.guest, arrival_date=other_date,
+            departure_date=other_date + timedelta(days=3),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Arrival.objects.create(booking=booking_b, self_check_in=True, meet_greet=False)
+        self.assertEqual(resolve_shared_postbox_path(booking_a), 'preferred')
+        self.assertEqual(resolve_shared_postbox_path(booking_b), 'preferred')
 
 
 class BookingManageFAQViewTests(TestCase):

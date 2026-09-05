@@ -23,7 +23,7 @@ from bookings.utils import (
     compute_effective_self_check_in, compute_tourist_tax, extras_summary, guest_counts_by_age,
     mid_stay_clean_window, parsed_arrival_departure_time, parsed_travel_method,
     recalculate_balance_for_party, recalculate_costs_for_party, reservation_retry_url,
-    valid_flight_number,
+    resolve_shared_postbox_path, valid_flight_number,
 )
 from libraries.banking.revolut import Revolut
 
@@ -1955,7 +1955,15 @@ class BookingManageLocationView(View):
     response until BookingSettings.self_check_in_code_reveal_days before arrival - deliberately
     separate from the surrounding self_check_in_instructions prose (always shown once self check-in
     applies at all), so a guest can read the general "how this works" text well ahead of arrival
-    while the actual code value stays hidden until closer to the date."""
+    while the actual code value stays hidden until closer to the date.
+
+    Shared-postbox fork (2026-09-05, Quinta da Barracuda): when the property's Location has one
+    configured (Location.self_check_in_preferred_code non-blank), bookings/utils.py::
+    resolve_shared_postbox_path decides whether this booking gets the Location-level preferred or
+    fallback instructions+code instead of the plain property-level ones - see that function's
+    docstring for the assignment rule. The property's own access codes still show on the fallback
+    path (the guest still needs their own front-door code after the gate fob) but not on the
+    preferred path (the postbox key makes the front-door code irrelevant)."""
     template_name = 'bookings/manage_location.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -1965,26 +1973,33 @@ class BookingManageLocationView(View):
         if not is_paid(booking):
             return redirect('bookings:details', reference=reference)
 
+        location = booking.property.location
         arrival = Arrival.objects.filter(booking=booking).first()
         self_check_in = bool(arrival and arrival.self_check_in)
 
         access_codes = []
         codes_revealed = False
         reveal_days = None
+        postbox_path = None
         if self_check_in:
             reveal_days = BookingSettings.load().self_check_in_code_reveal_days
             days_until_arrival = (booking.arrival_date - timezone.now().date()).days
             codes_revealed = days_until_arrival <= reveal_days
-            access_codes = list(booking.property.access_codes.all())
+            if location is not None and location.self_check_in_preferred_code:
+                postbox_path = resolve_shared_postbox_path(booking)
+            if postbox_path in (None, 'fallback'):
+                access_codes = list(booking.property.access_codes.all())
 
         context = _manage_nav_context(booking, 'location')
         context.update({
-            'booking': booking, 'location': booking.property.location,
+            'booking': booking, 'location': location,
             'self_check_in': self_check_in,
-            'self_check_in_instructions': booking.property.self_check_in_instructions if self_check_in else '',
+            'self_check_in_instructions': booking.property.self_check_in_instructions if (self_check_in and postbox_path is None) else '',
             'access_codes': access_codes,
             'codes_revealed': codes_revealed,
             'code_reveal_days': reveal_days,
+            'postbox_path': postbox_path,
+            'postbox_location': location if postbox_path else None,
         })
         return render(request, self.template_name, context)
 

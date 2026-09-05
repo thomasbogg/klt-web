@@ -2,20 +2,43 @@
 {% if self_check_in %}
 <div class="details-section">
     <h2 class="details-section-title">Self check-in</h2>
-    {% if self_check_in_instructions %}
-    <p class="details-note details-note-left">{{ self_check_in_instructions|linkify }}</p>
+    {% if postbox_path == 'conflict' %}
+    <p class="details-note details-note-left">Your check-in for this stay is self check-in, but there's a scheduling clash with another arrival the same night - please contact us ahead of arrival and we'll sort out access for you.</p>
     {% else %}
-    <p class="details-note details-note-left">Your check-in for this stay is self check-in, but we haven't added the access instructions yet - please contact us ahead of arrival.</p>
-    {% endif %}
-    {% if access_codes %}
-    <ul class="details-list">
-        {% for access_code in access_codes %}
-        <li>
-            <strong>{{ access_code.label }}:</strong>
-            {% if codes_revealed %}{{ access_code.code }}{% else %}Code revealed {{ code_reveal_days }} day{{ code_reveal_days|pluralize }} before your check-in date.{% endif %}
-        </li>
-        {% endfor %}
-    </ul>
+        {% if postbox_path == 'preferred' %}
+        <p class="details-note details-note-left">{{ postbox_location.self_check_in_preferred_instructions|linkify }}</p>
+        {% elif postbox_path == 'fallback' %}
+        <p class="details-note details-note-left">{{ postbox_location.self_check_in_fallback_instructions|linkify }}</p>
+        {% elif self_check_in_instructions %}
+        <p class="details-note details-note-left">{{ self_check_in_instructions|linkify }}</p>
+        {% else %}
+        <p class="details-note details-note-left">Your check-in for this stay is self check-in, but we haven't added the access instructions yet - please contact us ahead of arrival.</p>
+        {% endif %}
+        {% if postbox_path == 'preferred' %}
+        <ul class="details-list">
+            <li>
+                <strong>Postbox key:</strong>
+                {% if codes_revealed %}{{ postbox_location.self_check_in_preferred_code }}{% else %}Code revealed {{ code_reveal_days }} day{{ code_reveal_days|pluralize }} before your check-in date.{% endif %}
+            </li>
+        </ul>
+        {% elif postbox_path == 'fallback' %}
+        <ul class="details-list">
+            <li>
+                <strong>Postbox gate fob:</strong>
+                {% if codes_revealed %}{{ postbox_location.self_check_in_fallback_code }}{% else %}Code revealed {{ code_reveal_days }} day{{ code_reveal_days|pluralize }} before your check-in date.{% endif %}
+            </li>
+        </ul>
+        {% endif %}
+        {% if access_codes %}
+        <ul class="details-list">
+            {% for access_code in access_codes %}
+            <li>
+                <strong>{{ access_code.label }}:</strong>
+                {% if codes_revealed %}{{ access_code.code }}{% else %}Code revealed {{ code_reveal_days }} day{{ code_reveal_days|pluralize }} before your check-in date.{% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
     {% endif %}
 </div>
 {% endif %}
