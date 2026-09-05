@@ -8,7 +8,7 @@
     <title>{{ property }} | Staff</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
-    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=8">
+    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=9">
     <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
     <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
     <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
@@ -201,7 +201,7 @@
                             <h2 class="staff-panel-title">Self check-in access codes</h2>
                             <p class="staff-hint">Kept separate from the instructions above so the code value itself can be withheld from a guest's Manage Booking hub until Settings &gt; Bookings' reveal window is reached - the instructions text still shows throughout.</p>
                             {% for access_code in access_codes %}
-                            <div class="staff-field-row">
+                            <div class="staff-field-row staff-access-code-row">
                                 <span class="staff-field">{{ access_code.label }}: {{ access_code.code }}</span>
                                 <form method="post" class="staff-inline-delete">
                                     {% csrf_token %}

@@ -128,6 +128,14 @@
     gap: 20px;
 }
 
+/* .staff-field-row has no bottom margin of its own (fine everywhere else it's used - a single
+   row, or one immediately followed by a submit button) - stacking several of these access-code
+   rows directly on top of each other left their Delete buttons touching, per Thomas 2026-09-05. */
+.staff-access-code-row {
+    margin-bottom: 10px;
+    align-items: center;
+}
+
 /* Scoped to property-page forms specifically (not .staff-inline-form, which deliberately wants
    the full row width for the iCal/photo add-forms) - stops a lone text input from stretching
    edge-to-edge of a wide pane, the same complaint that motivated the two-column split above.
