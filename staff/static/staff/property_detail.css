@@ -156,7 +156,15 @@
    2026-09-05: same field-row-grid shape as Amenities/SEF, and capping it while its neighbour card
    below (Self check-in access codes, which needs its full width for the one-row add form) isn't
    capped left the two stacked right-column cards' visible content ending at very different
-   widths - caught live by Thomas. */
+   widths - caught live by Thomas.
+
+   The first attempt at that exemption (a bare `.staff-property-specification-form` class) never
+   actually took effect - a single-class selector (0,1,0) is lower specificity than this rule's
+   own `.staff-property-content .staff-form` (0,2,0), so the 480px cap kept silently winning
+   regardless of source order. `#pane-main .staff-property-specification-form` below matches the
+   ID-scoped pattern the other three exemptions already use, which is what actually gives them
+   enough specificity to win - same CSS-specificity-gotcha shape as this project's `.owner-*`
+   incidents (a component's own single class losing to a container-level selector). */
 .staff-property-content .staff-form {
     max-width: 480px;
 }
@@ -164,7 +172,7 @@
 #pane-amenities .staff-form,
 #pane-sef .staff-form,
 #pane-ownership .staff-form,
-.staff-property-specification-form {
+#pane-main .staff-property-specification-form {
     max-width: none;
 }
 
