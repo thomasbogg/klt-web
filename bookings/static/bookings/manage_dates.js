@@ -47,6 +47,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     endPicker.dates.addEventListener('dateselected', () => endPicker.close());
 
+    // Same price-change-overlay pattern as guest_list.js: "Edit dates" just dismisses the
+    // overlay so the guest can see/change the picker fields underneath it again - a plain <button
+    // type="button">, not a submit, so it never posts anything itself.
+    const priceChangeOverlay = document.getElementById('price-change-overlay');
+    const priceChangeEditButton = document.getElementById('price-change-edit');
+    if (priceChangeEditButton && priceChangeOverlay) {
+        priceChangeEditButton.addEventListener('click', () => priceChangeOverlay.remove());
+    }
+
+    // Any date change after a price-change warning is shown invalidates it - same reasoning as
+    // guest_list.js's own input listener (the guest must resubmit to see a fresh recalculation).
+    if (priceChangeOverlay) {
+        startPicker.dates.addEventListener('dateselected', () => priceChangeOverlay.classList.add('price-change-stale'));
+        endPicker.dates.addEventListener('dateselected', () => priceChangeOverlay.classList.add('price-change-stale'));
+    }
+
     form.addEventListener('submit', (e) => {
         const start = startPicker.value;
         const end = endPicker.value;

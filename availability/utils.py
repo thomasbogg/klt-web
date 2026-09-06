@@ -1,7 +1,7 @@
 import calendar as calendar_module
 from datetime import date, datetime
 
-from bookings.models import Booking, BookingSettings
+from bookings.models import Booking, BookingSettings, SupplementaryPayment
 from env_settings import PROVISIONAL_BOOKING_STATUSES, VALID_BOOKING_STATUSES
 from properties.models import Location, Property, PropertySpec
 
@@ -76,6 +76,14 @@ def get_property_calendar(property, months=12, start=None, mine_range=None):
         (booking.arrival_date, booking.departure_date)
         for booking in bookings if booking.enquiry_status in PROVISIONAL_BOOKING_STATUSES
     ]
+    # A pending date-change's requested new dates hold the calendar the same way a not-yet-paid
+    # new reservation does (see SupplementaryPayment.hold_expires_at's own docstring) - folded into
+    # the same 'provisional' bucket rather than a distinct status, since both mean the same thing
+    # to a browsing guest: not certain yet, but not open either.
+    provisional_ranges += list(
+        SupplementaryPayment.objects.overlapping_dates(property, range_start, range_end)
+        .values_list('new_arrival_date', 'new_departure_date')
+    )
 
     def status_for(day):
         if mine_range and mine_range[0] <= day < mine_range[1]:

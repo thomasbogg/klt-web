@@ -395,6 +395,22 @@ class Booking(models.Model):
             if overlap:
                 message = f"These dates overlap an existing booking ({overlap.arrival_date} to {overlap.departure_date})."
                 raise ValidationError({'arrival_date': message, 'departure_date': message})
+            # Also respects another booking's in-flight date-change request - see
+            # SupplementaryPayment.hold_expires_at's own docstring. This is the one central
+            # validation every booking-creation path (create_booking(), create_owner_booking(),
+            # staff booking edits) already funnels through via full_clean(), so extending it here
+            # protects all of them for free, the same way the overlap check above already does -
+            # BookingManageDatesView's own pre-check (a friendlier guest-facing error, before this
+            # booking's own row is even touched) is a separate, earlier check, not a replacement.
+            held = SupplementaryPayment.objects.overlapping_dates(
+                self.property_id, self.arrival_date, self.departure_date,
+            ).exclude(booking_id=self.pk).first()
+            if held:
+                message = (
+                    f"These dates are on hold pending another guest's payment "
+                    f"({held.new_arrival_date} to {held.new_departure_date})."
+                )
+                raise ValidationError({'arrival_date': message, 'departure_date': message})
         # The guest-facing party-size flow (bookings/views.py) already enforces this before it ever
         # constructs/saves a Booking, so this only actually bites on the staff edit path (which
         # otherwise had no cap at all - see staff/views.py::_update_booking) - kept here rather than
@@ -1525,6 +1541,30 @@ SUPPLEMENTARY_PAYMENT_KIND_CHOICES = (
 )
 
 
+class SupplementaryPaymentQuerySet(models.QuerySet):
+    def holding_dates(self):
+        """date_change payments whose hold on their requested new dates hasn't expired -
+        BookingQuerySet.holding()'s counterpart for a pending date change rather than a pending
+        new reservation. guest_add rows (hold_expires_at always null) never match."""
+        return self.filter(
+            kind='date_change', status__in=('pending', 'in_progress'),
+            hold_expires_at__gt=timezone.now(),
+        )
+
+    def overlapping_dates(self, property, start_date, end_date):
+        """Other bookings' held date-change requests that overlap the given range - the
+        SupplementaryPayment-side half of an availability check, alongside
+        BookingQuerySet.overlapping() for actual booking rows. Deliberately doesn't take an
+        exclude_booking param the way that method takes exclude(pk=...): a booking is only ever
+        allowed one pending date_change at a time (see BookingManageDatesView), so there's nothing
+        of its own for a fresh request from the same booking to collide with by the time this
+        runs."""
+        return self.holding_dates().filter(
+            booking__property_id=getattr(property, 'pk', property),
+            new_arrival_date__lt=end_date, new_departure_date__gt=start_date,
+        )
+
+
 class SupplementaryPayment(models.Model):
     """An on-demand top-up payment for a booking that's already fully paid (see
     bookings/views.py::is_fully_paid()), covering the two cases where an already-settled Charge
@@ -1540,19 +1580,36 @@ class SupplementaryPayment(models.Model):
     pending_charge_fields to write onto Charge; kind='guest_add' stages pending_guest_rows (the
     same first_name/last_name/age dicts BookingManageGuestAddView's _parse_rows() already
     produces). Neither the Booking/Charge nor the guest list are touched until this is marked
-    paid - see apply(). applied_at is kept distinct from paid_at to cover
-    the rare case where the requested dates were taken by someone else between payment and
-    application; that's flagged for staff rather than modelled as a full second inventory-hold
-    system, given how small the actual race window/business is.
+    paid - see apply(). applied_at is kept distinct from paid_at to cover the rare case where the
+    requested dates were taken by someone else between payment and application (still possible in
+    principle - hold_expires_at only protects the window up to and including payment, see below);
+    that's flagged for staff rather than auto-resolved.
+
+    kind='date_change' also holds the requested new_arrival_date/new_departure_date against other
+    guests while payment is pending - see hold_expires_at below and
+    BookingQuerySet.overlapping()'s counterpart, SupplementaryPaymentQuerySet.overlapping_dates() -
+    the same role Booking.hold_expires_at plays for a brand-new reservation's own dates
+    (bookings/utils.py::compute_initial_hold_expiry(), shared by both).
 
     Like Payment/BalancePayment, this is wired for the same Revolut-webhook confirmation via
-    klt-hooks - see register_revolut_supplementary_payment_webhook - and shares that pipeline's
-    current dormant status (see [[project_klt_web_balance_payment]] in memory) until it's all
-    switched on together."""
+    klt-hooks (postgres_bookings.py's mark_supplementary_payment_* trio, dispatched from the same
+    single booking-deposit-callback webhook subscription the deposit/balance/tourist-tax events
+    already share - no separate registration needed) and shares that pipeline's current dormant
+    status (see [[project_klt_web_balance_payment]] in memory) until it's all switched on
+    together."""
+    objects = SupplementaryPaymentQuerySet.as_manager()
+
     booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='supplementary_payments')
     kind = models.CharField(max_length=20, choices=SUPPLEMENTARY_PAYMENT_KIND_CHOICES)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
+
+    # kind='date_change' only - see SupplementaryPaymentQuerySet.holding_dates()/overlapping_dates().
+    # Computed the same way Booking.hold_expires_at is for a brand-new reservation (see
+    # bookings/utils.py::compute_initial_hold_expiry()) and extended the same way too, via
+    # klt-hooks' mark_supplementary_payment_in_progress()/_authenticated() mirroring
+    # mark_payment_in_progress()/_authenticated().
+    hold_expires_at = models.DateTimeField(blank=True, null=True)
 
     provider = models.CharField(max_length=10, choices=PROVIDER_CHOICES)
     status = models.CharField(max_length=15, choices=PAYMENT_STATUS_CHOICES, default='pending')

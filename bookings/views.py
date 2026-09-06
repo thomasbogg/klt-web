@@ -22,10 +22,11 @@ from bookings.models import (
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, append_guest_rows, booking_confirmation_context, cancel_booking_hold,
-    compute_effective_self_check_in, compute_tourist_tax, determine_payment_provider, extras_summary,
-    guest_counts_by_age, mid_stay_clean_window, parsed_arrival_departure_time, parsed_travel_method,
-    recalculate_balance_for_party, recalculate_costs_for_dates, recalculate_costs_for_party,
-    reservation_retry_url, resolve_shared_postbox_path, valid_flight_number,
+    compute_effective_self_check_in, compute_initial_hold_expiry, compute_tourist_tax,
+    determine_payment_provider, extras_summary, guest_counts_by_age, mid_stay_clean_window,
+    parsed_arrival_departure_time, parsed_travel_method, recalculate_balance_for_party,
+    recalculate_costs_for_dates, recalculate_costs_for_party, reservation_retry_url,
+    resolve_shared_postbox_path, valid_flight_number,
 )
 from availability.utils import date_string_to_date, get_property_calendar
 from libraries.banking.revolut import Revolut
@@ -1510,9 +1511,24 @@ class BookingManageDatesView(View):
         if new_arrival < timezone.now().date():
             return error("Check-in can't be in the past.")
 
+        # Checked before the overlap conflict check below (which would otherwise self-conflict
+        # against this booking's own hold) - a booking only ever has one pending date_change at a
+        # time; a second submission while one's already in flight goes straight back to paying for
+        # it, not through a fresh availability check for (possibly overlapping) new dates.
+        existing_payment = SupplementaryPayment.objects.filter(
+            booking=booking, kind='date_change', status__in=('pending', 'in_progress'),
+            hold_expires_at__gt=timezone.now(),
+        ).first()
+        if existing_payment is not None:
+            return redirect(
+                'bookings:manage_supplementary_pay', reference=booking.reference, payment_id=existing_payment.pk,
+            )
+
         conflict = Booking.objects.overlapping(
             booking.property, new_arrival, new_departure,
-        ).exclude(pk=booking.pk).exists()
+        ).exclude(pk=booking.pk).exists() or SupplementaryPayment.objects.overlapping_dates(
+            booking.property, new_arrival, new_departure,
+        ).exists()
         if conflict:
             return error("Those dates aren't available for this property - please choose another range.")
 
@@ -1560,16 +1576,16 @@ class BookingManageDatesView(View):
             context['old_charge'] = charge
             context['new_costs'] = new_costs
             context['price_diff'] = price_diff
-            context['pending_dates'] = {'arrival': arrival_raw, 'departure': departure_raw}
             context.update(self._calendar_context(booking))
             return render(request, self.template_name, context)
 
         pay_amount, pay_currency = (
             (charge.to_gbp(price_diff), 'GBP') if charge.currency == 'GBP' else (price_diff, 'EUR')
         )
+        provider, hold_expires_at = compute_initial_hold_expiry(new_arrival, BookingSettings.load())
         payment = SupplementaryPayment.objects.create(
             booking=booking, kind='date_change', amount=pay_amount, currency=pay_currency,
-            provider=determine_payment_provider(new_arrival),
+            provider=provider, hold_expires_at=hold_expires_at,
             new_arrival_date=new_arrival, new_departure_date=new_departure,
             pending_charge_fields={
                 'basic_rental': new_costs['basic_rental'],

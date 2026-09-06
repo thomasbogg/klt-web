@@ -18,13 +18,14 @@ from bookings.payouts import compute_owner_payout
 from staff.models import OwnerPayment
 from bookings.utils import (
     add_business_days, apply_supplementary_payment, compute_deposit_waiver,
-    compute_effective_self_check_in, compute_tourist_tax, create_booking, create_owner_booking,
-    determine_payment_provider, expire_stale_holds, extras_summary, guest_counts_by_age,
-    guest_for_owner, has_completed_previous_stay, payment_clearing_expiry,
+    compute_effective_self_check_in, compute_initial_hold_expiry, compute_tourist_tax, create_booking,
+    create_owner_booking, determine_payment_provider, expire_stale_holds, extras_summary,
+    guest_counts_by_age, guest_for_owner, has_completed_previous_stay, payment_clearing_expiry,
     recalculate_balance_for_party, recalculate_costs_for_dates, recalculate_costs_for_party,
     resolve_shared_postbox_path, sync_ical_link,
 )
 from bookings.templatetags.bookings_extras import linkify
+from availability.utils import get_property_calendar
 from guests.models import Guest
 from properties.models import (
     Amenity, Location, LocationRules, ManagementCompany, Owner, Platform, Price, Property,
@@ -5133,6 +5134,80 @@ class BookingManageDatesViewTests(TestCase):
         self.assertEqual(self.booking.arrival_date, self.start)  # unchanged until paid
         self.charge.refresh_from_db()
         self.assertEqual(self.charge.basic_rental, Decimal('700.00'))  # unchanged until paid
+
+        # Revolut-path (self.start is well outside WISE_MONTHS) - a flat 20-minute initial hold.
+        self.assertIsNotNone(payment.hold_expires_at)
+        self.assertLess(abs((payment.hold_expires_at - timezone.now()).total_seconds() - 20 * 60), 5)
+
+    def test_confirmed_price_increase_holds_the_new_dates_against_other_bookings(self):
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        new_start = self.start + timedelta(days=10)
+        new_end = new_start + timedelta(days=14)
+        self._post(new_start, new_end, confirmed=True)
+        self.assertEqual(SupplementaryPayment.objects.count(), 1)
+
+        # A different guest trying to book (part of) those same held dates on this property.
+        other_guest = Guest.objects.create(first_name='Other', last_name='Guest', email='other-hold-md@example.com')
+        conflicting = Booking(
+            property=self.property, guest=other_guest,
+            arrival_date=new_start + timedelta(days=2), departure_date=new_start + timedelta(days=9),
+            is_owner=False, enquiry_status='Awaiting payment', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        with self.assertRaises(ValidationError):
+            conflicting.full_clean()
+
+    def test_resubmitting_with_a_pending_payment_redirects_to_the_existing_one(self):
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        new_start = self.start + timedelta(days=10)
+        new_end = new_start + timedelta(days=14)
+        self._post(new_start, new_end, confirmed=True)
+        payment = SupplementaryPayment.objects.get()
+
+        # Same guest submits again (e.g. double-click, or picks slightly different dates) while
+        # the first is still pending - sent back to the existing checkout, no second payment/hold.
+        response = self._post(new_start + timedelta(days=1), new_end + timedelta(days=1), confirmed=True)
+        self.assertEqual(SupplementaryPayment.objects.count(), 1)
+        self.assertRedirects(
+            response,
+            reverse('bookings:manage_supplementary_pay', kwargs={'reference': self.booking.reference, 'payment_id': payment.pk}),
+            fetch_redirect_response=False,
+        )
+
+    def test_expired_hold_is_treated_as_stale_and_a_fresh_payment_is_created(self):
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        new_start = self.start + timedelta(days=10)
+        new_end = new_start + timedelta(days=14)
+        self._post(new_start, new_end, confirmed=True)
+        stale_payment = SupplementaryPayment.objects.get()
+        stale_payment.hold_expires_at = timezone.now() - timedelta(minutes=1)
+        stale_payment.save(update_fields=['hold_expires_at'])
+
+        response = self._post(new_start, new_end, confirmed=True)
+        self.assertEqual(SupplementaryPayment.objects.count(), 2)
+        fresh_payment = SupplementaryPayment.objects.exclude(pk=stale_payment.pk).get()
+        self.assertRedirects(
+            response,
+            reverse('bookings:manage_supplementary_pay', kwargs={'reference': self.booking.reference, 'payment_id': fresh_payment.pk}),
+            fetch_redirect_response=False,
+        )
+
+    def test_property_calendar_shows_a_pending_date_change_hold_as_provisional(self):
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+        new_start = self.start + timedelta(days=10)
+        new_end = new_start + timedelta(days=14)
+        self._post(new_start, new_end, confirmed=True)
+
+        months = get_property_calendar(self.property, start=new_start)
+        day_cell = next(
+            cell for week in months[0]['weeks'] for cell in week
+            if cell and cell['day'] == new_start.day
+        )
+        self.assertEqual(day_cell['status'], 'provisional')
 
     def test_paying_date_change_supplementary_payment_applies_new_dates(self):
         self.balance_payment.status = 'paid'

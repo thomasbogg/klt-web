@@ -88,6 +88,24 @@ def payment_clearing_expiry(now, booking_settings):
     return add_business_days(now, booking_settings.payment_clearing_business_days)
 
 
+def compute_initial_hold_expiry(arrival_date, booking_settings, now=None):
+    """(provider, hold_expires_at) for a brand-new hold on `arrival_date`, decided by
+    determine_payment_provider() - Wise-path bookings get the full payment-clearing window
+    immediately (no in-progress signal to react to later), Revolut-path bookings get a short flat
+    window that klt-hooks extends as payment events arrive (mark_payment_in_progress/
+    _authenticated, and their SupplementaryPayment mirrors). Shared by create_booking() (a new
+    reservation's own Booking.hold_expires_at) and BookingManageDatesView (a pending date change's
+    SupplementaryPayment.hold_expires_at) - same rules, same reasoning, two different things being
+    held."""
+    now = now or timezone.now()
+    provider = determine_payment_provider(arrival_date)
+    if provider == 'wise':
+        hold_expires_at = payment_clearing_expiry(now, booking_settings)
+    else:
+        hold_expires_at = now + timedelta(minutes=booking_settings.revolut_hold_minutes)
+    return provider, hold_expires_at
+
+
 def create_booking(property, guest_data, start_date, end_date, guests, currency='EUR',
                     enquiry_source='Website', manual_discount_percent=None, manual_discount_reason=''):
     """Create the Guest (if new), Booking, and locked-in Charge for a reservation, all-or-nothing.
@@ -141,11 +159,7 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
         rental_total = pricing['basic_total'] - discount_total + pricing['extra_guest_total']
         costs = booking_settings.compute_costs(rental_total, arrival_date=start_date)
 
-        provider = determine_payment_provider(start_date)
-        if provider == 'wise':
-            hold_expires_at = payment_clearing_expiry(timezone.now(), booking_settings)
-        else:
-            hold_expires_at = timezone.now() + timedelta(minutes=booking_settings.revolut_hold_minutes)
+        provider, hold_expires_at = compute_initial_hold_expiry(start_date, booking_settings)
 
         booking = Booking(
             property=property,
