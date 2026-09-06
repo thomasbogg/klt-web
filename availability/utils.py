@@ -41,13 +41,18 @@ def full_toolbar_context(start_date=None, end_date=None, guests=None):
     }
 
 
-def get_property_calendar(property, months=12, start=None):
+def get_property_calendar(property, months=12, start=None, mine_range=None):
     """Build a month-by-month availability grid for a property.
 
     Returns a list of dicts, one per month, each with a 'label' and
     'weeks' (Monday-first, padded with None for days outside the month).
     Each day cell is a dict with 'day', 'status'
-    ('past'/'available'/'provisional'/'booked') and 'is_today'.
+    ('past'/'available'/'provisional'/'booked'/'mine') and 'is_today'.
+
+    mine_range, if given, is an (arrival_date, departure_date) tuple (departure exclusive) that
+    takes priority over booked/provisional - a guest viewing their own stay's dates on
+    BookingManageDatesView (see bookings/views.py) should see it called out distinctly from a
+    generic 'booked' day, even though it's the exact same underlying Booking row.
     """
     start = start or date.today()
     range_start = date(start.year, start.month, 1)
@@ -73,6 +78,8 @@ def get_property_calendar(property, months=12, start=None):
     ]
 
     def status_for(day):
+        if mine_range and mine_range[0] <= day < mine_range[1]:
+            return 'mine'
         if any(arrival <= day < departure for arrival, departure in booked_ranges):
             return 'booked'
         if any(arrival <= day < departure for arrival, departure in provisional_ranges):

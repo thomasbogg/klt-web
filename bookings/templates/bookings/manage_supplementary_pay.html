@@ -1,0 +1,64 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% if payment.kind == 'date_change' %}Pay for New Dates{% else %}Pay for Added Guest(s){% endif %} {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="confirmation-page">
+        {% if payment.kind == 'date_change' %}
+        <h1>Pay for your new dates</h1>
+        <p class="details-note details-note-left">Your balance is already paid, so this covers just the extra cost of your new dates. Your booking will be updated to the new dates as soon as this is paid.</p>
+        {% else %}
+        <h1>Pay for the added guest(s)</h1>
+        <p class="details-note details-note-left">Your balance is already paid, so this covers just the extra cost of the guest(s) you're adding. They'll be added to your booking as soon as this is paid.</p>
+        {% endif %}
+
+        <div class="confirmation-reference">
+            <span class="confirmation-reference-label">Booking Reference</span>
+            <span class="confirmation-reference-value">{{ booking.reference }}</span>
+        </div>
+
+        <div class="pay-amount">
+            <span class="pay-amount-label">Amount due now</span>
+            <span class="pay-amount-value">{% if pay_currency == 'GBP' %}&pound;{% else %}&euro;{% endif %}{{ pay_amount|floatformat:2 }}</span>
+        </div>
+
+        {% if payment_error %}
+        <div class="reserve-form-errors">
+            <p>We couldn't set up card payment just now. Please reload this page to try again.</p>
+        </div>
+
+        {% elif payment.provider == 'revolut' %}
+        <a class="reserve-form-submit pay-button" href="{{ payment.revolut_checkout_url }}">Pay now</a>
+        <p class="pay-instructions">Opens Revolut's secure checkout, where you can pay by card or bank transfer in {{ pay_currency }}.</p>
+
+        {% else %}
+        <div class="pay-wise-panel">
+            <p class="pay-instructions pay-instructions-lead">
+                Our Wise payment page lets you enter these details yourself. Before clicking the button below (it opens in a new tab), note:
+            </p>
+            <ol class="pay-steps">
+                <li>Enter the amount: <strong>{% if pay_currency == 'GBP' %}&pound;{% else %}&euro;{% endif %}{{ pay_amount|floatformat:2 }}</strong></li>
+                <li>Select <strong>{{ pay_currency }}</strong> as the currency</li>
+                <li>Enter the reference: <strong>{{ booking.reference }}</strong></li>
+            </ol>
+            <a class="reserve-form-submit pay-button" href="{{ wise_payment_link }}" target="_blank" rel="noopener">Pay via Wise</a>
+        </div>
+        {% endif %}
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

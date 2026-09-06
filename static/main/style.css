@@ -23,6 +23,8 @@
     --status-booked-color: #c1554f;
     --status-provisional-bg: var(--secondary-color-soft);
     --status-provisional-color: var(--secondary-color);
+    --status-mine-bg: #ece3f7;
+    --status-mine-color: #6b3fa0;
 }
 
 body {

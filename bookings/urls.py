@@ -18,6 +18,11 @@ urlpatterns = [
     path('<str:reference>/manage/guests/add/', views.BookingManageGuestAddView.as_view(), name='manage_hub_guest_add'),
     path('<str:reference>/manage/guests/remove/', views.BookingManageGuestRemoveView.as_view(), name='manage_hub_guest_remove'),
     path('<str:reference>/manage/arrival-departure/', views.BookingManageArrivalDepartureView.as_view(), name='manage_arrival_departure'),
+    path('<str:reference>/manage/dates/', views.BookingManageDatesView.as_view(), name='manage_dates'),
+    path(
+        '<str:reference>/manage/supplementary-payment/<int:payment_id>/',
+        views.BookingManageSupplementaryPaymentView.as_view(), name='manage_supplementary_pay',
+    ),
     path('<str:reference>/manage/extras/', views.BookingManageExtrasView.as_view(), name='manage_extras'),
     path(
         '<str:reference>/manage/guest-registrations/',

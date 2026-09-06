@@ -24,6 +24,11 @@ export class Datepicker extends Picker {
         this.todaysDate = this.#simplifyDate(new Date());
         this._disableBefore = this.#simplifyDate(disableBefore);
         this._disableAfter = this.#simplifyDate(disableAfter);
+        // Arbitrary already-occupied ranges (e.g. another guest's stay), on top of the
+        // before/after bounds above - [{start: Date, end: Date}, ...], end exclusive (matches
+        // Booking.arrival_date/departure_date semantics: the departure day itself is free).
+        // Empty by default so every existing caller (the search toolbar) is unaffected.
+        this._disabledRanges = [];
 
         // handle next month nav
         this.nextBtn.addEventListener('click', () => this.goToNextMonth());
@@ -70,6 +75,16 @@ export class Datepicker extends Picker {
 
     set disableAfter(value){
         this._disableAfter = this.#simplifyDate(value);
+    }
+
+    get disabledRanges(){
+        return this._disabledRanges;
+    }
+
+    set disabledRanges(ranges){
+        this._disabledRanges = (ranges || []).map(({start, end}) => ({
+            start: this.#simplifyDate(start), end: this.#simplifyDate(end),
+        }));
     }
 
     // render the dates in the calendar interface
@@ -193,19 +208,13 @@ export class Datepicker extends Picker {
     
     shouldBeDisabled(i){
         const date = new Date(this.year, this.month, i);
-    
-        // if disableBefore is set to a date not check if is prior date
-        if (this._disableBefore){
-            return date.valueOf() < this._disableBefore.valueOf()
-        }
 
-        // if disableAfter is set to a date not check if is posterior date
-        if (this._disableAfter){
-            return date.valueOf() > this._disableAfter.valueOf()
-        }
-        
-        return (
-            date.valueOf() < this.todaysDate.valueOf()
+        if (this._disableBefore && date.valueOf() < this._disableBefore.valueOf()) return true;
+        if (this._disableAfter && date.valueOf() > this._disableAfter.valueOf()) return true;
+        if (!this._disableBefore && !this._disableAfter && date.valueOf() < this.todaysDate.valueOf()) return true;
+
+        return this._disabledRanges.some(
+            ({start, end}) => date.valueOf() >= start.valueOf() && date.valueOf() < end.valueOf()
         );
     }
 

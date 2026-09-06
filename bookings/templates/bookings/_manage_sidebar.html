@@ -18,6 +18,10 @@ bookings.css's .manage-hub-nav-group-label.
        href="{% url 'bookings:manage_guests' reference=booking.reference %}">Guest List</a>
     <a class="manage-hub-nav-link{% if active_section == 'arrival_departure' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_arrival_departure' reference=booking.reference %}">Arrival &amp; Departure</a>
+    {% if show_edit_dates %}
+    <a class="manage-hub-nav-link{% if active_section == 'dates' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'bookings:manage_dates' reference=booking.reference %}">Edit Dates</a>
+    {% endif %}
     <a class="manage-hub-nav-link{% if active_section == 'extras' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_extras' reference=booking.reference %}">Optional Extras</a>
     <a class="manage-hub-nav-link{% if active_section == 'guest_registrations' %} manage-hub-nav-link-active{% endif %}"

@@ -44,6 +44,11 @@
     border: 1px solid var(--status-booked-color);
 }
 
+.availability-calendar-swatch.mine {
+    background: var(--status-mine-bg);
+    border: 1px solid var(--status-mine-color);
+}
+
 .availability-calendar-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -118,6 +123,12 @@
 .availability-day.booked {
     background: var(--status-booked-bg);
     color: var(--status-booked-color);
+}
+
+.availability-day.mine {
+    background: var(--status-mine-bg);
+    color: var(--status-mine-color);
+    font-weight: 700;
 }
 
 .availability-day.today {

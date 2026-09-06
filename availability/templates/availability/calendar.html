@@ -9,6 +9,11 @@
         <span class="availability-calendar-legend-item">
             <span class="availability-calendar-swatch booked"></span>Booked
         </span>
+        {% if mine_legend_label %}
+        <span class="availability-calendar-legend-item">
+            <span class="availability-calendar-swatch mine"></span>{{ mine_legend_label }}
+        </span>
+        {% endif %}
     </div>
 
     <div class="availability-calendar-grid">
