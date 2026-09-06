@@ -582,8 +582,20 @@ def compute_deposit_waiver(booking):
 
 
 def booking_confirmation_context(booking):
-    """Display context shared by the post-booking redirect and the manage-lookup success state."""
-    charge = booking.charges
+    """Display context shared by the post-booking redirect and the manage-lookup success state.
+
+    charge can be genuinely absent (getattr, not booking.charges directly) - an owner booking
+    (create_owner_booking()'s own docstring: "there's no pricing/Charge/Payment at all - an owner
+    stay is never [charged]", by deliberate design, not a gap to fill) never gets one. has_cost_data
+    is False for that case, and separately whenever a real Charge row exists but was never priced
+    (charge.total_rental is None - only possible before 2026-09-06 for a booking sync_ical_link()
+    created without a Charge at all; every new one gets a bare Charge now, see that function). In
+    both cases there is nothing genuine to show as a cost breakdown, so the template hides that
+    section entirely rather than display misleading €0.00 figures - see is_paid()/is_balance_paid()
+    for the same "nothing tracked here" philosophy applied to the Payment/BalancePayment side."""
+    from properties.models import Platform
+
+    charge = getattr(booking, 'charges', None)
     balance_payment = getattr(booking, 'balance_payment', None)
     cancelled = booking.enquiry_status == 'Cancelled by guest'  # mirrors views.py::is_cancelled()
     # Deliberately keyed off the BalancePayment's own paid status, not 'balance_due' below - a
@@ -592,28 +604,59 @@ def booking_confirmation_context(booking):
     # the Pay Balance button on a stay there's nothing left to buy toward), which would otherwise
     # double-count due_at_balance into 'Paid' for a cancelled-but-never-paid booking.
     balance_paid = balance_payment is not None and balance_payment.status == 'paid'
-    subtotal = charge.total_rental + charge.admin
-    if charge.due_at_booking is None:
-        # No deposit/balance split was ever computed for this Charge - a platform-synced booking
-        # (payment happens on Airbnb/Booking.com/Vrbo itself, never through klt-web - see
-        # sync_ical_link()'s Booking creation, which never touches Charge at all) or one migrated
-        # from the legacy klt_main.db (migrate_klt_data.py::migrate_charges(), which has no
-        # equivalent legacy column to migrate this from). is_paid()/is_balance_paid() already
-        # treat a missing Payment/BalancePayment row the same way - "nothing tracked here, so
-        # nothing outstanding" - so paid_amount follows the same logic rather than crashing on
-        # None arithmetic or falsely showing this class of booking as having paid nothing.
-        paid_amount = subtotal
-    else:
-        paid_amount = charge.due_at_booking + (charge.due_at_balance if balance_paid else 0)
+    has_cost_data = charge is not None and charge.total_rental is not None
+    subtotal = paid_amount = None
+    if has_cost_data:
+        subtotal = charge.total_rental + charge.admin
+        if charge.due_at_booking is None:
+            # No deposit/balance split was ever computed for this Charge - a platform-synced
+            # booking (payment happens on Airbnb/Booking.com/Vrbo itself, never through klt-web)
+            # or one migrated from the legacy klt_main.db (migrate_klt_data.py::migrate_charges(),
+            # which has no equivalent legacy column to migrate this from). is_paid()/
+            # is_balance_paid() already treat a missing Payment/BalancePayment row the same way -
+            # "nothing tracked here, so nothing outstanding" - so paid_amount follows the same
+            # logic rather than crashing on None arithmetic or falsely showing this class of
+            # booking as having paid nothing.
+            paid_amount = subtotal
+        else:
+            paid_amount = charge.due_at_booking + (charge.due_at_balance if balance_paid else 0)
+
+    # "Platform reference" (Airbnb's e.g. HMXXXXXXXX, Vrbo's HA-XXXXXXX, Booking.com's numeric
+    # confirmation code) - Booking.platform_id, populated for legacy-migrated bookings only so far
+    # (migrate_klt_data.py) - '0' is that legacy source's own placeholder for "none", not a real
+    # value. Shown alongside the internal Booking Reference only for an actual platform booking
+    # (2026-09-06, per Thomas), never a Direct/Website one even if platform_id somehow holds
+    # leftover placeholder data (confirmed some Direct rows do, from the legacy migration).
+    platform = Platform.objects.filter(name=booking.enquiry_source).first()
+    is_platform_booking = platform is not None
+    platform_reference = booking.platform_id if (
+        is_platform_booking and booking.platform_id and booking.platform_id != '0'
+    ) else None
+    # A platform booking's payment breakdown - even the legacy-migrated figures some of them
+    # happen to have - is never shown (2026-09-06, per Thomas: "the guest will find the most
+    # accurate information about that directly on the platform"), regardless of has_cost_data.
+    show_cost_breakdown = has_cost_data and not is_platform_booking
+    # Security deposit is otherwise independent of show_cost_breakdown above - an Algarve Beach
+    # Apartments cash-at-check-in policy, not something the platform manages, so it stays relevant
+    # for a platform booking whose platform DOES take its own security deposits (same
+    # Platform.take_security_deposits flag compute_deposit_waiver() already reads). But when the
+    # platform doesn't take deposits at all, this row would only ever read "Not required" - not
+    # wrong, but confusing noise (2026-09-06, per Thomas: guests were asking about it) - so the
+    # whole row is hidden rather than shown as a flat "no" for a policy that was never in play.
+    show_security_deposit_row = platform is None or platform.take_security_deposits
+
     return {
         'booking': booking,
         'charge': charge,
+        'has_cost_data': has_cost_data,
+        'show_cost_breakdown': show_cost_breakdown,
+        'show_security_deposit_row': show_security_deposit_row,
         'subtotal': subtotal,
         'nights': (booking.departure_date - booking.arrival_date).days,
-        'costs_gbp': charge.costs_in_gbp(),
+        'costs_gbp': charge.costs_in_gbp() if has_cost_data else None,
         'cancelled': cancelled,
         'paid_amount': paid_amount,
-        'paid_amount_gbp': charge.to_gbp(paid_amount),
+        'paid_amount_gbp': charge.to_gbp(paid_amount) if has_cost_data else None,
         # Self-serve entry point into the balance flow, for a guest who wants to pay early or lost
         # a manually-sent link (no automated reminder email yet - see BalancePayment's docstring).
         # Excludes a cancelled booking - there's nothing to pay toward a cancelled stay, even if
@@ -621,7 +664,8 @@ def booking_confirmation_context(booking):
         'balance_due': balance_payment is not None and balance_payment.status != 'paid' and not cancelled,
         # Charge.security is the actual source of truth for what's owed (see its own docstring,
         # bookings/models.py) - not recomputed here, just read directly.
-        'deposit_due': bool(charge.security),
+        'deposit_due': bool(charge.security) if charge is not None else False,
+        'platform_reference': platform_reference,
     }
 
 
@@ -660,7 +704,7 @@ def sync_ical_link(link, ics_text):
     outcome, since it was never a real stay."""
     from icalendar import Calendar
 
-    from bookings.models import Arrival, Booking, Departure
+    from bookings.models import Arrival, Booking, Charge, Departure
     from guests.models import Guest
 
     summary = {
@@ -758,6 +802,15 @@ def sync_ical_link(link, ics_text):
             meet_greet=True,
         )
         Departure.objects.create(booking=booking, clean=True)
+        # Every Booking needs a Charge row to exist (booking_confirmation_context() above reads it
+        # via a defensive getattr, but that's a fallback for the deliberately-Charge-less owner-
+        # booking case, not something to lean on here too) - left otherwise bare (no basic_rental/
+        # due_at_booking/etc.) since an iCal feed carries no pricing data at all and payment
+        # happens on the platform itself, never through klt-web. Its absence used to be tolerated
+        # by accident rather than design - found live 2026-09-06 when a real guest hit a 500
+        # visiting their own Manage Booking hub - so it's created unconditionally now rather than
+        # leaving every future platform-synced booking to keep depending on that same fallback.
+        Charge.objects.create(booking=booking, currency='EUR')
         summary['created'] += 1
         summary['events'].append(
             {'uid': uid, 'start': start, 'end': end, 'result': 'created', 'booking': booking}

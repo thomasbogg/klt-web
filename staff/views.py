@@ -1879,6 +1879,7 @@ class StaffPropertyDetailView(View):
         if fee is not None:
             property.standard_cleaning_fee = fee
         property.self_check_in_instructions = post.get('self_check_in_instructions', '').strip()
+        property.in_person_check_in_instructions = post.get('in_person_check_in_instructions', '').strip()
         try:
             property.full_clean()
         except ValidationError as error:

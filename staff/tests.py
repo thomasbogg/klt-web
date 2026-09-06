@@ -2555,6 +2555,7 @@ class StaffPropertyDetailViewTests(TestCase):
             'booking_company': self.management_company.pk,
             'standard_cleaning_fee': '90.00',
             'self_check_in_instructions': 'Key safe code: 4821.',
+            'in_person_check_in_instructions': 'Call us on +351 912 345 678.',
         })
         self.assertRedirects(response, f'{self.url}?panel=main')
         self.property.refresh_from_db()
@@ -2564,6 +2565,7 @@ class StaffPropertyDetailViewTests(TestCase):
         self.assertIsNone(self.property.cleaning_company_id)
         self.assertEqual(self.property.standard_cleaning_fee, Decimal('90.00'))
         self.assertEqual(self.property.self_check_in_instructions, 'Key safe code: 4821.')
+        self.assertEqual(self.property.in_person_check_in_instructions, 'Call us on +351 912 345 678.')
 
     def test_update_property_info_saves_platform_listing_ids(self):
         airbnb = Platform.objects.get_or_create(name='Airbnb')[0]

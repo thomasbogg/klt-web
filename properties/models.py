@@ -378,11 +378,18 @@ class Property(models.Model):
 
     # Door codes, key safe location, smart-lock app steps, etc. - deliberately separate from
     # PropertySpec.description (public marketing copy shown on the property's public listing
-    # page): this is only ever rendered in a guest's own Manage Booking hub (Location & Arrival),
+    # page): this is only ever rendered in a guest's own Manage Booking hub (Location & Check-in),
     # gated the same way as the rest of that hub (a valid booking reference, is_paid), and only
     # when that booking's own Arrival.self_check_in is True - never public, never shown to a
     # meet-and-greet guest who has no reason to know it.
     self_check_in_instructions = models.TextField(blank=True, default='')
+    # The meet-and-greet counterpart (2026-09-06, per Thomas) - who to call and when, standard
+    # check-in/check-out times, meeting point, etc. Same guest-hub-only visibility as
+    # self_check_in_instructions above, shown instead of it whenever this booking's own
+    # Arrival.self_check_in is False rather than True - the two are mutually exclusive per booking,
+    # never both shown, since a booking is one or the other on any given save (see
+    # bookings/utils.py::compute_effective_self_check_in).
+    in_person_check_in_instructions = models.TextField(blank=True, default='')
 
     @property
     def slug(self):

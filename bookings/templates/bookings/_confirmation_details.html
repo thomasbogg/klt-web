@@ -1,7 +1,15 @@
 {% load static %}
-<div class="confirmation-reference">
-    <span class="confirmation-reference-label">Booking Reference</span>
-    <span class="confirmation-reference-value">{{ booking.reference }}</span>
+<div class="confirmation-references">
+    <div class="confirmation-reference">
+        <span class="confirmation-reference-label">Booking Reference</span>
+        <span class="confirmation-reference-value">{{ booking.reference }}</span>
+    </div>
+    {% if platform_reference %}
+    <div class="confirmation-reference">
+        <span class="confirmation-reference-label">Platform Reference</span>
+        <span class="confirmation-reference-value">{{ platform_reference }}</span>
+    </div>
+    {% endif %}
 </div>
 
 <div class="confirmation-summary">
@@ -23,8 +31,15 @@
     </div>
 </div>
 
-{# Currency is locked in by whatever Charge.currency the deposit was actually paid in - no toggle #}
+{% comment %}
+Currency is locked in by whatever Charge.currency the deposit was actually paid in - no toggle.
+The whole box is skipped when neither half has anything to show - the common case for a platform
+booking whose platform doesn't take its own deposits (show_cost_breakdown AND
+show_security_deposit_row both false), which would otherwise render as an empty white box.
+{% endcomment %}
+{% if show_cost_breakdown or show_security_deposit_row %}
 <div class="confirmation-breakdown">
+    {% if show_cost_breakdown %}
     <div class="confirmation-breakdown-row">
         <span>Basic rental ({{ nights }} night{{ nights|pluralize }})</span>
         {% if charge.currency == 'GBP' %}<span>&pound;{{ costs_gbp.basic_rental|floatformat:2 }}</span>
@@ -52,6 +67,16 @@
         {% else %}<span>&euro;{{ charge.due_at_balance|floatformat:2 }}</span>{% endif %}
     </div>
     {% endif %}
+    {% endif %}
+    {% comment %}
+    Security deposit is independent of show_cost_breakdown - shown (or genuinely "Not required")
+    regardless of whether klt-web computed/displays a rental price, since it's an Algarve Beach
+    Apartments cash policy, not something a platform manages. But hidden entirely for a platform
+    that never takes deposits at all (show_security_deposit_row) - otherwise this row would only
+    ever read a flat "Not required" for every one of that platform's bookings, which reads as
+    confusing noise rather than a real answer.
+    {% endcomment %}
+    {% if show_security_deposit_row %}
     <div class="confirmation-breakdown-row confirmation-breakdown-note">
         <span>Security deposit (cash at check-in, always in EUR)</span>
         {% if deposit_due %}
@@ -60,11 +85,16 @@
         <span>Not required</span>
         {% endif %}
     </div>
+    {% endif %}
 </div>
+{% endif %}
 
 {% if not cancelled %}
 <p class="confirmation-message">
-    {% if paid_amount >= subtotal %}
+    {% if not show_cost_breakdown %}
+    Thank you, {{ booking.guest.first_name|default:booking.guest.last_name }} — your reservation is
+    confirmed.
+    {% elif paid_amount >= subtotal %}
     Thank you, {{ booking.guest.first_name|default:booking.guest.last_name }} — all payments have been
     received and your reservation is confirmed.
     {% else %}

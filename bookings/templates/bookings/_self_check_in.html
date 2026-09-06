@@ -1,4 +1,14 @@
 {% load bookings_extras %}
+{% if in_person %}
+<div class="details-section">
+    <h2 class="details-section-title">Check-in</h2>
+    {% if in_person_check_in_instructions %}
+    <p class="details-note details-note-left">{{ in_person_check_in_instructions|linkify }}</p>
+    {% else %}
+    <p class="details-note details-note-left">Your check-in for this stay is in person - a member of our team will meet you at the property. Please contact us ahead of arrival if you haven't already shared your arrival details.</p>
+    {% endif %}
+</div>
+{% endif %}
 {% if self_check_in %}
 <div class="details-section">
     <h2 class="details-section-title">Self check-in</h2>

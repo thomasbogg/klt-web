@@ -5,7 +5,7 @@ Manage Booking hub sidebar - shared by every hub section template. Expects `book
 
 Two labelled groups, not one flat list: "Manage Your Stay" is everything the guest actively does
 something with (submits, edits, pays, cancels); "Holiday Info" is everything they're just looking
-up (Amenities, Location & Arrival, FAQ) - a guest reading these never changes anything, so they
+up (Amenities, Location & Check-in, FAQ) - a guest reading these never changes anything, so they
 don't belong mixed in with the action items above. Same underlying plain-links mechanism as before
 (each item is a real page, not a client-side tab switch), just grouped visually - see
 bookings.css's .manage-hub-nav-group-label.
@@ -43,7 +43,7 @@ bookings.css's .manage-hub-nav-group-label.
     <a class="manage-hub-nav-link{% if active_section == 'amenities' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_amenities' reference=booking.reference %}">Amenities</a>
     <a class="manage-hub-nav-link{% if active_section == 'location' %} manage-hub-nav-link-active{% endif %}"
-       href="{% url 'bookings:manage_location' reference=booking.reference %}">Location &amp; Arrival</a>
+       href="{% url 'bookings:manage_location' reference=booking.reference %}">Location &amp; Check-in</a>
     <a class="manage-hub-nav-link{% if active_section == 'faq' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_faq' reference=booking.reference %}">FAQ</a>
 </nav>

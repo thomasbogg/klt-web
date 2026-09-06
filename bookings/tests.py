@@ -2504,6 +2504,103 @@ class BookingManageHubViewTests(TestCase):
         self.assertEqual(response.context['paid_amount'], response.context['subtotal'])
         self.assertIn('all payments have been received', _normalized_text(response))
 
+    def test_booking_with_no_charge_row_at_all_renders_without_crashing(self):
+        # An owner booking (create_owner_booking()) never gets a Charge row at all, by deliberate
+        # design - this must never crash the hub page even though it's a different failure mode
+        # (RelatedObjectDoesNotExist, not the None-arithmetic TypeError above) than the platform/
+        # legacy case. Deleting the Charge row here is the simplest way to exercise that state.
+        self.booking.charges.delete()
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context['has_cost_data'])
+        self.assertIsNone(response.context['charge'])
+        self.assertNotContains(response, 'Basic rental')
+        self.assertContains(response, 'Security deposit')
+        self.assertIn('your reservation is', _normalized_text(response))
+
+    def test_platform_reference_shown_for_a_real_platform_booking(self):
+        platform = Platform.objects.get_or_create(name='Airbnb')[0]
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.platform_id = 'HM5ENMBBQ3'
+        self.booking.save(update_fields=['enquiry_source', 'platform_id'])
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Platform Reference')
+        self.assertContains(response, 'HM5ENMBBQ3')
+
+    def test_platform_reference_hidden_for_a_direct_booking_even_with_a_value_on_file(self):
+        # Real legacy data has stray '0'/placeholder platform_id values on non-platform bookings -
+        # never show this section for a booking whose enquiry_source isn't an actual Platform.
+        self.booking.enquiry_source = 'Website'
+        self.booking.platform_id = 'HM5ENMBBQ3'
+        self.booking.save(update_fields=['enquiry_source', 'platform_id'])
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Platform Reference')
+
+    def test_platform_reference_hidden_when_placeholder_zero(self):
+        platform = Platform.objects.get_or_create(name='Airbnb')[0]
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.platform_id = '0'
+        self.booking.save(update_fields=['enquiry_source', 'platform_id'])
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Platform Reference')
+
+    def test_platform_reference_hidden_when_blank(self):
+        Platform.objects.get_or_create(name='Airbnb')
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Platform Reference')
+
+    def test_platform_booking_hides_payment_breakdown_even_with_real_cost_data(self):
+        # 2026-09-06, per Thomas: "the guest will find the most accurate information about that
+        # directly on the platform" - a platform booking never shows the EUR/GBP breakdown, even
+        # when a real (e.g. legacy-migrated) Charge with actual figures exists.
+        Platform.objects.update_or_create(name='Airbnb', defaults={'take_security_deposits': True})
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['show_cost_breakdown'])
+        self.assertTrue(response.context['has_cost_data'])
+        self.assertNotContains(response, 'Basic rental')
+        self.assertNotContains(response, '700.00')
+        self.assertIn('your reservation is', _normalized_text(response))
+        self.assertNotIn('all payments have been', _normalized_text(response))
+
+    def test_security_deposit_row_shown_for_a_platform_that_takes_its_own_deposits(self):
+        Platform.objects.update_or_create(name='Airbnb', defaults={'take_security_deposits': True})
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['show_security_deposit_row'])
+        self.assertContains(response, 'Security deposit')
+
+    def test_security_deposit_row_hidden_for_a_platform_that_never_takes_deposits(self):
+        # Real production data (2026-09-06): every current Platform (Airbnb/Booking.com/Vrbo) has
+        # take_security_deposits=False, so this row would only ever read a flat, confusing "Not
+        # required" for every platform booking - Thomas reported guests asking about it. Hide the
+        # whole row rather than show a "no" for a policy that was never actually in play.
+        Platform.objects.update_or_create(name='Airbnb', defaults={'take_security_deposits': False})
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['show_security_deposit_row'])
+        self.assertNotContains(response, 'Security deposit')
+
+    def test_breakdown_box_entirely_absent_when_platform_takes_no_deposits(self):
+        # Both show_cost_breakdown and show_security_deposit_row are false for this real-world
+        # common case (every current Platform has take_security_deposits=False) - the whole
+        # .confirmation-breakdown box must not render as an empty shell.
+        Platform.objects.update_or_create(name='Airbnb', defaults={'take_security_deposits': False})
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'confirmation-breakdown"')
+
+    def test_security_deposit_row_always_shown_for_a_non_platform_booking(self):
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['show_security_deposit_row'])
+        self.assertContains(response, 'Security deposit')
+
 
 class BookingManageGuestAddViewTests(TestCase):
     def setUp(self):
@@ -4047,6 +4144,30 @@ class BookingManageLocationViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertNotContains(response, 'Self check-in')
 
+    def test_arrival_marked_in_person_shows_check_in_section_with_fallback_message(self):
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Check-in')
+        self.assertContains(response, "member of our team will meet you")
+
+    def test_arrival_marked_in_person_shows_property_instructions(self):
+        self.property.in_person_check_in_instructions = 'Call us on +351 912 345 678 as you leave the airport.'
+        self.property.save(update_fields=['in_person_check_in_instructions'])
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Call us on +351 912 345 678')
+        self.assertNotContains(response, "member of our team will meet you")
+
+    def test_another_bookings_in_person_check_in_instructions_never_leak(self):
+        other_property = Property.objects.create(
+            title='Other Property In Person LOC', short_title='OTHERINPERSONLOC',
+            in_person_check_in_instructions='Other property secret contact: 9999.',
+        )
+        self.assertNotEqual(other_property.pk, self.property.pk)
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertNotContains(response, '9999')
+
     def test_self_check_in_shows_property_instructions(self):
         self.property.self_check_in_instructions = 'Key safe code: 4821. Located left of the front door.'
         self.property.save(update_fields=['self_check_in_instructions'])
@@ -4461,6 +4582,17 @@ class SyncIcalLinkTests(TestCase):
         self.assertEqual(summary['events'][0]['result'], 'created')
         self.assertEqual(summary['events'][0]['booking'], booking)
         self.assertFalse(booking.is_owner)
+
+    def test_creates_new_booking_with_a_bare_charge_row(self):
+        # A real live bug (2026-09-06): a Booking with no Charge row at all crashed the guest's
+        # own Manage Booking hub page (booking.charges raising RelatedObjectDoesNotExist) - every
+        # booking this function creates now gets one unconditionally, even though an iCal feed
+        # carries no pricing data to actually populate it with.
+        sync_ical_link(self.link, _ics_feed([('uid-charge', self.start, self.end)]))
+        booking = Booking.objects.get(ical_uid='uid-charge')
+        self.assertTrue(Charge.objects.filter(booking=booking).exists())
+        self.assertEqual(booking.charges.currency, 'EUR')
+        self.assertIsNone(booking.charges.total_rental)
 
     def test_created_booking_applies_property_check_in_policy(self):
         company = ManagementCompany.objects.create(

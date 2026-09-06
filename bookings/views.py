@@ -1979,6 +1979,11 @@ class BookingManageLocationView(View):
         location = booking.property.location
         arrival = Arrival.objects.filter(booking=booking).first()
         self_check_in = bool(arrival and arrival.self_check_in)
+        # A known meet-and-greet, distinct from "we don't know yet" (arrival is None) - only ever
+        # true once an Arrival row exists and explicitly says self_check_in=False, never shown
+        # prematurely before the guest's own arrival details (or a company policy) have actually
+        # settled which path applies.
+        in_person = arrival is not None and arrival.self_check_in is False
 
         access_codes = []
         codes_revealed = False
@@ -1998,6 +2003,8 @@ class BookingManageLocationView(View):
             'booking': booking, 'location': location,
             'self_check_in': self_check_in,
             'self_check_in_instructions': booking.property.self_check_in_instructions if self_check_in else '',
+            'in_person': in_person,
+            'in_person_check_in_instructions': booking.property.in_person_check_in_instructions if in_person else '',
             'access_codes': access_codes,
             'codes_revealed': codes_revealed,
             'code_reveal_days': reveal_days,

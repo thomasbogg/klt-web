@@ -134,6 +134,10 @@
                                     <textarea name="self_check_in_instructions" class="staff-input" rows="4">{{ property.self_check_in_instructions }}</textarea>
                                 </label>
                                 <span class="staff-hint">Key safe location, what to do with the key, etc. - leave the code(s) themselves out of this text, they're entered separately below so they can be withheld until closer to arrival. Only ever shown to a guest whose own booking is marked self check-in, in their Manage Booking hub - never on the public property page.</span>
+                                <label class="staff-field">In-person check-in instructions
+                                    <textarea name="in_person_check_in_instructions" class="staff-input" rows="4">{{ property.in_person_check_in_instructions }}</textarea>
+                                </label>
+                                <span class="staff-hint">Who to call and when, standard check-in/check-out times, meeting point, etc. Shown instead of the self check-in text above whenever this booking is marked meet &amp; greet rather than self check-in.</span>
                                 <button type="submit" class="staff-button">Update</button>
                             </form>
                         </div>

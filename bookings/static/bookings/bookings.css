@@ -9,6 +9,21 @@
     margin-bottom: 48px;
 }
 
+/* Wraps Booking Reference + the optional Platform Reference (2026-09-06, per Thomas - shown
+   alongside it, same visual treatment, only for an actual platform booking with one on file) so
+   they sit centered next to each other with a real gap instead of relying on inline-flex's own
+   whitespace-based spacing between two adjacent siblings. Carries the 48px bottom margin itself
+   (see the container-scoped override below) rather than each chip carrying its own - two chips
+   each with their own margin-bottom stacked into a much bigger gap between them specifically once
+   a narrow viewport wrapped them onto separate lines (caught live 2026-09-06). */
+.confirmation-references {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 48px;
+}
+
 .confirmation-reference {
     display: inline-flex;
     flex-direction: column;
@@ -19,6 +34,13 @@
     border-radius: 12px;
     padding: 14px 32px;
     margin-bottom: 48px;
+}
+
+/* Inside the wrapper, the wrapper's own margin-bottom above is the only one that should count -
+   otherwise each chip's individual margin stacks on top of it, worst-case (wrapped onto separate
+   lines on a narrow viewport) leaving a much bigger gap between the two chips than intended. */
+.confirmation-references .confirmation-reference {
+    margin-bottom: 0;
 }
 
 .confirmation-reference-label {
@@ -448,9 +470,18 @@
     display: flex;
     align-items: flex-start;
     gap: 40px;
+    width: 100%;
     max-width: 1100px;
     margin: 40px auto;
     padding: 0 20px var(--primary-margin-bottom);
+    /* body is itself a column flexbox (see main/style.css) - a flex item with auto side-margins
+       sizes to fit its content instead of stretching to fill (auto margins take priority over
+       align-items:stretch), so without width:100% this silently shrank to whatever the sidebar +
+       wrapped-heading minimum required (~818px) rather than actually reaching its own 1100px cap -
+       caught live 2026-09-06 as "Manage Your Booking" wrapping onto two lines despite plenty of
+       room in the viewport. box-sizing: border-box so max-width/width agree with padding included,
+       matching how the rest of this rule already reads. */
+    box-sizing: border-box;
 }
 
 .manage-hub-sidebar {
