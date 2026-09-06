@@ -367,8 +367,16 @@
     text-decoration: underline;
 }
 
+/* display:flex (not inline-flex) deliberately - this sits directly before a .pay-button
+   (also inline-level, see its own rule below) on every payment page (pay.html, balance_pay.html,
+   tourist_tax_pay.html, manage_supplementary_pay.html) with nothing block-level forcing a line
+   break between them, so two adjacent inline-flex/inline-block boxes were free to share one line
+   instead of each getting its own centered row - found 2026-09-06 verifying manage_supplementary_
+   pay.html, confirmed live on the other three too. Block-level still reads as centered on screen
+   since .confirmation-page's text-align:center has no bearing on a flex container's own children -
+   align-items:center here does that job instead. */
 .pay-amount {
-    display: inline-flex;
+    display: flex;
     flex-direction: column;
     align-items: center;
     gap: 4px;

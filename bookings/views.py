@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -16,15 +17,18 @@ from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, DepositBankDetails,
     Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, RequestType,
-    TouristTax, TravelMethod, WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
+    SupplementaryPayment, TouristTax, TravelMethod, WelcomePackDrinksChoice, WelcomePackFoodChoice,
+    WelcomePackItem,
 )
 from bookings.utils import (
-    FLIGHT_NUMBER_HINT, booking_confirmation_context, cancel_booking_hold,
-    compute_effective_self_check_in, compute_tourist_tax, extras_summary, guest_counts_by_age,
-    mid_stay_clean_window, parsed_arrival_departure_time, parsed_travel_method,
-    recalculate_balance_for_party, recalculate_costs_for_party, reservation_retry_url,
+    FLIGHT_NUMBER_HINT, append_guest_rows, booking_confirmation_context, cancel_booking_hold,
+    compute_effective_self_check_in, compute_initial_hold_expiry, compute_tourist_tax,
+    determine_payment_provider, extras_summary, guest_counts_by_age, mid_stay_clean_window,
+    parsed_arrival_departure_time, parsed_travel_method, recalculate_balance_for_party,
+    recalculate_costs_for_dates, recalculate_costs_for_party, reservation_retry_url,
     resolve_shared_postbox_path, valid_flight_number,
 )
+from availability.utils import date_string_to_date, get_property_calendar
 from libraries.banking.revolut import Revolut
 
 MAX_GUEST_AGE = 120
@@ -511,26 +515,10 @@ class BookingFormMixin:
         booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
 
     def _append_guest_rows(self, booking, rows, adjustment, new_guests):
-        """Used only by BookingManageGuestAddView, once the booking is already fully paid -
-        deliberately NOT _save_guest_list()'s delete-then-bulk_create pattern, since that would
-        wipe the identity (and added_via_adjustment tagging) of every already-saved BookingGuest
-        row. Only ever appends the new rows, tagged to the GuestListAdjustment that authorized them."""
-        BookingGuest.objects.bulk_create([
-            BookingGuest(
-                booking=booking,
-                first_name=row['first_name'],
-                last_name=row['last_name'],
-                age=int(row['age']),
-                is_lead=False,
-                added_via_adjustment=adjustment,
-            )
-            for row in rows
-        ])
-        booking.adults = new_guests['adults']
-        booking.children = new_guests['children']
-        booking.babies = new_guests['infants']
-        booking.last_updated = timezone.now()
-        booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
+        """Used only by BookingManageGuestAddView, once the booking is already fully paid - see
+        bookings/utils.py::append_guest_rows(), shared with apply_supplementary_payment() for the
+        online-payment-gated case."""
+        append_guest_rows(booking, rows, adjustment, new_guests)
 
 
 class BookingOfferOpenView(View):
@@ -966,6 +954,76 @@ class BookingBalancePaymentView(View):
         # unset so payment_error renders and the guest can retry on reload.
 
 
+SUPPLEMENTARY_PAYMENT_DESCRIPTIONS = {
+    'date_change': 'Date change',
+    'guest_add': 'Added guest(s)',
+}
+
+
+class BookingManageSupplementaryPaymentView(View):
+    """Checkout page for a SupplementaryPayment - the top-up a guest owes for a self-serve date
+    change or guest addition that raised the price after the balance was already paid (see that
+    model's own docstring; BookingManageDatesView/BookingManageGuestAddView are what create these
+    rows). Mirrors BookingBalancePaymentView closely: same lazy Revolut order creation, same
+    static Wise link, same lack of any polling - a guest who pays here and closes the tab has
+    their date-change/guest-add applied the next time they load any Manage hub page (see
+    _manage_nav_context()'s apply-pending-supplementary-payments step), exactly the same
+    "confirmed on next visit, not via live polling" norm balance_pay.html already has while the
+    webhook pipeline is dormant.
+
+    Bearer-readable by reference + payment id together, same norm as every other Manage hub view -
+    the payment_id is only ever handed out via BookingManageDatesView/BookingManageGuestAddView's
+    own redirect, right after the guest themselves requested the change."""
+    template_name = 'bookings/manage_supplementary_pay.html'
+
+    def get(self, request, reference, payment_id, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        payment = SupplementaryPayment.objects.filter(pk=payment_id, booking=booking).first()
+        if payment is None:
+            raise Http404("No supplementary payment found for this booking.")
+
+        if payment.status == 'paid':
+            payment.apply()
+            return redirect(self._success_url(payment))
+
+        context = {
+            'booking': booking, 'payment': payment,
+            'pay_amount': payment.amount, 'pay_currency': payment.currency,
+        }
+        context.update(_manage_nav_context(booking, 'dates' if payment.kind == 'date_change' else 'guests'))
+
+        if payment.provider == 'revolut' and not payment.revolut_checkout_url:
+            self._create_revolut_order(payment)
+
+        context['payment_error'] = payment.provider == 'revolut' and not payment.revolut_checkout_url
+        context['wise_payment_link'] = env_settings.WISE_BASE_PAYMENT_LINK
+        return render(request, self.template_name, context)
+
+    def _success_url(self, payment):
+        if payment.kind == 'date_change':
+            return f"{reverse('bookings:manage_dates', args=[payment.booking.reference])}?dates_updated=1"
+        return f"{reverse('bookings:manage_guests', args=[payment.booking.reference])}?guest_added=1"
+
+    def _create_revolut_order(self, payment):
+        booking = payment.booking
+        order = Revolut(secretKey=env_settings.REVOLUT_API_SECRET_KEY).payment
+        order.amount = int(payment.amount * 100)  # Revolut wants minor units (cents/pence), not major units
+        order.currency = payment.currency
+        order.description = f"{SUPPLEMENTARY_PAYMENT_DESCRIPTIONS[payment.kind]} for booking {booking.reference}"
+        order.customerEmail = booking.guest.email
+        order.customerName = f"{booking.guest.first_name} {booking.guest.last_name}".strip()
+        order.create()
+
+        if order.id and order.has('checkout_url'):
+            payment.revolut_order_id = order.id
+            payment.revolut_checkout_url = order.checkoutUrl
+            payment.save()
+        # else: order.create() already logged the failure via logerror(); leave revolut_checkout_url
+        # unset so payment_error renders and the guest can retry on reload.
+
+
 class BookingPaymentCancelView(View):
     """Lets a guest back out of their own not-yet-paid hold (e.g. picked the wrong currency) and
     redoes the reservation, rather than being stuck until the hold times out - see
@@ -1048,7 +1106,15 @@ def _manage_nav_context(booking, active_section):
     (unpaid deposit, already paid, payment in progress), so this doesn't need to re-derive those.
     show_cancel_booking is the single source of truth BookingCancelView's own gate also uses (never
     show/allow it once already cancelled, for a platform-sourced booking Thomas doesn't control
-    cancellation for from this system, or once the stay has already started)."""
+    cancellation for from this system, or once the stay has already started).
+
+    Also the single place that sweeps any paid-but-unapplied SupplementaryPayment for this booking
+    (see that model's own docstring) - called by every hub section view, so a guest who paid for a
+    date change/guest addition and closed the tab gets it applied the moment they next load any
+    page here, without needing a dedicated polling endpoint."""
+    for payment in booking.supplementary_payments.filter(status='paid', applied_at__isnull=True):
+        payment.apply(booking=booking)
+
     cancelled = is_cancelled(booking)
     return {
         'active_section': active_section,
@@ -1064,15 +1130,28 @@ def _manage_nav_context(booking, active_section):
         # Always shown once not cancelled (same style as show_security_deposit) - the page itself
         # handles "no party yet"/"nothing owed"/"already paid", no need to hide the link for those.
         'show_tourist_tax': not cancelled,
+        # Online-direct only (hasattr 'charges') - a platform-synced booking has no Charge and its
+        # dates are owned by iCal sync, not a guest edit (see BookingManageDatesView). Same
+        # not-cancelled/not-started guard as show_cancel_booking - editing dates on a cancelled or
+        # already-arrived stay makes no sense either.
+        'show_edit_dates': (
+            not cancelled
+            and hasattr(booking, 'charges')
+            and booking.arrival_date > timezone.now().date()
+        ),
         'cancelled': cancelled,
         'stage': 'fully_paid' if is_fully_paid(booking) else 'pre_balance',
     }
 
 
 def _manage_hub_context(booking):
-    """Context for the hub's landing ("Booking") section - just the booking summary plus nav."""
+    """Context for the hub's landing ("Booking") section - just the booking summary plus nav.
+    _manage_nav_context() runs first (not just merged in after) since its pending-
+    SupplementaryPayment sweep can mutate `booking` in place - booking_confirmation_context()
+    must see that update, not a stale snapshot from before it ran."""
+    nav_context = _manage_nav_context(booking, 'booking')
     context = booking_confirmation_context(booking)
-    context.update(_manage_nav_context(booking, 'booking'))
+    context.update(nav_context)
     return context
 
 
@@ -1369,15 +1448,208 @@ class BookingManageArrivalDepartureView(View):
         return redirect(f"{reverse('bookings:manage_arrival_departure', args=[booking.reference])}?saved=1")
 
 
+class BookingManageDatesView(View):
+    """Self-serve stay-date editing section of the Manage Booking hub (2026-09, per Thomas) -
+    online-direct bookings only (see _manage_nav_context()'s show_edit_dates gate; a platform-
+    synced booking has no Charge and its dates are owned by iCal sync, not a guest edit), any time
+    from deposit-paid onward. Branches on is_balance_paid(booking), same style as
+    BookingManageGuestsView/recalculate_costs_for_dates():
+
+    pre_balance: any price change (up or down) just moves due_at_balance - nothing's been
+    collected for the balance stage yet, so there's nothing to check out online for. Same
+    confirm-if-price-changed interstitial as BookingBalanceDetailsView.
+
+    fully_paid: a lower-or-equal price applies immediately - no refund, matching this codebase's
+    no-refund-after-payment stance (see GuestListAdjustment's own docstring). A higher price is
+    staged onto a SupplementaryPayment and the guest is sent to pay it online before the dates
+    actually change - see that model's own docstring for why (no more cash-in-hand for a
+    management-side charge like this)."""
+    template_name = 'bookings/manage_dates.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking) or not hasattr(booking, 'charges'):
+            return redirect('bookings:manage_hub', reference=reference)
+
+        context = {
+            'booking': booking,
+            'arrival_value': booking.arrival_date.strftime('%d/%m/%Y'),
+            'departure_value': booking.departure_date.strftime('%d/%m/%Y'),
+        }
+        context.update(_manage_nav_context(booking, 'dates'))
+        context.update(self._calendar_context(booking))
+        return render(request, self.template_name, context)
+
+    def post(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking) or not hasattr(booking, 'charges'):
+            return redirect('bookings:manage_hub', reference=reference)
+
+        arrival_raw = request.POST.get('arrival', '').strip()
+        departure_raw = request.POST.get('departure', '').strip()
+
+        context = {'booking': booking, 'arrival_value': arrival_raw, 'departure_value': departure_raw}
+        context.update(_manage_nav_context(booking, 'dates'))
+
+        def error(message):
+            context['dates_error'] = message
+            context.update(self._calendar_context(booking))
+            return render(request, self.template_name, context)
+
+        try:
+            new_arrival = date_string_to_date(arrival_raw)
+            new_departure = date_string_to_date(departure_raw)
+        except (ValueError, TypeError):
+            return error("Please enter valid check-in and check-out dates.")
+
+        if new_departure <= new_arrival:
+            return error("Check-out must be after check-in.")
+        if new_arrival < timezone.now().date():
+            return error("Check-in can't be in the past.")
+
+        # Checked before the overlap conflict check below (which would otherwise self-conflict
+        # against this booking's own hold) - a booking only ever has one pending date_change at a
+        # time; a second submission while one's already in flight goes straight back to paying for
+        # it, not through a fresh availability check for (possibly overlapping) new dates.
+        existing_payment = SupplementaryPayment.objects.filter(
+            booking=booking, kind='date_change', status__in=('pending', 'in_progress'),
+            hold_expires_at__gt=timezone.now(),
+        ).first()
+        if existing_payment is not None:
+            return redirect(
+                'bookings:manage_supplementary_pay', reference=booking.reference, payment_id=existing_payment.pk,
+            )
+
+        conflict = Booking.objects.overlapping(
+            booking.property, new_arrival, new_departure,
+        ).exclude(pk=booking.pk).exists() or SupplementaryPayment.objects.overlapping_dates(
+            booking.property, new_arrival, new_departure,
+        ).exists()
+        if conflict:
+            return error("Those dates aren't available for this property - please choose another range.")
+
+        new_costs, changed = recalculate_costs_for_dates(booking, new_arrival, new_departure)
+        if new_costs is None:
+            return error("These dates can no longer be priced automatically - please contact us to change them.")
+
+        charge = booking.charges
+        confirmed = request.POST.get('confirmed') == '1'
+
+        if not is_balance_paid(booking):
+            if changed and not confirmed:
+                context['price_changed'] = True
+                context['old_charge'] = charge
+                context['new_costs'] = new_costs
+                context.update(self._calendar_context(booking))
+                return render(request, self.template_name, context)
+
+            with transaction.atomic():
+                self._apply_dates_and_charge(booking, charge, new_arrival, new_departure, new_costs)
+
+                # Same stale-checkout-URL guard as BookingBalanceDetailsView.post() - a guest who
+                # already generated a balance checkout link at the old amount must not be able to
+                # pay that stale amount after changing their dates.
+                balance_payment = getattr(booking, 'balance_payment', None)
+                if changed and balance_payment and balance_payment.revolut_checkout_url:
+                    balance_payment.revolut_order_id = None
+                    balance_payment.revolut_checkout_url = None
+                    balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
+
+            return redirect(f"{reverse('bookings:manage_dates', args=[booking.reference])}?dates_updated=1")
+
+        # Balance already paid - a lower/equal price applies immediately (no refund of the excess
+        # already collected); a higher price must be paid online first.
+        price_diff = (new_costs['rental_total'] + new_costs['admin_fee']) - (charge.total_rental + charge.admin)
+
+        if price_diff <= 0:
+            with transaction.atomic():
+                self._apply_dates_and_charge(booking, charge, new_arrival, new_departure, new_costs)
+            return redirect(f"{reverse('bookings:manage_dates', args=[booking.reference])}?dates_updated=1")
+
+        if not confirmed:
+            context['price_changed'] = True
+            context['price_increase'] = True
+            context['old_charge'] = charge
+            context['new_costs'] = new_costs
+            context['price_diff'] = price_diff
+            context.update(self._calendar_context(booking))
+            return render(request, self.template_name, context)
+
+        pay_amount, pay_currency = (
+            (charge.to_gbp(price_diff), 'GBP') if charge.currency == 'GBP' else (price_diff, 'EUR')
+        )
+        provider, hold_expires_at = compute_initial_hold_expiry(new_arrival, BookingSettings.load())
+        payment = SupplementaryPayment.objects.create(
+            booking=booking, kind='date_change', amount=pay_amount, currency=pay_currency,
+            provider=provider, hold_expires_at=hold_expires_at,
+            new_arrival_date=new_arrival, new_departure_date=new_departure,
+            pending_charge_fields={
+                'basic_rental': new_costs['basic_rental'],
+                'discount_total': new_costs['discount_total'],
+                'extra_guest_total': new_costs['extra_guest_total'],
+                'admin': new_costs['admin_fee'],
+                'due_at_balance': new_costs['due_at_balance'],
+            },
+        )
+        return redirect('bookings:manage_supplementary_pay', reference=booking.reference, payment_id=payment.pk)
+
+    def _apply_dates_and_charge(self, booking, charge, new_arrival, new_departure, new_costs):
+        booking.arrival_date = new_arrival
+        booking.departure_date = new_departure
+        booking.manual_override = True
+        booking.save(update_fields=['arrival_date', 'departure_date', 'manual_override'])
+
+        charge.basic_rental = new_costs['basic_rental']
+        charge.discount_total = new_costs['discount_total']
+        charge.extra_guest_total = new_costs['extra_guest_total']
+        charge.admin = new_costs['admin_fee']
+        charge.due_at_balance = new_costs['due_at_balance']
+        charge.save(update_fields=[
+            'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'due_at_balance',
+        ])
+
+    def _calendar_context(self, booking):
+        """occupied_ranges is inlined as JSON for manage_dates.js to feed straight into the date
+        pickers' disabledRanges (see static/pickers/dates.js) - no separate endpoint, since the
+        guest already has to reload this page to see fresh availability anyway (same server-
+        rendered norm as the rest of this app, no live/SPA refresh anywhere else either).
+        calendar_months reuses the same property-calendar builder the property page itself uses,
+        with this booking's own current stay highlighted as a distinct 'mine' status."""
+        today = timezone.now().date()
+        occupied = Booking.objects.holding().filter(
+            property=booking.property, departure_date__gte=today,
+        ).exclude(pk=booking.pk).values_list('arrival_date', 'departure_date')
+        return {
+            'occupied_ranges_json': json.dumps([
+                [arrival.strftime('%d/%m/%Y'), departure.strftime('%d/%m/%Y')]
+                for arrival, departure in occupied
+            ]),
+            'calendar_months': get_property_calendar(
+                booking.property, mine_range=(booking.arrival_date, booking.departure_date),
+            ),
+        }
+
+
 class BookingManageGuestAddView(BookingFormMixin, View):
     """Guest-list *increases* once a booking is already fully paid (see is_fully_paid()) - the
     hub's only guest-list write path at that point, since Charge is frozen for good by then. Never
     edits or deletes an existing BookingGuest row - only ever appends new ones, each tagged
-    added_via_adjustment so the cash owed for them is traceable back to its GuestListAdjustment
+    added_via_adjustment so the charge owed for them is traceable back to its GuestListAdjustment
     audit row. GET has nothing to show on its own, so it just bounces back to the Guest List
     section; POST is stateless (two-step confirm via a repeated `confirmed` field, not session
     state) for the same reason BookingBalanceDetailsView's POST is - this is reached from a
-    bookmarked/emailed link days or weeks later, no session continuity to lean on."""
+    bookmarked/emailed link days or weeks later, no session continuity to lean on.
+
+    A guest added within the property's base occupancy (additional_charge == 0) is appended
+    immediately - nothing to collect. One that crosses into extra-guest-fee territory is staged
+    onto a SupplementaryPayment and the guest is sent to pay it online first (2026-09, per Thomas:
+    a management-side charge like this is no longer cash-at-check-in) - see that model's own
+    docstring; the row is only actually appended once that payment is paid
+    (apply_supplementary_payment(), via _manage_nav_context()'s sweep)."""
     template_name = 'bookings/manage_guests.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -1425,12 +1697,26 @@ class BookingManageGuestAddView(BookingFormMixin, View):
             context['pending_guest_addition'] = {'rows': new_rows, 'additional_charge': additional_charge}
             return render(request, self.template_name, context)
 
+        if additional_charge > 0:
+            pay_amount, pay_currency = (
+                (charge.to_gbp(additional_charge), 'GBP') if charge.currency == 'GBP' else (additional_charge, 'EUR')
+            )
+            payment = SupplementaryPayment.objects.create(
+                booking=booking, kind='guest_add', amount=pay_amount, currency=pay_currency,
+                provider=determine_payment_provider(booking.arrival_date),
+                pending_guest_rows=[
+                    {'first_name': row['first_name'], 'last_name': row['last_name'], 'age': row['age']}
+                    for row in new_rows
+                ],
+            )
+            return redirect('bookings:manage_supplementary_pay', reference=booking.reference, payment_id=payment.pk)
+
         with transaction.atomic():
             adjustment = GuestListAdjustment.objects.create(
                 booking=booking,
                 previous_party_size=len(existing_party),
                 new_party_size=len(existing_party) + len(new_rows),
-                additional_charge=additional_charge,
+                additional_charge=Decimal('0'),
             )
             self._append_guest_rows(booking, new_rows, adjustment, new_guests)
 

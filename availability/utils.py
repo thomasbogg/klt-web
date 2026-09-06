@@ -1,7 +1,7 @@
 import calendar as calendar_module
 from datetime import date, datetime
 
-from bookings.models import Booking, BookingSettings
+from bookings.models import Booking, BookingSettings, SupplementaryPayment
 from env_settings import PROVISIONAL_BOOKING_STATUSES, VALID_BOOKING_STATUSES
 from properties.models import Location, Property, PropertySpec
 
@@ -41,13 +41,18 @@ def full_toolbar_context(start_date=None, end_date=None, guests=None):
     }
 
 
-def get_property_calendar(property, months=12, start=None):
+def get_property_calendar(property, months=12, start=None, mine_range=None):
     """Build a month-by-month availability grid for a property.
 
     Returns a list of dicts, one per month, each with a 'label' and
     'weeks' (Monday-first, padded with None for days outside the month).
     Each day cell is a dict with 'day', 'status'
-    ('past'/'available'/'provisional'/'booked') and 'is_today'.
+    ('past'/'available'/'provisional'/'booked'/'mine') and 'is_today'.
+
+    mine_range, if given, is an (arrival_date, departure_date) tuple (departure exclusive) that
+    takes priority over booked/provisional - a guest viewing their own stay's dates on
+    BookingManageDatesView (see bookings/views.py) should see it called out distinctly from a
+    generic 'booked' day, even though it's the exact same underlying Booking row.
     """
     start = start or date.today()
     range_start = date(start.year, start.month, 1)
@@ -71,8 +76,18 @@ def get_property_calendar(property, months=12, start=None):
         (booking.arrival_date, booking.departure_date)
         for booking in bookings if booking.enquiry_status in PROVISIONAL_BOOKING_STATUSES
     ]
+    # A pending date-change's requested new dates hold the calendar the same way a not-yet-paid
+    # new reservation does (see SupplementaryPayment.hold_expires_at's own docstring) - folded into
+    # the same 'provisional' bucket rather than a distinct status, since both mean the same thing
+    # to a browsing guest: not certain yet, but not open either.
+    provisional_ranges += list(
+        SupplementaryPayment.objects.overlapping_dates(property, range_start, range_end)
+        .values_list('new_arrival_date', 'new_departure_date')
+    )
 
     def status_for(day):
+        if mine_range and mine_range[0] <= day < mine_range[1]:
+            return 'mine'
         if any(arrival <= day < departure for arrival, departure in booked_ranges):
             return 'booked'
         if any(arrival <= day < departure for arrival, departure in provisional_ranges):

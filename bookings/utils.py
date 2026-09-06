@@ -88,6 +88,24 @@ def payment_clearing_expiry(now, booking_settings):
     return add_business_days(now, booking_settings.payment_clearing_business_days)
 
 
+def compute_initial_hold_expiry(arrival_date, booking_settings, now=None):
+    """(provider, hold_expires_at) for a brand-new hold on `arrival_date`, decided by
+    determine_payment_provider() - Wise-path bookings get the full payment-clearing window
+    immediately (no in-progress signal to react to later), Revolut-path bookings get a short flat
+    window that klt-hooks extends as payment events arrive (mark_payment_in_progress/
+    _authenticated, and their SupplementaryPayment mirrors). Shared by create_booking() (a new
+    reservation's own Booking.hold_expires_at) and BookingManageDatesView (a pending date change's
+    SupplementaryPayment.hold_expires_at) - same rules, same reasoning, two different things being
+    held."""
+    now = now or timezone.now()
+    provider = determine_payment_provider(arrival_date)
+    if provider == 'wise':
+        hold_expires_at = payment_clearing_expiry(now, booking_settings)
+    else:
+        hold_expires_at = now + timedelta(minutes=booking_settings.revolut_hold_minutes)
+    return provider, hold_expires_at
+
+
 def create_booking(property, guest_data, start_date, end_date, guests, currency='EUR',
                     enquiry_source='Website', manual_discount_percent=None, manual_discount_reason=''):
     """Create the Guest (if new), Booking, and locked-in Charge for a reservation, all-or-nothing.
@@ -141,11 +159,7 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
         rental_total = pricing['basic_total'] - discount_total + pricing['extra_guest_total']
         costs = booking_settings.compute_costs(rental_total, arrival_date=start_date)
 
-        provider = determine_payment_provider(start_date)
-        if provider == 'wise':
-            hold_expires_at = payment_clearing_expiry(timezone.now(), booking_settings)
-        else:
-            hold_expires_at = timezone.now() + timedelta(minutes=booking_settings.revolut_hold_minutes)
+        provider, hold_expires_at = compute_initial_hold_expiry(start_date, booking_settings)
 
         booking = Booking(
             property=property,
@@ -376,6 +390,146 @@ def recalculate_balance_for_party(booking, ages):
     new_costs['balance_due_date'] = charge.balance_due_date
     changed = new_costs['rental_total'] != charge.total_rental
     return new_guests, new_costs, changed
+
+
+def recalculate_costs_for_dates(booking, new_arrival_date, new_departure_date):
+    """Repricing equivalent of recalculate_balance_for_party(), but for a change to the stay's
+    dates instead of its party - used by BookingManageDatesView for a guest's self-serve date
+    edit, at any stage from deposit-paid onward. Party ages are held fixed; only the dates vary.
+
+    Reuses get_stay_total_price()/BookingSettings.compute_costs() the same way, and the exact same
+    due_at_balance = max(new_subtotal - due_at_booking, 0) floor recalculate_balance_for_party()
+    uses - a date change can only ever move the balance still due, never retroactively redefine
+    (or imply refunding) the deposit already collected. balance_due_date is deliberately left as
+    charge.balance_due_date, unmoved - same as recalculate_balance_for_party(), and simplest given
+    due_at_booking itself never moves either.
+
+    Returns (new_costs, changed); new_costs has the same keys as compute_costs(), plus
+    basic_rental/discount_total/extra_guest_total, the same shape recalculate_balance_for_party()
+    returns. Returns (None, None) if the new dates can no longer be priced at all (e.g. no Price
+    row covers them) - same situation recalculate_balance_for_party() guards against. Writes
+    nothing to the DB - the caller decides what to persist and when (immediately, if the balance
+    isn't paid yet or the price didn't increase; staged onto a SupplementaryPayment otherwise -
+    see that model's own docstring)."""
+    from bookings.models import BookingSettings
+    from properties.utils import get_stay_total_price
+
+    booking_settings = BookingSettings.load()
+    guests = guest_counts_by_age(list(booking.party.values_list('age', flat=True)), booking_settings)
+    pricing = get_stay_total_price(
+        booking.property, new_arrival_date, new_departure_date, guests,
+        monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
+    )
+    if pricing is None:
+        return None, None
+
+    charge = booking.charges
+    discount_total = _apply_manual_discount(
+        pricing['basic_total'], pricing['discount_total'], charge.manual_discount_percent,
+    )
+    rental_total = pricing['basic_total'] - discount_total + pricing['extra_guest_total']
+    new_costs = booking_settings.compute_costs(rental_total, arrival_date=new_arrival_date)
+    new_costs['basic_rental'] = pricing['basic_total']
+    new_costs['discount_total'] = discount_total
+    new_costs['extra_guest_total'] = pricing['extra_guest_total']
+    new_costs['due_at_booking'] = charge.due_at_booking
+    new_costs['due_at_balance'] = max(new_costs['subtotal'] - charge.due_at_booking, Decimal('0'))
+    new_costs['balance_due_date'] = charge.balance_due_date
+    changed = new_costs['rental_total'] != charge.total_rental
+    return new_costs, changed
+
+
+def append_guest_rows(booking, rows, adjustment, new_guests):
+    """Bulk-appends new BookingGuest rows to an already fully-paid booking, tagged to the
+    GuestListAdjustment that authorized them - shared by BookingFormMixin._append_guest_rows()
+    (the guest-add view's own confirm step) and apply_supplementary_payment() (a guest-add whose
+    additional_charge required online payment first - see SupplementaryPayment's own docstring).
+    Deliberately NOT _save_guest_list()'s delete-then-bulk_create pattern, since that would wipe
+    the identity (and added_via_adjustment tagging) of every already-saved BookingGuest row - only
+    ever appends the new rows."""
+    from bookings.models import BookingGuest
+
+    BookingGuest.objects.bulk_create([
+        BookingGuest(
+            booking=booking,
+            first_name=row['first_name'],
+            last_name=row['last_name'],
+            age=int(row['age']),
+            is_lead=False,
+            added_via_adjustment=adjustment,
+        )
+        for row in rows
+    ])
+    booking.adults = new_guests['adults']
+    booking.children = new_guests['children']
+    booking.babies = new_guests['infants']
+    booking.last_updated = timezone.now()
+    booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
+
+
+def apply_supplementary_payment(payment, booking=None):
+    """Applies a paid SupplementaryPayment's staged date-change/guest-add - see that model's own
+    docstring. Called only from SupplementaryPayment.apply(), never directly. Returns True once
+    applied, False if a date-change's requested dates were taken by someone else between checkout
+    and payment - left for staff to resolve manually (there is no refund path anywhere in this
+    codebase - see GuestListAdjustment's own docstring - so this can't just auto-refund and bail).
+
+    `booking` lets a caller that already holds the live instance being rendered pass it in, so the
+    mutation lands on that same object rather than a second, separately-fetched one - see
+    SupplementaryPayment.apply()'s own docstring."""
+    from bookings.models import Booking, BookingSettings, GuestListAdjustment
+
+    booking = booking or payment.booking
+
+    if payment.kind == 'date_change':
+        conflict = Booking.objects.overlapping(
+            booking.property, payment.new_arrival_date, payment.new_departure_date,
+        ).exclude(pk=booking.pk).exists()
+        if conflict:
+            return False
+
+        with transaction.atomic():
+            booking.arrival_date = payment.new_arrival_date
+            booking.departure_date = payment.new_departure_date
+            booking.manual_override = True
+            booking.save(update_fields=['arrival_date', 'departure_date', 'manual_override'])
+
+            # DjangoJSONEncoder (see the field's own definition) writes Decimal as plain JSON
+            # strings - JSONField's decoder doesn't know to convert them back, so this does.
+            fields = {key: Decimal(value) for key, value in payment.pending_charge_fields.items()}
+            charge = booking.charges
+            charge.basic_rental = fields['basic_rental']
+            charge.discount_total = fields['discount_total']
+            charge.extra_guest_total = fields['extra_guest_total']
+            charge.admin = fields['admin']
+            charge.due_at_balance = fields['due_at_balance']
+            charge.save(update_fields=[
+                'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'due_at_balance',
+            ])
+
+            payment.applied_at = timezone.now()
+            payment.save(update_fields=['applied_at'])
+        return True
+
+    if payment.kind == 'guest_add':
+        with transaction.atomic():
+            existing_party = list(booking.party.all())
+            new_ages = [guest.age for guest in existing_party] + [int(row['age']) for row in payment.pending_guest_rows]
+            new_guests = guest_counts_by_age(new_ages, BookingSettings.load())
+            adjustment = GuestListAdjustment.objects.create(
+                booking=booking,
+                previous_party_size=len(existing_party),
+                new_party_size=len(new_ages),
+                additional_charge=payment.amount,
+                supplementary_payment=payment,
+            )
+            append_guest_rows(booking, payment.pending_guest_rows, adjustment, new_guests)
+
+            payment.applied_at = timezone.now()
+            payment.save(update_fields=['applied_at'])
+        return True
+
+    raise ValueError(f"Unknown SupplementaryPayment.kind: {payment.kind!r}")
 
 
 def expire_stale_holds():

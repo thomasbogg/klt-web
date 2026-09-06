@@ -3,6 +3,7 @@ from datetime import date, time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
+from django.core.serializers.json import DjangoJSONEncoder
 from django.core.validators import EmailValidator, MinValueValidator, MaxValueValidator
 from django.db import models
 from django.utils import timezone
@@ -403,6 +404,22 @@ class Booking(models.Model):
             ).exclude(pk=self.pk).first()
             if overlap:
                 message = f"These dates overlap an existing booking ({overlap.arrival_date} to {overlap.departure_date})."
+                raise ValidationError({'arrival_date': message, 'departure_date': message})
+            # Also respects another booking's in-flight date-change request - see
+            # SupplementaryPayment.hold_expires_at's own docstring. This is the one central
+            # validation every booking-creation path (create_booking(), create_owner_booking(),
+            # staff booking edits) already funnels through via full_clean(), so extending it here
+            # protects all of them for free, the same way the overlap check above already does -
+            # BookingManageDatesView's own pre-check (a friendlier guest-facing error, before this
+            # booking's own row is even touched) is a separate, earlier check, not a replacement.
+            held = SupplementaryPayment.objects.overlapping_dates(
+                self.property_id, self.arrival_date, self.departure_date,
+            ).exclude(booking_id=self.pk).first()
+            if held:
+                message = (
+                    f"These dates are on hold pending another guest's payment "
+                    f"({held.new_arrival_date} to {held.new_departure_date})."
+                )
                 raise ValidationError({'arrival_date': message, 'departure_date': message})
         # The guest-facing party-size flow (bookings/views.py) already enforces this before it ever
         # constructs/saves a Booking, so this only actually bites on the staff edit path (which
@@ -1499,14 +1516,22 @@ class GuestListAdjustment(models.Model):
     Deliberately increases-only - there is no refund logic anywhere in this codebase, so the
     guest-add flow this logs only ever appends new BookingGuest rows (see
     BookingGuest.added_via_adjustment) and can never edit or delete an existing one.
-    additional_charge is the extra rental+admin cost of the added guest(s) - cash at check-in,
-    same convention as BookingDateAdjustment.additional_charge, never wired into Charge."""
+    additional_charge is the extra rental+admin cost of the added guest(s). Since 2026-09,
+    additional_charge > 0 is collected online before the row is even created - see
+    supplementary_payment - never cash at check-in; a row with additional_charge > 0 and no
+    supplementary_payment predates that change. Never wired into Charge, same convention as
+    BookingDateAdjustment.additional_charge."""
     booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='guest_list_adjustments')
     previous_party_size = models.PositiveIntegerField(editable=False)
     new_party_size = models.PositiveIntegerField(editable=False)
     additional_charge = models.DecimalField(
         max_digits=8, decimal_places=2, default=0,
-        help_text="Extra rental+admin cost of the added guest(s) - cash at check-in, not part of Charge."
+        help_text="Extra rental+admin cost of the added guest(s) - not part of Charge."
+    )
+    supplementary_payment = models.OneToOneField(
+        'SupplementaryPayment', on_delete=models.PROTECT, blank=True, null=True,
+        related_name='guest_list_adjustment',
+        help_text="The online payment that authorized this addition, when additional_charge > 0.",
     )
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1518,6 +1543,135 @@ class GuestListAdjustment(models.Model):
 
     def __str__(self):
         return f"{self.booking} - +{self.new_party_size - self.previous_party_size} guest(s)"
+
+
+SUPPLEMENTARY_PAYMENT_KIND_CHOICES = (
+    ('date_change', 'Date change'),
+    ('guest_add', 'Guest addition'),
+)
+
+
+class SupplementaryPaymentQuerySet(models.QuerySet):
+    def holding_dates(self):
+        """date_change payments whose hold on their requested new dates hasn't expired -
+        BookingQuerySet.holding()'s counterpart for a pending date change rather than a pending
+        new reservation. guest_add rows (hold_expires_at always null) never match."""
+        return self.filter(
+            kind='date_change', status__in=('pending', 'in_progress'),
+            hold_expires_at__gt=timezone.now(),
+        )
+
+    def overlapping_dates(self, property, start_date, end_date):
+        """Other bookings' held date-change requests that overlap the given range - the
+        SupplementaryPayment-side half of an availability check, alongside
+        BookingQuerySet.overlapping() for actual booking rows. Deliberately doesn't take an
+        exclude_booking param the way that method takes exclude(pk=...): a booking is only ever
+        allowed one pending date_change at a time (see BookingManageDatesView), so there's nothing
+        of its own for a fresh request from the same booking to collide with by the time this
+        runs."""
+        return self.holding_dates().filter(
+            booking__property_id=getattr(property, 'pk', property),
+            new_arrival_date__lt=end_date, new_departure_date__gt=start_date,
+        )
+
+
+class SupplementaryPayment(models.Model):
+    """An on-demand top-up payment for a booking that's already fully paid (see
+    bookings/views.py::is_fully_paid()), covering the two cases where an already-settled Charge
+    needs more money after the fact: a self-serve date change that raises the price
+    (BookingManageDatesView) or a self-serve guest addition that crosses into extra-guest-fee
+    territory (BookingManageGuestAddView). Both are increases-only, paid-online-only by policy
+    (2026-09, per Thomas) - unlike GuestListAdjustment/BookingDateAdjustment's older cash-at-
+    check-in convention, this is money collected through the same Revolut/Wise flow as the
+    deposit/balance (see Payment/BalancePayment, which this mirrors field-for-field), because
+    "add a management-side charge to cash owed at check-in" is exactly the thing this replaces.
+
+    kind='date_change' stages new_arrival_date/new_departure_date plus the already-computed
+    pending_charge_fields to write onto Charge; kind='guest_add' stages pending_guest_rows (the
+    same first_name/last_name/age dicts BookingManageGuestAddView's _parse_rows() already
+    produces). Neither the Booking/Charge nor the guest list are touched until this is marked
+    paid - see apply(). applied_at is kept distinct from paid_at to cover the rare case where the
+    requested dates were taken by someone else between payment and application (still possible in
+    principle - hold_expires_at only protects the window up to and including payment, see below);
+    that's flagged for staff rather than auto-resolved.
+
+    kind='date_change' also holds the requested new_arrival_date/new_departure_date against other
+    guests while payment is pending - see hold_expires_at below and
+    BookingQuerySet.overlapping()'s counterpart, SupplementaryPaymentQuerySet.overlapping_dates() -
+    the same role Booking.hold_expires_at plays for a brand-new reservation's own dates
+    (bookings/utils.py::compute_initial_hold_expiry(), shared by both).
+
+    Like Payment/BalancePayment, this is wired for the same Revolut-webhook confirmation via
+    klt-hooks (postgres_bookings.py's mark_supplementary_payment_* trio, dispatched from the same
+    single booking-deposit-callback webhook subscription the deposit/balance/tourist-tax events
+    already share - no separate registration needed) and shares that pipeline's current dormant
+    status (see [[project_klt_web_balance_payment]] in memory) until it's all switched on
+    together."""
+    objects = SupplementaryPaymentQuerySet.as_manager()
+
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name='supplementary_payments')
+    kind = models.CharField(max_length=20, choices=SUPPLEMENTARY_PAYMENT_KIND_CHOICES)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES)
+
+    # kind='date_change' only - see SupplementaryPaymentQuerySet.holding_dates()/overlapping_dates().
+    # Computed the same way Booking.hold_expires_at is for a brand-new reservation (see
+    # bookings/utils.py::compute_initial_hold_expiry()) and extended the same way too, via
+    # klt-hooks' mark_supplementary_payment_in_progress()/_authenticated() mirroring
+    # mark_payment_in_progress()/_authenticated().
+    hold_expires_at = models.DateTimeField(blank=True, null=True)
+
+    provider = models.CharField(max_length=10, choices=PROVIDER_CHOICES)
+    status = models.CharField(max_length=15, choices=PAYMENT_STATUS_CHOICES, default='pending')
+    revolut_order_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    revolut_checkout_url = models.URLField(blank=True, null=True)
+    last_event_type = models.CharField(max_length=100, blank=True, null=True)
+    in_progress_at = models.DateTimeField(blank=True, null=True)
+    paid_at = models.DateTimeField(blank=True, null=True)
+    failed_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # kind='date_change' only. pending_charge_fields is the already-computed
+    # basic_rental/discount_total/extra_guest_total/admin/due_at_balance to write onto Charge at
+    # apply time - frozen at checkout-creation time rather than re-priced at apply time, so what
+    # the guest paid always matches what gets applied even if a Price row changes in between.
+    new_arrival_date = models.DateField(blank=True, null=True)
+    new_departure_date = models.DateField(blank=True, null=True)
+    pending_charge_fields = models.JSONField(blank=True, null=True, encoder=DjangoJSONEncoder)
+
+    # kind='guest_add' only - [{'first_name': ..., 'last_name': ..., 'age': ...}, ...].
+    pending_guest_rows = models.JSONField(blank=True, null=True)
+
+    applied_at = models.DateTimeField(
+        blank=True, null=True,
+        help_text="When the staged date-change/guest-add was actually applied - distinct from "
+                  "paid_at for the rare case a re-check at apply time fails (see apply()).",
+    )
+
+    class Meta:
+        db_table = 'booking_supplementary_payments'
+        verbose_name = 'Supplementary payment'
+
+    def __str__(self):
+        return f"{self.booking} - {self.get_kind_display()} ({self.get_status_display()})"
+
+    def apply(self, booking=None):
+        """Applies the staged date-change/guest-add once this payment is paid. Called from
+        wherever status flips to 'paid' (bookings/views.py's checkout views for now; klt-hooks'
+        webhook dispatch once that pipeline is switched on). No-ops if already applied or not
+        actually paid, so it's safe to call more than once. Returns True if applied, False if a
+        date-change couldn't be applied because the requested dates were taken in the meantime
+        (left for staff to resolve manually - see this model's own docstring).
+
+        Pass `booking` when the caller already holds the live Booking instance being rendered
+        (e.g. _manage_nav_context()'s sweep) - self.booking would otherwise fetch a second,
+        separate instance, and mutating that one wouldn't be visible on the object the rest of the
+        request is using."""
+        from bookings.utils import apply_supplementary_payment
+
+        if self.applied_at is not None or self.status != 'paid':
+            return self.applied_at is not None
+        return apply_supplementary_payment(self, booking=booking)
 
 
 class Form(models.Model):

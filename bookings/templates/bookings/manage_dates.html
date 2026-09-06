@@ -1,0 +1,109 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit Dates {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'pickers/dates.css' %}">
+    <link rel="stylesheet" href="{% static 'availability/calendar.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/manage_dates.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script type="application/json" id="edit-dates-data">{{ occupied_ranges_json|safe }}</script>
+    <script type="module" src="{% static 'bookings/manage_dates.js' %}"></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Edit Dates</h1>
+
+            <div class="confirmation-reference">
+                <span class="confirmation-reference-label">Booking Reference</span>
+                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+            </div>
+
+            {% if request.GET.dates_updated %}
+            <p class="details-note">Your dates have been updated.</p>
+            {% endif %}
+
+            <section class="details-section">
+                {% if dates_error %}
+                <div class="reserve-form-errors">
+                    <p>{{ dates_error }}</p>
+                </div>
+                {% endif %}
+
+                <form method="post" class="details-form edit-dates-form">
+                    {% csrf_token %}
+                    <div class="datepickers">
+                        <div class="edit-dates-field">
+                            <span class="edit-dates-field-label">Check-in</span>
+                            {% include 'pickers/dates.html' with name='arrival' value=arrival_value %}
+                        </div>
+                        <div class="edit-dates-field">
+                            <span class="edit-dates-field-label">Check-out</span>
+                            {% include 'pickers/dates.html' with name='departure' value=departure_value %}
+                        </div>
+                    </div>
+                    <p class="details-note">Changing your dates may change what you owe - we'll show you the updated amount before anything is charged. Dates already booked by other guests are disabled below.</p>
+                    <button type="submit" class="reserve-form-submit">Update Dates</button>
+
+                    {% if price_changed %}
+                    <div class="price-change-overlay" id="price-change-overlay">
+                        <div class="price-change-panel">
+                            {% if price_increase %}
+                            <p class="price-change-title">Your new dates cost more</p>
+                            <p class="price-change-body">Your balance is already paid, so the difference is payable online now - there's no cash-in-hand option for this. Nothing changes until it's paid.</p>
+                            <div class="price-change-row price-change-new">
+                                <span>Amount to pay now</span>
+                                <span>&euro;{{ price_diff|floatformat:2 }}</span>
+                            </div>
+                            <div class="price-change-actions">
+                                <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Continue to payment</button>
+                                <button type="button" class="reserve-form-cancel" id="price-change-edit">Edit dates</button>
+                            </div>
+                            {% else %}
+                            <p class="price-change-title">Your new dates change the price</p>
+                            <p class="price-change-body">This only affects your remaining balance - any deposit already paid isn't affected.</p>
+                            <div class="price-change-row">
+                                <span>Previously quoted balance</span>
+                                <span>&euro;{{ old_charge.due_at_balance|floatformat:2 }}</span>
+                            </div>
+                            <div class="price-change-row price-change-new">
+                                <span>Recalculated balance</span>
+                                <span>&euro;{{ new_costs.due_at_balance|floatformat:2 }}</span>
+                            </div>
+                            <div class="price-change-actions">
+                                <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Save anyway</button>
+                                <button type="button" class="reserve-form-cancel" id="price-change-edit">Edit dates</button>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
+                </form>
+            </section>
+
+            <section class="details-section">
+                <h2 class="details-section-title">Property Availability</h2>
+                {% include 'availability/calendar.html' with calendar_months=calendar_months mine_legend_label="Your stay" %}
+            </section>
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

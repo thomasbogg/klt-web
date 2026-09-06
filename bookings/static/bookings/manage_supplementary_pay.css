@@ -1,0 +1,19 @@
+/* This page doesn't link details.css (nothing else on it needs that stylesheet), so
+.details-note's own rule (font-size/line-height/color, defined there) never actually applied here
+despite the class being on the blurb paragraph - defining the same look directly, plus a
+margin-bottom matching the chip-to-amount gap below it (.confirmation-reference's 48px +
+.confirmation-summary's 12px, both in bookings.css) so the two gaps either side of the reference
+chip read as equal, per Thomas's 2026-09-06 request. */
+.supplementary-pay-blurb {
+    font-size: 0.88rem;
+    line-height: 1.6;
+    color: rgb(110, 110, 110);
+    margin: 0 0 60px;
+}
+
+/* Matches the same 60px gap above - .pay-amount's own margin-bottom (24px, bookings.css) is
+   tuned for the other pages sharing that class (a Wise instructions paragraph or Extras
+   breakdown sits close beneath it there), not for sitting right above the Pay button like here. */
+.supplementary-pay-page .pay-amount {
+    margin-bottom: 60px;
+}

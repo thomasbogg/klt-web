@@ -34,7 +34,7 @@
             <p class="details-note">Your guest list has been updated.</p>
             {% endif %}
             {% if request.GET.guest_added %}
-            <p class="details-note">Guest added - thanks! Any additional charge is payable in cash at check-in.</p>
+            <p class="details-note">Guest added - thanks!</p>
             {% endif %}
 
             {% if stage == 'fully_paid' %}
@@ -74,7 +74,7 @@
 
             <section class="details-section">
                 <h2 class="details-section-title">Add a guest</h2>
-                <p class="details-note details-note-left">This property allows up to {{ max_guests }} guests. Adding a guest may add a cash charge, payable at check-in - we'll show you the amount before anything is confirmed.</p>
+                <p class="details-note details-note-left">This property allows up to {{ max_guests }} guests. Adding a guest may add an extra charge, payable online - we'll show you the amount before anything is confirmed.</p>
 
                 {% if guest_add_error %}
                 <div class="reserve-form-errors">
@@ -152,13 +152,13 @@
                 <div class="price-change-overlay" id="price-change-overlay">
                     <div class="price-change-panel">
                         <p class="price-change-title">Confirm the added guest(s)</p>
-                        <p class="price-change-body">Adding {{ pending_guest_addition.rows|length }} guest{{ pending_guest_addition.rows|length|pluralize }} adds an extra cost, payable in cash at check-in.</p>
+                        <p class="price-change-body">Adding {{ pending_guest_addition.rows|length }} guest{{ pending_guest_addition.rows|length|pluralize }} adds an extra cost, payable online now - your balance is already paid, so there's no cash-in-hand option for this.</p>
                         <div class="price-change-row price-change-new">
-                            <span>Additional charge</span>
+                            <span>Amount to pay now</span>
                             <span>&euro;{{ pending_guest_addition.additional_charge|floatformat:2 }}</span>
                         </div>
                         <div class="price-change-actions">
-                            <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Confirm and add</button>
+                            <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Continue to payment</button>
                             <button type="button" class="reserve-form-cancel" id="price-change-edit">Cancel</button>
                         </div>
                     </div>
