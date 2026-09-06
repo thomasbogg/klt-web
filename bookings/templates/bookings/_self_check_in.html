@@ -2,8 +2,13 @@
 {% if in_person %}
 <div class="details-section">
     <h2 class="details-section-title">Check-in</h2>
+    {% if in_person_liaison %}
+    <p class="details-note details-note-left">Please call or WhatsApp {{ in_person_liaison.liaison_name|default:"our check-in team" }} on <strong>{{ in_person_liaison.liaison_phone }}</strong> as you're on your way, so they can be ready to meet you at the property.</p>
+    {% endif %}
     {% if in_person_check_in_instructions %}
     <p class="details-note details-note-left">{{ in_person_check_in_instructions|linkify }}</p>
+    {% elif in_person_liaison %}
+    <p class="details-note details-note-left">Your check-in for this stay is in person - a member of our team will meet you at the property.</p>
     {% else %}
     <p class="details-note details-note-left">Your check-in for this stay is in person - a member of our team will meet you at the property. Please contact us ahead of arrival if you haven't already shared your arrival details.</p>
     {% endif %}

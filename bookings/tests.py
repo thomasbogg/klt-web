@@ -4168,6 +4168,55 @@ class BookingManageLocationViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertNotContains(response, '9999')
 
+    def test_in_person_shows_liaison_contact_when_cleaning_company_has_one(self):
+        self.property.cleaning_company = ManagementCompany.objects.create(
+            name='LOC Cleaning Co', liaison_name='Maria', liaison_phone='+351 912 000 111',
+        )
+        self.property.save(update_fields=['cleaning_company'])
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Maria')
+        self.assertContains(response, '+351 912 000 111')
+
+    def test_in_person_liaison_falls_back_to_generic_name_when_unset(self):
+        self.property.cleaning_company = ManagementCompany.objects.create(
+            name='LOC Cleaning Co No Name', liaison_phone='+351 912 000 222',
+        )
+        self.property.save(update_fields=['cleaning_company'])
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'our check-in team')
+        self.assertContains(response, '+351 912 000 222')
+
+    def test_in_person_liaison_reads_cleaning_company_not_booking_company(self):
+        self.property.booking_company = ManagementCompany.objects.create(
+            name='LOC Booking Co', liaison_name='Wrong Contact', liaison_phone='+351 912 999 999',
+        )
+        self.property.save(update_fields=['booking_company'])
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Wrong Contact')
+        self.assertNotContains(response, '+351 912 999 999')
+
+    def test_in_person_hides_liaison_line_when_cleaning_company_has_no_phone(self):
+        self.property.cleaning_company = ManagementCompany.objects.create(name='LOC No Phone Co')
+        self.property.save(update_fields=['cleaning_company'])
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'call or WhatsApp')
+        self.assertContains(response, "member of our team will meet you")
+        self.assertContains(response, "Please contact us ahead of arrival")
+
+    def test_in_person_liaison_shortens_fallback_message_when_present(self):
+        self.property.cleaning_company = ManagementCompany.objects.create(
+            name='LOC Cleaning Co Short', liaison_name='Maria', liaison_phone='+351 912 000 111',
+        )
+        self.property.save(update_fields=['cleaning_company'])
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, "member of our team will meet you")
+        self.assertNotContains(response, "Please contact us ahead of arrival")
+
     def test_self_check_in_shows_property_instructions(self):
         self.property.self_check_in_instructions = 'Key safe code: 4821. Located left of the front door.'
         self.property.save(update_fields=['self_check_in_instructions'])

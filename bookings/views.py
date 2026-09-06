@@ -1966,7 +1966,14 @@ class BookingManageLocationView(View):
     the 2nd floor, turn right out of the lift" - the moment a fork applied). The property's own
     access codes still show on the fallback path (the guest still needs their own front-door code
     after the gate fob) but not on the preferred path (the postbox key makes the front-door code
-    irrelevant)."""
+    irrelevant).
+
+    In-person liaison contact (2026-09-06, per Thomas): sourced from Property.cleaning_company's
+    liaison_name/liaison_phone rather than baked into Property.in_person_check_in_instructions'
+    freeform text, so it can't go stale independently of the ManagementCompany record. Read off
+    cleaning_company specifically, not booking_company - same precedent as
+    ManagementCompany.standard_checkin_time (the cleaning company is who actually performs the
+    meet & greet, per Thomas 2026-09-02)."""
     template_name = 'bookings/manage_location.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -1998,6 +2005,12 @@ class BookingManageLocationView(View):
             if postbox_path in (None, 'fallback'):
                 access_codes = list(booking.property.access_codes.all())
 
+        in_person_liaison = None
+        if in_person:
+            cleaning_company = booking.property.cleaning_company
+            if cleaning_company is not None and cleaning_company.liaison_phone:
+                in_person_liaison = cleaning_company
+
         context = _manage_nav_context(booking, 'location')
         context.update({
             'booking': booking, 'location': location,
@@ -2005,6 +2018,7 @@ class BookingManageLocationView(View):
             'self_check_in_instructions': booking.property.self_check_in_instructions if self_check_in else '',
             'in_person': in_person,
             'in_person_check_in_instructions': booking.property.in_person_check_in_instructions if in_person else '',
+            'in_person_liaison': in_person_liaison,
             'access_codes': access_codes,
             'codes_revealed': codes_revealed,
             'code_reveal_days': reveal_days,
