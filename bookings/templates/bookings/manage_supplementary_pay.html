@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/manage_supplementary_pay.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
 </head>
 <header>
@@ -15,13 +16,13 @@
 </header>
 <body>
 
-    <div class="confirmation-page">
+    <div class="confirmation-page supplementary-pay-page">
         {% if payment.kind == 'date_change' %}
         <h1>Pay for your new dates</h1>
-        <p class="details-note details-note-left">Your balance is already paid, so this covers just the extra cost of your new dates. Your booking will be updated to the new dates as soon as this is paid.</p>
+        <p class="supplementary-pay-blurb">Your balance is already paid, so this covers just the extra cost of your new dates. Your booking will be updated to the new dates as soon as this is paid.</p>
         {% else %}
         <h1>Pay for the added guest(s)</h1>
-        <p class="details-note details-note-left">Your balance is already paid, so this covers just the extra cost of the guest(s) you're adding. They'll be added to your booking as soon as this is paid.</p>
+        <p class="supplementary-pay-blurb">Your balance is already paid, so this covers just the extra cost of the guest(s) you're adding. They'll be added to your booking as soon as this is paid.</p>
         {% endif %}
 
         <div class="confirmation-summary">
