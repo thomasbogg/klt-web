@@ -70,6 +70,31 @@ from staff.utils import last_day_of_month as _last_day_of_month
 from staff.utils import parsed_date as _parsed_date
 
 
+class StaffLoginView(auth_views.LoginView):
+    """Staff Area login - a dedicated bespoke page (2026-09-06, resolving the "unified vs. separate
+    staff/owner login pages" decision staff/urls.py had flagged as deferred since 2026-09-03) in
+    place of the generic Django admin login every staff sign-in used until now. Mirrors
+    owners.views.OwnerLoginView's own shape: rejects a valid username/password that isn't actually
+    a staff account before establishing a session, rather than letting them in to bounce off every
+    page behind staff_page_required/superuser_required."""
+    template_name = 'staff/login.html'
+    # Deliberately not redirect_authenticated_user=True - same reasoning as OwnerLoginView: an
+    # owner who's logged in elsewhere landing here would otherwise get bounced into staff:home by
+    # Django's own pre-dispatch redirect, then straight back out via staff_page_required (no
+    # staff_profile) - an infinite loop. Showing the form again to an already-authenticated
+    # non-staff account is harmless; looping isn't.
+
+    def get_success_url(self):
+        return self.get_redirect_url() or str(reverse_lazy('staff:home'))
+
+    def form_valid(self, form):
+        user = form.get_user()
+        if not user.is_staff:
+            form.add_error(None, "This account isn't a staff account.")
+            return self.form_invalid(form)
+        return super().form_valid(form)
+
+
 class StaffAcceptInviteView(auth_views.PasswordResetConfirmView):
     """Where a newly-invited staff account lands to choose its own password (see
     StaffSettingsView._add_staff_user, which creates the account with set_unusable_password()

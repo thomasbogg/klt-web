@@ -1,10 +1,10 @@
 {% load static %}
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Owner Sign In | Algarve Beach Apartments</title>
+    <title>Staff Sign In | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'main/auth.css' %}">
 </head>
@@ -14,16 +14,16 @@
             <a href="/" class="auth-back-link">&larr; Back to website</a>
             <img src="{% static 'index/images/logo/icon.png' %}" alt="Algarve Beach Apartments" class="auth-icon">
             <hr class="auth-accent">
-            <h1 class="auth-heading">Owner Sign In</h1>
+            <h1 class="auth-heading">Staff Sign In</h1>
             <p class="auth-subheading">Algarve Beach Apartments</p>
 
             {% if form.errors %}
             {% comment %}
             Deliberately one generic message regardless of which non-field error actually fired
-            (wrong password vs. a valid login with no linked Owner) - not distinguishing account
-            existence at all is the more secure default (unchanged from before this page's
-            2026-09-06 redesign, see owners/tests.py::
-            test_a_user_with_no_owner_profile_is_rejected_at_login's own docstring).
+            (wrong password vs. a valid login with no staff account) - not distinguishing account
+            existence at all is the more secure default, matching owners/login.html's own
+            long-standing choice (see owners/tests.py::
+            test_a_user_with_no_owner_profile_is_rejected_at_login's docstring).
             {% endcomment %}
             <ul class="auth-errors">
                 <li>Incorrect username or password.</li>

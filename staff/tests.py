@@ -89,17 +89,17 @@ class StaffAuthGateTests(TestCase):
         self.detail_url = reverse('staff:booking_detail', kwargs={'reference': self.booking.reference})
         self.lookup_url = reverse('staff:booking_lookup')
 
-    def test_anonymous_redirected_to_admin_login(self):
+    def test_anonymous_redirected_to_staff_login(self):
         response = self.client.get(self.detail_url)
         self.assertEqual(response.status_code, 302)
-        self.assertIn('/admin/login/', response.url)
+        self.assertIn(reverse('staff:login'), response.url)
 
-    def test_non_staff_user_redirected_to_admin_login(self):
+    def test_non_staff_user_redirected_to_staff_login(self):
         User.objects.create_user(username='notstaff', password='pw', is_staff=False)
         self.client.login(username='notstaff', password='pw')
         response = self.client.get(self.detail_url)
         self.assertEqual(response.status_code, 302)
-        self.assertIn('/admin/login/', response.url)
+        self.assertIn(reverse('staff:login'), response.url)
 
     def test_staff_user_can_view(self):
         User.objects.create_user(username='areal_staffer', password='pw', is_staff=True, is_superuser=True)
@@ -110,34 +110,34 @@ class StaffAuthGateTests(TestCase):
     def test_lookup_view_also_gated(self):
         response = self.client.get(self.lookup_url)
         self.assertEqual(response.status_code, 302)
-        self.assertIn('/admin/login/', response.url)
+        self.assertIn(reverse('staff:login'), response.url)
 
     def test_home_also_gated(self):
         response = self.client.get(reverse('staff:home'))
         self.assertEqual(response.status_code, 302)
-        self.assertIn('/admin/login/', response.url)
+        self.assertIn(reverse('staff:login'), response.url)
 
     def test_guest_list_also_gated(self):
         response = self.client.get(reverse('staff:guest_list'))
         self.assertEqual(response.status_code, 302)
-        self.assertIn('/admin/login/', response.url)
+        self.assertIn(reverse('staff:login'), response.url)
 
     def test_guest_detail_also_gated(self):
         response = self.client.get(reverse('staff:guest_detail', kwargs={'pk': self.guest.pk}))
         self.assertEqual(response.status_code, 302)
-        self.assertIn('/admin/login/', response.url)
+        self.assertIn(reverse('staff:login'), response.url)
 
     def test_property_list_also_gated(self):
         response = self.client.get(reverse('staff:property_list'))
         self.assertEqual(response.status_code, 302)
-        self.assertIn('/admin/login/', response.url)
+        self.assertIn(reverse('staff:login'), response.url)
 
     def test_property_detail_also_gated(self):
         response = self.client.get(reverse('staff:property_detail', kwargs={'pk': self.property.pk}))
         self.assertEqual(response.status_code, 302)
-        self.assertIn('/admin/login/', response.url)
+        self.assertIn(reverse('staff:login'), response.url)
 
-    def test_logout_via_post_logs_out_and_redirects_to_admin_login(self):
+    def test_logout_via_post_logs_out_and_redirects_to_staff_login(self):
         # Real bug, fixed 2026-09-03: Django 5's LogoutView is POST-only, but the nav bar's
         # Logout link was a plain GET <a> to /admin/logout/ - a 405 on click, no working logout
         # anywhere in the staff app at all.
@@ -147,7 +147,7 @@ class StaffAuthGateTests(TestCase):
 
         response = self.client.post(reverse('staff:logout'))
         self.assertEqual(response.status_code, 302)
-        self.assertIn('/admin/login/', response.url)
+        self.assertIn(reverse('staff:login'), response.url)
         self.assertEqual(self.client.get(self.detail_url).status_code, 302)  # session actually cleared
 
     def test_logout_via_get_is_not_allowed(self):
@@ -155,6 +155,28 @@ class StaffAuthGateTests(TestCase):
         self.client.login(username='logoutgetstaffer', password='pw')
         response = self.client.get(reverse('staff:logout'))
         self.assertEqual(response.status_code, 405)
+
+
+class StaffLoginViewTests(TestCase):
+    """The bespoke staff login page (2026-09-06), mirroring owners.tests's own OwnerLoginView
+    coverage - a non-staff account is rejected here the same way a non-owner account is rejected
+    at owners:login."""
+
+    def test_a_staff_user_can_log_in_and_reach_home(self):
+        User.objects.create_user(username='realstaffer', password='pw', is_staff=True, is_superuser=True)
+        response = self.client.post(reverse('staff:login'), {'username': 'realstaffer', 'password': 'pw'}, follow=True)
+        self.assertRedirects(response, reverse('staff:home'))
+
+    def test_a_non_staff_user_is_rejected_at_login(self):
+        """Same generic-message-only choice as owners:login (see owners/tests.py::
+        test_a_user_with_no_owner_profile_is_rejected_at_login's docstring) - this only asserts
+        the session was never established, not the wording."""
+        User.objects.create_user(username='notstaffuser', password='pw', is_staff=False)
+        response = self.client.post(reverse('staff:login'), {'username': 'notstaffuser', 'password': 'pw'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['form'].errors)
+        home_response = self.client.get(reverse('staff:home'))
+        self.assertEqual(home_response.status_code, 302)
 
 
 class StaffRolePermissionTests(TestCase):

@@ -5,13 +5,12 @@ from . import views
 
 app_name = 'staff'
 urlpatterns = [
-    # next_page='admin:login' matches the current sign-in entry point (staff_page_required
-    # composes Django admin's own staff_member_required, which redirects an unauthenticated/
-    # non-staff request there) - staff/urls.py had no auth routes of its own at all until this,
-    # unlike owners/urls.py's OwnerLoginView. Not a dedicated staff login page (yet) - deliberately
-    # deferred pending a decision on unified vs. separate staff/owner login pages, see the 2026-
-    # 09-03 memory note.
-    path('logout/', auth_views.LogoutView.as_view(next_page='admin:login'), name='logout'),
+    # Dedicated bespoke staff login (2026-09-06), replacing the generic Django admin login page
+    # every staff sign-in used until now - resolves the "unified vs. separate staff/owner login
+    # pages" decision this had flagged as deferred. staff.permissions' staff_member_required calls
+    # now point their login_url at this instead of the default 'admin:login'.
+    path('login/', views.StaffLoginView.as_view(), name='login'),
+    path('logout/', auth_views.LogoutView.as_view(next_page='staff:login'), name='logout'),
     path('invite/<uidb64>/<token>/', views.StaffAcceptInviteView.as_view(), name='accept_invite'),
     path('', views.StaffHomeView.as_view(), name='home'),
     path('bookings/', views.StaffBookingLookupView.as_view(), name='booking_lookup'),

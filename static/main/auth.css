@@ -1,0 +1,145 @@
+/* Shared look for the staff and owner sign-in pages (staff/templates/staff/login.html,
+   owners/templates/owners/login.html) - a bespoke branded screen deliberately outside each app's
+   own container-descendant CSS convention (.staff- and .owner- rules scoped to their own nav/panel
+   containers, see CLAUDE.md) since a login page has neither - .auth-* lives here in main/style.css's
+   sibling file precisely so it's never at risk of losing a specificity fight against either app's
+   container rules, and both pages stay visually identical without duplicating this file twice. */
+
+.auth-page {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    padding: 24px;
+    /* A soft "sky over sand" wash rather than a flat white page - keeps the brand's beach setting
+       present without pulling in a photographic asset just for this. */
+    background: radial-gradient(circle at top left, #eaf4fc 0%, #f7f9fb 55%, #ffffff 100%);
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 380px;
+    box-sizing: border-box;
+    background: #fff;
+    padding: 40px 36px;
+    border-radius: 16px;
+    box-shadow: 0 10px 40px rgba(44, 121, 185, 0.14);
+    text-align: center;
+}
+
+.auth-back-link {
+    display: inline-block;
+    margin-bottom: 24px;
+    font-family: var(--secondary-font);
+    font-size: 0.78rem;
+    color: #999;
+    text-decoration: none;
+}
+
+.auth-back-link:hover {
+    color: var(--primary-color);
+}
+
+.auth-icon {
+    width: 60px;
+    height: auto;
+    display: block;
+    margin: 0 auto 8px;
+}
+
+/* The true logo gold (#FAB20B, sampled from the source artwork) rather than --secondary-color
+   (#9f6f00) - that variable reads as a muted status-pill tone elsewhere in the app, noticeably
+   duller than the actual uploaded brand mark, which would look off on the one screen whose whole
+   job is to reproduce that mark accurately. Scoped here rather than promoted to :root since
+   nothing else in the app currently uses the true brand gold as a UI color. */
+.auth-accent {
+    width: 40px;
+    height: 3px;
+    background: #fab20b;
+    border: none;
+    border-radius: 2px;
+    margin: 0 auto 20px;
+}
+
+.auth-heading {
+    font-family: var(--secondary-font);
+    color: var(--primary-color);
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin: 0 0 4px;
+}
+
+.auth-subheading {
+    font-family: var(--secondary-font);
+    color: #888;
+    font-size: 0.85rem;
+    margin: 0 0 28px;
+}
+
+.auth-errors {
+    margin: 0 0 16px;
+    padding: 0;
+    list-style: none;
+    text-align: left;
+}
+
+.auth-errors li {
+    background: #fdecea;
+    color: var(--status-booked-color, #c1554f);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-family: var(--secondary-font);
+    font-size: 0.82rem;
+    margin-bottom: 8px;
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    text-align: left;
+}
+
+.auth-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-family: var(--secondary-font);
+    font-size: 0.8rem;
+    color: #555;
+}
+
+.auth-field input {
+    box-sizing: border-box;
+    padding: 11px 14px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-family: var(--secondary-font);
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.auth-field input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(44, 121, 185, 0.15);
+}
+
+.auth-submit {
+    margin-top: 8px;
+    padding: 12px;
+    background: var(--primary-color);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-family: var(--secondary-font);
+    font-weight: 700;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.auth-submit:hover {
+    background: var(--primary-color-dark);
+}

@@ -7,7 +7,8 @@ from django.core.exceptions import PermissionDenied
 def staff_page_required(field_name):
     """Gates a staff view behind one of StaffRole's page-access booleans (see
     staff/utils.py::STAFF_PAGE_PERMISSION_FIELDS). Composes the existing staff_member_required
-    (is_active and is_staff, redirects to admin:login) rather than re-deriving that check, so an
+    (is_active and is_staff, redirects to staff:login - the bespoke staff login page, 2026-09-06;
+    was Django admin's own generic one) rather than re-deriving that check, so an
     unauthenticated/non-staff request still behaves exactly as it always has. Superusers always
     pass regardless of role. A staff user with no StaffProfile, no role, or a role missing this
     specific field gets PermissionDenied (Django's stock 403) - expected for a fresh account
@@ -21,7 +22,7 @@ def staff_page_required(field_name):
             if profile and profile.role and getattr(profile.role, field_name, False):
                 return view_func(request, *args, **kwargs)
             raise PermissionDenied
-        return staff_member_required(check_role)
+        return staff_member_required(check_role, login_url='staff:login')
     return decorator
 
 
@@ -49,7 +50,7 @@ def staff_email_action_required(view_func):
         if not can_send_emails(request.user):
             raise PermissionDenied
         return view_func(request, *args, **kwargs)
-    return staff_member_required(check)
+    return staff_member_required(check, login_url='staff:login')
 
 
 def superuser_required(view_func):
@@ -62,4 +63,4 @@ def superuser_required(view_func):
         if not request.user.is_superuser:
             raise PermissionDenied
         return view_func(request, *args, **kwargs)
-    return staff_member_required(check_superuser)
+    return staff_member_required(check_superuser, login_url='staff:login')
