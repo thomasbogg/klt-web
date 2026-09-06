@@ -102,6 +102,10 @@
                                     <input type="text" name="child_min_age" class="staff-input" value="{{ booking_settings.child_min_age }}">
                                 </label>
                             </div>
+                            <label class="staff-checkbox-label">
+                                <input type="checkbox" name="security_deposits_enabled" {% if booking_settings.security_deposits_enabled %}checked{% endif %}>
+                                Collect security deposits on new bookings
+                            </label>
                             <button type="submit" class="staff-button">Save booking settings</button>
                         </form>
                     </div>

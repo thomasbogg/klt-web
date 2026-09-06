@@ -834,6 +834,18 @@ class CreateBookingTests(TestCase):
         )
         self.assertEqual(booking.charges.security, Decimal('200.00'))
 
+    def test_charge_security_is_zero_when_security_deposits_are_paused(self):
+        settings = BookingSettings.load()
+        settings.security_deposits_enabled = False
+        settings.save(update_fields=['security_deposits_enabled'])
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+        )
+        self.assertEqual(booking.charges.security, Decimal('0.00'))
+
     def test_charge_security_is_zero_for_a_guest_outside_uk_eu(self):
         start = date.today() + timedelta(days=200)
         end = start + timedelta(days=5)
@@ -3171,8 +3183,20 @@ class ComputeDepositWaiverTests(TestCase):
         result = compute_deposit_waiver(self.booking)
         self.assertEqual(result, {
             'waived': False, 'by_owner_booking': False, 'by_platform': False, 'by_country': False,
-            'by_returning_guest': False,
+            'by_returning_guest': False, 'by_policy_paused': False,
         })
+
+    def test_waived_when_security_deposits_are_paused(self):
+        settings = BookingSettings.load()
+        settings.security_deposits_enabled = False
+        settings.save(update_fields=['security_deposits_enabled'])
+        result = compute_deposit_waiver(self.booking)
+        self.assertTrue(result['waived'])
+        self.assertTrue(result['by_policy_paused'])
+        self.assertFalse(result['by_owner_booking'])
+        self.assertFalse(result['by_platform'])
+        self.assertFalse(result['by_country'])
+        self.assertFalse(result['by_returning_guest'])
 
     def test_waived_for_a_guest_outside_uk_eu(self):
         self.guest.country = 'US'
@@ -3749,6 +3773,29 @@ class ConfirmationDetailsDisplayTests(TestCase):
         self.charge.save(update_fields=['security'])
         response = self.client.get(self.url)
         self.assertContains(response, 'Not required')
+
+    def test_security_deposit_row_hidden_entirely_when_policy_paused_and_no_deposit(self):
+        # 2026-09-06, per Thomas: while deposits are paused, a booking with nothing due should
+        # show no trace of the feature at all - not even a "Not required" line.
+        settings = BookingSettings.load()
+        settings.security_deposits_enabled = False
+        settings.save(update_fields=['security_deposits_enabled'])
+        self.charge.security = Decimal('0.00')
+        self.charge.save(update_fields=['security'])
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Security deposit')
+        self.assertNotContains(response, 'Not required')
+
+    def test_security_deposit_row_still_shown_when_policy_paused_but_deposit_already_exists(self):
+        # An older booking that already has a real deposit on it must keep showing this row
+        # regardless of the pause - only NEW bookings stop being charged (see
+        # booking_confirmation_context()'s docstring/comments, bookings/utils.py).
+        settings = BookingSettings.load()
+        settings.security_deposits_enabled = False
+        settings.save(update_fields=['security_deposits_enabled'])
+        response = self.client.get(self.url)
+        self.assertContains(response, '&euro;200.00')
+        self.assertNotContains(response, 'Not required')
 
 
 class ConfirmationDetailsBalanceDueRowTests(TestCase):

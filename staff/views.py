@@ -1100,6 +1100,8 @@ class StaffSettingsView(View):
             value = _parsed_int(post.get(field))
             if value is not None:
                 setattr(settings, field, value)
+        for field in ('security_deposits_enabled',):
+            setattr(settings, field, post.get(field) == 'on')
         try:
             settings.full_clean()
         except ValidationError as error:

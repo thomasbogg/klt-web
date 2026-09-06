@@ -72,9 +72,13 @@ show_security_deposit_row both false), which would otherwise render as an empty 
     Security deposit is independent of show_cost_breakdown - shown (or genuinely "Not required")
     regardless of whether klt-web computed/displays a rental price, since it's an Algarve Beach
     Apartments cash policy, not something a platform manages. But hidden entirely for a platform
-    that never takes deposits at all (show_security_deposit_row) - otherwise this row would only
-    ever read a flat "Not required" for every one of that platform's bookings, which reads as
-    confusing noise rather than a real answer.
+    that never takes deposits at all, or while BookingSettings.security_deposits_enabled is off
+    company-wide (show_security_deposit_row folds in both) - otherwise this row would only ever
+    read a flat "Not required" for every booking in that state, which reads as confusing noise
+    rather than a real answer. An older booking that already has a real deposit on it
+    (deposit_due) always keeps showing this row regardless of the current policy state - the pause
+    only ever affects what a NEW booking gets charged (see booking_confirmation_context(),
+    bookings/utils.py).
     {% endcomment %}
     {% if show_security_deposit_row %}
     <div class="confirmation-breakdown-row confirmation-breakdown-note">

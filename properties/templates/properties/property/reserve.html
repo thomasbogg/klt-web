@@ -93,10 +93,12 @@
                 <span class="price-value" data-eur="{{ costs.due_at_balance|floatformat:2 }}" data-gbp="{{ costs_gbp.due_at_balance|floatformat:2 }}">&euro;{{ costs.due_at_balance|floatformat:2 }}</span>
             </div>
             {% endif %}
+            {% if booking_settings.security_deposits_enabled %}
             <div class="reserve-breakdown-row reserve-breakdown-note">
                 <span>Security deposit (cash at check-in, always in EUR)</span>
                 <span>&euro;{{ costs.security_deposit|floatformat:2 }}</span>
             </div>
+            {% endif %}
         </div>
 
         <form class="reserve-form" method="post">

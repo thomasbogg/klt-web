@@ -3898,6 +3898,18 @@ class StaffSettingsViewTests(TestCase):
         # boolean-checkbox settings on this page (e.g. OWNER_BOOLEAN_FIELDS) already behave.
         self.assertFalse(settings.charge_vat_on_low_season_platform_commission)
 
+    def test_update_booking_settings_saves_security_deposits_enabled_checkbox(self):
+        response = self.client.post(self.url, {
+            'action': 'update_booking_settings', 'security_deposits_enabled': 'on',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=bookings')
+        self.assertTrue(BookingSettings.load().security_deposits_enabled)
+
+        # Omitted checkbox - unchecked, not left at its previous value (same convention as the
+        # payment-settings VAT checkboxes above).
+        self.client.post(self.url, {'action': 'update_booking_settings'})
+        self.assertFalse(BookingSettings.load().security_deposits_enabled)
+
 
 class CleaningTaskValidRangeTests(TestCase):
     """staff/utils.py::cleaning_task_valid_range() - both ends inclusive for both task types

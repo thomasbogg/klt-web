@@ -136,6 +136,7 @@ class ReserveView(generic.DetailView):
 
         if context['is_available']:
             booking_settings = BookingSettings.load()
+            context['booking_settings'] = booking_settings
             pricing = get_stay_total_price(
                 self.object, start_date, end_date, guests,
                 monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,

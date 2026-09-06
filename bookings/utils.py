@@ -553,7 +553,7 @@ def compute_deposit_waiver(booking):
     confirmation page, and the manage-booking sidebar's deposit gate all read Charge.security
     directly instead of calling this again.
 
-    Four independent conditions, any one is enough:
+    Five independent conditions, any one is enough:
     - The property owner themself or a family/friend of theirs staying (booking.is_owner) - an
       owner booking is never charged a deposit, full stop.
     - A returning guest (has_completed_previous_stay).
@@ -563,7 +563,12 @@ def compute_deposit_waiver(booking):
       2026-08-29, per Thomas: the cash-in/bank-transfer-back process has extra cost/hassle for
       those). A guest with no country on record is treated as NOT outside the UK/EU - unknown
       isn't the same as confirmed-international, so this never silently waives a deposit that
-      would otherwise be taken."""
+      would otherwise be taken.
+    - BookingSettings.security_deposits_enabled is off (2026-09-06, per Thomas: company-wide
+      pause on collecting new deposits, independent of the other four - see that field's own
+      help_text). Existing bookings' already-set Charge.security is untouched either way; this
+      only affects what a NEW booking gets seeded with."""
+    from bookings.models import BookingSettings
     from properties.models import Platform
 
     by_owner_booking = booking.is_owner
@@ -572,12 +577,14 @@ def compute_deposit_waiver(booking):
     by_returning_guest = has_completed_previous_stay(booking.guest, exclude_booking_id=booking.pk)
     guest_country = booking.guest.country
     by_country = bool(guest_country) and guest_country.code not in env_settings.UK_EU_COUNTRY_CODES
+    by_policy_paused = not BookingSettings.load().security_deposits_enabled
     return {
-        'waived': by_owner_booking or by_platform or by_returning_guest or by_country,
+        'waived': by_owner_booking or by_platform or by_returning_guest or by_country or by_policy_paused,
         'by_owner_booking': by_owner_booking,
         'by_platform': by_platform and not by_owner_booking,
         'by_country': by_country and not by_platform and not by_owner_booking,
         'by_returning_guest': by_returning_guest,
+        'by_policy_paused': by_policy_paused,
     }
 
 
@@ -593,6 +600,7 @@ def booking_confirmation_context(booking):
     both cases there is nothing genuine to show as a cost breakdown, so the template hides that
     section entirely rather than display misleading €0.00 figures - see is_paid()/is_balance_paid()
     for the same "nothing tracked here" philosophy applied to the Payment/BalancePayment side."""
+    from bookings.models import BookingSettings
     from properties.models import Platform
 
     charge = getattr(booking, 'charges', None)
@@ -643,7 +651,16 @@ def booking_confirmation_context(booking):
     # platform doesn't take deposits at all, this row would only ever read "Not required" - not
     # wrong, but confusing noise (2026-09-06, per Thomas: guests were asking about it) - so the
     # whole row is hidden rather than shown as a flat "no" for a policy that was never in play.
-    show_security_deposit_row = platform is None or platform.take_security_deposits
+    # deposit_due is checked first, OR'd ahead of the platform/paused check below: Charge.security
+    # is frozen at booking creation and never re-derived (see its own docstring), so an older
+    # booking that already has a real deposit on it must keep showing this row regardless of the
+    # *current* value of BookingSettings.security_deposits_enabled - only a booking with nothing
+    # actually due falls through to the policy/platform check (2026-09-06, per Thomas: pausing new
+    # deposit collection shouldn't touch bookings that already have one).
+    deposit_due = bool(charge.security) if charge is not None else False
+    show_security_deposit_row = deposit_due or (
+        BookingSettings.load().security_deposits_enabled and (platform is None or platform.take_security_deposits)
+    )
 
     return {
         'booking': booking,
@@ -664,7 +681,7 @@ def booking_confirmation_context(booking):
         'balance_due': balance_payment is not None and balance_payment.status != 'paid' and not cancelled,
         # Charge.security is the actual source of truth for what's owed (see its own docstring,
         # bookings/models.py) - not recomputed here, just read directly.
-        'deposit_due': bool(charge.security) if charge is not None else False,
+        'deposit_due': deposit_due,
         'platform_reference': platform_reference,
     }
 

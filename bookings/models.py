@@ -62,6 +62,16 @@ class BookingSettings(models.Model):
         validators=[MinValueValidator(Decimal('0'))],
         help_text="Fixed refundable security deposit. Collected in cash at check-in, separate from the online rental/admin payment split."
     )
+    security_deposits_enabled = models.BooleanField(
+        default=True,
+        help_text="Master switch for collecting new security deposits. When off, new bookings "
+                  "are created with a €0 deposit regardless of platform/country/owner status "
+                  "(see compute_deposit_waiver()) - existing already-collected deposits "
+                  "(Charge.security already set on a booking) are completely unaffected, and "
+                  "staff can still override Charge.security per booking. Defaults to True so a "
+                  "fresh/test DB keeps today's behavior; the live pause is a data migration on "
+                  "the one production BookingSettings row, not this field default."
+    )
     self_check_in_code_reveal_days = models.PositiveIntegerField(
         default=2,
         help_text="How many days before arrival a self-check-in guest's access code(s) become "
