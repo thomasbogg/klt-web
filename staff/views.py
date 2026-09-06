@@ -36,6 +36,7 @@ from bookings.utils import (
     create_owner_booking, extras_summary, parsed_arrival_departure_time, parsed_travel_method,
     sync_ical_link, valid_flight_number,
 )
+from bookings.views import is_paid
 from communications.models import EmailTemplate, ScheduledEmail
 from communications.registry import PLACEHOLDER_KEYS
 from communications.services.sending import send_scheduled_email
@@ -2384,6 +2385,7 @@ class StaffBookingDetailView(View):
         charge = getattr(booking, 'charges', None)
         platform_payout = getattr(booking, 'platform_payout', None)
         balance_payment = getattr(booking, 'balance_payment', None)
+        is_platform_booking = booking.enquiry_source in env_settings.PLATFORMS
         subtotal = due_total = None
         split_mismatch = False
         if charge is not None and charge.total_rental is not None and charge.admin is not None:
@@ -2395,7 +2397,13 @@ class StaffBookingDetailView(View):
             'guest': booking.guest,
             'charge': charge,
             'platform_payout': platform_payout,
-            'is_platform_booking': booking.enquiry_source in env_settings.PLATFORMS,
+            'is_platform_booking': is_platform_booking,
+            # Owner bookings use the owner portal, not this guest suite; platform bookings are
+            # managed through the platform itself; and the hub redirects away to the pay page
+            # until the deposit is paid, so the link would be a dead end before then.
+            'show_guest_manage_link': (
+                not booking.is_owner and not is_platform_booking and is_paid(booking)
+            ),
             'payment': getattr(booking, 'payment', None),
             'balance_payment': balance_payment,
             'subtotal': subtotal,

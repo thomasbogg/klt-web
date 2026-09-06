@@ -130,6 +130,19 @@ body {
     color: #999;
 }
 
+.staff-link {
+    display: inline-block;
+    margin-top: 14px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.staff-link:hover {
+    text-decoration: underline;
+}
+
 /* Centers the single-panel Accept Invite page (staff/accept_invite.html) - there's no nav bar or
    other content on that page to anchor against (an unauthenticated new hire can't see the nav). */
 .staff-invite-page {

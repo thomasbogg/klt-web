@@ -90,6 +90,9 @@
                             </label>
                         </div>
                     </form>
+                    {% if show_guest_manage_link %}
+                    <a class="staff-link" href="{% url 'bookings:manage_hub' reference=booking.reference %}" target="_blank" rel="noopener">View Guest Management Suite &rarr;</a>
+                    {% endif %}
                 </section>
 
                 <section class="staff-panel">
