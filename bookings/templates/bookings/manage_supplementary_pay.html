@@ -24,9 +24,11 @@
         <p class="details-note details-note-left">Your balance is already paid, so this covers just the extra cost of the guest(s) you're adding. They'll be added to your booking as soon as this is paid.</p>
         {% endif %}
 
-        <div class="confirmation-reference">
-            <span class="confirmation-reference-label">Booking Reference</span>
-            <span class="confirmation-reference-value">{{ booking.reference }}</span>
+        <div class="confirmation-summary">
+            <div class="confirmation-reference">
+                <span class="confirmation-reference-label">Booking Reference</span>
+                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+            </div>
         </div>
 
         <div class="pay-amount">
