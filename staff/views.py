@@ -1544,7 +1544,8 @@ class StaffSettingsView(View):
 
     def _parsed_management_company_operational_fields(self, post):
         """towels_per_guest/includes_beach_towels/linen_provided/standard_meet_and_greet_fee/
-        check_in_method/self_check_in_after/freshen_after_days - all genuinely optional per-company
+        check_in_method/self_check_in_after/freshen_after_days/late_check_in_after/
+        late_check_in_fee - all genuinely optional per-company
         operational defaults (see ManagementCompany's own docstring), so anything missing or
         unrecognised parses to None rather than a default value - there's no sensible fallback for
         "this company didn't say" that isn't itself a real, distinct answer (e.g. 0 towels, or
@@ -1561,6 +1562,8 @@ class StaffSettingsView(View):
             'check_in_method': check_in_method if check_in_method in ManagementCompany.CheckInMethod.values else None,
             'self_check_in_after': _parsed_time(post.get('self_check_in_after')),
             'freshen_after_days': _parsed_int(post.get('freshen_after_days')),
+            'late_check_in_after': _parsed_time(post.get('late_check_in_after')),
+            'late_check_in_fee': _parsed_decimal(post.get('late_check_in_fee')),
         }
 
     def _parsed_standard_checkin_checkout(self, post):

@@ -1968,12 +1968,16 @@ class BookingManageLocationView(View):
     after the gate fob) but not on the preferred path (the postbox key makes the front-door code
     irrelevant).
 
-    In-person liaison contact (2026-09-06, per Thomas): sourced from Property.cleaning_company's
-    liaison_name/liaison_phone rather than baked into Property.in_person_check_in_instructions'
-    freeform text, so it can't go stale independently of the ManagementCompany record. Read off
+    In-person liaison contact/check-in-out times/late fee (2026-09-06, per Thomas): sourced from
+    Property.cleaning_company's liaison_name/liaison_phone, standard_checkin_time/
+    standard_checkout_time, and late_check_in_after/late_check_in_fee respectively - all live
+    ManagementCompany data rather than baked into Property.in_person_check_in_instructions'
+    freeform text, so none of it can go stale independently of that record. Read off
     cleaning_company specifically, not booking_company - same precedent as
-    ManagementCompany.standard_checkin_time (the cleaning company is who actually performs the
-    meet & greet, per Thomas 2026-09-02)."""
+    ManagementCompany.standard_checkin_time elsewhere (the cleaning company is who actually
+    performs the meet & greet, per Thomas 2026-09-02). in_person_checkin_checkout is just the
+    company itself (its two time fields always have a real value, unlike the other two) - None
+    only when there's no cleaning_company at all to read from."""
     template_name = 'bookings/manage_location.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -2005,11 +2009,19 @@ class BookingManageLocationView(View):
             if postbox_path in (None, 'fallback'):
                 access_codes = list(booking.property.access_codes.all())
 
-        in_person_liaison = None
-        if in_person:
-            cleaning_company = booking.property.cleaning_company
-            if cleaning_company is not None and cleaning_company.liaison_phone:
-                in_person_liaison = cleaning_company
+        in_person_cleaning_company = booking.property.cleaning_company if in_person else None
+        in_person_liaison = (
+            in_person_cleaning_company
+            if in_person_cleaning_company is not None and in_person_cleaning_company.liaison_phone
+            else None
+        )
+        in_person_late_fee = (
+            in_person_cleaning_company
+            if in_person_cleaning_company is not None
+            and in_person_cleaning_company.late_check_in_after is not None
+            and in_person_cleaning_company.late_check_in_fee is not None
+            else None
+        )
 
         context = _manage_nav_context(booking, 'location')
         context.update({
@@ -2019,6 +2031,8 @@ class BookingManageLocationView(View):
             'in_person': in_person,
             'in_person_check_in_instructions': booking.property.in_person_check_in_instructions if in_person else '',
             'in_person_liaison': in_person_liaison,
+            'in_person_checkin_checkout': in_person_cleaning_company,
+            'in_person_late_fee': in_person_late_fee,
             'access_codes': access_codes,
             'codes_revealed': codes_revealed,
             'code_reveal_days': reveal_days,

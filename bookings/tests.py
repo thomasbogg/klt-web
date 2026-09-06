@@ -4217,6 +4217,40 @@ class BookingManageLocationViewTests(TestCase):
         self.assertContains(response, "member of our team will meet you")
         self.assertNotContains(response, "Please contact us ahead of arrival")
 
+    def test_in_person_shows_standard_checkin_checkout_times(self):
+        self.property.cleaning_company = ManagementCompany.objects.create(
+            name='LOC Times Co', standard_checkin_time=time(15, 30), standard_checkout_time=time(11, 0),
+        )
+        self.property.save(update_fields=['cleaning_company'])
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, '15:30')
+        self.assertContains(response, '11:00')
+
+    def test_in_person_hides_times_when_no_cleaning_company(self):
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Standard check-in is')
+
+    def test_in_person_shows_late_check_in_fee_when_configured(self):
+        self.property.cleaning_company = ManagementCompany.objects.create(
+            name='LOC Late Fee Co', late_check_in_after=time(20, 0), late_check_in_fee=Decimal('20.00'),
+        )
+        self.property.save(update_fields=['cleaning_company'])
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Arriving after 20:00')
+        self.assertContains(response, '20.00')
+
+    def test_in_person_hides_late_check_in_fee_when_only_one_field_set(self):
+        self.property.cleaning_company = ManagementCompany.objects.create(
+            name='LOC Partial Late Fee Co', late_check_in_after=time(20, 0),
+        )
+        self.property.save(update_fields=['cleaning_company'])
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'late check-in fee')
+
     def test_self_check_in_shows_property_instructions(self):
         self.property.self_check_in_instructions = 'Key safe code: 4821. Located left of the front door.'
         self.property.save(update_fields=['self_check_in_instructions'])

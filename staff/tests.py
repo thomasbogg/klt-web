@@ -3582,6 +3582,7 @@ class StaffSettingsViewTests(TestCase):
             'towels_per_guest': '2', 'includes_beach_towels': 'true', 'linen_provided': 'true',
             'standard_meet_and_greet_fee': '25.00', 'check_in_method': 'mixed',
             'self_check_in_after': '16:00', 'freshen_after_days': '14',
+            'late_check_in_after': '20:00', 'late_check_in_fee': '20.00',
         })
         company = ManagementCompany.objects.get(name='Full Settings Co')
         self.assertEqual(company.towels_per_guest, 2)
@@ -3591,6 +3592,8 @@ class StaffSettingsViewTests(TestCase):
         self.assertEqual(company.check_in_method, 'mixed')
         self.assertEqual(company.self_check_in_after, time(16, 0))
         self.assertEqual(company.freshen_after_days, 14)
+        self.assertEqual(company.late_check_in_after, time(20, 0))
+        self.assertEqual(company.late_check_in_fee, Decimal('20.00'))
 
     def test_add_management_company_rejects_an_unrecognised_check_in_method(self):
         # A stray/tampered value falls back to None rather than a 500 or a silently-wrong choice.
@@ -3607,6 +3610,7 @@ class StaffSettingsViewTests(TestCase):
             'name': company.name, 'towels_per_guest': '3', 'includes_beach_towels': 'false',
             'linen_provided': 'true', 'standard_meet_and_greet_fee': '30.50',
             'check_in_method': 'self_check_in', 'freshen_after_days': '10',
+            'late_check_in_after': '20:00', 'late_check_in_fee': '20.00',
         })
         company.refresh_from_db()
         self.assertEqual(company.towels_per_guest, 3)
@@ -3615,6 +3619,8 @@ class StaffSettingsViewTests(TestCase):
         self.assertEqual(company.standard_meet_and_greet_fee, Decimal('30.50'))
         self.assertEqual(company.check_in_method, 'self_check_in')
         self.assertEqual(company.freshen_after_days, 10)
+        self.assertEqual(company.late_check_in_after, time(20, 0))
+        self.assertEqual(company.late_check_in_fee, Decimal('20.00'))
         # Clearing it back out (blank/omitted fields posted) should genuinely clear it to "not
         # specified" (None), same as the maintenance-contact round trip above - not leave stale
         # values stuck, and not silently coerce "not specified" into False for the boolean field.
@@ -3628,6 +3634,8 @@ class StaffSettingsViewTests(TestCase):
         self.assertIsNone(company.standard_meet_and_greet_fee)
         self.assertIsNone(company.check_in_method)
         self.assertIsNone(company.freshen_after_days)
+        self.assertIsNone(company.late_check_in_after)
+        self.assertIsNone(company.late_check_in_fee)
 
     def test_add_management_company_calendar_visibility_flags_default_false_when_unchecked(self):
         # Unlike the "not specified" operational fields above, these two plain checkboxes always

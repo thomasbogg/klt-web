@@ -199,6 +199,15 @@ class ManagementCompany(models.Model):
     # Only meaningful when check_in_method is MIXED - an arrival at or after this time defaults to
     # self check-in, anything earlier gets an in-person meet & greet instead.
     self_check_in_after = models.TimeField(null=True, blank=True)
+    # A cash surcharge for an in-person (meet & greet) check-in arriving at or after this time -
+    # distinct from self_check_in_after above, which is about which check-in METHOD applies, not
+    # about a fee. Both nullable/independent: a company can have neither, either, or both set (e.g.
+    # KLT's own self_check_in_after=22:00 but late_check_in_after=20:00, per Thomas 2026-09-06 -
+    # a guest arriving in-person between 20:00 and 22:00 still gets met, but pays the surcharge for
+    # the team's late-evening call-out). Surfaced on the guest-facing Manage Booking hub's Check-in
+    # section (bookings/views.py::BookingManageLocationView) only when both fields are set.
+    late_check_in_after = models.TimeField(null=True, blank=True)
+    late_check_in_fee = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     # Only meaningful for a property under this company's cleaning management (Property.
     # cleaning_company) - triggers a 'freshen' CleaningTask (staff/models.py) ahead of an arrival
     # when this many days or more will have passed since the property's last clean, covering a

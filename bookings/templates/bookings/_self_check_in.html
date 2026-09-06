@@ -12,6 +12,12 @@
     {% else %}
     <p class="details-note details-note-left">Your check-in for this stay is in person - a member of our team will meet you at the property. Please contact us ahead of arrival if you haven't already shared your arrival details.</p>
     {% endif %}
+    {% if in_person_checkin_checkout %}
+    <p class="details-note details-note-left">Standard check-in is {{ in_person_checkin_checkout.standard_checkin_time|time:"H:i" }} and check-out is {{ in_person_checkin_checkout.standard_checkout_time|time:"H:i" }} - let us know if you need flexibility either side and we'll do what we can.</p>
+    {% endif %}
+    {% if in_person_late_fee %}
+    <p class="details-note details-note-left">Arriving after {{ in_person_late_fee.late_check_in_after|time:"H:i" }}? A &euro;{{ in_person_late_fee.late_check_in_fee|floatformat:2 }} late check-in fee applies, payable in cash at check-in.</p>
+    {% endif %}
 </div>
 {% endif %}
 {% if self_check_in %}
