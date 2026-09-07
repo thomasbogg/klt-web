@@ -36,11 +36,11 @@
                 <form method="post" class="owner-filter-form owner-contact-details-form">
                     {% csrf_token %}
                     <label>Email
-                        <input type="email" name="email" value="{{ owner.email|default:'' }}" required>
+                        <input type="email" name="email" class="owner-input-wide" value="{{ owner.email|default:'' }}" required>
                     </label>
                     <div class="staff-field-row">
                         <label>Country code
-                            <select name="phone_country_code">
+                            <select name="phone_country_code" class="owner-input-narrow">
                                 <option value="">-</option>
                                 {% for code, label in phone_country_choices %}
                                 <option value="{{ code }}" {% if code == phone_code %}selected{% endif %}>{{ label }}</option>
@@ -48,11 +48,11 @@
                             </select>
                         </label>
                         <label>Phone
-                            <input type="tel" name="phone" value="{{ phone_local|default:'' }}">
+                            <input type="tel" name="phone" class="owner-input-narrow" value="{{ phone_local|default:'' }}">
                         </label>
                     </div>
                     <label>NIF number
-                        <input type="text" name="nif_number" value="{{ owner.nif_number|default:'' }}">
+                        <input type="text" name="nif_number" class="owner-input-narrow" value="{{ owner.nif_number|default:'' }}">
                     </label>
                     <button type="submit" class="owner-button">Save changes</button>
                 </form>

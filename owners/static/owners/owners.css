@@ -97,11 +97,18 @@
     box-sizing: border-box;
 }
 
-/* Without this, the select stretches to fit its longest option text ("Trinidad and Tobago
-   (+1)") - Phone's own text input next to it doesn't need a matching cap since it only ever
-   holds a local number, not a full country name. */
-.owner-contact-details-form select {
-    max-width: 220px;
+/* Contact Details, per Thomas 2026-09-08: Email needs the room (it's the one genuinely
+   variable-length field here), while Country code/Phone/NIF number never hold more than a
+   handful of characters - narrowing them is what lets all four fit on one row instead of
+   wrapping. The select would otherwise stretch to fit its longest option text ("Trinidad and
+   Tobago (+1)") - narrowing it just clips the closed-state label, the full name still shows once
+   the dropdown is open. */
+.owner-input-wide {
+    width: 260px;
+}
+
+.owner-input-narrow {
+    width: 110px;
 }
 
 .owner-filter-columns {
