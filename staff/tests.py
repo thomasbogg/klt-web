@@ -2036,6 +2036,25 @@ class StaffHomeViewTests(TestCase):
         booking_ids = {row['booking'].pk for row in response.context['rows']}
         self.assertEqual(booking_ids, {self.booking_a.pk, self.booking_b.pk})  # ended + cancelled excluded
 
+    def test_inactive_property_excluded_from_calendars_dropdown_and_reservations(self):
+        inactive_property = Property.objects.create(title='Home Property C', short_title='HOMEPROPC', active=False)
+        Booking.objects.create(
+            property=inactive_property, guest=self.guest,
+            arrival_date=date.today() + timedelta(days=5), departure_date=date.today() + timedelta(days=12),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url)
+        self.assertEqual(len(response.context['calendars']), 2)
+        shown_properties = {c['property'] for c in response.context['calendars']}
+        self.assertNotIn(inactive_property, shown_properties)
+        property_ids_in_dropdown = {
+            p.pk for _, props in response.context['property_groups'] for p in props
+        }
+        self.assertNotIn(inactive_property.pk, property_ids_in_dropdown)
+        booking_ids = {row['booking'].pk for row in response.context['rows']}
+        self.assertEqual(booking_ids, {self.booking_a.pk, self.booking_b.pk})
+
     def test_property_filter_narrows_calendar_and_reservations(self):
         response = self.client.get(self.url, {'property': self.property_a.pk})
         self.assertEqual(len(response.context['calendars']), 1)
@@ -2355,6 +2374,13 @@ class StaffPropertyListViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertContains(response, reverse('staff:property_create'))
 
+    def test_inactive_property_still_shown_so_staff_can_reactivate_it(self):
+        # Unlike StaffHomeView/the guest-facing site, this management list is deliberately never
+        # filtered by active - it's the only way to find and re-enable a deactivated property.
+        inactive = Property.objects.create(title='Inactive List Property', short_title='INACTIVELIST', active=False)
+        response = self.client.get(self.url)
+        self.assertIn(inactive, response.context['properties'])
+
 
 class StaffPriceBulkToolsViewTests(TestCase):
     """The 'Bulk price tools' page (properties/properties/bulk-prices/) - adjusts a whole year's
@@ -2597,6 +2623,23 @@ class StaffPropertyDetailViewTests(TestCase):
         self.assertEqual(self.property.standard_cleaning_fee, Decimal('90.00'))
         self.assertEqual(self.property.self_check_in_instructions, 'Key safe code: 4821.')
         self.assertEqual(self.property.in_person_check_in_instructions, 'Call us on +351 912 345 678.')
+
+    def test_update_property_info_saves_active_checkbox(self):
+        self.client.post(self.url, {
+            'action': 'update_property_info', 'title': 'Detail Property', 'short_title': 'DETAILPROP',
+            'location': self.location.pk, 'active': 'on',
+        })
+        self.property.refresh_from_db()
+        self.assertTrue(self.property.active)
+
+        # Omitted checkbox - unchecked, not left at its previous value (same convention as every
+        # other boolean-checkbox setting in this app).
+        self.client.post(self.url, {
+            'action': 'update_property_info', 'title': 'Detail Property', 'short_title': 'DETAILPROP',
+            'location': self.location.pk,
+        })
+        self.property.refresh_from_db()
+        self.assertFalse(self.property.active)
 
     def test_update_property_info_saves_platform_listing_ids(self):
         airbnb = Platform.objects.get_or_create(name='Airbnb')[0]

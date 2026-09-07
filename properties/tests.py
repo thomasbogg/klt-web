@@ -129,6 +129,37 @@ class ReserveOwnPendingBookingTests(TestCase):
         self.assertEqual(booking.enquiry_status, 'Awaiting payment')
 
 
+class InactivePropertyVisibilityTests(TestCase):
+    """Property.active=False hides a property from its own page, the reserve page, and its
+    location's listing - see that field's own docstring (properties/models.py) for the full list
+    of surfaces this affects."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Inactive Test Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.property = Property.objects.create(
+            title=f'{self.location} - INACTIVETEST', short_title='INACTIVETEST',
+            location=self.location, active=False,
+        )
+
+    def test_property_page_404s(self):
+        url = reverse('properties:property/page', kwargs={'location': self.location.slug, 'title': 'inactivetest'})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 404)
+
+    def test_reserve_page_404s(self):
+        url = reverse('properties:property/reserve', kwargs={'location': self.location.slug, 'title': 'inactivetest'})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 404)
+
+    def test_excluded_from_its_location_page(self):
+        url = reverse('properties:location/page', kwargs={'title': self.location.slug})
+        response = self.client.get(url)
+        self.assertNotIn(self.property, response.context['properties'])
+
+
 class PropertyCalendarExportViewTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Export Test Property', short_title='EXPORTTEST')

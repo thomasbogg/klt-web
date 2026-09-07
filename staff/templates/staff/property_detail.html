@@ -73,6 +73,10 @@
                                 <label class="staff-field">Door number
                                     <input type="text" name="door_number" class="staff-input" value="{{ property.door_number|default:'' }}">
                                 </label>
+                                <label class="staff-checkbox-label">
+                                    <input type="checkbox" name="active" {% if property.active %}checked{% endif %}> Active
+                                </label>
+                                <span class="staff-hint">When off, this property is hidden from the staff Home view, the guest-facing availability search, and its own property/reserve pages (404) - it still appears here and in the Properties list so you can find and re-enable it.</span>
                                 <label class="staff-field">Location
                                     <div class="staff-field-with-action">
                                         <select name="location" class="staff-input">

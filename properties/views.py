@@ -32,7 +32,7 @@ def get_object_with_slug_or_404(slug, Object, **kwargs):
 
 def get_property_from_slugs(location_slug, property_slug):
     location = get_object_with_slug_or_404(location_slug, Location)
-    return get_object_or_404(Property, title__iexact=f'{location} - {property_slug}')
+    return get_object_or_404(Property, title__iexact=f'{location} - {property_slug}', active=True)
 
 
 class LocationView(generic.DetailView):
@@ -48,7 +48,7 @@ class LocationView(generic.DetailView):
         context = super().get_context_data(**kwargs)
         context.update(full_toolbar_context())
         location = self.get_object()
-        properties = Property.objects.filter(location_id__exact=location.id)
+        properties = Property.objects.filter(location_id__exact=location.id, active=True)
         context['properties'] = properties
         return context
 

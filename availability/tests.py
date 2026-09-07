@@ -53,3 +53,8 @@ class SearchViewFilteringTests(TestCase):
         property = self._make_property('EXTERNAL', booking_company=other_company)
         response = self.client.get(self.url, self.query)
         self.assertNotIn(property, response.context['available_properties'])
+
+    def test_inactive_property_does_not_appear(self):
+        property = self._make_property('INACTIVE', booking_company=self.management_company, active=False)
+        response = self.client.get(self.url, self.query)
+        self.assertNotIn(property, response.context['available_properties'])

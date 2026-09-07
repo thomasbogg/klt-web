@@ -157,7 +157,7 @@ class StaffHomeView(View):
             if remembered:
                 return redirect(f'{request.path}?{remembered}')
 
-        properties = Property.objects.select_related('location').all()
+        properties = Property.objects.select_related('location').filter(active=True)
 
         selected_property = None
         property_id = request.GET.get('property', '').strip()
@@ -174,7 +174,7 @@ class StaffHomeView(View):
         ]
 
         status_filter = request.GET.get('status', '').strip() or 'Valid'
-        base = Booking.objects.filter(property=selected_property) if selected_property else Booking.objects.all()
+        base = Booking.objects.filter(property=selected_property) if selected_property else Booking.objects.filter(property__in=properties)
 
         direct_only = request.GET.get('direct_only') == 'on'
         ical_only = request.GET.get('ical_only') == 'on'
@@ -1911,6 +1911,7 @@ class StaffPropertyDetailView(View):
             property.standard_cleaning_fee = fee
         property.self_check_in_instructions = post.get('self_check_in_instructions', '').strip()
         property.in_person_check_in_instructions = post.get('in_person_check_in_instructions', '').strip()
+        property.active = post.get('active') == 'on'
         try:
             property.full_clean()
         except ValidationError as error:

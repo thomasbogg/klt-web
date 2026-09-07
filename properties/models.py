@@ -360,7 +360,17 @@ class Property(models.Model):
     title = models.CharField(max_length=200, unique=True, blank=False)
     short_title = models.CharField(max_length=100, unique=True, blank=False)
     door_number = models.CharField(max_length=20, blank=True, null=True)
-    
+    # Default True (2026-09-07) so every existing property stays visible on migration - same
+    # opt-out pattern as ManagementCompany.bookable_on_website/cleans_on_calendar. When False, the
+    # property drops out of the staff Home view's dropdown/calendars/reservations
+    # (StaffHomeView), the guest-facing availability search (availability/views.py::
+    # SearchView.get_available_properties) and its location's listing page (LocationView), and
+    # its own property/reserve pages 404 (get_property_from_slugs). Staff can still find and
+    # re-toggle it via StaffPropertyListView/StaffPropertyDetailView, both deliberately unfiltered
+    # - and its .ics export feed (PropertyCalendarExportView) keeps working regardless, since
+    # blocking other platforms' calendars still matters even once it's off this site.
+    active = models.BooleanField(default=True)
+
     # Foreign key relationships
     owner = models.ForeignKey(Owner, on_delete=models.SET_NULL, null=True)
     location = models.ForeignKey(Location, on_delete=models.SET_NULL, null=True)
