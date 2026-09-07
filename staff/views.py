@@ -22,8 +22,8 @@ import env_settings
 from availability.utils import get_property_calendar
 from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Arrival, Booking, BookingCondition,
-    BookingSettings, CheckinSettings, Departure, ExtrasSettings, FAQ, PaymentSettings, PlatformPayout,
-    RequestType, TravelMethod, WelcomePackItem,
+    BookingSettings, CheckinSettings, Departure, ExtrasSettings, FAQ, LocalGuideEntry, PaymentSettings,
+    PlatformPayout, RequestType, TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
 from finance.models import AdHocService, DepositReturn, Memo, PayoutRecord
@@ -926,6 +926,9 @@ class StaffSettingsView(View):
         'add_faq': 'bookings',
         'update_faq': 'bookings',
         'delete_faq': 'bookings',
+        'add_local_guide_entry': 'bookings',
+        'update_local_guide_entry': 'bookings',
+        'delete_local_guide_entry': 'bookings',
         'add_platform': 'bookings',
         'update_platform': 'bookings',
         'delete_platform': 'bookings',
@@ -986,6 +989,9 @@ class StaffSettingsView(View):
             'add_faq': self._add_faq,
             'update_faq': self._update_faq,
             'delete_faq': self._delete_faq,
+            'add_local_guide_entry': self._add_local_guide_entry,
+            'update_local_guide_entry': self._update_local_guide_entry,
+            'delete_local_guide_entry': self._delete_local_guide_entry,
             'add_platform': self._add_platform,
             'update_platform': self._update_platform,
             'delete_platform': self._delete_platform,
@@ -1030,6 +1036,8 @@ class StaffSettingsView(View):
             'booking_conditions': BookingCondition.objects.all(),
             'faqs': FAQ.objects.select_related('location').all(),
             'faq_locations': Location.objects.order_by('title'),
+            'local_guide_entries': LocalGuideEntry.objects.select_related('location').all(),
+            'local_guide_categories': LocalGuideEntry.Category.choices,
             'extras_settings': ExtrasSettings.load(),
             'payment_settings': PaymentSettings.load(),
             'month_choices': MONTH_CHOICES,
@@ -1195,6 +1203,50 @@ class StaffSettingsView(View):
     def _delete_faq(self, request):
         FAQ.objects.filter(pk=request.POST.get('faq_id')).delete()
         messages.success(request, "FAQ deleted.")
+
+    def _add_local_guide_entry(self, request):
+        post = request.POST
+        title = post.get('title', '').strip()
+        description = post.get('description', '').strip()
+        category = post.get('category', '').strip()
+        if not title or not description or category not in LocalGuideEntry.Category.values:
+            messages.error(request, "A local guide entry needs a category, title and description.")
+            return
+        location_id = post.get('location', '').strip()
+        entry = LocalGuideEntry(
+            category=category, title=title, tag=post.get('tag', '').strip(),
+            description=description, map_link=post.get('map_link', '').strip(),
+            location_id=location_id or None, order=_parsed_int(post.get('order')) or 0,
+        )
+        entry.save()
+        messages.success(request, "Local guide entry added.")
+
+    def _update_local_guide_entry(self, request):
+        entry = LocalGuideEntry.objects.filter(pk=request.POST.get('entry_id')).first()
+        if entry is None:
+            messages.error(request, "That local guide entry no longer exists.")
+            return
+        post = request.POST
+        title = post.get('title', '').strip()
+        description = post.get('description', '').strip()
+        category = post.get('category', '').strip()
+        if not title or not description or category not in LocalGuideEntry.Category.values:
+            messages.error(request, "A local guide entry needs a category, title and description.")
+            return
+        location_id = post.get('location', '').strip()
+        entry.category = category
+        entry.title = title
+        entry.tag = post.get('tag', '').strip()
+        entry.description = description
+        entry.map_link = post.get('map_link', '').strip()
+        entry.location_id = location_id or None
+        entry.order = _parsed_int(post.get('order')) or 0
+        entry.save()
+        messages.success(request, "Local guide entry updated.")
+
+    def _delete_local_guide_entry(self, request):
+        LocalGuideEntry.objects.filter(pk=request.POST.get('entry_id')).delete()
+        messages.success(request, "Local guide entry deleted.")
 
     def _add_platform(self, request):
         name = request.POST.get('name', '').strip()
