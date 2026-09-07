@@ -1,0 +1,53 @@
+{% load static %}
+{% load bookings_extras %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local Guide {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Local Guide</h1>
+            <p class="details-note">Our own favourite spots in and around Albufeira - not a comprehensive guide, just what we'd recommend ourselves.</p>
+
+            {% for category_label, category_entries in grouped_entries %}
+            <section class="details-section">
+                <h2 class="details-section-title">{{ category_label }}</h2>
+                {% for entry in category_entries %}
+                <div class="local-guide-entry">
+                    <p class="local-guide-entry-title">
+                        {{ entry.title }}{% if entry.tag %}<span class="local-guide-entry-tag">{{ entry.tag }}</span>{% endif %}
+                    </p>
+                    <p class="details-note details-note-left">{{ entry.description|linkify }}</p>
+                    {% if entry.map_link %}
+                    <a href="{{ entry.map_link }}" target="_blank" rel="noopener" class="local-guide-entry-map-link">More info</a>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </section>
+            {% empty %}
+            <p class="details-note">Local guide coming soon - get in touch if there's anything you'd like to know.</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

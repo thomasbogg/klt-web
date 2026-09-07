@@ -298,6 +298,89 @@
                             <input type="hidden" name="action" value="add_faq">
                         </form>
                     </div>
+
+                    <div class="staff-panel">
+                        <h2 class="staff-panel-title">Local Guide</h2>
+                        <p class="staff-settings-hint">Shown to guests, grouped by category, on the Manage Booking hub's Local Guide page.</p>
+                        <table class="staff-price-table staff-extras-aligned-table staff-local-guide-table">
+                            <thead>
+                                <tr><th>Category</th><th>Order</th><th>Title</th><th>Tag</th><th>Description</th><th>Map link</th><th>Location</th><th></th></tr>
+                            </thead>
+                            <tbody>
+                                {% for entry in local_guide_entries %}
+                                <tr>
+                                    <td>
+                                        <select name="category" form="lge-form-{{ entry.pk }}" class="staff-input">
+                                            {% for value, label in local_guide_categories %}
+                                            <option value="{{ value }}" {% if entry.category == value %}selected{% endif %}>{{ label }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </td>
+                                    <td><input type="number" name="order" form="lge-form-{{ entry.pk }}" min="0" value="{{ entry.order }}" class="staff-input staff-input-small"></td>
+                                    <td><input type="text" name="title" form="lge-form-{{ entry.pk }}" value="{{ entry.title }}" class="staff-input"></td>
+                                    <td><input type="text" name="tag" form="lge-form-{{ entry.pk }}" value="{{ entry.tag }}" class="staff-input"></td>
+                                    <td><textarea name="description" form="lge-form-{{ entry.pk }}" class="staff-input" rows="2">{{ entry.description }}</textarea></td>
+                                    <td><input type="url" name="map_link" form="lge-form-{{ entry.pk }}" value="{{ entry.map_link }}" class="staff-input"></td>
+                                    <td>
+                                        <select name="location" form="lge-form-{{ entry.pk }}" class="staff-input">
+                                            <option value="">All</option>
+                                            {% for location in faq_locations %}
+                                            <option value="{{ location.pk }}" {% if entry.location_id == location.pk %}selected{% endif %}>{{ location }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </td>
+                                    <td class="staff-price-row-actions">
+                                        <button type="submit" form="lge-form-{{ entry.pk }}" class="staff-button staff-button-small">Save</button>
+                                        <form method="post" class="staff-inline-delete">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="delete_local_guide_entry">
+                                            <input type="hidden" name="entry_id" value="{{ entry.pk }}">
+                                            <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="8" class="staff-empty">No local guide entries yet.</td></tr>
+                                {% endfor %}
+                                <tr class="staff-price-row-new">
+                                    <td>
+                                        <select name="category" form="lge-form-new" class="staff-input">
+                                            {% for value, label in local_guide_categories %}
+                                            <option value="{{ value }}">{{ label }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </td>
+                                    <td><input type="number" name="order" form="lge-form-new" min="0" value="0" class="staff-input staff-input-small"></td>
+                                    <td><input type="text" name="title" form="lge-form-new" class="staff-input"></td>
+                                    <td><input type="text" name="tag" form="lge-form-new" class="staff-input"></td>
+                                    <td><textarea name="description" form="lge-form-new" class="staff-input" rows="2"></textarea></td>
+                                    <td><input type="url" name="map_link" form="lge-form-new" class="staff-input"></td>
+                                    <td>
+                                        <select name="location" form="lge-form-new" class="staff-input">
+                                            <option value="">All</option>
+                                            {% for location in faq_locations %}
+                                            <option value="{{ location.pk }}">{{ location }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </td>
+                                    <td class="staff-price-row-actions">
+                                        <button type="submit" form="lge-form-new" class="staff-button staff-button-small">Add</button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        {% for entry in local_guide_entries %}
+                        <form method="post" id="lge-form-{{ entry.pk }}">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_local_guide_entry">
+                            <input type="hidden" name="entry_id" value="{{ entry.pk }}">
+                        </form>
+                        {% endfor %}
+                        <form method="post" id="lge-form-new">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="add_local_guide_entry">
+                        </form>
+                    </div>
                 </section>
 
                 <section class="staff-settings-pane" id="settings-pane-extras">

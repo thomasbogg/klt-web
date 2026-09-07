@@ -41,6 +41,7 @@ urlpatterns = [
     path('<str:reference>/manage/amenities/', views.BookingManageAmenitiesView.as_view(), name='manage_amenities'),
     path('<str:reference>/manage/location/', views.BookingManageLocationView.as_view(), name='manage_location'),
     path('<str:reference>/manage/faq/', views.BookingManageFAQView.as_view(), name='manage_faq'),
+    path('<str:reference>/manage/local-guide/', views.BookingManageLocalGuideView.as_view(), name='manage_local_guide'),
     path('<str:reference>/open/', views.BookingOfferOpenView.as_view(), name='offer_open'),
     path('<str:reference>/', views.BookingConfirmationView.as_view(), name='confirmation'),  # catch-all, must stay LAST
 ]

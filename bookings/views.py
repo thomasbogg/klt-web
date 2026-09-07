@@ -1,4 +1,5 @@
 import json
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -16,7 +17,7 @@ from bookings.forms import BookingLookupForm
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, DepositBankDetails,
-    Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, RequestType,
+    Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, LocalGuideEntry, RequestType,
     SupplementaryPayment, TouristTax, TravelMethod, WelcomePackDrinksChoice, WelcomePackFoodChoice,
     WelcomePackItem,
 )
@@ -2363,4 +2364,42 @@ class BookingManageFAQView(View):
 
         context = _manage_nav_context(booking, 'faq')
         context.update({'booking': booking, 'faqs': faqs})
+        return render(request, self.template_name, context)
+
+
+class BookingManageLocalGuideView(View):
+    """Holiday Info section of the Manage Booking hub - a guest-facing local area guide (things to
+    do, beaches, day trips, where to eat, shopping, local facilities), sourced from the
+    LocalGuideEntry model staff maintain in Settings > Bookings, same order-editable,
+    location-optional pattern as FAQ. Read-only, same no-side-effect GET as the other Holiday Info
+    views.
+
+    Grouped in Python rather than via {% regroup %}: the model's Meta.ordering sorts by (category,
+    order), but "category" orders alphabetically by its stored value (beaches, day_trips, dining,
+    facilities, shopping, things_to_do) - not the Things To Do-first/Facilities-last sequence
+    LocalGuideEntry.Category.choices itself declares and this page wants to display in. {% regroup
+    %} only ever groups already-adjacent rows, so it can't fix that ordering by itself."""
+    template_name = 'bookings/manage_local_guide.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        entries = LocalGuideEntry.objects.filter(
+            Q(location__isnull=True) | Q(location=booking.property.location_id)
+        )
+        entries_by_category = defaultdict(list)
+        for entry in entries:
+            entries_by_category[entry.category].append(entry)
+        grouped_entries = [
+            (label, entries_by_category[value])
+            for value, label in LocalGuideEntry.Category.choices
+            if entries_by_category[value]
+        ]
+
+        context = _manage_nav_context(booking, 'local_guide')
+        context.update({'booking': booking, 'grouped_entries': grouped_entries})
         return render(request, self.template_name, context)

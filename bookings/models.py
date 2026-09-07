@@ -602,6 +602,46 @@ class FAQ(models.Model):
         return self.question
 
 
+class LocalGuideEntry(models.Model):
+    """A single place/recommendation entry on the Manage Booking hub's Local Guide page - same
+    order-editable, staff-authored, location-optional pattern as FAQ above (location=None shows
+    on every location's page). Sourced from the printed Algarve Beach Apartments Guidebook
+    (2026-09) - almost every row is left location-blank since the whole business is Albufeira-
+    based today (per Thomas); the field exists for the day that stops being true, not because any
+    current entry actually varies by location."""
+
+    class Category(models.TextChoices):
+        THINGS_TO_DO = 'things_to_do', 'Things To Do'
+        BEACHES = 'beaches', 'Beaches'
+        DAY_TRIPS = 'day_trips', 'Day Trips'
+        DINING = 'dining', 'Where To Eat'
+        SHOPPING = 'shopping', 'Shopping'
+        FACILITIES = 'facilities', 'Local Facilities'
+
+    category = models.CharField(max_length=20, choices=Category.choices)
+    title = models.CharField(max_length=200)
+    tag = models.CharField(
+        max_length=100, blank=True,
+        help_text='Short label shown next to the title, e.g. "Formal", "Casual", "45 min drive".',
+    )
+    description = models.TextField()
+    map_link = models.URLField(blank=True)
+    location = models.ForeignKey(
+        Location, on_delete=models.CASCADE, null=True, blank=True, related_name='local_guide_entries',
+        help_text="Leave blank to show this on every location's Local Guide page.",
+    )
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = 'local_guide_entries'
+        verbose_name = 'Local guide entry'
+        verbose_name_plural = 'Local guide entries'
+        ordering = ('category', 'order')
+
+    def __str__(self):
+        return f"{self.get_category_display()}: {self.title}"
+
+
 class TravelMethod(models.TextChoices):
     """Same stored values for Arrival and Departure - only the label wording differs by
     direction (departure_choices() below), since "Flight to Faro" reads backwards for a guest
