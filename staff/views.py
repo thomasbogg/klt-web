@@ -3546,6 +3546,7 @@ class StaffFinanceMemosView(View):
             'prev_date': target_date - timedelta(days=3),
             'next_date': target_date + timedelta(days=3),
             'active_tab': 'memos',
+            'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
         })
 
 
@@ -3672,6 +3673,7 @@ class StaffFinanceAdHocServiceListView(View):
             'services': services[:30],
             'active_tab': 'services',
             'today': timezone.now().date(),
+            'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
         }
 
     def _create(self, request):
@@ -3765,6 +3767,7 @@ class StaffFinancePayoutsView(View):
             'prev_date': target_date - timedelta(days=3),
             'next_date': target_date + timedelta(days=3),
             'active_tab': 'payouts',
+            'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
         })
 
 
@@ -3808,6 +3811,14 @@ class StaffFinanceDepositsView(View):
     template_name = 'staff/finance_deposits.html'
 
     def get(self, request, *args, **kwargs):
+        # 2026-09-07, per Thomas: security deposits are paused (see BookingSettings.
+        # security_deposits_enabled's own docstring) and no outstanding pre-pause deposits remain
+        # to track - the whole tab is switched off with the same flag rather than just unlinked
+        # from nav, so a bookmarked/typed URL doesn't land on a stale page. Comes back on its own
+        # if deposits are ever resumed.
+        if not BookingSettings.load().security_deposits_enabled:
+            return redirect('staff:finance_memos')
+
         target_date = _parsed_date(request.GET.get('date')) or timezone.now().date()
         window_dates = [target_date + timedelta(days=offset) for offset in range(-1, 4)]
 
@@ -3836,6 +3847,7 @@ class StaffFinanceDepositsView(View):
             'next_date': target_date + timedelta(days=3),
             'deposit_amount': BookingSettings.load().security_deposit_amount,
             'active_tab': 'deposits',
+            'show_deposits_tab': True,
         })
 
 
@@ -3903,6 +3915,7 @@ class StaffFinanceStatementView(View):
             'end': end,
             'sections': None,
             'active_tab': 'statement',
+            'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
         }
         if (owner or property) and start and end:
             context['sections'] = self._sections(owner, property, start, end)

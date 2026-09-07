@@ -368,6 +368,19 @@ class DepositReturnTests(FinanceTestCase):
         response = self.client.post(url)
         self.assertEqual(DepositReturn.objects.filter(booking=booking).count(), 1)
 
+    def test_deposits_tab_hidden_and_redirected_while_security_deposits_are_paused(self):
+        # 2026-09-07, per Thomas: while paused, the tab is switched off entirely (not just
+        # unlinked from nav) rather than left reachable showing a now-permanently-empty list.
+        settings = BookingSettings.load()
+        settings.security_deposits_enabled = False
+        settings.save(update_fields=['security_deposits_enabled'])
+
+        response = self.client.get(reverse('staff:finance_memos'))
+        self.assertNotContains(response, 'Deposits')
+
+        response = self.client.get(reverse('staff:finance_deposits'))
+        self.assertRedirects(response, reverse('staff:finance_memos'))
+
 
 class FinanceViewSmokeTests(FinanceTestCase):
     """Wiring smoke tests - catches URL/template mistakes the model-level tests above can't."""
