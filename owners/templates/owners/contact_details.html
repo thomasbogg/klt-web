@@ -1,0 +1,64 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contact Details | Owner Suite | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'owners/owners.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'owners/_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content">
+            <h1>Contact Details</h1>
+            <p class="owner-welcome">Keep your phone number, email and NIF number up to date - we use these for correspondence, payouts and invoicing.</p>
+
+            {% if messages %}
+            <div class="owner-messages">
+                {% for message in messages %}
+                <p class="owner-message owner-message-{{ message.tags }}">{{ message }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <div class="owner-filter-panel">
+                <form method="post" class="owner-filter-form owner-contact-details-form">
+                    {% csrf_token %}
+                    <label>Email
+                        <input type="email" name="email" value="{{ owner.email|default:'' }}" required>
+                    </label>
+                    <div class="staff-field-row">
+                        <label>Country code
+                            <select name="phone_country_code">
+                                <option value="">-</option>
+                                {% for code, label in phone_country_choices %}
+                                <option value="{{ code }}" {% if code == phone_code %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </label>
+                        <label>Phone
+                            <input type="tel" name="phone" value="{{ phone_local|default:'' }}">
+                        </label>
+                    </div>
+                    <label>NIF number
+                        <input type="text" name="nif_number" value="{{ owner.nif_number|default:'' }}">
+                    </label>
+                    <button type="submit" class="owner-button">Save changes</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    {% include 'footer/footer.html' %}
+</body>
+</html>

@@ -21,10 +21,12 @@ from bookings.utils import (
 from bookings.views import BookingFormMixin
 from finance.models import Memo, PayoutRecord
 from owners.permissions import owner_login_required
+from owners.phone_country_codes import join_phone, phone_country_choices, split_phone
 from properties.models import Property
 from staff.models import TaskHistoryEntry
 from staff.reports import OWNER_SAFE_REPORT_COLUMNS, booking_report_rows, report_totals
 from staff.utils import CLOSED_STATUSES, last_day_of_month, parsed_date
+from staff.views import _flash_validation_error
 
 
 class OwnerLoginView(auth_views.LoginView):
@@ -67,6 +69,52 @@ class OwnerHomeView(View):
             'properties': properties,
             'active_section': 'home',
         })
+
+
+@method_decorator(owner_login_required, name='dispatch')
+class OwnerContactDetailsView(View):
+    """Self-service edit for phone/email/NIF number - per Thomas 2026-09-07, so an owner can keep
+    their own contact details current without emailing staff. All three fields already existed on
+    properties.models.Owner (used for staff-side records/statements); this just exposes them for
+    the owner themselves to edit. Reuses staff.views._flash_validation_error for the same
+    unique-constraint-message deduplication the staff-side Owner edit form already relies on
+    (email/phone/nif_number are all `unique=True` on the model).
+
+    Phone is still a single freeform Owner.phone string in the DB (same as every other phone
+    field in this codebase) - the country-code dropdown (per Thomas 2026-09-07) is purely a form
+    convenience either side of that: split_phone() breaks the stored value into (calling code,
+    local number) to prefill the two form controls, join_phone() puts them back together on save.
+    See phone_country_codes.py for why the dropdown is deduplicated by calling code rather than
+    listing one option per country."""
+    template_name = 'owners/contact_details.html'
+
+    def get(self, request, *args, **kwargs):
+        owner = request.user.owner_profile
+        phone_code, phone_local = split_phone(owner.phone)
+        return render(request, self.template_name, {
+            'owner': owner, 'active_section': 'contact_details',
+            'phone_country_choices': phone_country_choices(),
+            'phone_code': phone_code, 'phone_local': phone_local,
+        })
+
+    def post(self, request, *args, **kwargs):
+        owner = request.user.owner_profile
+        post = request.POST
+        owner.email = post.get('email', '').strip()
+        owner.phone = join_phone(post.get('phone_country_code', ''), post.get('phone', '')) or None
+        owner.nif_number = post.get('nif_number', '').strip() or None
+        try:
+            owner.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return render(request, self.template_name, {
+                'owner': owner, 'active_section': 'contact_details',
+                'phone_country_choices': phone_country_choices(),
+                'phone_code': post.get('phone_country_code', ''), 'phone_local': post.get('phone', '').strip(),
+            })
+        owner.save(update_fields=['email', 'phone', 'nif_number'])
+        messages.success(request, "Contact details updated.")
+        return redirect('owners:contact_details')
 
 
 @method_decorator(owner_login_required, name='dispatch')

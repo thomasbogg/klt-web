@@ -8,6 +8,7 @@ urlpatterns = [
     path('login/', views.OwnerLoginView.as_view(), name='login'),
     path('logout/', auth_views.LogoutView.as_view(next_page='owners:login'), name='logout'),
     path('', views.OwnerHomeView.as_view(), name='home'),
+    path('contact-details/', views.OwnerContactDetailsView.as_view(), name='contact_details'),
     path('reports/', views.OwnerReportView.as_view(), name='reports'),
     path('calendar/', views.OwnerCalendarView.as_view(), name='calendar'),
     path('payouts-memos/', views.OwnerPayoutsMemosView.as_view(), name='payouts_memos'),

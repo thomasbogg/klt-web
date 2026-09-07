@@ -97,6 +97,13 @@
     box-sizing: border-box;
 }
 
+/* Without this, the select stretches to fit its longest option text ("Trinidad and Tobago
+   (+1)") - Phone's own text input next to it doesn't need a matching cap since it only ever
+   holds a local number, not a full country name. */
+.owner-contact-details-form select {
+    max-width: 220px;
+}
+
 .owner-filter-columns {
     display: flex;
     flex-wrap: wrap;

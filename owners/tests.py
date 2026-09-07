@@ -13,6 +13,7 @@ from bookings.models import (
 from bookings.utils import create_owner_booking, guest_for_owner
 from finance.models import Memo, PayoutRecord
 from guests.models import Guest
+from owners.phone_country_codes import join_phone, split_phone
 from properties.models import ManagementCompany, Owner, Property, PropertySpec
 
 User = get_user_model()
@@ -158,6 +159,121 @@ class OwnerSuiteTests(TestCase):
         self.assertNotIn('klt_net_revenue', response.context['selected_columns'])
         self.assertNotContains(response, 'KLT Net Commission')
         self.assertNotContains(response, 'KLT Net Revenue')
+
+
+class PhoneCountryCodeTests(TestCase):
+    """split_phone/join_phone (owners/phone_country_codes.py) - the round-trip backing the
+    Contact Details country-code dropdown, tested standalone since these are pure functions."""
+
+    def test_split_recognises_a_known_calling_code_with_a_space(self):
+        self.assertEqual(split_phone('+351 912345678'), ('+351', '912345678'))
+
+    def test_split_recognises_a_known_calling_code_with_no_separator(self):
+        self.assertEqual(split_phone('+351912345678'), ('+351', '912345678'))
+
+    def test_split_falls_back_to_no_country_selected_for_an_unrecognised_or_blank_value(self):
+        self.assertEqual(split_phone('0791 123456'), ('', '0791 123456'))
+        self.assertEqual(split_phone(''), ('', ''))
+        self.assertEqual(split_phone(None), ('', ''))
+
+    def test_join_combines_code_and_local_number(self):
+        self.assertEqual(join_phone('+351', '912345678'), '+351 912345678')
+
+    def test_join_with_no_code_selected_stores_the_local_number_alone(self):
+        self.assertEqual(join_phone('', '0791 123456'), '0791 123456')
+
+    def test_join_with_nothing_entered_is_blank(self):
+        self.assertEqual(join_phone('', ''), '')
+
+
+class OwnerContactDetailsTests(TestCase):
+    """Self-service phone/email/NIF editing (owners:contact_details) - added 2026-09-07 per
+    Thomas so an owner can update their own contact details without emailing staff. Owner.email/
+    phone/nif_number are all `unique=True`, so the validation-error path (mirroring the staff-side
+    Owner edit form's own _flash_validation_error usage) is worth pinning down here too.
+
+    Phone is posted as two fields (phone_country_code, phone) - the country-code dropdown added
+    2026-09-07 - and stored back as the single Owner.phone string; see
+    owners/phone_country_codes.py::split_phone/join_phone for the round-trip this relies on."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Contact Details Owner', email='contact-owner@example.com', phone='+351900000001',
+            nif_number='111111111', default_clean=False, default_meet_greet=False, takes_euros=True,
+            takes_pounds=False, cleans_are_invoiced=False, rental_commissions_are_invoiced=False,
+            is_paid_regularly=False,
+        )
+        self.owner_user = User.objects.create_user(username='contactowner', password='pw')
+        self.owner.user = self.owner_user
+        self.owner.save(update_fields=['user'])
+
+        self.other_owner = Owner.objects.create(
+            name='Other Contact Owner', email='other-contact-owner@example.com', phone='+351900000002',
+            nif_number='222222222', default_clean=False, default_meet_greet=False, takes_euros=True,
+            takes_pounds=False, cleans_are_invoiced=False, rental_commissions_are_invoiced=False,
+            is_paid_regularly=False,
+        )
+
+        self.client.login(username='contactowner', password='pw')
+
+    def test_get_shows_current_contact_details(self):
+        response = self.client.get(reverse('owners:contact_details'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'contact-owner@example.com')
+        self.assertEqual(response.context['phone_code'], '+351')
+        self.assertEqual(response.context['phone_local'], '900000001')
+        self.assertContains(response, '900000001')
+        self.assertContains(response, '111111111')
+
+    def test_get_offers_a_calling_code_per_unique_code_not_per_country(self):
+        response = self.client.get(reverse('owners:contact_details'))
+        codes = [code for code, _label in response.context['phone_country_choices']]
+        self.assertEqual(len(codes), len(set(codes)))
+        self.assertIn('+351', codes)
+        self.assertIn('+44', codes)
+
+    def test_post_updates_email_phone_and_nif(self):
+        response = self.client.post(reverse('owners:contact_details'), {
+            'email': 'updated-owner@example.com', 'phone_country_code': '+44',
+            'phone': '7911123456', 'nif_number': '999999999',
+        }, follow=True)
+        self.assertRedirects(response, reverse('owners:contact_details'))
+        self.owner.refresh_from_db()
+        self.assertEqual(self.owner.email, 'updated-owner@example.com')
+        self.assertEqual(self.owner.phone, '+44 7911123456')
+        self.assertEqual(self.owner.nif_number, '999999999')
+        self.assertContains(response, 'Contact details updated.')
+
+    def test_post_allows_clearing_phone_and_nif(self):
+        """phone/nif_number are blank=True, null=True - clearing the input should null them out,
+        not fail validation or silently keep the old value."""
+        response = self.client.post(reverse('owners:contact_details'), {
+            'email': self.owner.email, 'phone_country_code': '', 'phone': '', 'nif_number': '',
+        }, follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.owner.refresh_from_db()
+        self.assertIsNone(self.owner.phone)
+        self.assertIsNone(self.owner.nif_number)
+
+    def test_post_rejects_an_email_already_used_by_another_owner(self):
+        response = self.client.post(reverse('owners:contact_details'), {
+            'email': self.other_owner.email, 'phone_country_code': '+351', 'phone': '900000001',
+            'nif_number': self.owner.nif_number,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'already exists')
+        self.owner.refresh_from_db()
+        self.assertEqual(self.owner.email, 'contact-owner@example.com')
+
+    def test_post_never_shows_another_owners_contact_details(self):
+        response = self.client.get(reverse('owners:contact_details'))
+        self.assertNotContains(response, self.other_owner.email)
+
+    def test_anonymous_visitor_is_redirected_to_login(self):
+        self.client.logout()
+        response = self.client.get(reverse('owners:contact_details'))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse('owners:login'), response.url)
 
 
 class OwnerBookingsTests(TestCase):
