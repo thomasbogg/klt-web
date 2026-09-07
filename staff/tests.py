@@ -1552,6 +1552,15 @@ class StaffCleaningRotaViewTests(TestCase):
         self.assertContains(response, f'Assigned to {self.cleaner.username}')
         self.assertNotContains(response, 'staff-cleaning-assign-form')
 
+    def test_assigned_names_are_alphabetically_sorted_regardless_of_assignment_order(self):
+        # 2026-09-07: task.assigned_to is a prefetched relation with no inherent ordering of its
+        # own - assigning in reverse-alphabetical order here would show 'cleaner2, cleaner1'
+        # without the sorted() fix (staff/views.py::StaffCleaningRotaView._context).
+        self.task.assigned_to.set([self.other_cleaner, self.cleaner])
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Assigned to cleaner1, cleaner2')
+
     def test_posting_assign_action_is_a_no_op(self):
         self.client.login(username='rotasuperuser', password='pw')
         self.client.post(self.url, {

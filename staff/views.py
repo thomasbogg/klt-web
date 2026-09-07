@@ -2978,7 +2978,11 @@ class StaffCleaningRotaView(View):
                 'task': task,
                 'guest_booking': guest_booking,
                 'extras': extras,
-                'assigned_names': ', '.join(u.username for u in task.assigned_to.all()),
+                # sorted(), not .order_by('username') - the latter would issue a fresh query
+                # against this already-prefetched relation, silently reintroducing an N+1 (same
+                # prefetch-cache-bypass bug already fixed once in extras_summary(), see its own
+                # comment, bookings/utils.py).
+                'assigned_names': ', '.join(sorted(u.username for u in task.assigned_to.all())),
             })
         days = [{'date': day, 'rows': rows_by_date.get(day, [])} for day in window_dates]
 
@@ -3089,7 +3093,9 @@ class StaffCleaningEventsView(View):
         for task in tasks:
             min_date, max_date = valid_ranges[task.pk]
             location = task.booking.property.location
-            assigned_usernames = [u.username for u in task.assigned_to.all()]
+            # sorted(), not .order_by('username') - see the identical comment on assigned_names
+            # above (StaffCleaningRotaView._context); this relation is prefetched the same way.
+            assigned_usernames = sorted(u.username for u in task.assigned_to.all())
             # short_title, not the full property title - the location's own colour (below)
             # already identifies which property group a clean belongs to, so the extra label
             # length just crowds out the task-type/NEW/team/turnaround information that's
