@@ -106,6 +106,19 @@
     margin: 0;
 }
 
+/* The guest-name link (cleaning_rota.html/finance_deposits.html/finance_payouts.html, all three
+   reuse this class/stylesheet) - same treatment as every other guest/reference link in the app
+   (.staff-reservations-table a, .staff-guest-table a) rather than the browser's default blue. */
+.staff-cleaning-meta a {
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.staff-cleaning-meta a:hover {
+    text-decoration: underline;
+}
+
 .staff-cleaning-extras {
     margin: 0;
     padding-left: 18px;
