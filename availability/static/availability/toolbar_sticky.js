@@ -1,11 +1,10 @@
-import { StartDatepicker, EndDatepicker, GuestsGrouppicker, submissionValidation, switchStartToEndPicker, switchEndToGuestsPicker } from './toolbar.js';
+import { createSearchDatePickers, GuestsGrouppicker, submissionValidation, switchStartToEndPicker, switchEndToGuestsPicker } from './toolbar.js';
 import { Locationpicker } from '../../../static/pickers/locations.js';
 import { Bedroomspicker } from '../../../static/pickers/bedrooms.js';
 
 document.addEventListener('DOMContentLoaded', function() {
-    const startPicker = new StartDatepicker();
-    const endPicker = new EndDatepicker(startPicker);
-    const guestsPicker = new GuestsGrouppicker(endPicker.dates);
+    const { startInput, endInput, startFp, endFp } = createSearchDatePickers();
+    const guestsPicker = new GuestsGrouppicker(endFp.calendarContainer);
 
     // the location/bedrooms pickers are omitted from the toolbar when it's
     // pre-filled from a search, so only wire them up if present
@@ -17,8 +16,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const form = document.querySelector('form.toolbar.availability');
     const submitBtn = document.querySelector('form.toolbar.availability button.submit');
 
-    startPicker.dates.addEventListener('dateselected', () => switchStartToEndPicker(startPicker, endPicker));
-    endPicker.dates.addEventListener('dateselected', () => switchEndToGuestsPicker(endPicker, guestsPicker));
+    startFp.config.onChange.push(() => switchStartToEndPicker(startFp, endFp));
+    endFp.config.onChange.push(() => switchEndToGuestsPicker(endFp, guestsPicker));
 
-    if (submitBtn && form) submitBtn.addEventListener('click', (e) => submissionValidation(e, startPicker.value, endPicker.value));
+    if (submitBtn && form) submitBtn.addEventListener('click', (e) => submissionValidation(e, startInput.value, endInput.value));
 });

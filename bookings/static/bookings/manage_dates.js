@@ -1,51 +1,54 @@
-import { Datepicker } from '../pickers/dates.js';
-import { addDays, dateCheck, isDateString } from '../availability/script.js';
-
-class EditDatesStartDatepicker extends Datepicker {
-    constructor(disableBefore) {
-        super('arrival', new Date(), disableBefore, null);
-        this.placeholder = 'Check-in';
-    }
-}
-
-class EditDatesEndDatepicker extends Datepicker {
-    constructor(disableBefore) {
-        super('departure', new Date(), disableBefore, null);
-        this.placeholder = 'Check-out';
-    }
-}
+import { linkDateRange, tagCalendar, toFlatpickrDisabledRanges } from '../../../static/pickers/linked_dates.js';
+import { addDays, dateCheck, isDateString, stringToDate } from '../availability/script.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     const form = document.querySelector('form.edit-dates-form');
     if (!form) return;
 
+    const startInput = document.getElementById('arrival');
+    const endInput = document.getElementById('departure');
+
     const dataEl = document.getElementById('edit-dates-data');
     const occupiedRanges = dataEl
         ? JSON.parse(dataEl.textContent).map(([start, end]) => ({
-            start: Datepicker.parseValue(start), end: Datepicker.parseValue(end),
+            start: stringToDate(start), end: stringToDate(end),
         }))
         : [];
+    const disabledRanges = toFlatpickrDisabledRanges(occupiedRanges);
 
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    const startPicker = new EditDatesStartDatepicker(today);
-    const endPicker = new EditDatesEndDatepicker(addDays(startPicker.selectedDate, 1));
-    startPicker.disabledRanges = occupiedRanges;
-    endPicker.disabledRanges = occupiedRanges;
-
-    startPicker.dates.addEventListener('dateselected', () => {
-        const checkInPlusOne = addDays(startPicker.selectedDate, 1);
-        endPicker.disableBefore = checkInPlusOne;
-        if (!endPicker.value || !dateCheck(startPicker.value, endPicker.value)) {
-            endPicker.selectedDate = checkInPlusOne;
-            endPicker.value = endPicker.getValueString();
-        }
-        startPicker.close();
-        endPicker.open();
+    // Not appendTo-ed into the field's own wrapper: this codebase's global
+    // .container base rule (static/main/style.css) puts every .container
+    // element - including that wrapper - on position:relative, which breaks
+    // flatpickr's own viewport-relative positioning math. Defaulting to
+    // flatpickr's normal document.body append keeps positioning correct;
+    // tagCalendar scopes the brand-color theme in dates.css by class instead
+    // of DOM nesting.
+    const startFp = window.flatpickr(startInput, {
+        dateFormat: 'd/m/Y',
+        minDate: today,
+        disable: disabledRanges,
+        onReady: [tagCalendar],
     });
 
-    endPicker.dates.addEventListener('dateselected', () => endPicker.close());
+    const initialCheckIn = startFp.selectedDates[0] || today;
+    const endFp = window.flatpickr(endInput, {
+        dateFormat: 'd/m/Y',
+        minDate: addDays(initialCheckIn, 1),
+        disable: disabledRanges,
+        onReady: [tagCalendar],
+    });
+
+    linkDateRange(startFp, endFp);
+
+    startFp.config.onChange.push(() => {
+        startFp.close();
+        endFp.open();
+    });
+
+    endFp.config.onChange.push(() => endFp.close());
 
     // Same price-change-overlay pattern as guest_list.js: "Edit dates" just dismisses the
     // overlay so the guest can see/change the picker fields underneath it again - a plain <button
@@ -59,13 +62,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Any date change after a price-change warning is shown invalidates it - same reasoning as
     // guest_list.js's own input listener (the guest must resubmit to see a fresh recalculation).
     if (priceChangeOverlay) {
-        startPicker.dates.addEventListener('dateselected', () => priceChangeOverlay.classList.add('price-change-stale'));
-        endPicker.dates.addEventListener('dateselected', () => priceChangeOverlay.classList.add('price-change-stale'));
+        startFp.config.onChange.push(() => priceChangeOverlay.classList.add('price-change-stale'));
+        endFp.config.onChange.push(() => priceChangeOverlay.classList.add('price-change-stale'));
     }
 
     form.addEventListener('submit', (e) => {
-        const start = startPicker.value;
-        const end = endPicker.value;
+        const start = startInput.value;
+        const end = endInput.value;
 
         if (!start || !end) {
             e.preventDefault();

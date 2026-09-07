@@ -1,42 +1,31 @@
 .container.picker.date input.readonly {
     width: 150px;
+    padding: 14px 16px;
+    font-size: 1rem;
+    box-sizing: border-box;
 }
 
-.container.picker.hidden.date {
-    min-width: 250px;
-}
+/* flatpickr's own popup is appended to document.body (see tagCalendar in
+linked_dates.js and the comment in toolbar.js/manage_dates.js on why appendTo
+isn't used), so it's tagged with .guest-datepicker rather than scoped by DOM
+nesting - this keeps these overrides off staff's own unstyled default
+flatpickr (staff/static/staff/vendor/flatpickr/). */
 
-.container.picker.date .days, 
-.container.picker.date .dates {
-    display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    gap: 10px;
-    margin-block-start: 10px;
-    width: 100%;
-    justify-items: center;
-    align-items: center;
-}
-
-.container.picker.date .days span {
-    font-size: 14px;
-    font-weight: 600;
-    text-transform: uppercase;
-    text-align: center;
-    width: 100%;
-}
-
-.container.picker.date .dates button {
-    color: slategray;
-    width: 100%;
-    aspect-ratio: 1;
-}
-
-.container.picker.date .dates button.today {
-    background: var(--secondary-color-soft, #f9e7b0);
-    color: var(--primary-color-dark, #1f5f93);
-}
-
-.container.picker.date .dates button.selected {
+.guest-datepicker .flatpickr-day.selected,
+.guest-datepicker .flatpickr-day.selected:hover {
     background: var(--primary-color, #2c79b9);
-    color: #fff;
+    border-color: var(--primary-color, #2c79b9);
+}
+
+.guest-datepicker .flatpickr-day.today {
+    border-color: var(--primary-color, #2c79b9);
+}
+
+.guest-datepicker .flatpickr-day.today:hover {
+    background: var(--secondary-color-soft, #f9e7b0);
+    border-color: var(--secondary-color-soft, #f9e7b0);
+}
+
+.guest-datepicker .flatpickr-day:hover {
+    background: var(--secondary-color-soft, #f9e7b0);
 }

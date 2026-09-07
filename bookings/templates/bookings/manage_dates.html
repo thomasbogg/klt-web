@@ -9,11 +9,13 @@
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'vendor/flatpickr/flatpickr.min.css' %}">
     <link rel="stylesheet" href="{% static 'pickers/dates.css' %}">
     <link rel="stylesheet" href="{% static 'availability/calendar.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/manage_dates.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
     <script type="application/json" id="edit-dates-data">{{ occupied_ranges_json|safe }}</script>
+    <script src="{% static 'vendor/flatpickr/flatpickr.min.js' %}"></script>
     <script type="module" src="{% static 'bookings/manage_dates.js' %}"></script>
 </head>
 <header>

@@ -1,14 +1,13 @@
-import { StartDatepicker, EndDatepicker, GuestsGrouppicker, submissionValidation, switchStartToEndPicker, switchEndToGuestsPicker } from './toolbar.js';
+import { createSearchDatePickers, GuestsGrouppicker, submissionValidation, switchStartToEndPicker, switchEndToGuestsPicker } from './toolbar.js';
 
 document.addEventListener('DOMContentLoaded', function() {
-    const startPicker = new StartDatepicker();
-    const endPicker = new EndDatepicker(startPicker);
-    const guestsPicker = new GuestsGrouppicker(endPicker.dates);
+    const { startInput, endInput, startFp, endFp } = createSearchDatePickers();
+    const guestsPicker = new GuestsGrouppicker(endFp.calendarContainer);
     const form = document.querySelector('form.toolbar.availability');
     const submitBtn = document.querySelector('form.toolbar.availability button.submit');
 
-    startPicker.dates.addEventListener('dateselected', () => switchStartToEndPicker(startPicker, endPicker));
-    endPicker.dates.addEventListener('dateselected', () => switchEndToGuestsPicker(endPicker, guestsPicker));
+    startFp.config.onChange.push(() => switchStartToEndPicker(startFp, endFp));
+    endFp.config.onChange.push(() => switchEndToGuestsPicker(endFp, guestsPicker));
 
-    if (submitBtn && form) submitBtn.addEventListener('click', (e) => submissionValidation(e, startPicker.value, endPicker.value));
+    if (submitBtn && form) submitBtn.addEventListener('click', (e) => submissionValidation(e, startInput.value, endInput.value));
 });
