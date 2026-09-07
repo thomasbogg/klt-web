@@ -5151,6 +5151,66 @@ class BookingManageDatesViewTests(TestCase):
         self.assertEqual(self.booking.departure_date, new_end)
         self.assertEqual(SupplementaryPayment.objects.count(), 0)
 
+    def test_shrinking_then_restoring_dates_does_not_require_another_payment(self):
+        """Regression test: a guest who shrinks their dates (no refund, applied immediately) and
+        then restores them must not be asked to pay again for nights they already paid for. This
+        requires the shrink to leave charge.basic_rental/admin untouched - see _apply_dates_only's
+        docstring for why overwriting them down here was the actual bug."""
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+
+        shrunk_start = self.start + timedelta(days=2)
+        shrunk_end = self.end - timedelta(days=2)
+        response = self._post(shrunk_start, shrunk_end)
+        self.assertRedirects(response, f"{self.url}?dates_updated=1", fetch_redirect_response=False)
+
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.basic_rental, Decimal('700.00'))  # untouched - no refund happened
+        self.assertEqual(self.charge.admin, Decimal('38.50'))
+
+        response = self._post(self.start, self.end)
+        self.assertRedirects(response, f"{self.url}?dates_updated=1", fetch_redirect_response=False)
+        self.assertEqual(SupplementaryPayment.objects.count(), 0)
+
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.arrival_date, self.start)
+        self.assertEqual(self.booking.departure_date, self.end)
+
+    def test_increase_after_shrinking_is_only_charged_against_the_original_paid_amount(self):
+        """Generalises the above: it's not just an exact restore that must stay free - any new
+        dates costing no more than what's already been paid (738.50 = 700 + 38.50 admin) must
+        apply with no payment, and a genuine increase must only ever be charged the excess over
+        that true paid total, never over the shrunk (and never actually refunded) figure."""
+        self.balance_payment.status = 'paid'
+        self.balance_payment.save(update_fields=['status'])
+
+        shrunk_start = self.start + timedelta(days=2)
+        shrunk_end = self.end - timedelta(days=2)
+        self._post(shrunk_start, shrunk_end)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.basic_rental, Decimal('700.00'))
+
+        # A 5-night stay (500 + 27.50 admin = 527.50) still costs less than the 738.50 already
+        # paid - must apply immediately, no payment, even though it's pricier than the 3-night
+        # shrunk stay and isn't the original dates either.
+        mid_start = self.start + timedelta(days=1)
+        mid_end = mid_start + timedelta(days=5)
+        response = self._post(mid_start, mid_end)
+        self.assertRedirects(response, f"{self.url}?dates_updated=1", fetch_redirect_response=False)
+        self.assertEqual(SupplementaryPayment.objects.count(), 0)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.basic_rental, Decimal('700.00'))  # still untouched
+
+        # A 20-night stay (2000 + 110 admin = 2110.00) genuinely exceeds the 738.50 already paid -
+        # must be charged only the excess over that true paid total (1371.50), not over the
+        # 527.50 the booking most recently (and briefly) cost.
+        long_start = self.start + timedelta(days=1)
+        long_end = long_start + timedelta(days=20)
+        response = self._post(long_start, long_end)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['price_increase'])
+        self.assertEqual(response.context['price_diff'], Decimal('1371.50'))
+
     def test_fully_paid_pricier_dates_require_payment_before_applying(self):
         self.balance_payment.status = 'paid'
         self.balance_payment.save(update_fields=['status'])

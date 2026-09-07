@@ -1562,12 +1562,16 @@ class BookingManageDatesView(View):
             return redirect(f"{reverse('bookings:manage_dates', args=[booking.reference])}?dates_updated=1")
 
         # Balance already paid - a lower/equal price applies immediately (no refund of the excess
-        # already collected); a higher price must be paid online first.
+        # already collected); a higher price must be paid online first. Crucially, "applies
+        # immediately" only ever moves the dates, never charge.total_rental/admin - those must
+        # stay pinned to what was actually collected. Writing them down to the new, cheaper price
+        # here would erase the record of the (unrefunded) excess, so a later change back to - or
+        # towards - the original dates would wrongly look like a fresh price increase against the
+        # now-understated charge, asking the guest to pay again for nights they already paid for.
         price_diff = (new_costs['rental_total'] + new_costs['admin_fee']) - (charge.total_rental + charge.admin)
 
         if price_diff <= 0:
-            with transaction.atomic():
-                self._apply_dates_and_charge(booking, charge, new_arrival, new_departure, new_costs)
+            self._apply_dates_only(booking, new_arrival, new_departure)
             return redirect(f"{reverse('bookings:manage_dates', args=[booking.reference])}?dates_updated=1")
 
         if not confirmed:
@@ -1611,6 +1615,16 @@ class BookingManageDatesView(View):
         charge.save(update_fields=[
             'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'due_at_balance',
         ])
+
+    def _apply_dates_only(self, booking, new_arrival, new_departure):
+        """Used for a post-balance-paid price decrease: moves the booking's dates without
+        touching Charge at all, since there's no refund to reconcile it against - see the
+        price_diff <= 0 branch above for why overwriting it here would be a real bug, not a
+        cosmetic one."""
+        booking.arrival_date = new_arrival
+        booking.departure_date = new_departure
+        booking.manual_override = True
+        booking.save(update_fields=['arrival_date', 'departure_date', 'manual_override'])
 
     def _calendar_context(self, booking):
         """occupied_ranges is inlined as JSON for manage_dates.js to feed straight into the date
