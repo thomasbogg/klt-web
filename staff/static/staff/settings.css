@@ -206,6 +206,25 @@
     width: 70px;
 }
 
+/* Platforms: without an explicit width, fixed table-layout was splitting the leftover space
+   evenly between Name and "Takes security deposits" - handing a lone checkbox the same column
+   width as the one genuinely free-text field, so it sat flush left with a wide empty strip beside
+   it (2026-09-07, per Thomas: "a little asymmetric"). 200px comfortably fits the header on one
+   line; text-align: center (on both th and td, same as .staff-owners-table's boolean columns)
+   puts the checkbox in the middle of that width instead of hugging its left edge. Commission %'s
+   130px mirrors Special requests' Default price treatment above - fits the header plus its
+   .staff-input-small (100px max-width) without excess.  */
+.staff-platforms-table th:nth-child(2),
+.staff-platforms-checkbox-cell {
+    width: 200px;
+    text-align: center;
+}
+
+.staff-platforms-table th:nth-child(3),
+.staff-platforms-table td:nth-child(3) {
+    width: 130px;
+}
+
 .staff-booking-conditions-table th:first-child,
 .staff-booking-conditions-table td:first-child {
     width: 80px;
