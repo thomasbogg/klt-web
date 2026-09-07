@@ -100,15 +100,21 @@
 /* Contact Details, per Thomas 2026-09-08: Email needs the room (it's the one genuinely
    variable-length field here), while Country code/Phone/NIF number never hold more than a
    handful of characters - narrowing them is what lets all four fit on one row instead of
-   wrapping. The select would otherwise stretch to fit its longest option text ("Trinidad and
-   Tobago (+1)") - narrowing it just clips the closed-state label, the full name still shows once
-   the dropdown is open. */
+   wrapping. */
 .owner-input-wide {
     width: 260px;
 }
 
 .owner-input-narrow {
     width: 110px;
+}
+
+/* The select only ever needs to fit its own collapsed display, a bare calling code like "+351" -
+   contact_details.js swaps each option's text between that and its full country name, so the
+   dropdown list itself still reads with full names once opened even though the box stays this
+   narrow. */
+.owner-input-tiny {
+    width: 80px;
 }
 
 .owner-filter-columns {

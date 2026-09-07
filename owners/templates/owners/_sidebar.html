@@ -19,6 +19,6 @@ guest Manage Booking hub, per Thomas's own framing. Expects `active_section` and
        href="{% url 'owners:contact_details' %}">Contact Details</a>
     <form method="post" action="{% url 'owners:logout' %}">
         {% csrf_token %}
-        <button type="submit" class="manage-hub-nav-link">Log out</button>
+        <button type="submit" class="manage-hub-nav-link manage-hub-nav-link-danger">Log out</button>
     </form>
 </nav>

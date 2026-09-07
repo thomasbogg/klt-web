@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
     <link rel="stylesheet" href="{% static 'owners/owners.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script src="{% static 'owners/contact_details.js' %}" defer></script>
 </head>
 <header>
     {% include 'header/header.html' %}
@@ -40,7 +41,7 @@
                     </label>
                     <div class="staff-field-row">
                         <label>Country code
-                            <select name="phone_country_code" class="owner-input-narrow">
+                            <select name="phone_country_code" class="owner-input-tiny">
                                 <option value="">-</option>
                                 {% for code, label in phone_country_choices %}
                                 <option value="{{ code }}" {% if code == phone_code %}selected{% endif %}>{{ label }}</option>
