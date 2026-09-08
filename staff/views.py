@@ -2769,7 +2769,7 @@ class StaffBookingDetailView(View):
             # A property whose booking_company has a check-in policy set overrides whatever this
             # checkbox was posted as - see compute_effective_self_check_in's own docstring. Only a
             # property with no such policy leaves this fully staff-manual, same as always.
-            computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.time)
+            computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.method, arrival.time)
             arrival.self_check_in = (
                 computed_self_check_in if computed_self_check_in is not None
                 else post.get('self_check_in') == 'on'

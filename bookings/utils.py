@@ -1,6 +1,6 @@
 import re
 import secrets
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from urllib.parse import urlencode
 
@@ -967,7 +967,7 @@ def sync_ical_link(link, ics_text):
         # step to ever collect one), so a MIXED company policy can't resolve here - only a hard
         # SELF_CHECK_IN/IN_PERSON policy can, same "None means leave the default" contract as
         # every other compute_effective_self_check_in() call site.
-        computed_self_check_in = compute_effective_self_check_in(link.property, None)
+        computed_self_check_in = compute_effective_self_check_in(link.property, None, None)
         Arrival.objects.create(
             booking=booking, self_check_in=computed_self_check_in if computed_self_check_in is not None else False,
             meet_greet=True,
@@ -1039,9 +1039,52 @@ def parsed_arrival_departure_time(raw):
         return None
 
 
-def compute_effective_self_check_in(property, arrival_time):
+def compute_eta_from_given_time(method, given_time):
+    """Applies the same per-method last-mile buffer as staff/utils.py::compute_arrival_eta (which
+    delegates here) - the single source of truth for "what time does this guest actually reach the
+    property", given what they told us on the arrival form. A flight's given time is its *landing*
+    time (still needs the buffer to clear immigration/baggage/the drive from Faro or Lisbon); bus/
+    train's given time is already an at-property estimate needing only a last-mile buffer; driving/
+    other are already a final at-property estimate, used as-is with no buffer (see
+    compute_arrival_eta's own docstring for the 'other' reasoning).
+
+    Returns None if given_time is None or the time(0, 0) migration/data-entry sentinel (see
+    compute_arrival_eta's docstring - hundreds of real rows have this baked in as "no time known",
+    not a genuine midnight arrival) - both mean there's no real time to compute an ETA from.
+
+    2026-09-08, per Thomas: built so MIXED-policy self-check-in eligibility
+    (compute_effective_self_check_in below) judges lateness by this same computed ETA rather than
+    the raw given time - a 21:45 Faro landing clears the property well after a 22:00 cutoff once
+    the drive is accounted for, and should qualify for self check-in exactly like the staff
+    check-ins calendar already shows it would."""
+    from bookings.models import CheckinSettings, TravelMethod
+
+    if given_time is None or given_time == time(0, 0):
+        return None
+
+    if method == TravelMethod.FLIGHT_FARO:
+        buffer_minutes = CheckinSettings.load().faro_buffer_minutes
+    elif method == TravelMethod.FLIGHT_LISBON:
+        buffer_minutes = CheckinSettings.load().lisbon_buffer_minutes
+    elif method in (TravelMethod.BUS, TravelMethod.TRAIN):
+        buffer_minutes = CheckinSettings.load().transit_buffer_minutes
+    else:
+        buffer_minutes = 0
+
+    combined = datetime.combine(date.today(), given_time) + timedelta(minutes=buffer_minutes)
+    if combined.date() != date.today():
+        # Same midnight-rollover handling as compute_arrival_eta - see its docstring for why a
+        # naive .time() extraction here would silently misread "very late tonight" as "very early
+        # this morning".
+        overflow_minutes = combined.hour * 60 + combined.minute
+        return time(23, min(overflow_minutes, 59))
+    return combined.time()
+
+
+def compute_effective_self_check_in(property, method, arrival_time):
     """Derives Arrival.self_check_in from property.booking_company's check-in policy (2026-09-05,
-    per Thomas), given the guest's currently-known arrival time (may be None if not supplied yet).
+    per Thomas), given the guest's currently-known travel method and arrival time (may be None if
+    not supplied yet).
 
     Returns True/False when the policy determines an answer, or None when there's nothing to
     apply - no booking_company, one with check_in_method unset, or a MIXED policy that can't yet
@@ -1052,8 +1095,13 @@ def compute_effective_self_check_in(property, arrival_time):
 
     Called every time Arrival is saved (guest's own Manage Booking hub, Owner Suite, and the staff
     Booking Info panel) so a MIXED policy keeps re-evaluating as the guest's own answers (arrival
-    time) change, and a hard SELF_CHECK_IN/IN_PERSON company policy always wins over whatever a
-    staff member ticks on the checkbox - deliberate per Thomas, not a bug."""
+    method/time) change, and a hard SELF_CHECK_IN/IN_PERSON company policy always wins over
+    whatever a staff member ticks on the checkbox - deliberate per Thomas, not a bug.
+
+    MIXED policy judges lateness by the computed ETA (compute_eta_from_given_time above), not the
+    raw given time (2026-09-08, per Thomas) - a guest who lands before the cutoff but wouldn't
+    actually reach the property until after it should still get self check-in, matching what the
+    staff check-ins calendar already shows for the same booking."""
     from properties.models import ManagementCompany
 
     company = property.booking_company
@@ -1063,9 +1111,12 @@ def compute_effective_self_check_in(property, arrival_time):
         return True
     if company.check_in_method == ManagementCompany.CheckInMethod.IN_PERSON:
         return False
-    if not company.self_check_in_after or not arrival_time:
+    if not company.self_check_in_after:
         return None
-    return arrival_time >= company.self_check_in_after
+    eta = compute_eta_from_given_time(method, arrival_time)
+    if eta is None:
+        return None
+    return eta >= company.self_check_in_after
 
 
 def resolve_shared_postbox_path(booking):

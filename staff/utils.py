@@ -677,38 +677,13 @@ def compute_arrival_eta(booking):
     method='other' with no time at all (still correctly fall through to this same branch,
     unaffected), 16 have a real non-midnight time (previously silently discarded, now shown
     correctly)."""
-    from bookings.models import CheckinSettings, TravelMethod
+    from bookings.utils import compute_eta_from_given_time
 
     arrival = getattr(booking, 'arrival', None)
-    if arrival is None or arrival.time is None or arrival.time == time(0, 0):
+    eta = compute_eta_from_given_time(arrival.method, arrival.time) if arrival is not None else None
+    if eta is None:
         return _standard_checkin_time(booking), False
-
-    if arrival.method == TravelMethod.FLIGHT_FARO:
-        buffer_minutes = CheckinSettings.load().faro_buffer_minutes
-    elif arrival.method == TravelMethod.FLIGHT_LISBON:
-        buffer_minutes = CheckinSettings.load().lisbon_buffer_minutes
-    elif arrival.method in (TravelMethod.BUS, TravelMethod.TRAIN):
-        buffer_minutes = CheckinSettings.load().transit_buffer_minutes
-    else:
-        # DRIVING and OTHER (see docstring): both already represent a final at-property estimate,
-        # used as-is with no buffer applied here.
-        buffer_minutes = 0
-
-    combined = datetime.combine(date.today(), arrival.time) + timedelta(minutes=buffer_minutes)
-    if combined.date() != date.today():
-        # The buffer pushed the ETA past midnight - guests don't actually check in during the
-        # small hours, so a naive .time() extraction here would silently drop the day-rollover
-        # and render as e.g. 00:50 on the check-in's own date, reading as "very early that
-        # morning" when it really means "very late that night" (2026-09-02, per Thomas - a real
-        # bug, not a deliberate all-day/no-buffer fallback). Map into the last hour of the
-        # correct date instead: overflow-minutes-past-midnight becomes minutes-past-23:00,
-        # capped at 23:59 for buffers large enough to overflow by more than an hour (Lisbon's can
-        # be, at up to 270 minutes) so it always lands within Thomas's stated 23:00-23:59 window.
-        overflow_minutes = combined.hour * 60 + combined.minute
-        computed = time(23, min(overflow_minutes, 59))
-    else:
-        computed = combined.time()
-    return computed, True
+    return eta, True
 
 
 def _computed_checkin_time(booking, task_type):

@@ -11,15 +11,16 @@ from bookings.forms import ReservationForm
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge,
-    Departure, DepositBankDetails, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration,
-    Payment, PaymentSettings, PlatformPayout, RequestType, SupplementaryPayment, TouristTax,
-    WelcomePackItem,
+    CheckinSettings, Departure, DepositBankDetails, Extra, ExtrasSettings, FAQ, GuestListAdjustment,
+    GuestRegistration, Payment, PaymentSettings, PlatformPayout, RequestType, SupplementaryPayment,
+    TouristTax, TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
 from staff.models import OwnerPayment
 from bookings.utils import (
     add_business_days, apply_supplementary_payment, compute_deposit_waiver,
-    compute_effective_self_check_in, compute_initial_hold_expiry, compute_tourist_tax, create_booking,
+    compute_effective_self_check_in, compute_eta_from_given_time, compute_initial_hold_expiry,
+    compute_tourist_tax, create_booking,
     create_owner_booking, determine_payment_provider, expire_stale_holds, extras_summary,
     guest_counts_by_age, guest_for_owner, has_completed_previous_stay, payment_clearing_expiry,
     recalculate_balance_for_party, recalculate_costs_for_dates, recalculate_costs_for_party,
@@ -3214,58 +3215,136 @@ class BookingManageGuestRegistrationsViewTests(TestCase):
         self.assertFalse(rows_by_guest[self.lead.pk]['registration'].has_nif)
 
 
+class ComputeEtaFromGivenTimeTests(TestCase):
+    def setUp(self):
+        settings = CheckinSettings.load()
+        settings.faro_buffer_minutes = 90
+        settings.lisbon_buffer_minutes = 270
+        settings.transit_buffer_minutes = 30
+        settings.save()
+
+    def test_faro_flight_adds_faro_buffer_to_landing_time(self):
+        self.assertEqual(compute_eta_from_given_time(TravelMethod.FLIGHT_FARO, time(21, 0)), time(22, 30))
+
+    def test_lisbon_flight_adds_lisbon_buffer_to_landing_time(self):
+        self.assertEqual(compute_eta_from_given_time(TravelMethod.FLIGHT_LISBON, time(14, 0)), time(18, 30))
+
+    def test_bus_and_train_add_transit_buffer(self):
+        self.assertEqual(compute_eta_from_given_time(TravelMethod.BUS, time(21, 45)), time(22, 15))
+        self.assertEqual(compute_eta_from_given_time(TravelMethod.TRAIN, time(21, 45)), time(22, 15))
+
+    def test_driving_and_other_are_used_as_given(self):
+        self.assertEqual(compute_eta_from_given_time(TravelMethod.DRIVING, time(21, 45)), time(21, 45))
+        self.assertEqual(compute_eta_from_given_time(TravelMethod.OTHER, time(21, 45)), time(21, 45))
+
+    def test_no_time_returns_none(self):
+        self.assertIsNone(compute_eta_from_given_time(TravelMethod.FLIGHT_FARO, None))
+
+    def test_midnight_sentinel_is_treated_as_no_time(self):
+        self.assertIsNone(compute_eta_from_given_time(TravelMethod.FLIGHT_FARO, time(0, 0)))
+
+    def test_buffer_past_midnight_is_clamped_into_the_last_hour(self):
+        # 23:30 landing + 90 minutes would roll into 01:00 the next day - must read as "very late
+        # tonight", never "very early this morning".
+        self.assertEqual(compute_eta_from_given_time(TravelMethod.FLIGHT_FARO, time(23, 30)), time(23, 59))
+
+
 class ComputeEffectiveSelfCheckInTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Test Property CESC', short_title='TESTCESC')
+        settings = CheckinSettings.load()
+        settings.faro_buffer_minutes = 90
+        settings.transit_buffer_minutes = 30
+        settings.save()
 
     def test_no_booking_company_returns_none(self):
-        self.assertIsNone(compute_effective_self_check_in(self.property, None))
+        self.assertIsNone(compute_effective_self_check_in(self.property, TravelMethod.DRIVING, None))
 
     def test_company_with_no_check_in_method_returns_none(self):
         self.property.booking_company = ManagementCompany.objects.create(name='No Policy Co')
-        self.assertIsNone(compute_effective_self_check_in(self.property, time(12, 0)))
+        self.assertIsNone(
+            compute_effective_self_check_in(self.property, TravelMethod.DRIVING, time(12, 0))
+        )
 
     def test_always_self_check_in_returns_true_regardless_of_time(self):
         self.property.booking_company = ManagementCompany.objects.create(
             name='Always Self Co', check_in_method=ManagementCompany.CheckInMethod.SELF_CHECK_IN,
         )
-        self.assertTrue(compute_effective_self_check_in(self.property, None))
-        self.assertTrue(compute_effective_self_check_in(self.property, time(3, 0)))
+        self.assertTrue(compute_effective_self_check_in(self.property, TravelMethod.DRIVING, None))
+        self.assertTrue(compute_effective_self_check_in(self.property, TravelMethod.DRIVING, time(3, 0)))
 
     def test_always_in_person_returns_false_regardless_of_time(self):
         self.property.booking_company = ManagementCompany.objects.create(
             name='Always In Person Co', check_in_method=ManagementCompany.CheckInMethod.IN_PERSON,
         )
-        self.assertFalse(compute_effective_self_check_in(self.property, None))
-        self.assertFalse(compute_effective_self_check_in(self.property, time(23, 0)))
+        self.assertFalse(compute_effective_self_check_in(self.property, TravelMethod.DRIVING, None))
+        self.assertFalse(
+            compute_effective_self_check_in(self.property, TravelMethod.DRIVING, time(23, 0))
+        )
 
     def test_mixed_at_or_after_cutoff_is_self_check_in(self):
         self.property.booking_company = ManagementCompany.objects.create(
             name='Mixed Co', check_in_method=ManagementCompany.CheckInMethod.MIXED,
             self_check_in_after=time(14, 0),
         )
-        self.assertTrue(compute_effective_self_check_in(self.property, time(14, 0)))
-        self.assertTrue(compute_effective_self_check_in(self.property, time(20, 0)))
+        self.assertTrue(compute_effective_self_check_in(self.property, TravelMethod.DRIVING, time(14, 0)))
+        self.assertTrue(compute_effective_self_check_in(self.property, TravelMethod.DRIVING, time(20, 0)))
 
     def test_mixed_before_cutoff_is_not_self_check_in(self):
         self.property.booking_company = ManagementCompany.objects.create(
             name='Mixed Co Early', check_in_method=ManagementCompany.CheckInMethod.MIXED,
             self_check_in_after=time(14, 0),
         )
-        self.assertFalse(compute_effective_self_check_in(self.property, time(9, 0)))
+        self.assertFalse(compute_effective_self_check_in(self.property, TravelMethod.DRIVING, time(9, 0)))
 
     def test_mixed_with_no_arrival_time_yet_returns_none(self):
         self.property.booking_company = ManagementCompany.objects.create(
             name='Mixed Co No Time', check_in_method=ManagementCompany.CheckInMethod.MIXED,
             self_check_in_after=time(14, 0),
         )
-        self.assertIsNone(compute_effective_self_check_in(self.property, None))
+        self.assertIsNone(compute_effective_self_check_in(self.property, TravelMethod.DRIVING, None))
 
     def test_mixed_with_no_cutoff_configured_returns_none(self):
         self.property.booking_company = ManagementCompany.objects.create(
             name='Mixed Co No Cutoff', check_in_method=ManagementCompany.CheckInMethod.MIXED,
         )
-        self.assertIsNone(compute_effective_self_check_in(self.property, time(14, 0)))
+        self.assertIsNone(
+            compute_effective_self_check_in(self.property, TravelMethod.DRIVING, time(14, 0))
+        )
+
+    def test_mixed_judges_lateness_on_the_computed_eta_not_the_landing_time(self):
+        """A 21:00 Faro landing is before a 22:00 cutoff, but the guest doesn't reach the property
+        until 22:30 once the drive is accounted for - that qualifies for self check-in."""
+        self.property.booking_company = ManagementCompany.objects.create(
+            name='Mixed Co ETA', check_in_method=ManagementCompany.CheckInMethod.MIXED,
+            self_check_in_after=time(22, 0),
+        )
+        self.assertTrue(
+            compute_effective_self_check_in(self.property, TravelMethod.FLIGHT_FARO, time(21, 0))
+        )
+        # Same landing time, driving instead - already an at-property estimate, so no buffer and
+        # no self check-in.
+        self.assertFalse(
+            compute_effective_self_check_in(self.property, TravelMethod.DRIVING, time(21, 0))
+        )
+
+    def test_mixed_eta_still_short_of_cutoff_stays_in_person(self):
+        self.property.booking_company = ManagementCompany.objects.create(
+            name='Mixed Co ETA Early', check_in_method=ManagementCompany.CheckInMethod.MIXED,
+            self_check_in_after=time(22, 0),
+        )
+        self.assertFalse(
+            compute_effective_self_check_in(self.property, TravelMethod.FLIGHT_FARO, time(19, 0))
+        )
+
+    def test_mixed_midnight_sentinel_time_returns_none(self):
+        self.property.booking_company = ManagementCompany.objects.create(
+            name='Mixed Co Midnight', check_in_method=ManagementCompany.CheckInMethod.MIXED,
+            self_check_in_after=time(22, 0),
+        )
+        self.assertIsNone(
+            compute_effective_self_check_in(self.property, TravelMethod.FLIGHT_FARO, time(0, 0))
+        )
 
 
 class ComputeDepositWaiverTests(TestCase):

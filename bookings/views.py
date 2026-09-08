@@ -23,7 +23,8 @@ from bookings.models import (
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, append_guest_rows, booking_confirmation_context, cancel_booking_hold,
-    compute_effective_self_check_in, compute_initial_hold_expiry, compute_tourist_tax,
+    compute_effective_self_check_in, compute_eta_from_given_time, compute_initial_hold_expiry,
+    compute_tourist_tax,
     determine_payment_provider, extras_summary, guest_counts_by_age, mid_stay_clean_window,
     parsed_arrival_departure_time, parsed_travel_method, recalculate_balance_for_party,
     recalculate_costs_for_dates, recalculate_costs_for_party, reservation_retry_url,
@@ -1429,7 +1430,7 @@ def _save_arrival(booking, data):
     arrival.time = parsed_arrival_departure_time(data['time'])
     arrival.details = data['details']
     update_fields = ['method', 'flight_number', 'travelling_from', 'hiring_car', 'time', 'details']
-    computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.time)
+    computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.method, arrival.time)
     if computed_self_check_in is not None:
         arrival.self_check_in = computed_self_check_in
         update_fields.append('self_check_in')
@@ -2387,15 +2388,21 @@ class BookingManageLocationView(View):
             # Only true when self check-in is a MIXED company's late-arrival cutoff kicking in,
             # not a property that's always self check-in - a guest arriving well within normal
             # hours shouldn't be told they're "arriving very late" just because their property
-            # happens to have no in-person option at all (2026-09-08, per Thomas).
+            # happens to have no in-person option at all (2026-09-08, per Thomas). Judged on the
+            # computed ETA, not the raw given time, for exactly the same reason
+            # compute_effective_self_check_in() is - otherwise a 21:00 Faro landing would silently
+            # get self check-in (ETA 22:30, past the cutoff) with no explanation of why.
             from properties.models import ManagementCompany
             booking_company = booking.property.booking_company
+            arrival_eta = (
+                compute_eta_from_given_time(arrival.method, arrival.time) if arrival is not None else None
+            )
             self_check_in_late_arrival = bool(
                 booking_company is not None
                 and booking_company.check_in_method == ManagementCompany.CheckInMethod.MIXED
                 and booking_company.self_check_in_after is not None
-                and arrival is not None and arrival.time is not None
-                and arrival.time >= booking_company.self_check_in_after
+                and arrival_eta is not None
+                and arrival_eta >= booking_company.self_check_in_after
             )
 
         in_person_cleaning_company = booking.property.cleaning_company if in_person else None

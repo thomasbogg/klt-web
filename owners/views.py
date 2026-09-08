@@ -643,7 +643,7 @@ class OwnerBookingDetailView(BookingFormMixin, View):
         # Unlike the guest-facing Manage Booking hub (which never lets a guest touch this),
         # meet_greet IS owner-editable here - see this view's own docstring.
         arrival.meet_greet = post.get('meet_greet') == 'on'
-        computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.time)
+        computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.method, arrival.time)
         if computed_self_check_in is not None:
             arrival.self_check_in = computed_self_check_in
         arrival.save()
