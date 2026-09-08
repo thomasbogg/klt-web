@@ -822,6 +822,10 @@ def booking_confirmation_context(booking):
         'has_cost_data': has_cost_data,
         'show_cost_breakdown': show_cost_breakdown,
         'show_security_deposit_row': show_security_deposit_row,
+        # Exposed 2026-09-08, per Thomas, so manage_hub.html can show a platform-booking-only
+        # explainer of what the Manage Booking hub covers (the guest never filled in a form on
+        # our own site, so the hub itself is their first look at any of this).
+        'is_platform_booking': is_platform_booking,
         'subtotal': subtotal,
         'nights': (booking.departure_date - booking.arrival_date).days,
         'costs_gbp': charge.costs_in_gbp() if has_cost_data else None,

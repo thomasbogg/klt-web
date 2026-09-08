@@ -2623,6 +2623,28 @@ class BookingManageHubViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertNotContains(response, 'Platform Reference')
 
+    def test_getting_ready_note_shown_for_a_platform_booking(self):
+        Platform.objects.get_or_create(name='Airbnb')
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['is_platform_booking'])
+        self.assertContains(response, 'Getting ready for your stay')
+        self.assertContains(response, 'Guest Registrations')
+
+    def test_getting_ready_note_hidden_for_a_direct_booking(self):
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['is_platform_booking'])
+        self.assertNotContains(response, 'Getting ready for your stay')
+
+    def test_getting_ready_note_hidden_for_a_cancelled_platform_booking(self):
+        Platform.objects.get_or_create(name='Airbnb')
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.enquiry_status = 'Cancelled by guest'
+        self.booking.save(update_fields=['enquiry_source', 'enquiry_status'])
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Getting ready for your stay')
+
     def test_platform_reference_hidden_when_blank(self):
         Platform.objects.get_or_create(name='Airbnb')
         self.booking.enquiry_source = 'Airbnb'
@@ -5574,7 +5596,10 @@ class BookingManageDatesViewTests(TestCase):
         self.assertEqual(response.context['departure_value'], self.end.strftime('%d/%m/%Y'))
         self.assertIn('calendar_months', response.context)
 
-    def test_get_redirects_for_a_booking_with_no_charge(self):
+    def test_get_redirects_for_a_booking_with_no_charge_at_all(self):
+        # An edge case (one legacy-migrated row in production has this shape) rather than the
+        # normal platform-booking case below - covered separately so the hasattr('charges') guard
+        # that protects this view from crashing doesn't quietly stop being exercised.
         platform_guest = Guest.objects.create(first_name='Air', last_name='BnB', email='air-md@example.com')
         platform_booking = Booking.objects.create(
             property=self.property, guest=platform_guest,
@@ -5588,6 +5613,58 @@ class BookingManageDatesViewTests(TestCase):
             response, reverse('bookings:manage_hub', kwargs={'reference': platform_booking.reference}),
             fetch_redirect_response=False,
         )
+
+    def test_get_redirects_for_a_platform_booking_with_a_charge_row(self):
+        # Real bug, fixed 2026-09-08: every platform booking DOES get a Charge row (for Owner
+        # Payout accounting - see sync_ical_link()), so the old hasattr('charges')-only gate let
+        # Edit Dates show, and this view accept edits, for every single one of them despite their
+        # dates being owned by iCal sync. enquiry_source is what actually has to exclude them.
+        platform_guest = Guest.objects.create(first_name='Air', last_name='Bnb2', email='air-md-2@example.com')
+        platform_booking = Booking.objects.create(
+            property=self.property, guest=platform_guest,
+            arrival_date=self.start + timedelta(days=100), departure_date=self.start + timedelta(days=107),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Airbnb',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(
+            booking=platform_booking, basic_rental=Decimal('700.00'), admin=Decimal('0.00'),
+            platform_fee=Decimal('50.00'), currency='EUR',
+        )
+        url = reverse('bookings:manage_dates', kwargs={'reference': platform_booking.reference})
+        get_response = self.client.get(url)
+        self.assertRedirects(
+            get_response, reverse('bookings:manage_hub', kwargs={'reference': platform_booking.reference}),
+            fetch_redirect_response=False,
+        )
+        new_start = platform_booking.arrival_date + timedelta(days=1)
+        post_response = self.client.post(url, {
+            'arrival': new_start.strftime('%d/%m/%Y'),
+            'departure': (new_start + timedelta(days=7)).strftime('%d/%m/%Y'),
+            'confirmed': '1',
+        })
+        self.assertRedirects(
+            post_response, reverse('bookings:manage_hub', kwargs={'reference': platform_booking.reference}),
+            fetch_redirect_response=False,
+        )
+        platform_booking.refresh_from_db()
+        self.assertEqual(platform_booking.arrival_date, self.start + timedelta(days=100))  # unchanged
+
+    def test_show_edit_dates_false_for_a_platform_booking_with_a_charge_row(self):
+        platform_guest = Guest.objects.create(first_name='Air', last_name='Bnb3', email='air-md-3@example.com')
+        platform_booking = Booking.objects.create(
+            property=self.property, guest=platform_guest,
+            arrival_date=self.start + timedelta(days=100), departure_date=self.start + timedelta(days=107),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Airbnb',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(
+            booking=platform_booking, basic_rental=Decimal('700.00'), admin=Decimal('0.00'),
+            platform_fee=Decimal('50.00'), currency='EUR',
+        )
+        hub_url = reverse('bookings:manage_hub', kwargs={'reference': platform_booking.reference})
+        response = self.client.get(hub_url)
+        self.assertFalse(response.context['show_edit_dates'])
+        self.assertNotContains(response, reverse('bookings:manage_dates', kwargs={'reference': platform_booking.reference}))
 
     def test_checkout_must_be_after_checkin(self):
         response = self._post(self.start + timedelta(days=5), self.start, confirmed=True)

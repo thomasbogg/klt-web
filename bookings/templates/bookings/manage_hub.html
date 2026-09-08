@@ -32,6 +32,45 @@
             {% endif %}
 
             {% include 'bookings/_confirmation_details.html' with hide_manage_link=True %}
+
+            {% comment %}
+            Platform/iCal bookings only (Airbnb/Booking.com/Vrbo, per booking_confirmation_context's
+            is_platform_booking) - per Thomas 2026-09-08. A direct/website guest already went
+            through our own reservation form and sees a cost breakdown right above this, so they
+            already know the shape of the site; a platform guest booked entirely on the platform's
+            own site and is landing on klt-web for the first time here; nothing on the platform told
+            them any of this exists. Written to cover the same ground as the manual "welcome" email
+            Thomas used to send by hand for every platform booking, now that the arrival/departure
+            form fields it used to point guests to all live in this hub instead of a one-off form.
+            {% endcomment %}
+            {% if is_platform_booking and not cancelled %}
+            <div class="details-section platform-welcome-note">
+                <h2 class="details-section-title">Getting ready for your stay</h2>
+                <p class="details-note details-note-left">
+                    We're Algarve Beach Apartments, the local team managing your stay on the ground
+                    here in Albufeira. With decades of experience welcoming holidaymakers to the
+                    Algarve, we're with you every step of the way, from now through to the day you
+                    check out.
+                </p>
+                <p class="details-note details-note-left">
+                    Everything you need before you arrive now lives here in this Manager, rather
+                    than in a separate form or email - it's worth a few minutes to look through it:
+                </p>
+                <ul class="details-list">
+                    <li><strong>Contact Details</strong> - keep your email and phone number up to date, so we can reach you if anything comes up.</li>
+                    <li><strong>Arrival &amp; Departure</strong> - let us know your flight (or other travel) details as soon as you have them, so we can plan your key handover.</li>
+                    <li><strong>Optional Extras</strong> - add an Airport Transfer, Cot/High Chair, or Welcome Pack if you'd like one waiting for you.</li>
+                    <li><strong>Guest Registrations</strong> - Portuguese law requires us to register every guest's ID details ahead of check-in.</li>
+                    <li><strong>Location &amp; Check-in</strong> and <strong>Last Days &amp; Check-out</strong> - your address, access details, and everything you need for a smooth arrival and departure.</li>
+                    <li><strong>FAQ</strong> and <strong>Local Guide</strong> - answers to common questions and our own recommendations for the local area.</li>
+                </ul>
+                <p class="details-note details-note-left">
+                    We'll be in touch closer to your arrival with anything else you need, but feel
+                    free to look around and update your details any time before then. Thank you for
+                    choosing us, and we look forward to welcoming you to Albufeira!
+                </p>
+            </div>
+            {% endif %}
         </div>
     </div>
 

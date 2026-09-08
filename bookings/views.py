@@ -1166,12 +1166,20 @@ def _manage_nav_context(booking, active_section):
         # Always shown once not cancelled (same style as show_security_deposit) - the page itself
         # handles "no party yet"/"nothing owed"/"already paid", no need to hide the link for those.
         'show_tourist_tax': not cancelled,
-        # Online-direct only (hasattr 'charges') - a platform-synced booking has no Charge and its
-        # dates are owned by iCal sync, not a guest edit (see BookingManageDatesView). Same
-        # not-cancelled/not-started guard as show_cancel_booking - editing dates on a cancelled or
-        # already-arrived stay makes no sense either.
+        # Online-direct only. NOT hasattr('charges') alone - fixed 2026-09-08, per Thomas: a
+        # platform-synced booking DOES get a Charge row too (platform_fee/basic_rental, needed for
+        # Owner Payout accounting - see sync_ical_link()), so that check let Edit Dates show for
+        # every platform booking despite the docstring's original "a platform-synced booking has
+        # no Charge" assumption being false. enquiry_source (same signal show_cancel_booking
+        # already uses) is the real "online-direct" test; hasattr('charges') stays as a second
+        # guard against the one legacy-migrated direct booking with no Charge row at all, so this
+        # view never crashes reading booking.charges. Same not-cancelled/not-started guard as
+        # show_cancel_booking - editing dates on a cancelled or already-arrived stay makes no sense
+        # either, and a platform booking's dates are owned by iCal sync, not a guest edit (see
+        # BookingManageDatesView).
         'show_edit_dates': (
             not cancelled
+            and booking.enquiry_source not in env_settings.PLATFORMS
             and hasattr(booking, 'charges')
             and booking.arrival_date > timezone.now().date()
         ),
@@ -1544,10 +1552,12 @@ class BookingManageArrivalDepartureView(View):
 
 class BookingManageDatesView(View):
     """Self-serve stay-date editing section of the Manage Booking hub (2026-09, per Thomas) -
-    online-direct bookings only (see _manage_nav_context()'s show_edit_dates gate; a platform-
-    synced booking has no Charge and its dates are owned by iCal sync, not a guest edit), any time
-    from deposit-paid onward. Branches on is_balance_paid(booking), same style as
-    BookingManageGuestsView/recalculate_costs_for_dates():
+    online-direct bookings only (see _manage_nav_context()'s show_edit_dates gate - a platform
+    booking's dates are owned by iCal sync, not a guest edit; it DOES still get a Charge row of
+    its own for payout accounting, so enquiry_source, not hasattr('charges'), is what actually
+    excludes it here - fixed 2026-09-08, per Thomas, after this let a platform guest edit their
+    stay dates directly), any time from deposit-paid onward. Branches on is_balance_paid(booking),
+    same style as BookingManageGuestsView/recalculate_costs_for_dates():
 
     pre_balance: any price change (up or down) just moves due_at_balance - nothing's been
     collected for the balance stage yet, so there's nothing to check out online for. Same
@@ -1564,7 +1574,11 @@ class BookingManageDatesView(View):
         booking = Booking.objects.filter(reference=reference).first()
         if booking is None:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking) or not hasattr(booking, 'charges'):
+        if (
+            not is_paid(booking)
+            or booking.enquiry_source in env_settings.PLATFORMS
+            or not hasattr(booking, 'charges')
+        ):
             return redirect('bookings:manage_hub', reference=reference)
 
         context = {
@@ -1580,7 +1594,11 @@ class BookingManageDatesView(View):
         booking = Booking.objects.filter(reference=reference).first()
         if booking is None:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking) or not hasattr(booking, 'charges'):
+        if (
+            not is_paid(booking)
+            or booking.enquiry_source in env_settings.PLATFORMS
+            or not hasattr(booking, 'charges')
+        ):
             return redirect('bookings:manage_hub', reference=reference)
 
         arrival_raw = request.POST.get('arrival', '').strip()
