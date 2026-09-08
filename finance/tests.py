@@ -24,9 +24,7 @@ class FinanceTestCase(TestCase):
 
     def setUp(self):
         self.owner = Owner.objects.create(
-            name='Finance Owner', email='finance-owner@example.com', default_clean=False,
-            default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            name='Finance Owner', email='finance-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         self.company = ManagementCompany.objects.create(
             name='Finance Test Co', finances_managed_internally=True,

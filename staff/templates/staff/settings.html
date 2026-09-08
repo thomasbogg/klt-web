@@ -766,10 +766,11 @@
                             <thead>
                                 <tr>
                                     <th>Name</th><th>Email</th><th>Phone</th><th>NIF</th>
+                                    <th class="staff-owners-currency-col">Currency</th>
                                     {% for field, label in owner_boolean_fields %}
-                                    <th title="{{ label }}">{{ label }}</th>
+                                    <th class="staff-owners-checkbox-col" title="{{ label }}">{{ label }}</th>
                                     {% endfor %}
-                                    <th title="Number of properties currently assigned to this owner">Properties</th>
+                                    <th class="staff-property-count-cell" title="Number of properties currently assigned to this owner">Properties</th>
                                     <th class="staff-owner-portal-col" title="Owner Suite login - owners set their own password via an emailed invite, never a staff member">Portal login</th>
                                     <th></th>
                                 </tr>
@@ -781,8 +782,15 @@
                                     <td><input type="email" name="email" form="owner-form-{{ owner.pk }}" value="{{ owner.email }}" class="staff-input"></td>
                                     <td><input type="text" name="phone" form="owner-form-{{ owner.pk }}" value="{{ owner.phone|default:'' }}" class="staff-input"></td>
                                     <td><input type="text" name="nif_number" form="owner-form-{{ owner.pk }}" value="{{ owner.nif_number|default:'' }}" class="staff-input"></td>
+                                    <td class="staff-owners-currency-col">
+                                        <select name="currency" form="owner-form-{{ owner.pk }}" class="staff-input">
+                                            {% for value, label in owner_currency_choices %}
+                                            <option value="{{ value }}" {% if owner.currency == value %}selected{% endif %}>{{ label }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </td>
                                     {% for field, label in owner_boolean_fields %}
-                                    <td><input type="checkbox" name="{{ field }}" form="owner-form-{{ owner.pk }}" {% if owner|get_attr:field %}checked{% endif %}></td>
+                                    <td class="staff-owners-checkbox-col"><input type="checkbox" name="{{ field }}" form="owner-form-{{ owner.pk }}" {% if owner|get_attr:field %}checked{% endif %}></td>
                                     {% endfor %}
                                     <td class="staff-property-count-cell">{{ owner.property_count }}</td>
                                     <td class="staff-owner-portal-col">
@@ -803,7 +811,7 @@
                                             {% csrf_token %}
                                             <input type="hidden" name="action" value="invite_owner">
                                             <input type="hidden" name="owner_id" value="{{ owner.pk }}">
-                                            <button type="submit" class="staff-button staff-button-small">Invite</button>
+                                            <button type="submit" class="staff-button staff-button-small staff-button-success">Invite</button>
                                         </form>
                                         {% endif %}
                                     </td>
@@ -818,15 +826,22 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="14" class="staff-empty">No owners yet.</td></tr>
+                                <tr><td colspan="{{ owner_boolean_fields|length|add:8 }}" class="staff-empty">No owners yet.</td></tr>
                                 {% endfor %}
                                 <tr class="staff-price-row-new">
                                     <td><input type="text" name="name" form="owner-form-new" class="staff-input"></td>
                                     <td><input type="email" name="email" form="owner-form-new" class="staff-input"></td>
                                     <td><input type="text" name="phone" form="owner-form-new" class="staff-input"></td>
                                     <td><input type="text" name="nif_number" form="owner-form-new" class="staff-input"></td>
+                                    <td class="staff-owners-currency-col">
+                                        <select name="currency" form="owner-form-new" class="staff-input">
+                                            {% for value, label in owner_currency_choices %}
+                                            <option value="{{ value }}">{{ label }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </td>
                                     {% for field, label in owner_boolean_fields %}
-                                    <td><input type="checkbox" name="{{ field }}" form="owner-form-new"></td>
+                                    <td class="staff-owners-checkbox-col"><input type="checkbox" name="{{ field }}" form="owner-form-new"></td>
                                     {% endfor %}
                                     <td></td>
                                     <td class="staff-owner-portal-col"></td>

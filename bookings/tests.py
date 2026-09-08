@@ -337,10 +337,7 @@ class ComputeOwnerPayoutTests(TestCase):
 
     def setUp(self):
         self.owner = Owner.objects.create(
-            name='Payout Owner', email='payout-owner@example.com', default_clean=False,
-            default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False,
-            is_paid_regularly=True,
+            name='Payout Owner', email='payout-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=True,
         )
         self.management_company = ManagementCompany.objects.create(name='Test Management Co')
         self.property = Property.objects.create(
@@ -1025,13 +1022,11 @@ class CreateOwnerBookingTests(TestCase):
     def setUp(self):
         self.owner = Owner.objects.create(
             name='Owner Booking Test Owner', email='owner-booking-test@example.com',
-            default_clean=False, default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         self.other_owner = Owner.objects.create(
             name='Other Owner Booking Test Owner', email='other-owner-booking-test@example.com',
-            default_clean=False, default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         self.property = Property.objects.create(
             title='Owner Booking Test Property', short_title='OWNBOOK', owner=self.owner,

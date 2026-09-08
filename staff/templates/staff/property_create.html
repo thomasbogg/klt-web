@@ -91,6 +91,13 @@
                     <label class="staff-field">Email
                         <input type="email" data-field="email" class="staff-input">
                     </label>
+                    <label class="staff-field">Currency
+                        <select data-field="currency" class="staff-input">
+                            {% for value, label in owner_currency_choices %}
+                            <option value="{{ value }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
                     <div class="staff-quick-add-checkbox-grid">
                         {% for field, label in owner_boolean_fields %}
                         <label class="staff-checkbox-label">

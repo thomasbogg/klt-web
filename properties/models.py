@@ -310,16 +310,20 @@ class WashingMaterial(models.Model):
 
 class Owner(models.Model):
     """Property owner information."""
+
+    class Currency(models.TextChoices):
+        EUR = 'EUR', 'Euros'
+        GBP = 'GBP', 'Pounds'
+        BOTH = 'BOTH', 'Both'
+
     name = models.CharField(max_length=200, unique=True)
     email = models.EmailField(unique=True)
     phone = models.CharField(max_length=50, blank=True, null=True, unique=True)
     nif_number = models.CharField(max_length=50, blank=True, null=True, unique=True)
-    default_clean = models.BooleanField()
-    default_meet_greet = models.BooleanField()
-    takes_euros = models.BooleanField()
-    takes_pounds = models.BooleanField()
-    cleans_are_invoiced = models.BooleanField()
-    rental_commissions_are_invoiced = models.BooleanField()
+    # Replaces the old separate takes_euros/takes_pounds booleans (2026-09-08, per Thomas) - no
+    # model-level default, same "a real choice always has to be made" convention as
+    # is_paid_regularly below (see OWNER_BOOLEAN_FIELDS' own comment in staff/utils.py).
+    currency = models.CharField(max_length=4, choices=Currency.choices)
     is_paid_regularly = models.BooleanField()
     # Owner Suite login (owners app) - staff.views.py::StaffSettingsView._invite_owner creates the
     # User (with set_unusable_password()) and links it here in one step; owners/utils.py::
