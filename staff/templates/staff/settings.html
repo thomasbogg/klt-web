@@ -111,6 +111,43 @@
                     </div>
 
                     <div class="staff-panel">
+                        <h2 class="staff-panel-title">Tourist tax</h2>
+                        <p class="staff-settings-hint">The Algarve municipal tourist tax - only charged for a stay whose arrival date falls within the season below.</p>
+                        <form method="post" class="staff-form staff-settings-form">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_booking_settings">
+                            <div class="staff-settings-field-grid">
+                                <label class="staff-field">Tourist tax (&euro; per night)
+                                    <input type="text" name="tourist_tax_per_night" class="staff-input" value="{{ booking_settings.tourist_tax_per_night }}">
+                                </label>
+                                <label class="staff-field">Tourist tax min age
+                                    <input type="text" name="tourist_tax_min_age" class="staff-input" value="{{ booking_settings.tourist_tax_min_age }}">
+                                </label>
+                                <label class="staff-field">Tourist tax max nights
+                                    <input type="text" name="tourist_tax_max_nights" class="staff-input" value="{{ booking_settings.tourist_tax_max_nights }}">
+                                </label>
+                            </div>
+                            <div class="staff-field-row">
+                                <label class="staff-field">Tourist tax season start month
+                                    <select name="tourist_tax_season_start_month" class="staff-input">
+                                        {% for value, label in month_choices %}
+                                        <option value="{{ value }}" {% if booking_settings.tourist_tax_season_start_month == value %}selected{% endif %}>{{ label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                                <label class="staff-field">Tourist tax season end month
+                                    <select name="tourist_tax_season_end_month" class="staff-input">
+                                        {% for value, label in month_choices %}
+                                        <option value="{{ value }}" {% if booking_settings.tourist_tax_season_end_month == value %}selected{% endif %}>{{ label }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </label>
+                            </div>
+                            <button type="submit" class="staff-button">Save tourist tax settings</button>
+                        </form>
+                    </div>
+
+                    <div class="staff-panel">
                         <h2 class="staff-panel-title">Check-in settings</h2>
                         <p class="staff-settings-hint">Drives the check-ins calendar's computed arrival times and self-check-in prep/welcome-visit tasks.</p>
                         <form method="post" class="staff-form staff-settings-form">

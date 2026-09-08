@@ -78,6 +78,15 @@
     margin: 0 0 10px;
 }
 
+/* .details-list has no margin of its own (see its own rule below) and .details-note only has a
+   bottom margin - a closing paragraph right after a bullet list (e.g. the Manage Booking hub
+   landing page's platform/direct-booking explainer, Local Rules' own closing line) otherwise sits
+   flush against the list's last item with no gap at all (2026-09-08, per Thomas). Matches
+   .details-note's own 10px bottom margin for a symmetrical gap above and below. */
+.details-list + .details-note {
+    margin-top: 10px;
+}
+
 /* .details-note inherits centred text from .manage-hub-content - fine for a short standalone
    note, but reads oddly sitting directly above the left-aligned guest-row grid (see Guest List's
    "Add a guest" section) - opt in per instance rather than flipping the shared class everywhere

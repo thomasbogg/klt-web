@@ -79,12 +79,42 @@
                     <li><strong>Optional Extras</strong> - add an Airport Transfer, Cot/High Chair, or Welcome Pack if you'd like one waiting for you.</li>
                     <li><strong>Guest Registrations</strong> - Portuguese law requires us to register every guest's ID details ahead of check-in.</li>
                     <li><strong>Location &amp; Check-in</strong> and <strong>Last Days &amp; Check-out</strong> - your address, access details, and everything you need for a smooth arrival and departure.</li>
+                    {% if tourist_tax_in_season %}<li><strong>Tourist Tax</strong> - the Algarve municipal tourist tax, due for stays between April and October, can be paid here once your Guest List is filled in.</li>{% endif %}
                     <li><strong>FAQ</strong> and <strong>Local Guide</strong> - answers to common questions and our own recommendations for the local area.</li>
                 </ul>
                 <p class="details-note details-note-left">
                     We'll be in touch closer to your arrival with anything else you need, but feel
                     free to look around and update your details any time before then. Thank you for
                     choosing us, and we look forward to welcoming you to Albufeira!
+                </p>
+            </div>
+            {% elif not cancelled %}
+            {% comment %}
+            Direct/website bookings (per Thomas 2026-09-08): mirrors the platform-welcome-note
+            above, but shorter - this guest already went through our own reservation form and sees
+            a cost breakdown right above this, so they already know who we are and roughly what the
+            site looks like. No "add your email" prompt either - a direct booking always has a real
+            guest email from the reservation form itself, unlike a freshly-synced platform booking
+            (see is_platform_booking's own note on that gap).
+            {% endcomment %}
+            <div class="details-section platform-welcome-note">
+                <h2 class="details-section-title">What's next</h2>
+                <p class="details-note details-note-left">
+                    Thanks for booking with us directly. This Manage Booking hub is where
+                    everything for your stay lives from now through to the day you check out -
+                    worth a look through before you arrive:
+                </p>
+                <ul class="details-list">
+                    <li><strong>Arrival &amp; Departure</strong> - let us know your flight (or other travel) details as soon as you have them, so we can plan your key handover.</li>
+                    <li><strong>Optional Extras</strong> - add an Airport Transfer, Cot/High Chair, or Welcome Pack if you'd like one waiting for you.</li>
+                    <li><strong>Guest Registrations</strong> - Portuguese law requires us to register every guest's ID details ahead of check-in.</li>
+                    <li><strong>Location &amp; Check-in</strong> and <strong>Last Days &amp; Check-out</strong> - your address, access details, and everything you need for a smooth arrival and departure.</li>
+                    {% if tourist_tax_in_season %}<li><strong>Tourist Tax</strong> - the Algarve municipal tourist tax, due for stays between April and October, can be paid here once your Guest List is filled in.</li>{% endif %}
+                    <li><strong>FAQ</strong> and <strong>Local Guide</strong> - answers to common questions and our own recommendations for the local area.</li>
+                </ul>
+                <p class="details-note details-note-left">
+                    We'll be in touch closer to your arrival with anything else you need. Thank you
+                    for choosing us, and we look forward to welcoming you to Albufeira!
                 </p>
             </div>
             {% endif %}

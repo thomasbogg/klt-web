@@ -7,7 +7,7 @@
             <li><a href="/availability/search/">Availability</a></li>
             <li><a href="/gallery">Gallery</a></li>
             <li><a href="/location">Location</a></li>
-            <li><a href="/contact">Contact</a></li>
+            {% if site_head_email %}<li><a href="mailto:{{ site_head_email }}">Contact</a></li>{% endif %}
         </ul>
     </nav>
     <div class="menu-toggle" onclick="toggleMenu()">

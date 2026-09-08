@@ -291,15 +291,37 @@ def guest_counts_by_age(ages, booking_settings):
     return counts
 
 
+def tourist_tax_in_season(booking, booking_settings=None):
+    """Whether the municipal tourist tax season (BookingSettings.tourist_tax_season_start_month/
+    end_month, inclusive) covers this booking's arrival_date - judged off arrival month alone, same
+    simplification as tourist_tax_max_nights (no per-night proration for a stay straddling the
+    boundary). Shared by compute_tourist_tax() below and the Manage Booking hub landing page's
+    "Tourist Tax" explainer bullet (only worth mentioning when it actually applies)."""
+    from bookings.models import BookingSettings
+
+    booking_settings = booking_settings or BookingSettings.load()
+    return (
+        booking_settings.tourist_tax_season_start_month
+        <= booking.arrival_date.month
+        <= booking_settings.tourist_tax_season_end_month
+    )
+
+
 def compute_tourist_tax(booking, booking_settings=None):
     """Municipal tourist tax: qualifying_guests x min(nights, max_nights) x per_night. Qualifying
     guests are named party members at/above tourist_tax_min_age, computed from their real ages
     (BookingGuest.age) - deliberately not the adults/children/babies headcount split, since that's
     keyed to a different (pricing) age cutoff, see BookingSettings.tourist_tax_min_age's docstring.
-    Returns (total, qualifying_guests, nights) so callers can show a full breakdown."""
+    Returns (total, qualifying_guests, nights) so callers can show a full breakdown.
+
+    Zero across the board (not just total) when tourist_tax_in_season() is False (2026-09-08, per
+    Thomas) - an out-of-season booking isn't "2 guests liable, €0 total" (which would read as a
+    non sequitur on the guest-facing breakdown), it's simply not liable at all."""
     from bookings.models import BookingSettings
 
     booking_settings = booking_settings or BookingSettings.load()
+    if not tourist_tax_in_season(booking, booking_settings):
+        return Decimal('0'), 0, 0
     nights = min((booking.departure_date - booking.arrival_date).days, booking_settings.tourist_tax_max_nights)
     qualifying_guests = booking.party.filter(age__gte=booking_settings.tourist_tax_min_age).count()
     total = Decimal(qualifying_guests) * Decimal(nights) * booking_settings.tourist_tax_per_night

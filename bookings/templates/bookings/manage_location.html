@@ -67,6 +67,13 @@
 
             {% include 'bookings/_self_check_in.html' %}
 
+            {% if emergency_contact %}
+            <div class="details-section">
+                <h2 class="details-section-title">In case of a problem</h2>
+                <p class="details-note details-note-left">If anything comes up during your stay - a maintenance issue, a lost key, anything you need help with - phone or message {{ emergency_contact.liaison_name|default:"our team" }} on <strong>{{ emergency_contact.liaison_phone }}</strong>.</p>
+            </div>
+            {% endif %}
+
             {% if location.nearest_bins or location.nearest_corner_shop or location.nearest_supermarket or location.parking_details %}
             <div class="details-section">
                 <h2 class="details-section-title">Good to know</h2>
@@ -94,6 +101,12 @@
             {% endwith %}
             {% else %}
             {% include 'bookings/_self_check_in.html' %}
+            {% if emergency_contact %}
+            <div class="details-section">
+                <h2 class="details-section-title">In case of a problem</h2>
+                <p class="details-note details-note-left">If anything comes up during your stay - a maintenance issue, a lost key, anything you need help with - phone or message {{ emergency_contact.liaison_name|default:"our team" }} on <strong>{{ emergency_contact.liaison_phone }}</strong>.</p>
+            </div>
+            {% endif %}
             <p class="details-note">Location details for this property aren't available yet - please contact us if you need directions.</p>
             {% endif %}
         </div>
