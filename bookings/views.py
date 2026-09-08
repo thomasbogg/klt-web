@@ -13,7 +13,7 @@ from django.views import View
 from django_countries import countries
 
 import env_settings
-from bookings.forms import BookingLookupForm
+from bookings.forms import BookingLookupForm, GuestContactDetailsForm
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, DepositBankDetails,
@@ -31,6 +31,7 @@ from bookings.utils import (
 )
 from availability.utils import date_string_to_date, get_property_calendar
 from libraries.banking.revolut import Revolut
+from libraries.phone_country_codes import split_phone
 
 MAX_GUEST_AGE = 120
 
@@ -1176,6 +1177,64 @@ class BookingManageHubView(View):
         if not is_paid(booking):
             return redirect('bookings:details', reference=reference)
         return render(request, self.template_name, _manage_hub_context(booking))
+
+
+class BookingManageContactDetailsView(View):
+    """Contact Details section of the Manage Booking hub - self-service edit of the lead guest's
+    own email/phone, mirroring owners.views.OwnerContactDetailsView (added 2026-09-07) for guests,
+    per Thomas 2026-09-08. Available any time once the deposit is paid, no stage/cutoff
+    distinction - same as Arrival & Departure.
+
+    Unlike Owner.email/phone/nif_number, Guest.email/phone carry no unique constraint (a family
+    booking under one lead guest can already share a phone/email with other Guest rows), so
+    there's nothing here like staff.views._flash_validation_error's unique-collision handling -
+    GuestContactDetailsForm's own EmailField format validation is the only check.
+
+    Phone is posted as two fields (phone_country_code, phone) and joined back into the single
+    Guest.phone string by the form's own clean() - see libraries/phone_country_codes.py.
+
+    NB: this site has no guest accounts - ManageBookingView's reference+email lookup matches
+    against whatever Guest.email currently holds. Unlike Owner.email (a separate User.username
+    backs owner login), a guest who changes their email here must use the new address for that
+    lookup afterward. Not flagged in the UI - every hub page is normally reached via an emailed
+    link, not the lookup form, so this is a much rarer path than the equivalent question was for
+    owners (whose portal login IS the email)."""
+    template_name = 'bookings/manage_contact_details.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        phone_code, phone_local = split_phone(booking.guest.phone)
+        form = GuestContactDetailsForm(initial={
+            'email': booking.guest.email, 'phone_country_code': phone_code, 'phone': phone_local,
+        })
+        context = {'booking': booking, 'form': form}
+        context.update(_manage_nav_context(booking, 'contact_details'))
+        return render(request, self.template_name, context)
+
+    def post(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        form = GuestContactDetailsForm(request.POST)
+        if form.is_valid():
+            guest = booking.guest
+            guest.email = form.cleaned_data['email']
+            guest.phone = form.cleaned_data['phone'] or None
+            guest.save(update_fields=['email', 'phone'])
+            url = reverse('bookings:manage_contact_details', kwargs={'reference': booking.reference})
+            return redirect(f"{url}?saved=1")
+
+        context = {'booking': booking, 'form': form}
+        context.update(_manage_nav_context(booking, 'contact_details'))
+        return render(request, self.template_name, context)
 
 
 class BookingManageGuestsView(BookingFormMixin, View):

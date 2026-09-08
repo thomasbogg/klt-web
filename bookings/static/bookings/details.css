@@ -630,6 +630,31 @@
     gap: 20px;
 }
 
+/* Contact Details - same 20px stacking as .deposit-bank-fields for Email/the phone row, and the
+   same code-select-narrow/phone-wide split as the reserve form's own .reserve-phone-row
+   (properties/static/properties/reserve.css) and the Owner Suite's Contact Details page
+   (owners/static/owners/owners.css) - the code select only needs to fit its own collapsed
+   display ("+351", see static/main/phone_country_select.js). */
+.contact-details-form-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.contact-details-phone-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.contact-details-phone-code {
+    flex: 0 0 110px;
+}
+
+.contact-details-phone-number {
+    flex: 1;
+}
+
 .transfer-field label {
     font-family: var(--secondary-font);
     font-size: 0.72rem;

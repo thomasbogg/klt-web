@@ -110,9 +110,9 @@
 }
 
 /* The select only ever needs to fit its own collapsed display, a bare calling code like "+351" -
-   contact_details.js swaps each option's text between that and its full country name, so the
-   dropdown list itself still reads with full names once opened even though the box stays this
-   narrow. */
+   static/main/phone_country_select.js swaps each option's text between that and its full country
+   name, so the dropdown list itself still reads with full names once opened even though the box
+   stays this narrow. */
 .owner-input-tiny {
     width: 80px;
 }

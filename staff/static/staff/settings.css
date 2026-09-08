@@ -238,7 +238,13 @@
    unspecified so it absorbs whatever's left, same "one genuinely free-text column" role Name/
    Description already play elsewhere in this file. */
 .staff-local-guide-table th:nth-child(1), .staff-local-guide-table td:nth-child(1) { width: 140px; }
-.staff-local-guide-table th:nth-child(2), .staff-local-guide-table td:nth-child(2) { width: 60px; }
+/* 80px, matching Booking Conditions'/FAQ's own Order column (property_detail.css's
+   .staff-price-table input.staff-input-small sets min-width: 60px) - at the old 60px, the
+   column's 4px td padding on each side left only 52px for an input that can't shrink below 60px,
+   so it overflowed its own cell by 8px and swallowed the visual gap before Title entirely
+   (confirmed via getBoundingClientRect: 0px gap here vs 8px at every other column boundary,
+   2026-09-08, per Thomas: "spacing between columns... consistent"). */
+.staff-local-guide-table th:nth-child(2), .staff-local-guide-table td:nth-child(2) { width: 80px; }
 .staff-local-guide-table th:nth-child(3), .staff-local-guide-table td:nth-child(3) { width: 170px; }
 .staff-local-guide-table th:nth-child(4), .staff-local-guide-table td:nth-child(4) { width: 130px; }
 .staff-local-guide-table th:nth-child(6), .staff-local-guide-table td:nth-child(6) { width: 150px; }
@@ -333,8 +339,10 @@
 
 .staff-owners-table th:nth-child(1), .staff-owners-table td:nth-child(1) { width: 140px; }
 .staff-owners-table th:nth-child(2), .staff-owners-table td:nth-child(2) { width: 190px; }
-.staff-owners-table th:nth-child(3), .staff-owners-table td:nth-child(3) { width: 110px; }
-.staff-owners-table th:nth-child(4), .staff-owners-table td:nth-child(4) { width: 90px; }
+/* Phone/NIF widened 2026-09-08, per Thomas - both were clipping their own real values (a
+   country-coded phone number, a 9-digit NIF) at the old 110px/90px. */
+.staff-owners-table th:nth-child(3), .staff-owners-table td:nth-child(3) { width: 160px; }
+.staff-owners-table th:nth-child(4), .staff-owners-table td:nth-child(4) { width: 130px; }
 
 .staff-owners-currency-col {
     width: 90px;

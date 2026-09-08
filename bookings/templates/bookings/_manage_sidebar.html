@@ -14,6 +14,8 @@ bookings.css's .manage-hub-nav-group-label.
     <span class="manage-hub-nav-group-label">Manage Your Stay</span>
     <a class="manage-hub-nav-link{% if active_section == 'booking' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_hub' reference=booking.reference %}">Booking</a>
+    <a class="manage-hub-nav-link{% if active_section == 'contact_details' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'bookings:manage_contact_details' reference=booking.reference %}">Contact Details</a>
     <a class="manage-hub-nav-link{% if active_section == 'guests' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_guests' reference=booking.reference %}">Guest List</a>
     <a class="manage-hub-nav-link{% if active_section == 'arrival_departure' %} manage-hub-nav-link-active{% endif %}"

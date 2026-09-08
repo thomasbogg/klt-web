@@ -148,16 +148,21 @@ class ReserveView(generic.DetailView):
                 context['costs'] = booking_settings.compute_costs(rental_total, arrival_date=start_date)
                 context['costs_gbp'] = booking_settings.costs_in_gbp(context['costs'])
                 if 'form' not in context:
-                    context['form'] = ReservationForm(initial={
-                        'start': self.request.GET.get('start', ''),
-                        'end': self.request.GET.get('end', ''),
-                        'guests': self.request.GET.get('guests', ''),
-                    })
+                    context['form'] = ReservationForm(
+                        initial={
+                            'start': self.request.GET.get('start', ''),
+                            'end': self.request.GET.get('end', ''),
+                            'guests': self.request.GET.get('guests', ''),
+                        },
+                        security_deposits_enabled=booking_settings.security_deposits_enabled,
+                    )
         return context
 
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
-        form = ReservationForm(request.POST)
+        form = ReservationForm(
+            request.POST, security_deposits_enabled=BookingSettings.load().security_deposits_enabled,
+        )
         if form.is_valid():
             try:
                 booking = create_booking(

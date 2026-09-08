@@ -8,7 +8,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from bookings.models import Booking
+from bookings.models import Booking, BookingSettings
 from guests.models import Guest
 from properties.models import (
     Amenity, Location, ManagementCompany, Owner, Price, Property, PropertyOwnership, PropertySpec,
@@ -125,6 +125,69 @@ class ReserveOwnPendingBookingTests(TestCase):
         stranger.post(f'/bookings/{reference}/pay/cancel/')
         booking.refresh_from_db()
         self.assertEqual(booking.enquiry_status, 'Awaiting payment')
+
+
+class ReserveCountryOfResidenceDepositGatingTests(TestCase):
+    """Country of Residence exists only to drive compute_deposit_waiver()'s UK/EU check - per
+    Thomas 2026-09-08, the reserve page hides the field entirely (and stops requiring it) while
+    BookingSettings.security_deposits_enabled is off."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Deposit Gating Loc', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.management_company = ManagementCompany.objects.create(name='Deposit Gating Co')
+        self.property = Property.objects.create(
+            title=f'{self.location} - DEPGATE', short_title='DEPGATE',
+            location=self.location, booking_company=self.management_company,
+        )
+        PropertySpec.objects.create(property=self.property, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        self.start = date.today() + timedelta(days=340)
+        self.end = self.start + timedelta(days=5)
+        Price.objects.create(
+            property=self.property,
+            start_date=date.today(), end_date=self.end + timedelta(days=30), rate=100,
+        )
+        self.reserve_url = f'/properties/{self.location.slug}/depgate/reserve/'
+        self.query = {
+            'start': self.start.strftime('%d/%m/%Y'),
+            'end': self.end.strftime('%d/%m/%Y'),
+            'guests': '2 adults,0 children,0 infants',
+        }
+
+    def test_country_row_shown_when_deposits_enabled(self):
+        response = self.client.get(self.reserve_url, self.query)
+        self.assertContains(response, 'Country of residence')
+
+    def test_country_row_hidden_when_deposits_disabled(self):
+        settings = BookingSettings.load()
+        settings.security_deposits_enabled = False
+        settings.save(update_fields=['security_deposits_enabled'])
+
+        response = self.client.get(self.reserve_url, self.query)
+        self.assertNotContains(response, 'Country of residence')
+
+    def test_submission_without_country_succeeds_when_deposits_disabled(self):
+        settings = BookingSettings.load()
+        settings.security_deposits_enabled = False
+        settings.save(update_fields=['security_deposits_enabled'])
+
+        response = self.client.post(self.reserve_url, {
+            **self.query, 'currency': 'EUR',
+            'first_name': 'No', 'last_name': 'Country', 'email': 'no-country@example.com', 'phone': '',
+            'country': '',
+        })
+        self.assertEqual(response.status_code, 302)
+
+    def test_submission_without_country_fails_when_deposits_enabled(self):
+        response = self.client.post(self.reserve_url, {
+            **self.query, 'currency': 'EUR',
+            'first_name': 'No', 'last_name': 'Country', 'email': 'still-needs-country@example.com', 'phone': '',
+            'country': '',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('country', response.context['form'].errors)
 
 
 class InactivePropertyVisibilityTests(TestCase):

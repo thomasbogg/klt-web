@@ -1,0 +1,77 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contact Details {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script src="{% static 'main/phone_country_select.js' %}" defer></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Contact Details</h1>
+
+            <div class="confirmation-reference">
+                <span class="confirmation-reference-label">Booking Reference</span>
+                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+            </div>
+
+            {% if request.GET.saved %}
+            <p class="details-note">Your contact details have been updated.</p>
+            {% endif %}
+
+            <p class="details-note">Keep your email and phone number up to date - we use these to reach you about this stay.</p>
+
+            {% if form.non_field_errors %}
+            <div class="reserve-form-errors">
+                {% for error in form.non_field_errors %}
+                <p>{{ error }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <form method="post" class="details-form">
+                {% csrf_token %}
+
+                <section class="details-section contact-details-form-fields">
+                    <div class="transfer-field">
+                        <label for="{{ form.email.id_for_label }}">Email</label>
+                        {{ form.email }}
+                        {% for error in form.email.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+                    </div>
+
+                    <div class="contact-details-phone-row">
+                        <div class="transfer-field contact-details-phone-code">
+                            <label for="{{ form.phone_country_code.id_for_label }}">Country code</label>
+                            {{ form.phone_country_code }}
+                        </div>
+                        <div class="transfer-field contact-details-phone-number">
+                            <label for="{{ form.phone.id_for_label }}">Phone</label>
+                            {{ form.phone }}
+                        </div>
+                    </div>
+                </section>
+
+                <button type="submit" class="reserve-form-submit">Save Contact Details</button>
+            </form>
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

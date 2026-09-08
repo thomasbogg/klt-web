@@ -7,6 +7,7 @@ from django.test import RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+from bookings.forms import ReservationForm
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge,
@@ -760,6 +761,73 @@ class RecalculateBalanceForPartyTests(TestCase):
         new_guests, new_costs, changed = recalculate_balance_for_party(self.booking, [30, 32, 10])
         self.assertFalse(changed)
         self.assertEqual(new_costs['discount_total'], Decimal('70.00'))
+
+
+class ReservationFormPhoneCountryCodeTests(TestCase):
+    """ReservationForm's phone_country_code + phone split, added 2026-09-08 per Thomas (mirroring
+    the Owner Suite Contact Details dropdown) and joined back into the single string
+    create_booking()/Guest.phone expects by clean() - see libraries/phone_country_codes.py for
+    split_phone/join_phone's own standalone tests."""
+
+    def _valid_data(self, **overrides):
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=7)
+        data = {
+            'first_name': 'Test', 'last_name': 'Guest', 'email': 'form-test@example.com',
+            'phone_country_code': '', 'phone': '', 'country': 'GB',
+            'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y'),
+            'guests': '2 adults,0 children,0 infants', 'currency': 'EUR',
+        }
+        data.update(overrides)
+        return data
+
+    def test_joins_country_code_and_local_number(self):
+        form = ReservationForm(self._valid_data(phone_country_code='+351', phone='912345678'))
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data['phone'], '+351 912345678')
+
+    def test_no_country_code_selected_stores_local_number_alone(self):
+        form = ReservationForm(self._valid_data(phone_country_code='', phone='0791 123456'))
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data['phone'], '0791 123456')
+
+    def test_blank_phone_and_code_is_blank(self):
+        form = ReservationForm(self._valid_data(phone_country_code='', phone=''))
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data['phone'], '')
+
+
+class ReservationFormSecurityDepositGatingTests(TestCase):
+    """Country of Residence only exists to drive compute_deposit_waiver()'s UK/EU check - per
+    Thomas 2026-09-08, it should stop being required (and reserve.html hides the row) whenever
+    BookingSettings.security_deposits_enabled is off, since the field is then meaningless."""
+
+    def _valid_data(self, **overrides):
+        start = date.today() + timedelta(days=200)
+        end = start + timedelta(days=7)
+        data = {
+            'first_name': 'Test', 'last_name': 'Guest', 'email': 'form-test@example.com',
+            'phone_country_code': '', 'phone': '', 'country': '',
+            'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y'),
+            'guests': '2 adults,0 children,0 infants', 'currency': 'EUR',
+        }
+        data.update(overrides)
+        return data
+
+    def test_country_required_by_default(self):
+        form = ReservationForm(self._valid_data())
+        self.assertFalse(form.is_valid())
+        self.assertIn('country', form.errors)
+
+    def test_country_required_when_deposits_explicitly_enabled(self):
+        form = ReservationForm(self._valid_data(), security_deposits_enabled=True)
+        self.assertFalse(form.is_valid())
+        self.assertIn('country', form.errors)
+
+    def test_country_not_required_when_deposits_disabled(self):
+        form = ReservationForm(self._valid_data(), security_deposits_enabled=False)
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data['country'], '')
 
 
 class CreateBookingTests(TestCase):
@@ -3752,6 +3820,78 @@ class BookingManageArrivalDepartureViewTests(TestCase):
             'arrival_method': 'bus', 'arrival_flight_number': 'DDPP-3QSK',
         })
         self.assertRedirects(response, f"{self.url}?saved=1", fetch_redirect_response=False)
+
+
+class BookingManageContactDetailsViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property CD2', short_title='TESTCD2')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(
+            first_name='Marta', last_name='Alves', email='marta-cd@example.com', phone='+351912345678',
+        )
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.url = reverse('bookings:manage_contact_details', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+
+    def test_not_paid_redirects_to_details(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_get_prefills_email_and_split_phone(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        form = response.context['form']
+        self.assertEqual(form.initial['email'], 'marta-cd@example.com')
+        self.assertEqual(form.initial['phone_country_code'], '+351')
+        self.assertEqual(form.initial['phone'], '912345678')
+
+    def test_post_updates_email_and_rejoins_phone(self):
+        response = self.client.post(self.url, {
+            'email': 'marta-new@example.com', 'phone_country_code': '+44', 'phone': '7700 900123',
+        })
+        self.assertRedirects(response, f"{self.url}?saved=1", fetch_redirect_response=False)
+        self.guest.refresh_from_db()
+        self.assertEqual(self.guest.email, 'marta-new@example.com')
+        self.assertEqual(self.guest.phone, '+44 7700 900123')
+
+    def test_post_with_no_country_code_stores_local_number_alone(self):
+        self.client.post(self.url, {'email': 'marta-new2@example.com', 'phone_country_code': '', 'phone': '0791 123456'})
+        self.guest.refresh_from_db()
+        self.assertEqual(self.guest.phone, '0791 123456')
+
+    def test_post_with_blank_phone_clears_it(self):
+        self.client.post(self.url, {'email': 'marta-new3@example.com', 'phone_country_code': '', 'phone': ''})
+        self.guest.refresh_from_db()
+        self.assertIsNone(self.guest.phone)
+
+    def test_post_invalid_email_shows_error_and_does_not_save(self):
+        response = self.client.post(self.url, {
+            'email': 'not-an-email', 'phone_country_code': '+351', 'phone': '912345678',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['form'].errors)
+        self.guest.refresh_from_db()
+        self.assertEqual(self.guest.email, 'marta-cd@example.com')
+
+    def test_other_guests_sharing_the_same_phone_or_email_do_not_block_the_save(self):
+        # Unlike Owner.email/phone/nif_number, Guest fields carry no unique constraint - a second
+        # Guest row (e.g. a family member booked separately) can already share either value.
+        Guest.objects.create(first_name='Ines', last_name='Alves', email='ines-cd@example.com', phone='+44 7700 900999')
+        response = self.client.post(self.url, {
+            'email': 'ines-cd@example.com', 'phone_country_code': '+44', 'phone': '7700 900999',
+        })
+        self.assertRedirects(response, f"{self.url}?saved=1", fetch_redirect_response=False)
+        self.guest.refresh_from_db()
+        self.assertEqual(self.guest.email, 'ines-cd@example.com')
 
 
 class ConfirmationDetailsDisplayTests(TestCase):

@@ -160,6 +160,35 @@ a.reserve-form-submit {
     color: var(--secondary-color);
 }
 
+/* Country code + Phone side by side within one .reserve-form-row, same split as the Owner Suite
+   Contact Details page (owners/static/owners/owners.css) - the code select only ever needs to
+   fit its own collapsed display ("+351", see static/main/phone_country_select.js), so it stays
+   narrow and lets Phone take the rest of the row. */
+.reserve-phone-row {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.reserve-phone-code, .reserve-phone-number {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    /* Flex items default to min-width:auto, which floors their size at their content's
+       min-content width - without this, the code select's own <option> text (full country
+       names, not just the collapsed "+351" phone_country_select.js shows once one is picked)
+       forced this column past its 110px flex-basis. */
+    min-width: 0;
+}
+
+.reserve-phone-code {
+    flex: 0 0 110px;
+}
+
+.reserve-phone-number {
+    flex: 1;
+}
+
 .reserve-input {
     padding: 10px 12px;
     font-size: 1rem;

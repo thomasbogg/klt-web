@@ -22,7 +22,7 @@ from bookings.utils import (
 from bookings.views import BookingFormMixin
 from finance.models import Memo, PayoutRecord
 from owners.permissions import owner_login_required
-from owners.phone_country_codes import join_phone, phone_country_choices, split_phone
+from libraries.phone_country_codes import join_phone, phone_country_choices, split_phone
 from properties.models import Property
 from staff.models import TaskHistoryEntry
 from staff.reports import OWNER_SAFE_REPORT_COLUMNS, booking_report_rows, report_totals
@@ -110,8 +110,9 @@ class OwnerContactDetailsView(View):
     field in this codebase) - the country-code dropdown (per Thomas 2026-09-07) is purely a form
     convenience either side of that: split_phone() breaks the stored value into (calling code,
     local number) to prefill the two form controls, join_phone() puts them back together on save.
-    See phone_country_codes.py for why the dropdown is deduplicated by calling code rather than
-    listing one option per country."""
+    See libraries/phone_country_codes.py for why the dropdown is deduplicated by calling code
+    rather than listing one option per country - also shared 2026-09-08 by the guest-facing
+    reservation form and Manage Booking Contact Details (bookings.forms)."""
     template_name = 'owners/contact_details.html'
 
     def get(self, request, *args, **kwargs):

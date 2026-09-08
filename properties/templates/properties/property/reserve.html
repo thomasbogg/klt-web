@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="{% static 'properties/reserve.css' %}">
     <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
     <script type="module" src="{% static 'main/currency_toggle.js' %}"></script>
+    <script src="{% static 'main/phone_country_select.js' %}" defer></script>
 </head>
 <header>
     {% include 'header/header.html' %}
@@ -130,15 +131,23 @@
                 {{ form.email }}
                 {% for error in form.email.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
             </div>
-            <div class="reserve-form-row">
-                <label for="{{ form.phone.id_for_label }}">Phone</label>
-                {{ form.phone }}
+            <div class="reserve-form-row reserve-phone-row">
+                <div class="reserve-phone-code">
+                    <label for="{{ form.phone_country_code.id_for_label }}">Country code</label>
+                    {{ form.phone_country_code }}
+                </div>
+                <div class="reserve-phone-number">
+                    <label for="{{ form.phone.id_for_label }}">Phone</label>
+                    {{ form.phone }}
+                </div>
             </div>
+            {% if booking_settings.security_deposits_enabled %}
             <div class="reserve-form-row">
                 <label for="{{ form.country.id_for_label }}">Country of residence</label>
                 {{ form.country }}
                 {% for error in form.country.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
             </div>
+            {% endif %}
 
             <button type="submit" class="reserve-form-submit">Proceed to Reservation</button>
         </form>

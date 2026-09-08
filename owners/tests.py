@@ -16,7 +16,7 @@ from bookings.models import (
 from bookings.utils import create_owner_booking, guest_for_owner
 from finance.models import Memo, PayoutRecord
 from guests.models import Guest
-from owners.phone_country_codes import join_phone, split_phone
+from libraries.phone_country_codes import join_phone, split_phone
 from properties.models import ManagementCompany, Owner, Property, PropertySpec
 
 User = get_user_model()
@@ -211,7 +211,7 @@ class OwnerAcceptInviteViewTests(TestCase):
 
 
 class PhoneCountryCodeTests(TestCase):
-    """split_phone/join_phone (owners/phone_country_codes.py) - the round-trip backing the
+    """split_phone/join_phone (libraries/phone_country_codes.py) - the round-trip backing the
     Contact Details country-code dropdown, tested standalone since these are pure functions."""
 
     def test_split_recognises_a_known_calling_code_with_a_space(self):
@@ -243,7 +243,7 @@ class OwnerContactDetailsTests(TestCase):
 
     Phone is posted as two fields (phone_country_code, phone) - the country-code dropdown added
     2026-09-07 - and stored back as the single Owner.phone string; see
-    owners/phone_country_codes.py::split_phone/join_phone for the round-trip this relies on."""
+    libraries/phone_country_codes.py::split_phone/join_phone for the round-trip this relies on."""
 
     def setUp(self):
         self.owner = Owner.objects.create(
