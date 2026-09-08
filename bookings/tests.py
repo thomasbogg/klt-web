@@ -24,7 +24,7 @@ from bookings.utils import (
     create_owner_booking, determine_payment_provider, expire_stale_holds, extras_summary,
     guest_counts_by_age, guest_for_owner, has_completed_previous_stay, payment_clearing_expiry,
     recalculate_balance_for_party, recalculate_costs_for_dates, recalculate_costs_for_party,
-    resolve_shared_postbox_path, sync_ical_link,
+    resolve_shared_postbox_path, sync_ical_link, tourist_tax_in_season,
 )
 from bookings.templatetags.bookings_extras import linkify, split_lines
 from availability.utils import get_property_calendar
@@ -1995,6 +1995,11 @@ class ComputeTouristTaxTests(TestCase):
         self.settings.tourist_tax_per_night = Decimal('2.00')
         self.settings.tourist_tax_min_age = 13
         self.settings.tourist_tax_max_nights = 7
+        # Year-round, so these tests (about the allocation math, not the season gate) aren't
+        # coupled to whatever month date.today() + 100 days happens to land on when the suite runs
+        # - see TouristTaxSeasonTests below for the season gate itself.
+        self.settings.tourist_tax_season_start_month = 1
+        self.settings.tourist_tax_season_end_month = 12
         self.settings.save()
 
     def _add_guest(self, age, is_lead=False):
@@ -2024,6 +2029,48 @@ class ComputeTouristTaxTests(TestCase):
         self.assertEqual(total, Decimal('0'))
 
 
+class TouristTaxSeasonTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property TTS', short_title='TESTTTS')
+        PropertySpec.objects.create(property=self.property, max_guests=6)
+        self.guest = Guest.objects.create(first_name='Sofia', last_name='Costa', email='sofia-tts@example.com')
+        self.settings = BookingSettings.load()
+        self.settings.tourist_tax_per_night = Decimal('2.00')
+        self.settings.tourist_tax_min_age = 13
+        self.settings.tourist_tax_max_nights = 7
+        self.settings.tourist_tax_season_start_month = 4
+        self.settings.tourist_tax_season_end_month = 10
+        self.settings.save()
+
+    def _booking(self, arrival_date):
+        booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=arrival_date,
+            departure_date=arrival_date + timedelta(days=5),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        booking.party.create(first_name='G', last_name='Guest', age=30, is_lead=True)
+        return booking
+
+    def test_in_season_arrival_is_charged(self):
+        booking = self._booking(date(2027, 7, 15))
+        self.assertTrue(tourist_tax_in_season(booking, self.settings))
+        total, qualifying_guests, nights = compute_tourist_tax(booking, self.settings)
+        self.assertEqual(total, Decimal('10.00'))  # 1 guest x 5 nights x 2.00
+
+    def test_season_boundary_months_are_inclusive(self):
+        self.assertTrue(tourist_tax_in_season(self._booking(date(2027, 4, 1)), self.settings))
+        self.assertTrue(tourist_tax_in_season(self._booking(date(2027, 10, 31)), self.settings))
+
+    def test_out_of_season_arrival_owes_nothing(self):
+        booking = self._booking(date(2027, 12, 20))
+        self.assertFalse(tourist_tax_in_season(booking, self.settings))
+        total, qualifying_guests, nights = compute_tourist_tax(booking, self.settings)
+        self.assertEqual(total, Decimal('0'))
+        self.assertEqual(qualifying_guests, 0)
+        self.assertEqual(nights, 0)
+
+
 class BookingManageTouristTaxViewTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Test Property TTV', short_title='TESTTTV')
@@ -2040,6 +2087,13 @@ class BookingManageTouristTaxViewTests(TestCase):
         self.payment = Payment.objects.create(booking=self.booking, provider='wise', status='paid')
         self.url = reverse('bookings:manage_tourist_tax', kwargs={'reference': self.booking.reference})
         self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+        # Year-round, so this view-wiring test isn't coupled to whatever month date.today() + 100
+        # days happens to land on when the suite runs - see TouristTaxSeasonTests for the season
+        # gate itself.
+        settings = BookingSettings.load()
+        settings.tourist_tax_season_start_month = 1
+        settings.tourist_tax_season_end_month = 12
+        settings.save()
 
     def test_get_redirects_when_deposit_unpaid(self):
         self.payment.status = 'pending'
@@ -2673,6 +2727,44 @@ class BookingManageHubViewTests(TestCase):
         self.guest.save(update_fields=['email'])
         response = self.client.get(self.url)
         self.assertNotContains(response, 'One thing to do first')
+
+    def test_whats_next_note_shown_for_a_direct_booking(self):
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['is_platform_booking'])
+        self.assertContains(response, "What's next")
+        self.assertContains(response, 'Guest Registrations')
+
+    def test_whats_next_note_hidden_for_a_cancelled_direct_booking(self):
+        self.booking.enquiry_status = 'Cancelled by guest'
+        self.booking.save(update_fields=['enquiry_status'])
+        response = self.client.get(self.url)
+        self.assertNotContains(response, "What's next")
+
+    def test_tourist_tax_bullet_shown_on_hub_landing_page_when_in_season(self):
+        settings = BookingSettings.load()
+        settings.tourist_tax_season_start_month = 4
+        settings.tourist_tax_season_end_month = 10
+        settings.save()
+        self.booking.arrival_date = date(2027, 7, 1)
+        self.booking.departure_date = date(2027, 7, 8)
+        self.booking.save(update_fields=['arrival_date', 'departure_date'])
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['tourist_tax_in_season'])
+        # The sidebar's own "Tourist Tax" nav link always shows regardless of season (see
+        # _manage_sidebar.html) - check the explainer bullet's own distinguishing text instead.
+        self.assertContains(response, 'due for stays between April and October')
+
+    def test_tourist_tax_bullet_hidden_on_hub_landing_page_when_out_of_season(self):
+        settings = BookingSettings.load()
+        settings.tourist_tax_season_start_month = 4
+        settings.tourist_tax_season_end_month = 10
+        settings.save()
+        self.booking.arrival_date = date(2027, 12, 1)
+        self.booking.departure_date = date(2027, 12, 8)
+        self.booking.save(update_fields=['arrival_date', 'departure_date'])
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['tourist_tax_in_season'])
+        self.assertNotContains(response, 'due for stays between April and October')
 
     def test_platform_reference_hidden_when_blank(self):
         Platform.objects.get_or_create(name='Airbnb')

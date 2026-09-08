@@ -24,7 +24,7 @@ from bookings.models import (
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, append_guest_rows, booking_confirmation_context, cancel_booking_hold,
     compute_effective_self_check_in, compute_eta_from_given_time, compute_initial_hold_expiry,
-    compute_tourist_tax, extras_request_windows,
+    compute_tourist_tax, extras_request_windows, tourist_tax_in_season,
     determine_payment_provider, extras_summary, guest_counts_by_age, mid_stay_clean_window,
     parsed_arrival_departure_time, parsed_travel_method, recalculate_balance_for_party,
     recalculate_costs_for_dates, recalculate_costs_for_party, reservation_retry_url,
@@ -1166,6 +1166,11 @@ def _manage_nav_context(booking, active_section):
         # Always shown once not cancelled (same style as show_security_deposit) - the page itself
         # handles "no party yet"/"nothing owed"/"already paid", no need to hide the link for those.
         'show_tourist_tax': not cancelled,
+        # Narrower than show_tourist_tax above - only for the hub landing page's own explainer
+        # bullet (2026-09-08, per Thomas: "if it's applicable"), which unlike the sidebar link isn't
+        # meant to always show and let the destination page explain "nothing due" - worth mentioning
+        # up front only when the booking's own dates actually fall in tourist-tax season.
+        'tourist_tax_in_season': not cancelled and tourist_tax_in_season(booking),
         # Online-direct only. NOT hasattr('charges') alone - fixed 2026-09-08, per Thomas: a
         # platform-synced booking DOES get a Charge row too (platform_fee/basic_rental, needed for
         # Owner Payout accounting - see sync_ical_link()), so that check let Edit Dates show for

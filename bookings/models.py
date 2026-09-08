@@ -132,6 +132,19 @@ class BookingSettings(models.Model):
         help_text="Maximum number of nights per guest that tourist tax is charged for, regardless "
                   "of how much longer the actual stay is."
     )
+    # 2026-09-08, per Thomas: the Algarve municipal tourist tax only applies to stays within this
+    # window (inclusive) - a booking arriving outside it owes nothing, see
+    # bookings/utils.py::compute_tourist_tax(). Judged off arrival_date's month alone, same level
+    # of simplification as tourist_tax_max_nights above (no per-night proration for a stay
+    # straddling the boundary) - nothing else in this app does date-range-crossing proration either.
+    tourist_tax_season_start_month = models.PositiveSmallIntegerField(
+        choices=MONTH_CHOICES, default=4,
+        help_text="First month tourist tax applies to a stay's arrival date (inclusive)."
+    )
+    tourist_tax_season_end_month = models.PositiveSmallIntegerField(
+        choices=MONTH_CHOICES, default=10,
+        help_text="Last month tourist tax applies to a stay's arrival date (inclusive)."
+    )
 
     # Cost dict keys from compute_costs() that represent a money amount and are shown converted to
     # GBP when a guest toggles the currency display. security_deposit is deliberately excluded: it's

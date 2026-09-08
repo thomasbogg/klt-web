@@ -4065,6 +4065,21 @@ class StaffSettingsViewTests(TestCase):
         self.client.post(self.url, {'action': 'update_booking_settings'})
         self.assertFalse(BookingSettings.load().security_deposits_enabled)
 
+    def test_update_booking_settings_saves_tourist_tax_fields(self):
+        response = self.client.post(self.url, {
+            'action': 'update_booking_settings',
+            'tourist_tax_per_night': '2.50', 'tourist_tax_min_age': '12',
+            'tourist_tax_max_nights': '10',
+            'tourist_tax_season_start_month': '5', 'tourist_tax_season_end_month': '9',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=bookings')
+        settings = BookingSettings.load()
+        self.assertEqual(settings.tourist_tax_per_night, Decimal('2.50'))
+        self.assertEqual(settings.tourist_tax_min_age, 12)
+        self.assertEqual(settings.tourist_tax_max_nights, 10)
+        self.assertEqual(settings.tourist_tax_season_start_month, 5)
+        self.assertEqual(settings.tourist_tax_season_end_month, 9)
+
 
 class CleaningTaskValidRangeTests(TestCase):
     """staff/utils.py::cleaning_task_valid_range() - both ends inclusive for both task types

@@ -1106,7 +1106,7 @@ class StaffSettingsView(View):
         post = request.POST
         for field in (
             'admin_fee_percent', 'deposit_percent_at_booking', 'security_deposit_amount',
-            'gbp_conversion_rate',
+            'gbp_conversion_rate', 'tourist_tax_per_night',
         ):
             value = _parsed_decimal(post.get(field))
             if value is not None:
@@ -1116,7 +1116,8 @@ class StaffSettingsView(View):
             'extras_edit_cutoff_days_before_arrival', 'monthly_discount_min_nights',
             'revolut_hold_minutes', 'revolut_hold_extension_minutes',
             'payment_clearing_business_days', 'adult_min_age', 'child_min_age',
-            'self_check_in_code_reveal_days',
+            'self_check_in_code_reveal_days', 'tourist_tax_min_age', 'tourist_tax_max_nights',
+            'tourist_tax_season_start_month', 'tourist_tax_season_end_month',
         ):
             value = _parsed_int(post.get(field))
             if value is not None:
