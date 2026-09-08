@@ -2502,6 +2502,28 @@ class BookingManageLocationView(View):
         return render(request, self.template_name, context)
 
 
+class BookingManageLocalRulesView(View):
+    """Holiday Info section of the Manage Booking hub - Albufeira Municipal Council's public
+    conduct rules and their fines (2026-09-08, per Thomas - "Albufeira_Tourist_Code_of_Conduct.pdf"
+    council flyer). Same content for every property and every guest - not sourced from any
+    per-property model, unlike Amenities/Location above, since the municipality sets it, not us.
+    Hardcoded into the template rather than an admin-editable model for that reason: nothing here
+    is ever going to vary by property, and it isn't ours to edit anyway. Read-only, same
+    no-side-effect GET as BookingManageAmenitiesView/BookingManageLocationView."""
+    template_name = 'bookings/manage_local_rules.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        context = {'booking': booking}
+        context.update(_manage_nav_context(booking, 'local_rules'))
+        return render(request, self.template_name, context)
+
+
 class BookingManageLastDaysView(View):
     """Holiday Info section of the Manage Booking hub - final-day checkout procedure and, where
     applicable, departure-day airport transfer timing and after-checkout facility access. Ported

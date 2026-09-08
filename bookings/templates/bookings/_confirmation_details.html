@@ -105,7 +105,9 @@ show_security_deposit_row both false), which would otherwise render as an empty 
     Thank you, {{ booking.guest.first_name|default:booking.guest.last_name }} — your deposit has been
     received and your reservation is confirmed.
     {% endif %}
+    {% if booking.guest.email %}
     Keep your reference safe — you can look up this booking any time using it and your email.
+    {% endif %}
 </p>
 {% endif %}
 

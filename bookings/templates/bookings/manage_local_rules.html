@@ -1,0 +1,50 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local Rules {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Local Rules</h1>
+            <p class="details-note">Albufeira Municipal Council's rules for public places - you're welcome here, but only if you respect the people, the place, and the rules below. These are enforced by the council, not by us, and the fines are real.</p>
+
+            <div class="details-section">
+                <h2 class="details-section-title">Forbidden in public places</h2>
+                <ul class="details-list">
+                    <li><strong>Full or partial nudity in public</strong> - &euro;300 to &euro;1,800</li>
+                    <li><strong>Drinking alcohol in the street</strong> - &euro;300 to &euro;1,500</li>
+                    <li><strong>Urinating in public spaces</strong> - &euro;300 to &euro;1,500</li>
+                    <li><strong>Loud noise at night</strong> - &euro;300 to &euro;1,500</li>
+                    <li><strong>Sleeping or camping in public areas</strong> - &euro;150 to &euro;750</li>
+                    <li><strong>Cooking in public spaces</strong> - &euro;150 to &euro;750</li>
+                    <li><strong>Spitting on the ground</strong> - &euro;150 to &euro;750</li>
+                </ul>
+            </div>
+
+            <div class="details-section">
+                <p class="details-note">Respect the locals. Protect the city. Relax - love Albufeira the right way.</p>
+            </div>
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

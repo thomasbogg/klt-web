@@ -52,6 +52,23 @@
                     Algarve, we're with you every step of the way, from now through to the day you
                     check out.
                 </p>
+                {% comment %}
+                sync_ical_link() (bookings/utils.py) creates every platform Guest with no email at
+                all - only Booking.reference + this direct link get a fresh guest in here the first
+                time, since the public lookup form needs a matching email and there isn't one yet
+                (see _confirmation_details.html's own guard on the same field). Per Thomas
+                2026-09-08: better to say so plainly and point straight at Contact Details than
+                let a guest who loses this link discover the lookup form doesn't work for them.
+                {% endcomment %}
+                {% if not booking.guest.email %}
+                <p class="details-note details-note-left">
+                    <strong>One thing to do first:</strong> please add your email address under
+                    <strong>Contact Details</strong> as soon as you can. We don't have one on file
+                    yet, so right now this link is the only way back into this page - once your
+                    email is saved, you'll be able to look this booking up any time using it
+                    together with your reference, even if this link gets lost.
+                </p>
+                {% endif %}
                 <p class="details-note details-note-left">
                     Everything you need before you arrive now lives here in this Manager, rather
                     than in a separate form or email - it's worth a few minutes to look through it:

@@ -26,7 +26,7 @@ from bookings.utils import (
     recalculate_balance_for_party, recalculate_costs_for_dates, recalculate_costs_for_party,
     resolve_shared_postbox_path, sync_ical_link,
 )
-from bookings.templatetags.bookings_extras import linkify
+from bookings.templatetags.bookings_extras import linkify, split_lines
 from availability.utils import get_property_calendar
 from guests.models import Guest
 from properties.models import (
@@ -2645,6 +2645,35 @@ class BookingManageHubViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertNotContains(response, 'Getting ready for your stay')
 
+    def test_add_your_email_prompt_shown_for_a_platform_booking_with_no_email_on_file(self):
+        # sync_ical_link() (bookings/utils.py) creates every fresh platform Guest with no email at
+        # all - the realistic starting state for a platform booking, not an edge case.
+        Platform.objects.get_or_create(name='Airbnb')
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        self.guest.email = None
+        self.guest.save(update_fields=['email'])
+        response = self.client.get(self.url)
+        self.assertContains(response, 'One thing to do first')
+        self.assertContains(response, 'Contact Details')
+        self.assertNotContains(response, 'you can look up this booking any time using it and your email')
+
+    def test_add_your_email_prompt_hidden_once_a_platform_booking_has_an_email_on_file(self):
+        Platform.objects.get_or_create(name='Airbnb')
+        self.booking.enquiry_source = 'Airbnb'
+        self.booking.save(update_fields=['enquiry_source'])
+        response = self.client.get(self.url)  # self.guest already has an email from setUp
+        self.assertNotContains(response, 'One thing to do first')
+        self.assertContains(response, 'you can look up this booking any time using it and your email')
+
+    def test_add_your_email_prompt_never_shown_for_a_direct_booking(self):
+        # Direct bookings always have an email (ReservationForm requires it), but the prompt
+        # itself is also gated on is_platform_booking - confirms both guards independently.
+        self.guest.email = None
+        self.guest.save(update_fields=['email'])
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'One thing to do first')
+
     def test_platform_reference_hidden_when_blank(self):
         Platform.objects.get_or_create(name='Airbnb')
         self.booking.enquiry_source = 'Airbnb'
@@ -4541,6 +4570,58 @@ class LinkifyFilterTests(TestCase):
         self.assertEqual(linkify(''), '')
         self.assertIsNone(linkify(None))
 
+    def test_newlines_become_br_tags(self):
+        # Real bug, fixed 2026-09-08: LocationRules.pool_rules/condominium_rules and every other
+        # multi-paragraph field linkify touches are plain TextFields with blank-line-separated
+        # paragraphs, but rendering inside an ordinary block element with no white-space:pre-line
+        # collapsed that whitespace, running every paragraph together as one wall of text.
+        result = linkify('First paragraph.\n\nSecond paragraph.')
+        self.assertEqual(result, 'First paragraph.<br><br>Second paragraph.')
+
+    def test_windows_style_line_endings_also_become_br_tags(self):
+        result = linkify('First line.\r\nSecond line.')
+        self.assertEqual(result, 'First line.<br>Second line.')
+
+    def test_newlines_and_a_url_both_work_together(self):
+        result = linkify('Directions:\nhttps://maps.app.goo.gl/abc123\nSee you soon.')
+        self.assertIn('Directions:<br>', result)
+        self.assertIn('<br>See you soon.', result)
+        self.assertIn('>maps.app.goo.gl</a>', result)
+
+
+class SplitLinesFilterTests(TestCase):
+    """LocationRules.pool_rules/condominium_rules read as a list of distinct rules, one per line -
+    split_lines (bookings_extras.py) lets a template render one <li> per line instead of cramming
+    them all under a single bullet (2026-09-08, per Thomas, following on from linkify's own <br>
+    fix above for the same underlying field). Splits on \\n+ (a run of one or more newlines), not
+    a literal blank line - confirmed via a live screenshot that the real staff-entered data is
+    single-newline-separated, not blank-line-separated, even though it reads with visual spacing
+    in a <textarea>."""
+
+    def test_splits_on_single_newlines(self):
+        result = split_lines('First rule.\nSecond rule.\nThird rule.')
+        self.assertEqual(result, ['First rule.', 'Second rule.', 'Third rule.'])
+
+    def test_splits_on_blank_lines_too(self):
+        result = split_lines('First rule.\n\nSecond rule.')
+        self.assertEqual(result, ['First rule.', 'Second rule.'])
+
+    def test_windows_style_line_endings_also_split(self):
+        result = split_lines('First rule.\r\nSecond rule.')
+        self.assertEqual(result, ['First rule.', 'Second rule.'])
+
+    def test_a_single_line_with_no_newline_is_one_item(self):
+        self.assertEqual(split_lines('Just one rule, no newline.'), ['Just one rule, no newline.'])
+
+    def test_empty_or_blank_value_returns_an_empty_list(self):
+        self.assertEqual(split_lines(''), [])
+        self.assertEqual(split_lines(None), [])
+        self.assertEqual(split_lines('\n\n\n'), [])
+
+    def test_stray_extra_blank_lines_do_not_produce_empty_items(self):
+        result = split_lines('First rule.\n\n\n\nSecond rule.')
+        self.assertEqual(result, ['First rule.', 'Second rule.'])
+
 
 class BookingManageLocationViewTests(TestCase):
     def setUp(self):
@@ -4585,6 +4666,26 @@ class BookingManageLocationViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertContains(response, '22:00')
         self.assertContains(response, 'No diving.')
+
+    def test_each_pool_and_condominium_rule_line_gets_its_own_bullet(self):
+        # Real bug, fixed 2026-09-08: pool_rules/condominium_rules are one distinct rule per line
+        # (single-newline-separated, confirmed via a live screenshot of real staff-entered data -
+        # not blank-line-separated, even though a <textarea> shows them with visual spacing), but
+        # rendering the whole field as one <li> crammed every rule under a single bullet point
+        # once linkify's own <br> fix stopped them running together as one sentence - each line
+        # needs its own <li>.
+        LocationRules.objects.create(
+            location=self.location, quiet_hours_start=time(22, 0), quiet_hours_end=time(8, 0),
+            pool_hours_start=time(9, 0), pool_hours_end=time(20, 0),
+            pool_rules='No glass in the pool area.\nNo ball games.',
+            condominium_rules='Keep doors closed.\nNo lifts for unaccompanied children.',
+        )
+        response = self.client.get(self.url)
+        content = response.content.decode()
+        self.assertIn('<li>No glass in the pool area.</li>', content)
+        self.assertIn('<li>No ball games.</li>', content)
+        self.assertIn('<li>Keep doors closed.</li>', content)
+        self.assertIn('<li>No lifts for unaccompanied children.</li>', content)
 
     def test_no_location_renders_fallback_message(self):
         self.property.location = None
@@ -4972,6 +5073,40 @@ class BookingManageLocationViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertContains(response, 'Nick')
         self.assertContains(response, '+351 933 059 171')
+
+
+class BookingManageLocalRulesViewTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property LR', short_title='TESTLR')
+        self.guest = Guest.objects.create(first_name='Nadia', last_name='Reis', email='nadia-lr@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.url = reverse('bookings:manage_local_rules', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+
+    def test_not_paid_redirects_to_details(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_shows_the_council_rules_and_fines(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Full or partial nudity in public')
+        self.assertContains(response, '&euro;300 to &euro;1,800')
+        self.assertContains(response, 'Spitting on the ground')
+        self.assertContains(response, '&euro;150 to &euro;750')
+
+    def test_sidebar_highlights_local_rules(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['active_section'], 'local_rules')
 
 
 class BookingManageLastDaysViewTests(TestCase):

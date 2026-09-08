@@ -5,8 +5,9 @@ Manage Booking hub sidebar - shared by every hub section template. Expects `book
 
 Two labelled groups, not one flat list: "Manage Your Stay" is everything the guest actively does
 something with (submits, edits, pays, cancels); "Holiday Info" is everything they're just looking
-up (Amenities, Location & Check-in, Last Days & Check-out, FAQ, Local Guide) - a guest reading
-these never changes anything, so they don't belong mixed in with the action items above. Same
+up (Amenities, Location & Check-in, Local Rules, Last Days & Check-out, FAQ, Local Guide) - a
+guest reading these never changes anything, so they don't belong mixed in with the action items
+above. Same
 underlying plain-links mechanism as before (each item is a real page, not a client-side tab
 switch), just grouped visually - see bookings.css's .manage-hub-nav-group-label.
 {% endcomment %}
@@ -50,6 +51,8 @@ switch), just grouped visually - see bookings.css's .manage-hub-nav-group-label.
        href="{% url 'bookings:manage_amenities' reference=booking.reference %}">Amenities</a>
     <a class="manage-hub-nav-link{% if active_section == 'location' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_location' reference=booking.reference %}">Location &amp; Check-in</a>
+    <a class="manage-hub-nav-link{% if active_section == 'local_rules' %} manage-hub-nav-link-active{% endif %}"
+       href="{% url 'bookings:manage_local_rules' reference=booking.reference %}">Local Rules</a>
     <a class="manage-hub-nav-link{% if active_section == 'last_days' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_last_days' reference=booking.reference %}">Last Days &amp; Check-out</a>
     <a class="manage-hub-nav-link{% if active_section == 'faq' %} manage-hub-nav-link-active{% endif %}"
