@@ -2398,7 +2398,14 @@ class BookingManageLocationView(View):
     paragraph state definitively whether a return transfer is also booked, rather than the legacy
     email's "if applicable" hedge - the hub can just check. transfer_fallback_contact is only set
     (from ExtrasSettings) when both the name and phone are configured; template treats it as
-    "don't show this contact at all" otherwise, not a broken/partial credit."""
+    "don't show this contact at all" otherwise, not a broken/partial credit.
+
+    Emergency/in-stay contact (2026-09-08, per Thomas): the same cleaning_company liaison used for
+    in-person check-in coordination above, but shown unconditionally - self-check-in guests need
+    someone to call for an in-stay problem just as much as meet-and-greet guests do, so unlike
+    in_person_liaison this isn't gated on in_person at all. None when there's no cleaning_company
+    or it has no liaison_phone set, same "don't show a broken/partial credit" treatment as
+    transfer_fallback_contact above."""
     template_name = 'bookings/manage_location.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -2479,6 +2486,13 @@ class BookingManageLocationView(View):
             ):
                 transfer_fallback_contact = extras_settings
 
+        cleaning_company = booking.property.cleaning_company
+        emergency_contact = (
+            cleaning_company
+            if cleaning_company is not None and cleaning_company.liaison_phone
+            else None
+        )
+
         context = _manage_nav_context(booking, 'location')
         context.update({
             'booking': booking, 'location': location,
@@ -2498,6 +2512,7 @@ class BookingManageLocationView(View):
             'inbound_transfer': inbound_transfer,
             'has_outbound_transfer': has_outbound_transfer,
             'transfer_fallback_contact': transfer_fallback_contact,
+            'emergency_contact': emergency_contact,
         })
         return render(request, self.template_name, context)
 
