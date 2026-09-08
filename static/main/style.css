@@ -234,9 +234,23 @@ img {
     color: inherit;
 }
 
+/* height: auto (overriding the base .container's fixed 100vh) lets this grid grow with however
+   many locations exist, rather than clipping to exactly one viewport's worth - .tile below sizes
+   itself directly off the viewport (50vh) rather than a percentage of this container's own height,
+   which is what actually let the 2x2 grid this was built for silently break the moment a 5th
+   location (Balaia Atlantico/Cerro Mar, added straight to the DB) needed a 3rd row: at a fixed
+   100vh parent height, tile height:50% only ever carved out exactly two rows' worth of space, so
+   the row after that overflowed the container and visually collided with the next section down
+   the page (confirmed via screenshot, 2026-09-08). A lone last tile (odd location count) centres
+   itself in its own row for free, via .container.mosaic's own justify-content: center above -
+   no extra rule needed for that case. */
+.container.mosaic.simple {
+    height: auto;
+}
+
 .container.mosaic.simple .tile {
     width: 50%;
-    height: 50%;
+    height: 50vh;
     box-sizing: border-box;
     border: 2px solid white;
 }

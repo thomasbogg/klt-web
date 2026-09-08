@@ -221,6 +221,43 @@ class InactivePropertyVisibilityTests(TestCase):
         self.assertNotIn(self.property, response.context['properties'])
 
 
+class PropertyBookableOnWebsiteQuerySetTests(TestCase):
+    """Property.objects.bookable_on_website() - the canonical "does this belong on the public
+    site at all" gate, extracted 2026-09-08 (per Thomas) from availability/views.py's own inline
+    filter so index/views.py::IndexView (which Locations get a homepage tile) can't drift out of
+    sync with it. Same three conditions availability.tests.SearchViewFilteringTests already covers
+    end-to-end via the search view - these test the queryset method directly."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Bookable QuerySet Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.management_company = ManagementCompany.objects.create(name='Bookable QuerySet Co')
+
+    def _make_property(self, short_title, **kwargs):
+        return Property.objects.create(
+            title=f'{short_title} Property', short_title=short_title, location=self.location, **kwargs,
+        )
+
+    def test_property_with_a_bookable_company_is_included(self):
+        property = self._make_property('BOOKABLE', booking_company=self.management_company)
+        self.assertIn(property, Property.objects.bookable_on_website())
+
+    def test_property_with_no_booking_company_is_excluded(self):
+        property = self._make_property('NOCOMPANY')
+        self.assertNotIn(property, Property.objects.bookable_on_website())
+
+    def test_property_of_a_non_bookable_on_website_company_is_excluded(self):
+        other_company = ManagementCompany.objects.create(name='External Agency QS', bookable_on_website=False)
+        property = self._make_property('EXTERNAL', booking_company=other_company)
+        self.assertNotIn(property, Property.objects.bookable_on_website())
+
+    def test_inactive_property_is_excluded(self):
+        property = self._make_property('INACTIVE', booking_company=self.management_company, active=False)
+        self.assertNotIn(property, Property.objects.bookable_on_website())
+
+
 class PropertyCalendarExportViewTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Export Test Property', short_title='EXPORTTEST')

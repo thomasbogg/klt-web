@@ -364,6 +364,22 @@ class Accountant(models.Model):
         return f"{self.company} - {self.name}"
 
 
+class PropertyQuerySet(models.QuerySet):
+    def bookable_on_website(self):
+        """Active properties actually bookable through this site - the same three-part gate
+        availability/views.py::SearchView.get_available_properties already applied inline for
+        search results (active, has a booking_company at all, and that company hasn't opted out
+        of website sales), now the one canonical place for "does this property belong on the
+        public site at all" - reused 2026-09-08, per Thomas, for which Locations get a homepage
+        tile (index/views.py::IndexView) so that gate can't quietly drift out of sync between the
+        two call sites the way it already had (this method didn't exist until the homepage needed
+        the same answer). Doesn't filter by date/guest count - callers needing actual calendar
+        availability still chain their own overlapping()/specs__max_guests filters on top."""
+        return self.filter(
+            active=True, booking_company__isnull=False, booking_company__bookable_on_website=True,
+        )
+
+
 class Property(models.Model):
     """Main property model."""
     title = models.CharField(max_length=200, unique=True, blank=False)
@@ -418,6 +434,8 @@ class Property(models.Model):
     # never both shown, since a booking is one or the other on any given save (see
     # bookings/utils.py::compute_effective_self_check_in).
     in_person_check_in_instructions = models.TextField(blank=True, default='')
+
+    objects = PropertyQuerySet.as_manager()
 
     @property
     def slug(self):

@@ -1,6 +1,6 @@
 from django.http import HttpResponse
 from django.views import generic
-from properties.models import Location
+from properties.models import Location, Property
 from libraries.dates import dates
 
 # Create your views here.
@@ -8,9 +8,15 @@ from libraries.dates import dates
 class IndexView(generic.ListView):
     template_name = 'index/index.html'
     context_object_name = 'locations_list'
-    
+
     def get_queryset(self):
-        return Location.objects.order_by("title")
+        # Only a Location with at least one bookable-on-website property earns a homepage tile
+        # (2026-09-08, per Thomas) - the same gate availability/views.py::get_available_properties
+        # uses for search results (Property.objects.bookable_on_website()), so a location whose
+        # only properties are inactive or booked through a company that doesn't sell via this site
+        # doesn't show up with nothing a guest can actually book there.
+        bookable_location_ids = Property.objects.bookable_on_website().values_list('location_id', flat=True)
+        return Location.objects.filter(pk__in=bookable_location_ids).order_by("title")
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
