@@ -25,6 +25,9 @@
 {% if self_check_in %}
 <div class="details-section">
     <h2 class="details-section-title">Self check-in</h2>
+    {% if self_check_in_late_arrival %}
+    <p class="details-note details-note-left">Because you're arriving very late, we've set you up with self check-in instead of a team member meeting you at the door - here's how it works.</p>
+    {% endif %}
     {% if postbox_path == 'conflict' %}
     <p class="details-note details-note-left">Your check-in for this stay is self check-in, but there's a scheduling clash with another arrival the same night - please contact us ahead of arrival and we'll sort out access for you.</p>
     {% else %}

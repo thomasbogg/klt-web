@@ -63,6 +63,17 @@ def all_guests_registered(booking):
     )
 
 
+def _arrival_departure_details_missing(booking):
+    """True unless a real travel TIME has been given for both legs - method alone doesn't count,
+    since _save_arrival()/_save_departure() always write a method (defaulting to FLIGHT_FARO, see
+    parsed_travel_method's own docstring) on every balance-details submit regardless of whether the
+    guest actually told us anything, so an Arrival/Departure row existing at all is not a reliable
+    "guest gave us something" signal - only a non-null time is."""
+    arrival = getattr(booking, 'arrival', None)
+    departure = getattr(booking, 'departure', None)
+    return (arrival is None or arrival.time is None) or (departure is None or departure.time is None)
+
+
 def _booking_is_live(booking):
     from staff.utils import CLOSED_STATUSES
     return booking.enquiry_status not in CLOSED_STATUSES
@@ -222,6 +233,17 @@ EMAIL_TYPES: dict[str, EmailDefinition] = {
         context=_guest_context,
         recipient_email=lambda booking: booking.guest.email or None,
     ),
+
+    'arrival_departure_reminder': EmailDefinition(
+        audience='guest',
+        anchor=lambda booking: booking.arrival_date,
+        eligible=lambda booking: (
+            _arrival_departure_details_missing(booking) and _booking_is_live(booking)
+            and bool(booking.guest.email)
+        ),
+        context=_guest_context,
+        recipient_email=lambda booking: booking.guest.email or None,
+    ),
 }
 
 
@@ -260,6 +282,10 @@ PLACEHOLDER_KEYS = {
         'guest_first_name', 'property_name', 'reference', 'arrival_date',
         'manage_guest_registrations_url', 'manage_hub_url',
     ),
+    'arrival_departure_reminder': (
+        'guest_first_name', 'property_name', 'reference', 'arrival_date',
+        'manage_arrival_departure_url', 'manage_hub_url',
+    ),
 }
 
 
@@ -278,4 +304,7 @@ DEFAULT_OFFSET_DAYS = {
     'balance_payment_reminder': -63,
     'security_deposit_request': -14,
     'guest_registration_reminder': -10,
+    # "A couple of weeks before arrival" per Thomas, 2026-09-08 - same cadence as
+    # security_deposit_request above.
+    'arrival_departure_reminder': -14,
 }

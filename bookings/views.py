@@ -2375,6 +2375,7 @@ class BookingManageLocationView(View):
         codes_revealed = False
         reveal_days = None
         postbox_path = None
+        self_check_in_late_arrival = False
         if self_check_in:
             reveal_days = BookingSettings.load().self_check_in_code_reveal_days
             days_until_arrival = (booking.arrival_date - timezone.now().date()).days
@@ -2383,6 +2384,19 @@ class BookingManageLocationView(View):
                 postbox_path = resolve_shared_postbox_path(booking)
             if postbox_path in (None, 'fallback'):
                 access_codes = list(booking.property.access_codes.all())
+            # Only true when self check-in is a MIXED company's late-arrival cutoff kicking in,
+            # not a property that's always self check-in - a guest arriving well within normal
+            # hours shouldn't be told they're "arriving very late" just because their property
+            # happens to have no in-person option at all (2026-09-08, per Thomas).
+            from properties.models import ManagementCompany
+            booking_company = booking.property.booking_company
+            self_check_in_late_arrival = bool(
+                booking_company is not None
+                and booking_company.check_in_method == ManagementCompany.CheckInMethod.MIXED
+                and booking_company.self_check_in_after is not None
+                and arrival is not None and arrival.time is not None
+                and arrival.time >= booking_company.self_check_in_after
+            )
 
         in_person_cleaning_company = booking.property.cleaning_company if in_person else None
         in_person_liaison = (
@@ -2412,6 +2426,7 @@ class BookingManageLocationView(View):
             'booking': booking, 'location': location,
             'self_check_in': self_check_in,
             'self_check_in_instructions': booking.property.self_check_in_instructions if self_check_in else '',
+            'self_check_in_late_arrival': self_check_in_late_arrival,
             'in_person': in_person,
             'in_person_check_in_instructions': booking.property.in_person_check_in_instructions if in_person else '',
             'in_person_liaison': in_person_liaison,

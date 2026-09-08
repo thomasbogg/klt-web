@@ -2534,11 +2534,16 @@ class StaffBookingDetailView(View):
             'charge': charge,
             'platform_payout': platform_payout,
             'is_platform_booking': is_platform_booking,
-            # Owner bookings use the owner portal, not this guest suite; platform bookings are
-            # managed through the platform itself; and the hub redirects away to the pay page
-            # until the deposit is paid, so the link would be a dead end before then.
+            # Owner bookings use the owner portal, not this guest suite; and the hub redirects
+            # away to the pay page until the deposit is paid, so the link would be a dead end
+            # before then. Platform/iCal-synced bookings ARE included (2026-09-08, per Thomas) -
+            # the guest never gets this link through Airbnb/Booking.com/Vrbo themselves, but staff
+            # still want to open it to preview arrival-day check-in info for that stay; the page
+            # itself already tolerates a platform-synced booking (sync_ical_feeds() above
+            # unconditionally creates a bare Charge row for exactly this reason, after a real
+            # guest hit a 500 here on 2026-09-06).
             'show_guest_manage_link': (
-                not booking.is_owner and not is_platform_booking and is_paid(booking)
+                not booking.is_owner and is_paid(booking)
             ),
             'payment': getattr(booking, 'payment', None),
             'balance_payment': balance_payment,
