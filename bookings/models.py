@@ -361,6 +361,14 @@ class Booking(models.Model):
 
     # Metadata
     last_updated = models.DateTimeField()
+    # When the reservation itself was made. Null for every booking that predates this field
+    # (2026-09-08) - including the whole legacy PIMS migration, which never carried a creation
+    # timestamp finer than enquiry_date's day granularity. Added for the per-extra last-minute
+    # window (bookings/utils.py::extra_request_window_open), which needs to know whether a booking
+    # was made before or after its own extras cutoff, to the hour - enquiry_date is a DateField and
+    # can't answer that. A null here just means "not a last-minute booking", which is correct for
+    # every historical row: they're all long past any cutoff anyway.
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
 
     objects = BookingQuerySet.as_manager()
 
@@ -1105,6 +1113,17 @@ class RequestType(models.Model):
     description = models.TextField(blank=True)
     default_price = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     active = models.BooleanField(default=True)
+    # Per-item ordering cutoff, same pair of fields (and same meaning) as ExtrasSettings' own
+    # per-extra cutoffs - kept here rather than there since this catalog is already per-row, the
+    # same way default_price is. See bookings/utils.py::extra_request_window_open().
+    cutoff_days_before_arrival = models.PositiveSmallIntegerField(
+        null=True, blank=True, default=3,
+        help_text="Days before arrival that requests for this item close. Blank means no cutoff.",
+    )
+    last_minute_window_hours = models.PositiveSmallIntegerField(
+        default=12,
+        help_text="Hours after booking a last-minute reservation still has to request this item.",
+    )
 
     class Meta:
         db_table = 'booking_request_types'
@@ -1237,6 +1256,59 @@ class ExtrasSettings(models.Model):
                   "all (see bookings/views.py::BookingFormMixin._extras_context's "
                   "show_mid_stay_clean and _parse_mid_stay_clean, which both enforce this, not "
                   "just the display gate).",
+    )
+
+    # Per-extra ordering cutoffs (2026-09-08, per Thomas), replacing the single global
+    # BookingSettings.extras_edit_cutoff_days_before_arrival that used to lock every extra at
+    # once - fulfilment lead time genuinely differs per extra (a cot has to be delivered; a late
+    # checkout is just a rota note). See bookings/utils.py::extra_request_window_open() for how
+    # the pair of fields is actually applied.
+    #
+    # A NULL cutoff means "no cutoff at all" - requestable right through the stay, which is the
+    # point for late checkout. The last-minute window only ever applies to a booking MADE after
+    # its own cutoff had already passed (there was never a normal ordering window for that guest
+    # to use), giving them that many hours from booking to make an exceptional request.
+    cot_high_chair_cutoff_days_before_arrival = models.PositiveSmallIntegerField(
+        null=True, blank=True, default=3,
+        help_text="Days before arrival that Cot/High Chair ordering closes. Blank means no cutoff.",
+    )
+    cot_high_chair_last_minute_window_hours = models.PositiveSmallIntegerField(
+        default=12,
+        help_text="Hours after booking a last-minute reservation still has to request a Cot/High Chair.",
+    )
+    airport_transfer_cutoff_days_before_arrival = models.PositiveSmallIntegerField(
+        null=True, blank=True, default=3,
+        help_text="Days before arrival that Airport Transfer ordering closes. Blank means no cutoff.",
+    )
+    airport_transfer_last_minute_window_hours = models.PositiveSmallIntegerField(
+        default=12,
+        help_text="Hours after booking a last-minute reservation still has to request an Airport Transfer.",
+    )
+    late_checkout_cutoff_days_before_arrival = models.PositiveSmallIntegerField(
+        null=True, blank=True, default=None,
+        help_text="Days before arrival that Late Checkout ordering closes. Blank (the default) "
+                  "means no cutoff - a guest can request one during their stay.",
+    )
+    late_checkout_last_minute_window_hours = models.PositiveSmallIntegerField(
+        default=12,
+        help_text="Hours after booking a last-minute reservation still has to request a Late "
+                  "Checkout. Only consulted when a cutoff is actually set.",
+    )
+    mid_stay_clean_cutoff_days_before_arrival = models.PositiveSmallIntegerField(
+        null=True, blank=True, default=3,
+        help_text="Days before arrival that Mid-stay Clean ordering closes. Blank means no cutoff.",
+    )
+    mid_stay_clean_last_minute_window_hours = models.PositiveSmallIntegerField(
+        default=12,
+        help_text="Hours after booking a last-minute reservation still has to request a Mid-stay Clean.",
+    )
+    welcome_pack_cutoff_days_before_arrival = models.PositiveSmallIntegerField(
+        null=True, blank=True, default=3,
+        help_text="Days before arrival that Welcome Pack ordering closes. Blank means no cutoff.",
+    )
+    welcome_pack_last_minute_window_hours = models.PositiveSmallIntegerField(
+        default=12,
+        help_text="Hours after booking a last-minute reservation still has to request a Welcome Pack.",
     )
 
     class Meta:

@@ -1039,6 +1039,63 @@ def parsed_arrival_departure_time(raw):
         return None
 
 
+def extra_request_window_open(booking, cutoff_days, window_hours):
+    """Whether a guest can still request one particular extra on this booking (2026-09-08, per
+    Thomas), given that extra's own cutoff/window pair - ExtrasSettings' per-extra fields for the
+    built-in extras, RequestType's own two fields for a catalog item.
+
+    Three cases, in order:
+    - cutoff_days is None: no cutoff at all, always open. This is late checkout's default - a guest
+      can ask for one during their stay, when every other extra has long closed.
+    - Still before the cutoff: open, the ordinary case.
+    - Past the cutoff: closed, UNLESS this was a last-minute booking - one MADE after its own
+      cutoff had already passed, so the guest never had a normal ordering window at all. Those get
+      window_hours from the moment they booked to make an exceptional request.
+
+    A booking with no created_at (every row predating that field - see Booking.created_at) is
+    never treated as last-minute: they all long predate any cutoff, so the ordinary
+    before/after-cutoff answer is the right one for them."""
+    if cutoff_days is None:
+        return True
+
+    cutoff_date = booking.arrival_date - timedelta(days=cutoff_days)
+    now = timezone.now()
+    if now.date() <= cutoff_date:
+        return True
+
+    booked_at = booking.created_at
+    if booked_at is None or booked_at.date() <= cutoff_date:
+        return False
+    return now <= booked_at + timedelta(hours=window_hours)
+
+
+def extras_request_windows(booking):
+    """Per-extra {slug: bool} of which extras this booking can still change online, plus a
+    'request_types' sub-dict keyed by RequestType id for the catalog items. Single place the guest
+    hub's Extras page, its POST handler and the balance-details form all read, so a locked extra
+    can't be displayed as editable on one and rejected on another."""
+    from bookings.models import ExtrasSettings, RequestType
+
+    settings = ExtrasSettings.load()
+    windows = {
+        slug: extra_request_window_open(
+            booking,
+            getattr(settings, f'{slug}_cutoff_days_before_arrival'),
+            getattr(settings, f'{slug}_last_minute_window_hours'),
+        )
+        for slug in (
+            'cot_high_chair', 'airport_transfer', 'late_checkout', 'mid_stay_clean', 'welcome_pack',
+        )
+    }
+    windows['request_types'] = {
+        request_type.id: extra_request_window_open(
+            booking, request_type.cutoff_days_before_arrival, request_type.last_minute_window_hours,
+        )
+        for request_type in RequestType.objects.filter(active=True)
+    }
+    return windows
+
+
 def compute_eta_from_given_time(method, given_time):
     """Applies the same per-method last-mile buffer as staff/utils.py::compute_arrival_eta (which
     delegates here) - the single source of truth for "what time does this guest actually reach the

@@ -20,7 +20,7 @@ from staff.models import OwnerPayment
 from bookings.utils import (
     add_business_days, apply_supplementary_payment, compute_deposit_waiver,
     compute_effective_self_check_in, compute_eta_from_given_time, compute_initial_hold_expiry,
-    compute_tourist_tax, create_booking,
+    compute_tourist_tax, create_booking, extra_request_window_open, extras_request_windows,
     create_owner_booking, determine_payment_provider, expire_stale_holds, extras_summary,
     guest_counts_by_age, guest_for_owner, has_completed_previous_stay, payment_clearing_expiry,
     recalculate_balance_for_party, recalculate_costs_for_dates, recalculate_costs_for_party,
@@ -2994,24 +2994,86 @@ class BookingManageExtrasViewTests(TestCase):
         self.assertEqual(charge.basic_rental, Decimal('700.00'))  # untouched
 
     def test_get_locked_past_cutoff_is_read_only(self):
-        settings = BookingSettings.load()
-        settings.extras_edit_cutoff_days_before_arrival = 3
+        """extras_locked means EVERY extra has closed, so late checkout (no cutoff by default)
+        has to be given one too - otherwise the page still has something editable on it."""
+        settings = ExtrasSettings.load()
+        settings.late_checkout_cutoff_days_before_arrival = 3
         settings.save()
         self.booking.arrival_date = date.today() + timedelta(days=2)
         self.booking.save(update_fields=['arrival_date'])
+        # Booked well in advance, so these exercise the ordinary past-the-cutoff path rather
+        # than the last-minute one (a booking created today for a 2-day-out arrival is genuinely
+        # last-minute, and correctly stays open).
+        Booking.objects.filter(pk=self.booking.pk).update(
+            created_at=timezone.now() - timedelta(days=60))
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context['extras_locked'])
 
+    def test_get_past_cutoff_still_allows_late_checkout_by_default(self):
+        """Late checkout ships with no cutoff - requestable during the stay - so the page stays
+        editable even once every other extra has closed."""
+        self.booking.arrival_date = date.today() + timedelta(days=2)
+        self.booking.save(update_fields=['arrival_date'])
+        # Booked well in advance, so these exercise the ordinary past-the-cutoff path rather
+        # than the last-minute one (a booking created today for a 2-day-out arrival is genuinely
+        # last-minute, and correctly stays open).
+        Booking.objects.filter(pk=self.booking.pk).update(
+            created_at=timezone.now() - timedelta(days=60))
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context['extras_locked'])
+        windows = response.context['extras_windows']
+        self.assertTrue(windows['late_checkout'])
+        self.assertFalse(windows['cot_high_chair'])
+        self.assertFalse(windows['welcome_pack'])
+
     def test_post_locked_past_cutoff_is_a_no_op(self):
-        settings = BookingSettings.load()
-        settings.extras_edit_cutoff_days_before_arrival = 3
+        settings = ExtrasSettings.load()
+        settings.late_checkout_cutoff_days_before_arrival = 3
         settings.save()
         self.booking.arrival_date = date.today() + timedelta(days=2)
         self.booking.save(update_fields=['arrival_date'])
+        # Booked well in advance, so these exercise the ordinary past-the-cutoff path rather
+        # than the last-minute one (a booking created today for a 2-day-out arrival is genuinely
+        # last-minute, and correctly stays open).
+        Booking.objects.filter(pk=self.booking.pk).update(
+            created_at=timezone.now() - timedelta(days=60))
         response = self.client.post(self.url, {'late_checkout': 'on', 'late_checkout_time': '13:00'})
         self.assertRedirects(response, self.url, fetch_redirect_response=False)
         self.assertFalse(hasattr(self.booking, 'extras'))
+
+    def test_post_past_cutoff_saves_the_still_open_extra_but_not_a_closed_one(self):
+        """Past the 3-day cutoff: late checkout (no cutoff) still saves, while a welcome pack
+        posted alongside it is ignored rather than written."""
+        self.booking.arrival_date = date.today() + timedelta(days=2)
+        self.booking.save(update_fields=['arrival_date'])
+        # Booked well in advance, so these exercise the ordinary past-the-cutoff path rather
+        # than the last-minute one (a booking created today for a 2-day-out arrival is genuinely
+        # last-minute, and correctly stays open).
+        Booking.objects.filter(pk=self.booking.pk).update(
+            created_at=timezone.now() - timedelta(days=60))
+        self.client.post(self.url, {
+            'late_checkout': 'on', 'late_checkout_time': '13:00', 'welcome_pack': 'on',
+        })
+        extra = Extra.objects.get(booking=self.booking)
+        self.assertTrue(extra.late_checkout)
+        self.assertFalse(extra.welcome_pack)
+
+    def test_closed_extra_keeps_what_is_already_on_file(self):
+        """A closed extra's inputs aren't rendered, so a POST that omits them must not be read as
+        the guest having unticked it."""
+        Extra.objects.create(booking=self.booking, welcome_pack=True)
+        self.booking.arrival_date = date.today() + timedelta(days=2)
+        self.booking.save(update_fields=['arrival_date'])
+        # Booked well in advance, so these exercise the ordinary past-the-cutoff path rather
+        # than the last-minute one (a booking created today for a 2-day-out arrival is genuinely
+        # last-minute, and correctly stays open).
+        Booking.objects.filter(pk=self.booking.pk).update(
+            created_at=timezone.now() - timedelta(days=60))
+        self.client.post(self.url, {'late_checkout': 'on', 'late_checkout_time': '13:00'})
+        extra = Extra.objects.get(booking=self.booking)
+        self.assertTrue(extra.welcome_pack)
 
 
 class BookingManageGuestRegistrationsViewTests(TestCase):
@@ -3213,6 +3275,76 @@ class BookingManageGuestRegistrationsViewTests(TestCase):
         response = self.client.get(self.url)
         rows_by_guest = {row['guest'].pk: row for row in response.context['rows']}
         self.assertFalse(rows_by_guest[self.lead.pk]['registration'].has_nif)
+
+
+class ExtraRequestWindowTests(TestCase):
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property ERW', short_title='TESTERW')
+        self.guest = Guest.objects.create(last_name='Window', email='erw@example.com')
+
+    def _booking(self, arrival_in_days, created_at=None):
+        arrival = date.today() + timedelta(days=arrival_in_days)
+        booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=arrival,
+            departure_date=arrival + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        # created_at is auto_now_add, so it has to be forced past the ORM to simulate a booking
+        # made at a particular moment.
+        Booking.objects.filter(pk=booking.pk).update(created_at=created_at)
+        booking.refresh_from_db()
+        return booking
+
+    def test_no_cutoff_is_always_open(self):
+        booking = self._booking(arrival_in_days=-1, created_at=timezone.now())
+        self.assertTrue(extra_request_window_open(booking, None, 12))
+
+    def test_open_well_before_the_cutoff(self):
+        booking = self._booking(arrival_in_days=30, created_at=timezone.now() - timedelta(days=10))
+        self.assertTrue(extra_request_window_open(booking, 3, 12))
+
+    def test_open_on_the_cutoff_day_itself(self):
+        booking = self._booking(arrival_in_days=3, created_at=timezone.now() - timedelta(days=10))
+        self.assertTrue(extra_request_window_open(booking, 3, 12))
+
+    def test_closed_once_past_the_cutoff(self):
+        booking = self._booking(arrival_in_days=2, created_at=timezone.now() - timedelta(days=10))
+        self.assertFalse(extra_request_window_open(booking, 3, 12))
+
+    def test_last_minute_booking_still_inside_its_window_is_open(self):
+        """Booked 2 hours ago for an arrival inside the cutoff - the guest never had a normal
+        ordering window, so the exceptional one applies."""
+        booking = self._booking(arrival_in_days=1, created_at=timezone.now() - timedelta(hours=2))
+        self.assertTrue(extra_request_window_open(booking, 3, 12))
+
+    def test_last_minute_booking_past_its_window_is_closed(self):
+        booking = self._booking(arrival_in_days=1, created_at=timezone.now() - timedelta(hours=13))
+        self.assertFalse(extra_request_window_open(booking, 3, 12))
+
+    def test_booking_made_in_good_time_gets_no_last_minute_window(self):
+        """Booked well before the cutoff and simply left it too late - the exceptional window is
+        for last-minute bookings only, not a second chance for everyone."""
+        booking = self._booking(arrival_in_days=1, created_at=timezone.now() - timedelta(days=30))
+        self.assertFalse(extra_request_window_open(booking, 3, 12))
+
+    def test_booking_with_no_created_at_is_never_last_minute(self):
+        booking = self._booking(arrival_in_days=1, created_at=None)
+        self.assertFalse(extra_request_window_open(booking, 3, 12))
+
+    def test_windows_map_covers_every_extra_and_catalog_item(self):
+        request_type = RequestType.objects.create(name='Rollaway bed ERW', default_price=10)
+        booking = self._booking(arrival_in_days=30, created_at=timezone.now())
+        windows = extras_request_windows(booking)
+        for slug in ('cot_high_chair', 'airport_transfer', 'late_checkout', 'mid_stay_clean', 'welcome_pack'):
+            self.assertIn(slug, windows)
+        self.assertIn(request_type.id, windows['request_types'])
+
+    def test_late_checkout_default_has_no_cutoff_so_stays_open_during_the_stay(self):
+        booking = self._booking(arrival_in_days=-2, created_at=timezone.now() - timedelta(days=30))
+        windows = extras_request_windows(booking)
+        self.assertTrue(windows['late_checkout'])
+        self.assertFalse(windows['cot_high_chair'])
 
 
 class ComputeEtaFromGivenTimeTests(TestCase):

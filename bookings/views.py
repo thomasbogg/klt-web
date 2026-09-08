@@ -24,7 +24,7 @@ from bookings.models import (
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, append_guest_rows, booking_confirmation_context, cancel_booking_hold,
     compute_effective_self_check_in, compute_eta_from_given_time, compute_initial_hold_expiry,
-    compute_tourist_tax,
+    compute_tourist_tax, extras_request_windows,
     determine_payment_provider, extras_summary, guest_counts_by_age, mid_stay_clean_window,
     parsed_arrival_departure_time, parsed_travel_method, recalculate_balance_for_party,
     recalculate_costs_for_dates, recalculate_costs_for_party, reservation_retry_url,
@@ -73,12 +73,16 @@ def is_fully_paid(booking):
 
 
 def extras_edit_locked(booking):
-    """Whether self-serve Extras editing via the Manage Booking hub has closed for this booking -
-    a pure fulfilment-lead-time cutoff (BookingSettings.extras_edit_cutoff_days_before_arrival),
-    unrelated to payment status: Extras are cash-at-check-in and were never priced into Charge (see
-    extras_summary()'s docstring), so there's nothing here for payment state to gate."""
-    days_until_arrival = (booking.arrival_date - timezone.now().date()).days
-    return days_until_arrival <= BookingSettings.load().extras_edit_cutoff_days_before_arrival
+    """Whether EVERY extra has closed for this booking - i.e. there's nothing left the guest can
+    change online at all. Per-extra cutoffs are the real gate now (2026-09-08, see
+    bookings/utils.py::extras_request_windows); this just answers "is the whole page read-only",
+    which is what the page-level copy and the Save button still need to know.
+
+    Unrelated to payment status either way: Extras are cash-at-check-in and were never priced into
+    Charge (see extras_summary()'s docstring), so there's nothing here for payment state to gate."""
+    windows = extras_request_windows(booking)
+    return not any(windows[slug] for slug in windows if slug != 'request_types') \
+        and not any(windows['request_types'].values())
 
 
 def is_cancelled(booking):
@@ -119,45 +123,63 @@ class BookingFormMixin:
         much back-and-forth for a two-person operation)."""
         extra, _ = Extra.objects.get_or_create(booking=booking)
         settings = ExtrasSettings.load()
-        extra.welcome_pack = post_data.get('welcome_pack') == 'on'
-        if extra.welcome_pack:
-            food = post_data.get('welcome_pack_food', '')
-            extra.welcome_pack_food = food if food in WelcomePackFoodChoice.values else WelcomePackFoodChoice.STANDARD
-            drinks = post_data.get('welcome_pack_drinks', '')
-            extra.welcome_pack_drinks = (
-                drinks if drinks in WelcomePackDrinksChoice.values else WelcomePackDrinksChoice.ALCOHOLIC
+        # An extra past its own cutoff keeps whatever is already stored - the form doesn't render
+        # its inputs at all by then, so a POST that omits them must not be read as "the guest
+        # unticked it" (2026-09-08, see bookings/utils.py::extras_request_windows).
+        windows = extras_request_windows(booking)
+        update_fields = []
+
+        if windows['welcome_pack']:
+            extra.welcome_pack = post_data.get('welcome_pack') == 'on'
+            if extra.welcome_pack:
+                food = post_data.get('welcome_pack_food', '')
+                extra.welcome_pack_food = food if food in WelcomePackFoodChoice.values else WelcomePackFoodChoice.STANDARD
+                drinks = post_data.get('welcome_pack_drinks', '')
+                extra.welcome_pack_drinks = (
+                    drinks if drinks in WelcomePackDrinksChoice.values else WelcomePackDrinksChoice.ALCOHOLIC
+                )
+                extra.welcome_pack_note = post_data.get('welcome_pack_note', '').strip()
+                extra.welcome_pack_charge = settings.welcome_pack_price
+            else:
+                extra.welcome_pack_food = None
+                extra.welcome_pack_drinks = None
+                extra.welcome_pack_note = ''
+                extra.welcome_pack_charge = None
+            update_fields += [
+                'welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note',
+                'welcome_pack_charge',
+            ]
+
+        if windows['cot_high_chair']:
+            extra.cot = post_data.get('cot') == 'on'
+            extra.high_chair = post_data.get('high_chair') == 'on'
+            nights = (booking.departure_date - booking.arrival_date).days
+            extra.cot_high_chair_charge = settings.compute_cot_high_chair_price(nights, extra.cot, extra.high_chair)
+            update_fields += ['cot', 'high_chair', 'cot_high_chair_charge']
+
+        if windows['late_checkout']:
+            extra.late_checkout, extra.late_checkout_time, _ = self._parse_late_checkout(post_data)
+            extra.late_checkout_charge = settings.late_checkout_price if extra.late_checkout else None
+            update_fields += ['late_checkout', 'late_checkout_time', 'late_checkout_charge']
+
+        if windows['mid_stay_clean']:
+            extra.mid_stay_clean, extra.mid_stay_clean_date, _ = self._parse_mid_stay_clean(booking, post_data)
+            extra.mid_stay_clean_charge = (
+                settings.compute_mid_stay_clean_price(booking.property) if extra.mid_stay_clean else None
             )
-            extra.welcome_pack_note = post_data.get('welcome_pack_note', '').strip()
-            extra.welcome_pack_charge = settings.welcome_pack_price
-        else:
-            extra.welcome_pack_food = None
-            extra.welcome_pack_drinks = None
-            extra.welcome_pack_note = ''
-            extra.welcome_pack_charge = None
+            update_fields += ['mid_stay_clean', 'mid_stay_clean_date', 'mid_stay_clean_charge']
 
-        extra.cot = post_data.get('cot') == 'on'
-        extra.high_chair = post_data.get('high_chair') == 'on'
-        nights = (booking.departure_date - booking.arrival_date).days
-        extra.cot_high_chair_charge = settings.compute_cot_high_chair_price(nights, extra.cot, extra.high_chair)
+        if update_fields:
+            extra.save(update_fields=update_fields)
 
-        extra.late_checkout, extra.late_checkout_time, _ = self._parse_late_checkout(post_data)
-        extra.late_checkout_charge = settings.late_checkout_price if extra.late_checkout else None
-
-        extra.mid_stay_clean, extra.mid_stay_clean_date, _ = self._parse_mid_stay_clean(booking, post_data)
-        extra.mid_stay_clean_charge = (
-            settings.compute_mid_stay_clean_price(booking.property) if extra.mid_stay_clean else None
-        )
-
-        extra.save(update_fields=[
-            'welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note', 'welcome_pack_charge',
-            'cot', 'high_chair', 'cot_high_chair_charge',
-            'late_checkout', 'late_checkout_time', 'late_checkout_charge',
-            'mid_stay_clean', 'mid_stay_clean_date', 'mid_stay_clean_charge',
-        ])
-
-        booking.requested_extras.all().delete()
+        # Same rule per catalog item: only the still-open ones are rebuilt from the POST, so a
+        # closed item's existing request survives untouched rather than being deleted.
+        open_request_type_ids = [
+            request_type_id for request_type_id, is_open in windows['request_types'].items() if is_open
+        ]
+        booking.requested_extras.filter(request_type_id__in=open_request_type_ids).delete()
         new_requests = []
-        for request_type in RequestType.objects.filter(active=True):
+        for request_type in RequestType.objects.filter(active=True, id__in=open_request_type_ids):
             try:
                 quantity = int(post_data.get(f'request_qty_{request_type.id}', '0'))
             except (TypeError, ValueError):
@@ -210,6 +232,7 @@ class BookingFormMixin:
             notes = {t.id: existing[t.id].note if t.id in existing else '' for t in active_types}
 
         settings = ExtrasSettings.load()
+        windows = extras_request_windows(booking)
         nights = (booking.departure_date - booking.arrival_date).days
         return {
             'welcome_pack_items': WelcomePackItem.objects.filter(active=True),
@@ -240,14 +263,24 @@ class BookingFormMixin:
             # not just this display gate.
             'show_mid_stay_clean': nights >= settings.mid_stay_clean_minimum_nights,
             'request_rows': [
-                {'request_type': t, 'quantity': quantities[t.id], 'note': notes[t.id]}
+                {'request_type': t, 'quantity': quantities[t.id], 'note': notes[t.id],
+                 'open': windows['request_types'].get(t.id, False)}
                 for t in active_types
             ],
+            # Per-extra ordering windows (2026-09-08) - every page that renders
+            # _extras_form.html reads these, so the same extra can't show as editable on one and
+            # be rejected on save by another.
+            'extras_windows': windows,
+            'all_request_types_open': all(windows['request_types'].get(t.id, False) for t in active_types),
         }
 
     def _save_transfers(self, booking, rows):
         """Prices are always recomputed here from ExtrasSettings, never trusted from the client -
-        the JS-side estimate in airport_transfers.js is display-only."""
+        the JS-side estimate in airport_transfers.js is display-only. A no-op once transfers are
+        past their own cutoff, same reason _save_extras() skips a closed extra: the form stops
+        rendering the rows, so an empty POST there means "not editable", not "delete them all"."""
+        if not extras_request_windows(booking)['airport_transfer']:
+            return
         booking.airport_transfers.all().delete()
         settings = ExtrasSettings.load()
         new_transfers = []

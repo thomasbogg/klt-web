@@ -1340,6 +1340,17 @@ class StaffSettingsView(View):
             settings.airport_transfer_night_window_end = night_end
         settings.airport_transfer_fallback_contact_name = post.get('airport_transfer_fallback_contact_name', '').strip()
         settings.airport_transfer_fallback_contact_phone = post.get('airport_transfer_fallback_contact_phone', '').strip()
+        # Per-extra ordering cutoffs. A blank cutoff is meaningful here (it means "no cutoff at
+        # all" - late checkout's whole point), so unlike every field above, an empty string is
+        # written as None rather than skipped.
+        for slug in ('cot_high_chair', 'airport_transfer', 'late_checkout', 'mid_stay_clean', 'welcome_pack'):
+            cutoff_field = f'{slug}_cutoff_days_before_arrival'
+            if cutoff_field in post:
+                raw = post.get(cutoff_field, '').strip()
+                setattr(settings, cutoff_field, _parsed_int(raw) if raw else None)
+            window_hours = _parsed_int(post.get(f'{slug}_last_minute_window_hours'))
+            if window_hours is not None:
+                setattr(settings, f'{slug}_last_minute_window_hours', window_hours)
         try:
             settings.full_clean()
         except ValidationError as error:
@@ -1386,10 +1397,15 @@ class StaffSettingsView(View):
 
     def _add_request_type(self, request):
         post = request.POST
+        cutoff_raw = post.get('cutoff_days_before_arrival', '').strip()
         item = RequestType(
             name=post.get('name', '').strip(),
             description=post.get('description', '').strip(),
             default_price=_parsed_decimal(post.get('default_price')) or 0,
+            # Blank means "no cutoff", not "use the default" - see ExtrasSettings' own per-extra
+            # cutoff fields for the same convention.
+            cutoff_days_before_arrival=_parsed_int(cutoff_raw) if cutoff_raw else None,
+            last_minute_window_hours=_parsed_int(post.get('last_minute_window_hours')) or 12,
             active=post.get('active') == 'on',
         )
         try:
@@ -1409,6 +1425,11 @@ class StaffSettingsView(View):
         item.name = post.get('name', '').strip()
         item.description = post.get('description', '').strip()
         item.default_price = _parsed_decimal(post.get('default_price')) or 0
+        cutoff_raw = post.get('cutoff_days_before_arrival', '').strip()
+        item.cutoff_days_before_arrival = _parsed_int(cutoff_raw) if cutoff_raw else None
+        window_hours = _parsed_int(post.get('last_minute_window_hours'))
+        if window_hours is not None:
+            item.last_minute_window_hours = window_hours
         item.active = post.get('active') == 'on'
         try:
             item.full_clean()
