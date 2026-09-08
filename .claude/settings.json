@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Bash",
       "Bash(/usr/bin/chromium-browser --headless=new --no-sandbox --disable-dev-shm-usage --disable-gpu *)",
       "Bash(/snap/bin/chromium --headless --disable-gpu --no-sandbox *)",
       "Bash(curl -s http://127.0.0.1:*)",
