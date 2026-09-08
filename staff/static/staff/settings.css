@@ -230,6 +230,20 @@
     width: 80px;
 }
 
+/* Local Guide: table-layout: fixed (via .staff-extras-aligned-table) was splitting the leftover
+   width evenly across all 7 non-actions columns, so Description - the one field that actually
+   needs room, a full sentence or two of guest-facing copy - ended up exactly as cramped as
+   Order's single-digit number or Location's short dropdown (2026-09-08, per Thomas: "a little
+   awkward"). Giving every other column just enough width for its own content leaves Description
+   unspecified so it absorbs whatever's left, same "one genuinely free-text column" role Name/
+   Description already play elsewhere in this file. */
+.staff-local-guide-table th:nth-child(1), .staff-local-guide-table td:nth-child(1) { width: 140px; }
+.staff-local-guide-table th:nth-child(2), .staff-local-guide-table td:nth-child(2) { width: 60px; }
+.staff-local-guide-table th:nth-child(3), .staff-local-guide-table td:nth-child(3) { width: 170px; }
+.staff-local-guide-table th:nth-child(4), .staff-local-guide-table td:nth-child(4) { width: 130px; }
+.staff-local-guide-table th:nth-child(6), .staff-local-guide-table td:nth-child(6) { width: 150px; }
+.staff-local-guide-table th:nth-child(7), .staff-local-guide-table td:nth-child(7) { width: 110px; }
+
 /* .staff-price-row-actions normally sets display:flex directly on the <td> itself (see
    property_detail.css) - harmless on the other catalog tables since every row there is exactly
    one input tall, so the flex td's content height already matches the row height. Booking
@@ -350,6 +364,18 @@
 
 .staff-owners-table .staff-price-row-actions {
     justify-content: flex-end;
+}
+
+/* Portal login (added 2026-09-08) - a class, not nth-child, deliberately: this table's other
+   columns already rely on position (Properties is nth-child(12), the booleans are an nth-child
+   range sized to OWNER_BOOLEAN_FIELDS) and this new column landed between Properties and Actions
+   with no width rule of its own, which is exactly the "column count drifted, CSS didn't know"
+   trap .staff-roles-table's own comment above describes hitting twice - it rendered near-zero
+   width under table-layout: fixed, squeezing "Resend invite" against Save/Delete (confirmed via
+   screenshot). 130px matches Actions' own Save+Delete width - "Resend invite" is a similar single
+   button, just stacked under a status line instead of sitting next to a second button. */
+.staff-owner-portal-col {
+    width: 130px;
 }
 
 /* Shared by Owners/Management companies/Accountants - the read-only property-assignment count
