@@ -98,6 +98,23 @@
     margin-bottom: 14px;
 }
 
+/* Every settings panel's Save button sits in a .staff-form (flex column, 10px gap) - but the
+   element directly above it varies by panel (.staff-settings-field-grid/-compact's own 14px
+   margin-bottom, .staff-settings-hint's 8px, or .staff-field-row/.staff-checkbox-label's none at
+   all), and margin doesn't collapse against flex gap, so the visible gap above the button ranged
+   10-24px panel to panel (2026-09-08, per Thomas: "spaced below symmetrically"). Topped up here
+   per preceding-element type so every panel lands on the same 24px total that
+   .staff-settings-field-grid's own case already had (10px gap + 14px margin) - nothing to add
+   there, only to the shorter cases. */
+.staff-checkbox-label + .staff-button,
+.staff-field-row + .staff-button {
+    margin-top: 14px;
+}
+
+.staff-settings-hint + .staff-button {
+    margin-top: 6px;
+}
+
 /* Panel presentation rule (2026-08-26, Extras tab only): max 4 non-table fields per row. Extras'
    auto-fit grid can pack 5 220px+ columns into one row on a wide viewport (confirmed - Airport
    transfers has 5 fields), which doesn't self-limit the way the fixed-column -compact grid below
