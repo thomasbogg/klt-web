@@ -2,9 +2,12 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 
 from bookings.models import (
     Arrival, Booking, BookingRequestedExtra, Charge, Departure, Extra, ExtrasSettings, PaymentSettings,
@@ -159,6 +162,58 @@ class OwnerSuiteTests(TestCase):
         self.assertNotIn('klt_net_revenue', response.context['selected_columns'])
         self.assertNotContains(response, 'KLT Net Commission')
         self.assertNotContains(response, 'KLT Net Revenue')
+
+
+class OwnerAcceptInviteViewTests(TestCase):
+    """owners:accept_invite - mirrors staff.tests.StaffAcceptInviteViewTests exactly (same
+    PasswordResetConfirmView base, same token mechanics), added 2026-09-08 alongside
+    staff.views.StaffSettingsView._invite_owner so an owner can set their own password instead of
+    a staff member setting one for them."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Invited Owner', email='invited-owner@example.com', default_clean=False,
+            default_meet_greet=False, takes_euros=True, takes_pounds=False, cleans_are_invoiced=False,
+            rental_commissions_are_invoiced=False, is_paid_regularly=False,
+        )
+        self.user = User.objects.create_user(username='invited-owner@example.com', email='invited-owner@example.com')
+        self.user.set_unusable_password()
+        self.user.save()
+        self.owner.user = self.user
+        self.owner.save(update_fields=['user'])
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+        token = default_token_generator.make_token(self.user)
+        self.url = reverse('owners:accept_invite', kwargs={'uidb64': uid, 'token': token})
+
+    def test_valid_link_shows_the_set_password_form(self):
+        response = self.client.get(self.url, follow=True)
+        self.assertContains(response, 'Set Your Password')
+
+    def test_invalid_token_shows_expired_message(self):
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+        bad_url = reverse('owners:accept_invite', kwargs={'uidb64': uid, 'token': 'bad-token'})
+        response = self.client.get(bad_url)
+        self.assertContains(response, 'expired')
+
+    def test_setting_a_password_logs_the_owner_in_and_makes_it_usable(self):
+        get_response = self.client.get(self.url, follow=True)
+        response = self.client.post(get_response.request['PATH_INFO'], {
+            'new_password1': 'a-genuinely-strong-pw-98x',
+            'new_password2': 'a-genuinely-strong-pw-98x',
+        }, follow=True)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.has_usable_password())
+        self.assertIn('_auth_user_id', self.client.session)
+        self.assertRedirects(response, reverse('owners:home'))
+
+    def test_mismatched_passwords_rejected(self):
+        get_response = self.client.get(self.url, follow=True)
+        self.client.post(get_response.request['PATH_INFO'], {
+            'new_password1': 'a-genuinely-strong-pw-98x',
+            'new_password2': 'does-not-match-99y',
+        })
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.has_usable_password())
 
 
 class PhoneCountryCodeTests(TestCase):

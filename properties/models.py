@@ -321,11 +321,13 @@ class Owner(models.Model):
     cleans_are_invoiced = models.BooleanField()
     rental_commissions_are_invoiced = models.BooleanField()
     is_paid_regularly = models.BooleanField()
-    # Owner Suite login (owners app) - a superuser creates the User and sets its password
-    # directly in Django admin (no self-service signup/password-reset flow, same no-outbound-
-    # email constraint every other account in this project already lives with - see
-    # [[project_klt_web_automation_roadmap]]), then links it here. NULL means this owner has no
-    # portal access yet - the overwhelmingly common case until Thomas onboards someone.
+    # Owner Suite login (owners app) - staff.views.py::StaffSettingsView._invite_owner creates the
+    # User (with set_unusable_password()) and links it here in one step; owners/utils.py::
+    # send_owner_invite_email then emails the owner a link to owners.views.OwnerAcceptInviteView
+    # to choose their own password, mirroring the staff account invite flow added 2026-09-06 (see
+    # staff/utils.py::send_staff_invite_email) - no staff member ever sets or knows an owner's
+    # password, for either account type. NULL means this owner has no portal access yet - still
+    # the overwhelmingly common case until Thomas onboards someone.
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='owner_profile',
     )

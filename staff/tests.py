@@ -3480,6 +3480,79 @@ class StaffAddStaffUserAndInviteTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
 
+class StaffInviteOwnerTests(TestCase):
+    """_invite_owner/_resend_owner_invite (staff/views.py) - the Owner Suite equivalent of
+    StaffAddStaffUserAndInviteTests above, added 2026-09-08 so owners set their own password via
+    an emailed invite too, same as staff (per Thomas: no staff member should ever set or know
+    anyone's password). Unlike the staff version, not superuser-only - inviting an owner is just
+    another People-panel action, same permission level as add_owner/update_owner/delete_owner."""
+
+    def setUp(self):
+        User.objects.create_user(username='invite_settings_user', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='invite_settings_user', password='pw')
+        self.url = reverse('staff:settings')
+        self.owner = make_owner(name='Invitable Owner', email='invitable@example.com')
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_invite_owner_creates_account_with_unusable_password_and_links_it(self, mock_send):
+        self.client.post(self.url, {'action': 'invite_owner', 'owner_id': self.owner.pk})
+        self.owner.refresh_from_db()
+        self.assertIsNotNone(self.owner.user_id)
+        self.assertFalse(self.owner.user.has_usable_password())
+        self.assertEqual(self.owner.user.username, 'invitable@example.com')
+        self.assertEqual(self.owner.user.email, 'invitable@example.com')
+        self.assertTrue(mock_send.called)
+        self.assertEqual(mock_send.call_args.kwargs['to_email'], 'invitable@example.com')
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_invite_owner_greets_by_owner_name_not_username(self, mock_send):
+        self.client.post(self.url, {'action': 'invite_owner', 'owner_id': self.owner.pk})
+        self.assertEqual(mock_send.call_args.kwargs['greeting_name'], 'Invitable Owner')
+
+    def test_invite_owner_rejects_an_owner_that_already_has_a_portal_account(self):
+        existing_user = User.objects.create_user(username='already_has_one', password='pw')
+        self.owner.user = existing_user
+        self.owner.save(update_fields=['user'])
+        with patch('communications.services.sending.send_plain_email') as mock_send:
+            self.client.post(self.url, {'action': 'invite_owner', 'owner_id': self.owner.pk})
+        self.assertFalse(mock_send.called)
+        self.owner.refresh_from_db()
+        self.assertEqual(self.owner.user_id, existing_user.pk)
+
+    def test_invite_owner_rejects_a_username_collision(self):
+        User.objects.create_user(username='invitable@example.com', password='pw')
+        before = User.objects.count()
+        with patch('communications.services.sending.send_plain_email') as mock_send:
+            self.client.post(self.url, {'action': 'invite_owner', 'owner_id': self.owner.pk})
+        self.assertEqual(User.objects.count(), before)
+        self.assertFalse(mock_send.called)
+        self.owner.refresh_from_db()
+        self.assertIsNone(self.owner.user_id)
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_resend_owner_invite_for_account_without_a_password_yet(self, mock_send):
+        user = User.objects.create_user(username='pending_owner', email='pending_owner@example.com')
+        user.set_unusable_password()
+        user.save()
+        self.owner.user = user
+        self.owner.save(update_fields=['user'])
+        self.client.post(self.url, {'action': 'resend_owner_invite', 'owner_id': self.owner.pk})
+        self.assertTrue(mock_send.called)
+
+    def test_resend_owner_invite_rejects_owner_with_a_password_already_set(self):
+        user = User.objects.create_user(username='owner_set_pw', password='pw', email='owner_set@example.com')
+        self.owner.user = user
+        self.owner.save(update_fields=['user'])
+        with patch('communications.services.sending.send_plain_email') as mock_send:
+            self.client.post(self.url, {'action': 'resend_owner_invite', 'owner_id': self.owner.pk})
+        self.assertFalse(mock_send.called)
+
+    def test_resend_owner_invite_rejects_owner_with_no_portal_account_yet(self):
+        with patch('communications.services.sending.send_plain_email') as mock_send:
+            self.client.post(self.url, {'action': 'resend_owner_invite', 'owner_id': self.owner.pk})
+        self.assertFalse(mock_send.called)
+
+
 class StaffAcceptInviteViewTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='invitee2', email='invitee2@example.com', is_staff=True)

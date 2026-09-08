@@ -7,6 +7,7 @@ app_name = 'owners'
 urlpatterns = [
     path('login/', views.OwnerLoginView.as_view(), name='login'),
     path('logout/', auth_views.LogoutView.as_view(next_page='owners:login'), name='logout'),
+    path('invite/<uidb64>/<token>/', views.OwnerAcceptInviteView.as_view(), name='accept_invite'),
     path('', views.OwnerHomeView.as_view(), name='home'),
     path('contact-details/', views.OwnerContactDetailsView.as_view(), name='contact_details'),
     path('reports/', views.OwnerReportView.as_view(), name='reports'),

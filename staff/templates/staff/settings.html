@@ -770,6 +770,7 @@
                                     <th title="{{ label }}">{{ label }}</th>
                                     {% endfor %}
                                     <th title="Number of properties currently assigned to this owner">Properties</th>
+                                    <th title="Owner Suite login - owners set their own password via an emailed invite, never a staff member">Portal login</th>
                                     <th></th>
                                 </tr>
                             </thead>
@@ -784,6 +785,28 @@
                                     <td><input type="checkbox" name="{{ field }}" form="owner-form-{{ owner.pk }}" {% if owner|get_attr:field %}checked{% endif %}></td>
                                     {% endfor %}
                                     <td class="staff-property-count-cell">{{ owner.property_count }}</td>
+                                    <td>
+                                        {% if owner.user_id %}
+                                            {% if owner.user.has_usable_password %}
+                                            Active
+                                            {% else %}
+                                            Invite sent
+                                            <form method="post" class="staff-inline-delete">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="action" value="resend_owner_invite">
+                                                <input type="hidden" name="owner_id" value="{{ owner.pk }}">
+                                                <button type="submit" class="staff-button staff-button-small">Resend invite</button>
+                                            </form>
+                                            {% endif %}
+                                        {% else %}
+                                        <form method="post" class="staff-inline-delete">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="invite_owner">
+                                            <input type="hidden" name="owner_id" value="{{ owner.pk }}">
+                                            <button type="submit" class="staff-button staff-button-small">Invite</button>
+                                        </form>
+                                        {% endif %}
+                                    </td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="owner-form-{{ owner.pk }}" class="staff-button staff-button-small">Save</button>
                                         <form method="post" class="staff-inline-delete staff-confirm-delete" data-property-count="{{ owner.property_count }}" data-entity-label="{{ owner }}" data-role-label="owner">
@@ -795,7 +818,7 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="13" class="staff-empty">No owners yet.</td></tr>
+                                <tr><td colspan="14" class="staff-empty">No owners yet.</td></tr>
                                 {% endfor %}
                                 <tr class="staff-price-row-new">
                                     <td><input type="text" name="name" form="owner-form-new" class="staff-input"></td>
@@ -805,6 +828,7 @@
                                     {% for field, label in owner_boolean_fields %}
                                     <td><input type="checkbox" name="{{ field }}" form="owner-form-new"></td>
                                     {% endfor %}
+                                    <td></td>
                                     <td></td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="owner-form-new" class="staff-button staff-button-small">Add</button>
@@ -824,6 +848,7 @@
                             {% csrf_token %}
                             <input type="hidden" name="action" value="add_owner">
                         </form>
+                        <p class="staff-settings-hint">"Invite" sends the owner a link to set their own Owner Suite password using the email address above as their username - no staff member ever chooses or sees it. Use "Resend invite" if their link expired or the email never arrived.</p>
                     </div>
 
                     <div class="staff-panel">

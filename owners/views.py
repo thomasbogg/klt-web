@@ -1,4 +1,5 @@
 from django.contrib import messages
+from django.contrib.auth import login
 from django.contrib.auth import views as auth_views
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -30,10 +31,12 @@ from staff.views import _flash_validation_error
 
 
 class OwnerLoginView(auth_views.LoginView):
-    """Owner Suite login - plain Django session auth (see properties.models.Owner.user's own
-    docstring for why there's no self-service signup/reset). Rejects a valid username/password
-    that isn't actually linked to an Owner (e.g. a staff account) before establishing a session,
-    rather than letting them in and then bouncing off every page behind owner_login_required."""
+    """Owner Suite login - plain Django session auth (see OwnerAcceptInviteView below and
+    properties.models.Owner.user's own docstring for how an owner actually gets a password in the
+    first place - self-service via an emailed invite, same as staff). Rejects a valid
+    username/password that isn't actually linked to an Owner (e.g. a staff account) before
+    establishing a session, rather than letting them in and then bouncing off every page behind
+    owner_login_required."""
     template_name = 'owners/login.html'
     # Deliberately not redirect_authenticated_user=True: Django's session/auth is shared across
     # this whole project (staff, guests, owners all use the same User model and cookie), so a
@@ -51,6 +54,29 @@ class OwnerLoginView(auth_views.LoginView):
             form.add_error(None, "This account isn't linked to an owner.")
             return self.form_invalid(form)
         return super().form_valid(form)
+
+
+class OwnerAcceptInviteView(auth_views.PasswordResetConfirmView):
+    """Where a newly-invited owner lands to choose their own password - mirrors
+    staff.views.StaffAcceptInviteView exactly (same Django PasswordResetConfirmView base, so the
+    same uidb64/token validation and SetPasswordForm/AUTH_PASSWORD_VALIDATORS), just pointed at
+    the Owner Suite's own template and post-login destination. See staff.views.
+    StaffSettingsView._invite_owner, which creates the account with set_unusable_password()
+    rather than a staff-chosen one, then owners/utils.py::send_owner_invite_email emails this
+    link. Not behind owner_login_required or any login gate - the whole point is an account that
+    can't log in yet.
+
+    Logs the owner in immediately on a successful password set (ModelBackend explicitly, since
+    there's no request.user session yet for Django's normal authenticate() flow to have already
+    populated) rather than Django's default "send them to the login page"."""
+    template_name = 'owners/accept_invite.html'
+    success_url = reverse_lazy('owners:home')
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        login(self.request, form.user, backend='django.contrib.auth.backends.ModelBackend')
+        messages.success(self.request, "Your password is set - welcome!")
+        return response
 
 
 @method_decorator(owner_login_required, name='dispatch')

@@ -1,0 +1,51 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Set Your Password | Owner Suite | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'main/auth.css' %}">
+</head>
+<body>
+    <div class="auth-page">
+        <div class="auth-card">
+            <a href="/" class="auth-back-link">&larr; Back to website</a>
+            <img src="{% static 'index/images/logo/icon.png' %}" alt="Algarve Beach Apartments" class="auth-icon">
+            <hr class="auth-accent">
+            {% if validlink %}
+            <h1 class="auth-heading">Set Your Password</h1>
+            <p class="auth-subheading">Choose a password to finish setting up your Owner Suite account.</p>
+
+            {% if form.errors %}
+            <ul class="auth-errors">
+                {% for field in form %}
+                {% for error in field.errors %}
+                <li>{{ error }}</li>
+                {% endfor %}
+                {% endfor %}
+                {% for error in form.non_field_errors %}
+                <li>{{ error }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
+            <form method="post" class="auth-form">
+                {% csrf_token %}
+                <label class="auth-field">New password
+                    <input type="password" name="new_password1" autocomplete="new-password" required>
+                </label>
+                <label class="auth-field">Confirm password
+                    <input type="password" name="new_password2" autocomplete="new-password" required>
+                </label>
+                <button type="submit" class="auth-submit">Set password</button>
+            </form>
+            {% else %}
+            <h1 class="auth-heading">This invite link has expired</h1>
+            <p class="auth-subheading">Ask staff to resend your invite.</p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

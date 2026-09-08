@@ -42,6 +42,7 @@ from communications.registry import PLACEHOLDER_KEYS
 from communications.services.sending import send_scheduled_email
 from guests.models import Guest
 from libraries.utils import logerror
+from owners.utils import send_owner_invite_email
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
     Owner, Platform, Price, Property, PropertyAccessCode, PropertyImage, PropertyOwnership,
@@ -948,6 +949,8 @@ class StaffSettingsView(View):
         'add_owner': 'people',
         'update_owner': 'people',
         'delete_owner': 'people',
+        'invite_owner': 'people',
+        'resend_owner_invite': 'people',
         'add_accountant': 'people',
         'update_accountant': 'people',
         'delete_accountant': 'people',
@@ -1011,6 +1014,8 @@ class StaffSettingsView(View):
             'add_owner': self._add_owner,
             'update_owner': self._update_owner,
             'delete_owner': self._delete_owner,
+            'invite_owner': self._invite_owner,
+            'resend_owner_invite': self._resend_owner_invite,
             'add_accountant': self._add_accountant,
             'update_accountant': self._update_accountant,
             'delete_accountant': self._delete_accountant,
@@ -1055,7 +1060,11 @@ class StaffSettingsView(View):
             # have no related_name) drives the confirm-before-delete warning in settings.js, so
             # staff can see how many properties would be orphaned (SET_NULL, not blocked) before
             # deleting one of these.
-            'owners': Owner.objects.annotate(property_count=Count('property')).order_by('name'),
+            # select_related('user') avoids an N+1 for the Portal login column's
+            # owner.user.has_usable_password check.
+            'owners': Owner.objects.select_related('user').annotate(
+                property_count=Count('property')
+            ).order_by('name'),
             'accountants': Accountant.objects.annotate(property_count=Count('property')).order_by('company'),
             'management_companies': self._management_companies_with_property_count(),
             'check_in_method_choices': ManagementCompany.CheckInMethod.choices,
@@ -1577,6 +1586,59 @@ class StaffSettingsView(View):
             )
             return
         messages.success(request, "Owner deleted.")
+
+    def _invite_owner(self, request):
+        # No password field here or anywhere else in this project (2026-09-08, per Thomas - no
+        # staff member should ever set or know an account's password, for staff or owner accounts
+        # alike). Mirrors _add_staff_user: the account is created with set_unusable_password() and
+        # owners.utils.send_owner_invite_email emails the owner a link to
+        # owners.views.OwnerAcceptInviteView to choose their own. The owner's own email (already
+        # unique on Owner) doubles as their login username, so there's nothing extra to type here.
+        owner = Owner.objects.filter(pk=request.POST.get('owner_id')).first()
+        if owner is None:
+            messages.error(request, "That owner no longer exists.")
+            return
+        if owner.user_id is not None:
+            messages.error(request, f'"{owner.name}" already has a portal account.')
+            return
+        if not owner.email:
+            messages.error(request, f'"{owner.name}" has no email address on file - add one first.')
+            return
+        if User.objects.filter(username=owner.email).exists():
+            messages.error(
+                request,
+                f'An account already uses "{owner.email}" as its username - resolve this in Django admin first.',
+            )
+            return
+        user = User(username=owner.email, email=owner.email)
+        user.set_unusable_password()
+        user.save()
+        owner.user = user
+        owner.save(update_fields=['user'])
+        if send_owner_invite_email(request, user):
+            messages.success(request, f'Invited "{owner.name}" to the Owner Suite - an email was sent to {owner.email}.')
+        else:
+            messages.warning(
+                request,
+                f'Portal account created for "{owner.name}", but the invite email could not be sent - '
+                f'use "Resend invite" once the issue is fixed.',
+            )
+
+    def _resend_owner_invite(self, request):
+        owner = Owner.objects.filter(pk=request.POST.get('owner_id')).select_related('user').first()
+        if owner is None or owner.user_id is None:
+            messages.error(request, "That owner has no portal account yet.")
+            return
+        if owner.user.has_usable_password():
+            messages.error(request, f'"{owner.name}" has already set a password.')
+            return
+        if not owner.user.email:
+            messages.error(request, f'"{owner.name}" has no email address on file - add one first.')
+            return
+        if send_owner_invite_email(request, owner.user):
+            messages.success(request, f'Invite resent to {owner.user.email}.')
+        else:
+            messages.error(request, "Could not send the invite email - check the logs.")
 
     def _add_accountant(self, request):
         post = request.POST
