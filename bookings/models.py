@@ -1185,6 +1185,13 @@ class ExtrasSettings(models.Model):
     airport_transfer_night_surcharge = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     airport_transfer_night_window_start = models.TimeField(default=time(22, 0))
     airport_transfer_night_window_end = models.TimeField(default=time(6, 0))
+    airport_transfer_fallback_contact_name = models.CharField(
+        max_length=100, blank=True,
+        help_text="Shown to a guest with a booked transfer only if their driver isn't at the "
+                  "meeting point - who they should contact instead. Leave blank to omit this "
+                  "fallback contact from the guest hub entirely.",
+    )
+    airport_transfer_fallback_contact_phone = models.CharField(max_length=30, blank=True)
 
     cot_price_short_stay = models.DecimalField(max_digits=8, decimal_places=2, default=0,
                                                 help_text="Flat price for a stay of up to 7 nights.")

@@ -1338,6 +1338,8 @@ class StaffSettingsView(View):
         night_end = _parsed_time(post.get('airport_transfer_night_window_end'))
         if night_end is not None:
             settings.airport_transfer_night_window_end = night_end
+        settings.airport_transfer_fallback_contact_name = post.get('airport_transfer_fallback_contact_name', '').strip()
+        settings.airport_transfer_fallback_contact_phone = post.get('airport_transfer_fallback_contact_phone', '').strip()
         try:
             settings.full_clean()
         except ValidationError as error:
@@ -2343,6 +2345,7 @@ class StaffLocationDetailView(View):
         'update_location_info': 'main',
         'update_specification': 'main',
         'update_self_check_in_fork': 'main',
+        'update_after_checkout_access': 'main',
         'update_rules': 'rules',
         'add_image': 'photos',
         'delete_image': 'photos',
@@ -2362,6 +2365,7 @@ class StaffLocationDetailView(View):
             'update_location_info': self._update_location_info,
             'update_specification': self._update_specification,
             'update_self_check_in_fork': self._update_self_check_in_fork,
+            'update_after_checkout_access': self._update_after_checkout_access,
             'update_rules': self._update_rules,
             'add_image': self._add_image,
             'delete_image': self._delete_image,
@@ -2423,6 +2427,11 @@ class StaffLocationDetailView(View):
         location.self_check_in_fallback_code = post.get('self_check_in_fallback_code', '').strip()
         location.save()
         messages.success(request, "Self check-in path fork updated.")
+
+    def _update_after_checkout_access(self, request, location):
+        location.after_checkout_access_instructions = request.POST.get('after_checkout_access_instructions', '').strip()
+        location.save()
+        messages.success(request, "After check-out access updated.")
 
     def _update_rules(self, request, location):
         rules, _ = LocationRules.objects.get_or_create(location=location, defaults=LOCATION_RULES_DEFAULTS)

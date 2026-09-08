@@ -1,0 +1,77 @@
+{% load static %}
+{% load bookings_extras %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Last Days &amp; Check-out {{ booking.reference }} | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/details.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'bookings/_manage_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content details-page">
+            <h1>Last Days &amp; Check-out</h1>
+
+            <div class="details-section">
+                <h2 class="details-section-title">Check-out</h2>
+                {% if checkout_time %}
+                {% if late_checkout %}
+                <p class="details-note details-note-left">You've booked a late checkout for <strong>{{ checkout_time|time:"H:i" }}</strong> on {{ booking.departure_date|date:"j F Y" }}. When you're ready to leave for the final time, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% else %}
+                <p class="details-note details-note-left">Check-out is at <strong>{{ checkout_time|time:"H:i" }}</strong> on {{ booking.departure_date|date:"j F Y" }} unless a different time has previously been agreed. When departing, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% endif %}
+                {% else %}
+                <p class="details-note details-note-left">When departing, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% endif %}
+            </div>
+
+            {% if outbound_transfer %}
+            <div class="details-section">
+                <h2 class="details-section-title">Getting to the airport</h2>
+                <p class="details-note details-note-left">As you've booked our airport transfer, your driver will be waiting for you outside the main entrance at <strong>{{ outbound_pickup_time|time:"H:i" }}</strong> - 2 hours 45 minutes before your scheduled take-off time - unless a different time has previously been discussed.</p>
+            </div>
+            {% endif %}
+
+            <div class="details-section">
+                <h2 class="details-section-title">Before you go</h2>
+                <ul class="details-list">
+                    <li>Please make sure all used crockery and cutlery has been cleaned and stored away.</li>
+                    <li>Kitchen appliances, particularly the oven and microwave, should be left as clean as you found them.</li>
+                    <li>Please try to avoid leaving food in tupperware or opened bottles of soft drink in the fridge.</li>
+                    {% if has_bbq %}
+                    <li>If you've used the BBQ, please make sure it's cleaned and left in a satisfactory condition - a &euro;50.00 charge applies otherwise.</li>
+                    {% endif %}
+                    {% if nearest_bins %}
+                    <li><strong>Rubbish:</strong> {{ nearest_bins|linkify }}</li>
+                    {% endif %}
+                </ul>
+            </div>
+
+            {% if after_checkout_paragraphs %}
+            <div class="details-section">
+                <h2 class="details-section-title">Staying on-site after check-out</h2>
+                {% for paragraph in after_checkout_paragraphs %}
+                <p class="details-note details-note-left">{{ paragraph|linkify }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% include 'footer/footer.html' %}
+
+</body>
+</html>

@@ -113,9 +113,16 @@
     letter-spacing: 0.04em;
 }
 
+/* Pulled up against .details-note's own 10px bottom margin (rather than stacking under it) so the
+link sits close to the write-up it belongs to instead of floating as its own separate element -
+left-aligned to match .details-note-left above it, since .manage-hub-content's default centred
+text would otherwise pull just this one line back to the middle. Weight/colour deliberately match
+.location-map-link's own restrained treatment rather than the bolder, darker pairing tried
+earlier - this is a secondary link sitting next to a whole page of body copy, not a heading. */
 .local-guide-entry-map-link {
-    display: inline-block;
-    margin-top: 2px;
+    display: block;
+    text-align: left;
+    margin-top: -8px;
     font-family: var(--secondary-font);
     font-size: 0.85rem;
     font-weight: 600;
@@ -124,6 +131,20 @@
 }
 
 .local-guide-entry-map-link:hover {
+    text-decoration: underline;
+}
+
+/* The `linkify` template filter (bookings_extras.py) wraps any bare URL dropped into a free-text
+field - FAQ answers, Location's directions/parking/bins notes, self-check-in instructions - in one
+of these. Same restrained colour/weight as the other secondary links on this page rather than the
+browser-default underlined blue, which reads as shouting next to a whole paragraph of body copy. */
+.inline-text-link {
+    font-weight: 600;
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.inline-text-link:hover {
     text-decoration: underline;
 }
 
