@@ -217,20 +217,26 @@ class Command(BaseCommand):
         
         if not dry_run:
             for row in rows:
+                takes_euros = bool(row['takesEuros'])
+                takes_pounds = bool(row['takesPounds'])
+                if takes_euros and takes_pounds:
+                    currency = Owner.Currency.BOTH
+                elif takes_pounds:
+                    currency = Owner.Currency.GBP
+                else:
+                    currency = Owner.Currency.EUR
                 Owner.objects.create(
                     id=row['id'],
                     name=row['name'],
                     email=row['email'],
                     phone=row['phone'],
                     nif_number=row['nifNumber'],
-                    default_clean=bool(row['defaultClean']),
-                    default_meet_greet=bool(row['defaultMeetGreet']),
-                    takes_euros=bool(row['takesEuros']),
-                    takes_pounds=bool(row['takesPounds']),
                     # wants_accounting has no current equivalent field on Owner (dropped along
-                    # with the rest of the model's restructure) - not migrated.
-                    cleans_are_invoiced=bool(row['cleansAreInvoiced']),
-                    rental_commissions_are_invoiced=bool(row['rentalCommissionsAreInvoiced']),
+                    # with the rest of the model's restructure) - not migrated. default_clean/
+                    # default_meet_greet/cleans_are_invoiced/rental_commissions_are_invoiced were
+                    # themselves dropped 2026-09-08 (dead weight, never actually consulted anywhere
+                    # in the booking-creation flow) - also not migrated.
+                    currency=currency,
                     is_paid_regularly=bool(row['isPaidRegularly'])
                 )
 

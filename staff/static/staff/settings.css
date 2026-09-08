@@ -244,6 +244,20 @@
 .staff-local-guide-table th:nth-child(6), .staff-local-guide-table td:nth-child(6) { width: 150px; }
 .staff-local-guide-table th:nth-child(7), .staff-local-guide-table td:nth-child(7) { width: 110px; }
 
+/* Same latent flex-td-height bug as .staff-booking-conditions-table/.staff-faq-table above (this
+   table's own Description column is a 3-row textarea) - identical fix. Confirmed via
+   getBoundingClientRect: the flex td was rendering 42px tall against a 79px row, pinning Save/
+   Delete near the top instead of following the row's actual (Description-driven) height. */
+.staff-local-guide-table .staff-price-row-actions {
+    display: table-cell;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.staff-local-guide-table .staff-price-row-actions .staff-button {
+    margin-left: 6px;
+}
+
 /* .staff-price-row-actions normally sets display:flex directly on the <td> itself (see
    property_detail.css) - harmless on the other catalog tables since every row there is exactly
    one input tall, so the flex td's content height already matches the row height. Booking
@@ -290,20 +304,31 @@
     margin-left: 6px;
 }
 
-/* Owners' 7 boolean columns push the table past its panel width (4 text columns + 7 checkbox
-   columns + actions) - a horizontal-scroll wrapper keeps the panel itself from stretching/
-   overflowing the page, matching the general Artifact-page rule of scrolling wide content in its
-   own container rather than letting the body scroll sideways. */
+/* Owners' checkbox/currency columns push the table past its panel width (4 text columns +
+   Currency + N checkbox columns + Properties/Portal login/Actions) - a horizontal-scroll wrapper
+   keeps the panel itself from stretching/overflowing the page, matching the general Artifact-page
+   rule of scrolling wide content in its own container rather than letting the body scroll
+   sideways. */
 .staff-table-scroll {
     overflow-x: auto;
 }
 
 /* table-layout: fixed is required for the explicit widths below to actually hold - on auto
-   layout, the 7 boolean headers' own text ("Cleans included by default" etc.) forces those
-   columns wide regardless of any width set on them, squeezing Name/Email/Phone/NIF down to
-   near-nothing (confirmed via screenshot, not assumed). */
+   layout, a boolean header's own text ("Paid on a regular schedule" etc.) forces its column wide
+   regardless of any width set on it, squeezing Name/Email/Phone/NIF down to near-nothing
+   (confirmed via screenshot, not assumed). */
 .staff-owners-table {
     table-layout: fixed;
+}
+
+/* "Paid on a regular schedule" wraps onto 3 lines, making the header row tall - every other
+   header is single-line and defaults to vertical-align: middle, so without this they floated
+   noticeably above the wrapped header's own bottom line (confirmed via screenshot, per Thomas
+   2026-09-08: "still vertically misaligned"). One blanket rule here is simpler than the
+   per-column vertical-align: bottom this table used to repeat on just the Properties/checkbox
+   columns - now redundant, removed below. */
+.staff-owners-table th {
+    vertical-align: bottom;
 }
 
 .staff-owners-table th:nth-child(1), .staff-owners-table td:nth-child(1) { width: 140px; }
@@ -311,45 +336,46 @@
 .staff-owners-table th:nth-child(3), .staff-owners-table td:nth-child(3) { width: 110px; }
 .staff-owners-table th:nth-child(4), .staff-owners-table td:nth-child(4) { width: 90px; }
 
-.staff-owners-table th:nth-child(n+5):nth-child(-n+11),
-.staff-owners-table td:nth-child(n+5):nth-child(-n+11) {
+.staff-owners-currency-col {
+    width: 90px;
+}
+
+/* Class, not an nth-child range (2026-09-08 rework, replacing the old th:nth-child(n+5):
+   nth-child(-n+11) sized to exactly 7 fields) - mirrors .staff-roles-checkbox-col exactly, and for
+   the same reason given in that table's own comment above: a position-based range silently goes
+   stale the moment OWNER_BOOLEAN_FIELDS' length changes, which is literally what just happened
+   here (7 fields down to 1). Applying the class directly in the
+   {% for field, label in owner_boolean_fields %} loop means it can never desync again, at any
+   field count. */
+.staff-owners-table th.staff-owners-checkbox-col,
+.staff-owners-table td.staff-owners-checkbox-col {
     width: 95px;
     text-align: center;
 }
 
-.staff-owners-table th:nth-child(n+5):nth-child(-n+11) {
+.staff-owners-table th.staff-owners-checkbox-col {
     white-space: normal;
     font-size: 0.68rem;
     line-height: 1.2;
     padding: 6px 4px;
-    vertical-align: bottom;
 }
 
-.staff-owners-table td:nth-child(n+5):nth-child(-n+11) input[type="checkbox"] {
+.staff-owners-table td.staff-owners-checkbox-col input[type="checkbox"] {
     margin: 0 auto;
     display: block;
 }
 
-/* text-align: center matters on the th too, not just the td (.staff-property-count-cell already
-   centers the data) - the base .staff-price-table th rule defaults every header to text-align:
-   left, so without this the "Properties" header sits left-aligned in its own column while the
-   count below it is centered, reading as misaligned even though the column boundaries match
-   exactly (confirmed via getBoundingClientRect - a cell-rect measurement alone would have missed
-   this, since it's the text position within the cell, not the cell itself, that was off).
-   vertical-align: bottom on the th matters separately - the wrapping boolean headers next door
-   (th:nth-child(n+5):nth-child(-n+11) below) are already bottom-aligned, which is what makes the
-   header row tall in the first place; without matching that here, this single-line header
-   defaults to vertical-align:middle and floats above the boolean headers' shared baseline
-   (confirmed via getComputedStyle, not assumed - Thomas caught this from a screenshot after the
-   text-align fix alone). */
-.staff-owners-table th:nth-child(12),
-.staff-owners-table td:nth-child(12) {
+/* Properties - also converted from th:nth-child(12) to the .staff-property-count-cell class
+   already applied to its td (now applied to its th too), same "don't let this table's CSS depend
+   on column position" fix as the checkbox columns above. text-align: center matters on the th
+   too, not just the td - the base .staff-price-table th rule defaults every header to text-align:
+   left, so without this "Properties" would sit left-aligned over a centered count (confirmed via
+   getBoundingClientRect - a cell-rect measurement alone would have missed this, since it's the
+   text position within the cell, not the cell itself, that was off). */
+.staff-owners-table th.staff-property-count-cell,
+.staff-owners-table td.staff-property-count-cell {
     width: 80px;
     text-align: center;
-}
-
-.staff-owners-table th:nth-child(12) {
-    vertical-align: bottom;
 }
 
 /* 130px fits Save+Delete (the widest case here - measured 112px combined, plus cell padding and
@@ -362,20 +388,46 @@
     width: 130px;
 }
 
+/* Same latent flex-td-height bug as .staff-booking-conditions-table/.staff-faq-table/
+   .staff-local-guide-table above - display: flex directly on a <td> doesn't stretch to the row's
+   full height in Chrome. Owners' rows can now vary in height because Portal login sometimes shows
+   two lines ("Invite sent" + a Resend invite button) instead of one ("Active"/"Invite") - Save/
+   Delete's own border-bottom was sitting visibly above the row's actual bottom edge whenever a
+   neighbouring row was taller (confirmed via screenshot, per Thomas 2026-09-08). Identical
+   override (display: table-cell; text-align: right) applied here. */
 .staff-owners-table .staff-price-row-actions {
-    justify-content: flex-end;
+    display: table-cell;
+    text-align: right;
+    white-space: nowrap;
 }
 
-/* Portal login (added 2026-09-08) - a class, not nth-child, deliberately: this table's other
-   columns already rely on position (Properties is nth-child(12), the booleans are an nth-child
-   range sized to OWNER_BOOLEAN_FIELDS) and this new column landed between Properties and Actions
-   with no width rule of its own, which is exactly the "column count drifted, CSS didn't know"
-   trap .staff-roles-table's own comment above describes hitting twice - it rendered near-zero
-   width under table-layout: fixed, squeezing "Resend invite" against Save/Delete (confirmed via
-   screenshot). 130px matches Actions' own Save+Delete width - "Resend invite" is a similar single
-   button, just stacked under a status line instead of sitting next to a second button. */
+.staff-owners-table .staff-price-row-actions .staff-button {
+    margin-left: 6px;
+}
+
+/* Portal login (added 2026-09-08) - a class, not nth-child, deliberately: same "column count
+   drifted, CSS didn't know" trap .staff-roles-table's own comment above describes hitting twice -
+   it rendered near-zero width under table-layout: fixed, squeezing "Resend invite" against Save/
+   Delete (confirmed via screenshot). 130px matches Actions' own Save+Delete width - "Resend
+   invite" is a similar single button, just stacked under a status line instead of sitting next to
+   a second button. */
 .staff-owner-portal-col {
     width: 130px;
+}
+
+/* th.staff-owner-portal-col (element+class), not the bare class above - needed to outrank the
+   base .staff-price-table th's own text-align: left (also element+class, so a bare class alone
+   loses that specificity fight and the header silently stayed left-aligned even with the rule
+   above in place - confirmed via getBoundingClientRect, not assumed; the td half worked first try
+   since .staff-price-table td never sets text-align at all). Matches Properties' own treatment
+   right next door (.staff-property-count-cell above, same reasoning) so "Portal login" and its
+   column both read as centered. .staff-inline-delete (wrapping the Invite/Resend invite
+   button's own form) is display: inline, so centering is enough to center the button too - Invite,
+   "Invite sent" + Resend invite, and Active all just occupy the same centered spot in turn as the
+   account's state changes, never three different layouts. */
+.staff-owners-table th.staff-owner-portal-col,
+.staff-owners-table td.staff-owner-portal-col {
+    text-align: center;
 }
 
 /* Shared by Owners/Management companies/Accountants - the read-only property-assignment count
@@ -405,10 +457,10 @@
     table-layout: fixed;
 }
 
-/* Same header-text-align/vertical-align gap as .staff-owners-table th:nth-child(12) above, same
-   fix - neither table currently has wrapping boolean headers to create a visible mismatch, but
-   keeping all four count-column headers (Owners/Accountants/Management companies/Roles)
-   behaviorally consistent as a set. */
+/* Same header-text-align/vertical-align gap as .staff-property-count-cell above, same fix -
+   neither table currently has wrapping boolean headers to create a visible mismatch, but keeping
+   all four count-column headers (Owners/Accountants/Management companies/Roles) behaviorally
+   consistent as a set. */
 .staff-management-companies-table th:nth-child(5),
 .staff-management-companies-table td:nth-child(5),
 .staff-accountants-table th:nth-child(5),
@@ -476,9 +528,9 @@
     display: block;
 }
 
-/* Same header-text-align/vertical-align gap as .staff-owners-table th:nth-child(12), same fix -
-   Roles' own boolean-column headers (.staff-roles-checkbox-col above) are already
-   vertical-align:bottom, which this needs to match. */
+/* Same header-text-align/vertical-align gap as .staff-property-count-cell, same fix - Roles' own
+   boolean-column headers (.staff-roles-checkbox-col above) are already vertical-align:bottom,
+   which this needs to match. */
 .staff-roles-table th.staff-roles-count-col,
 .staff-roles-table td.staff-roles-count-col {
     width: 70px;

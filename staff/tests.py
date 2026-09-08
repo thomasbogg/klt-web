@@ -44,9 +44,7 @@ User = get_user_model()
 
 def make_owner(**overrides):
     defaults = dict(
-        name='Test Owner', email='owner@example.com', default_clean=False, default_meet_greet=False,
-        takes_euros=True, takes_pounds=False, cleans_are_invoiced=False,
-        rental_commissions_are_invoiced=False, is_paid_regularly=True,
+        name='Test Owner', email='owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=True,
     )
     defaults.update(overrides)
     return Owner.objects.create(**defaults)
@@ -3617,6 +3615,38 @@ class StaffSettingsViewTests(TestCase):
         self.assertTrue(Owner.objects.filter(pk=owner.pk).exists())
         messages = [str(m) for m in response.context['messages']]
         self.assertTrue(any('ownership history' in m for m in messages))
+
+    def test_add_owner_saves_currency(self):
+        self.client.post(self.url, {
+            'action': 'add_owner', 'name': 'Currency Owner', 'email': 'currency-owner@example.com',
+            'currency': 'GBP',
+        })
+        self.assertEqual(Owner.objects.get(email='currency-owner@example.com').currency, 'GBP')
+
+    def test_add_owner_falls_back_to_eur_for_an_invalid_currency(self):
+        self.client.post(self.url, {
+            'action': 'add_owner', 'name': 'Bad Currency Owner', 'email': 'bad-currency-owner@example.com',
+            'currency': 'not-a-real-currency',
+        })
+        self.assertEqual(Owner.objects.get(email='bad-currency-owner@example.com').currency, 'EUR')
+
+    def test_update_owner_saves_currency(self):
+        owner = make_owner(currency='EUR')
+        self.client.post(self.url, {
+            'action': 'update_owner', 'owner_id': owner.pk, 'name': owner.name, 'email': owner.email,
+            'currency': 'BOTH',
+        })
+        owner.refresh_from_db()
+        self.assertEqual(owner.currency, 'BOTH')
+
+    def test_update_owner_falls_back_to_eur_for_an_invalid_currency(self):
+        owner = make_owner(currency='GBP')
+        self.client.post(self.url, {
+            'action': 'update_owner', 'owner_id': owner.pk, 'name': owner.name, 'email': owner.email,
+            'currency': '',
+        })
+        owner.refresh_from_db()
+        self.assertEqual(owner.currency, 'EUR')
 
     def test_add_platform(self):
         self.client.post(self.url, {'action': 'add_platform', 'name': 'Direct'})

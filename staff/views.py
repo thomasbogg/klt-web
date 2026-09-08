@@ -723,6 +723,7 @@ def _property_form_context():
         'accountants': Accountant.objects.order_by('company'),
         'management_companies': ManagementCompany.objects.order_by('name'),
         'owner_boolean_fields': OWNER_BOOLEAN_FIELDS,
+        'owner_currency_choices': Owner.Currency.choices,
         'platforms': Platform.objects.all(),
     }
 
@@ -853,9 +854,11 @@ class StaffQuickAddView(View):
 
     def _build_owner(self, post):
         fields = {name: post.get(name) == 'on' for name, _ in OWNER_BOOLEAN_FIELDS}
+        currency = post.get('currency')
         return Owner(
             name=post.get('name', '').strip(),
             email=post.get('email', '').strip(),
+            currency=currency if currency in Owner.Currency.values else Owner.Currency.EUR,
             **fields,
         )
 
@@ -1069,6 +1072,7 @@ class StaffSettingsView(View):
             'management_companies': self._management_companies_with_property_count(),
             'check_in_method_choices': ManagementCompany.CheckInMethod.choices,
             'owner_boolean_fields': OWNER_BOOLEAN_FIELDS,
+            'owner_currency_choices': Owner.Currency.choices,
         }
 
     def _management_companies_with_property_count(self):
@@ -1538,11 +1542,15 @@ class StaffSettingsView(View):
 
     def _add_owner(self, request):
         post = request.POST
+        currency = post.get('currency')
+        if currency not in Owner.Currency.values:
+            currency = Owner.Currency.EUR
         owner = Owner(
             name=post.get('name', '').strip(),
             email=post.get('email', '').strip(),
             phone=post.get('phone', '').strip() or None,
             nif_number=post.get('nif_number', '').strip() or None,
+            currency=currency,
             **{field: post.get(field) == 'on' for field, _label in OWNER_BOOLEAN_FIELDS},
         )
         try:
@@ -1563,6 +1571,8 @@ class StaffSettingsView(View):
         owner.email = post.get('email', '').strip()
         owner.phone = post.get('phone', '').strip() or None
         owner.nif_number = post.get('nif_number', '').strip() or None
+        currency = post.get('currency')
+        owner.currency = currency if currency in Owner.Currency.values else Owner.Currency.EUR
         for field, _label in OWNER_BOOLEAN_FIELDS:
             setattr(owner, field, post.get(field) == 'on')
         try:

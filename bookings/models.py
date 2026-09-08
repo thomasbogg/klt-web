@@ -1405,7 +1405,7 @@ class PaymentSettings(models.Model):
     meet_greet_fee = models.DecimalField(
         max_digits=8, decimal_places=2, default=Decimal('28.00'),
         validators=[MinValueValidator(Decimal('0'))],
-        help_text="Flat fee for a meet & greet (see Owner.default_meet_greet for whether one applies by default)."
+        help_text="Flat fee for a meet & greet, charged whenever one is requested for a stay."
     )
     extra_bed_fee = models.DecimalField(
         max_digits=8, decimal_places=2, default=Decimal('25.00'),

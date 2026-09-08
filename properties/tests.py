@@ -19,12 +19,10 @@ from properties.utils import (
 
 
 def make_owner(name, email):
-    """Owner's 7 BooleanFields have no model default - every test that needs an Owner has to
-    supply all of them explicitly, so this is shared across test classes below."""
+    """currency/is_paid_regularly have no model default - every test that needs an Owner has to
+    supply them explicitly, so this is shared across test classes below."""
     return Owner.objects.create(
-        name=name, email=email,
-        default_clean=False, default_meet_greet=False, takes_euros=True, takes_pounds=False,
-        cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+        name=name, email=email, currency=Owner.Currency.EUR, is_paid_regularly=False,
     )
 
 
@@ -364,6 +362,32 @@ class PropertyOwnershipBackfillMigrationTests(TestCase):
         row = PropertyOwnership.objects.get(property=owned)
         self.assertIsNone(row.start_date)
         self.assertIsNone(row.end_date)
+
+
+class PopulateOwnerCurrencyMigrationTests(TestCase):
+    """currency_for() (properties/migrations/0056_owner_currency_and_field_cleanup.py) - the
+    EUR/GBP/BOTH mapping the 2026-09-08 takes_euros/takes_pounds -> currency migration applies to
+    every existing Owner row. Tested as a standalone pure function rather than against a real
+    Owner row (unlike PropertyOwnershipBackfillMigrationTests above) - by definition the *current*
+    Owner model doesn't have takes_euros/takes_pounds any more, so there's no way to construct the
+    migration's own mid-flight state (old booleans + new currency field, both present at once)
+    with today's model classes."""
+
+    def setUp(self):
+        migration_module = importlib.import_module('properties.migrations.0056_owner_currency_and_field_cleanup')
+        self.currency_for = migration_module.currency_for
+
+    def test_euros_only(self):
+        self.assertEqual(self.currency_for(True, False), 'EUR')
+
+    def test_pounds_only(self):
+        self.assertEqual(self.currency_for(False, True), 'GBP')
+
+    def test_both(self):
+        self.assertEqual(self.currency_for(True, True), 'BOTH')
+
+    def test_neither_set_falls_back_to_eur(self):
+        self.assertEqual(self.currency_for(False, False), 'EUR')
 
 
 class GetStayTotalPriceTests(TestCase):

@@ -135,14 +135,13 @@ AMENITY_BOOLEAN_FIELDS = (
 # properties.models.Owner's boolean fields have no model-level default (a genuine choice always
 # has to be made, unlike e.g. ManagementCompany's optional contact roles), so the quick-add panel on the
 # Create Property page surfaces all of them rather than guessing - same (field, label) pattern as
-# AMENITY_BOOLEAN_FIELDS above, driving both the panel's checkboxes and StaffQuickAddView.
+# AMENITY_BOOLEAN_FIELDS above, driving both the panel's checkboxes and StaffQuickAddView. Down to
+# one field (2026-09-08, per Thomas) - default_clean/default_meet_greet were dead weight (never
+# actually consulted when creating an owner booking) and cleans_are_invoiced/
+# rental_commissions_are_invoiced were removed outright; takes_euros/takes_pounds became
+# Owner.currency instead (not boolean, so not part of this tuple - handled explicitly alongside
+# email/phone in _add_owner/_update_owner/_build_owner).
 OWNER_BOOLEAN_FIELDS = (
-    ('default_clean', 'Cleans included by default'),
-    ('default_meet_greet', 'Meet & greet included by default'),
-    ('takes_euros', 'Takes euros'),
-    ('takes_pounds', 'Takes pounds'),
-    ('cleans_are_invoiced', 'Cleans are invoiced'),
-    ('rental_commissions_are_invoiced', 'Rental commissions are invoiced'),
     ('is_paid_regularly', 'Paid on a regular schedule'),
 )
 

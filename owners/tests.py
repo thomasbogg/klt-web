@@ -29,18 +29,14 @@ class OwnerSuiteTests(TestCase):
 
     def setUp(self):
         self.owner = Owner.objects.create(
-            name='Portal Owner', email='portal-owner@example.com', default_clean=False,
-            default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            name='Portal Owner', email='portal-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         self.owner_user = User.objects.create_user(username='portalowner', password='pw')
         self.owner.user = self.owner_user
         self.owner.save(update_fields=['user'])
 
         self.other_owner = Owner.objects.create(
-            name='Other Owner', email='other-owner@example.com', default_clean=False,
-            default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            name='Other Owner', email='other-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
 
         self.non_owner_user = User.objects.create_user(username='randomuser', password='pw')
@@ -172,9 +168,7 @@ class OwnerAcceptInviteViewTests(TestCase):
 
     def setUp(self):
         self.owner = Owner.objects.create(
-            name='Invited Owner', email='invited-owner@example.com', default_clean=False,
-            default_meet_greet=False, takes_euros=True, takes_pounds=False, cleans_are_invoiced=False,
-            rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            name='Invited Owner', email='invited-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         self.user = User.objects.create_user(username='invited-owner@example.com', email='invited-owner@example.com')
         self.user.set_unusable_password()
@@ -254,9 +248,7 @@ class OwnerContactDetailsTests(TestCase):
     def setUp(self):
         self.owner = Owner.objects.create(
             name='Contact Details Owner', email='contact-owner@example.com', phone='+351900000001',
-            nif_number='111111111', default_clean=False, default_meet_greet=False, takes_euros=True,
-            takes_pounds=False, cleans_are_invoiced=False, rental_commissions_are_invoiced=False,
-            is_paid_regularly=False,
+            nif_number='111111111', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         self.owner_user = User.objects.create_user(username='contactowner', password='pw')
         self.owner.user = self.owner_user
@@ -264,9 +256,7 @@ class OwnerContactDetailsTests(TestCase):
 
         self.other_owner = Owner.objects.create(
             name='Other Contact Owner', email='other-contact-owner@example.com', phone='+351900000002',
-            nif_number='222222222', default_clean=False, default_meet_greet=False, takes_euros=True,
-            takes_pounds=False, cleans_are_invoiced=False, rental_commissions_are_invoiced=False,
-            is_paid_regularly=False,
+            nif_number='222222222', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
 
         self.client.login(username='contactowner', password='pw')
@@ -339,18 +329,14 @@ class OwnerBookingsTests(TestCase):
 
     def setUp(self):
         self.owner = Owner.objects.create(
-            name='Stays Owner', email='stays-owner@example.com', default_clean=False,
-            default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            name='Stays Owner', email='stays-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         self.owner_user = User.objects.create_user(username='staysowner', password='pw')
         self.owner.user = self.owner_user
         self.owner.save(update_fields=['user'])
 
         self.other_owner = Owner.objects.create(
-            name='Other Stays Owner', email='other-stays-owner@example.com', default_clean=False,
-            default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            name='Other Stays Owner', email='other-stays-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         self.other_owner_user = User.objects.create_user(username='otherstaysowner', password='pw')
         self.other_owner.user = self.other_owner_user
@@ -796,9 +782,7 @@ class OwnerCalendarTests(TestCase):
 
     def setUp(self):
         self.owner = Owner.objects.create(
-            name='Calendar Owner', email='calendar-owner@example.com', default_clean=False,
-            default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            name='Calendar Owner', email='calendar-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         self.owner_user = User.objects.create_user(username='calendarowner', password='pw')
         self.owner.user = self.owner_user
@@ -825,9 +809,7 @@ class OwnerCalendarTests(TestCase):
 
     def test_property_dropdown_never_offers_another_owners_property(self):
         other_owner = Owner.objects.create(
-            name='Other Calendar Owner', email='other-calendar-owner@example.com', default_clean=False,
-            default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            name='Other Calendar Owner', email='other-calendar-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         other_property = Property.objects.create(
             title='Other Calendar Property', short_title='OTHCAL', owner=other_owner,
@@ -847,18 +829,14 @@ class OwnerPayoutsMemosTests(TestCase):
 
     def setUp(self):
         self.owner = Owner.objects.create(
-            name='Payouts Owner', email='payouts-owner@example.com', default_clean=False,
-            default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            name='Payouts Owner', email='payouts-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         self.owner_user = User.objects.create_user(username='payoutsowner', password='pw')
         self.owner.user = self.owner_user
         self.owner.save(update_fields=['user'])
 
         self.other_owner = Owner.objects.create(
-            name='Other Payouts Owner', email='other-payouts-owner@example.com', default_clean=False,
-            default_meet_greet=False, takes_euros=True, takes_pounds=False,
-            cleans_are_invoiced=False, rental_commissions_are_invoiced=False, is_paid_regularly=False,
+            name='Other Payouts Owner', email='other-payouts-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False,
         )
         self.other_owner_user = User.objects.create_user(username='otherpayoutsowner', password='pw')
         self.other_owner.user = self.other_owner_user
