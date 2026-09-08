@@ -2,8 +2,10 @@
 {% if in_person %}
 <div class="details-section">
     <h2 class="details-section-title">Check-in</h2>
-    {% if in_person_liaison %}
+    {% if in_person_liaison and not inbound_transfer %}
     <p class="details-note details-note-left">Please call or WhatsApp {{ in_person_liaison.liaison_name|default:"our check-in team" }} on <strong>{{ in_person_liaison.liaison_phone }}</strong> 40 minutes before your expected arrival time at the property, so they can be ready to meet you.</p>
+    {% elif in_person_liaison and inbound_transfer %}
+    <p class="details-note details-note-left">No need to call ahead - your driver will let us know when you're on the way.</p>
     {% endif %}
     {% if in_person_check_in_instructions %}
     <p class="details-note details-note-left">{{ in_person_check_in_instructions|linkify }}</p>

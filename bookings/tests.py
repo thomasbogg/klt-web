@@ -4135,10 +4135,28 @@ class BookingManageAmenitiesViewTests(TestCase):
 
 
 class LinkifyFilterTests(TestCase):
-    def test_wraps_a_bare_url_in_a_new_tab_link(self):
+    def test_wraps_a_bare_url_in_a_new_tab_link_shown_as_its_domain(self):
         result = linkify('See it here: https://maps.app.goo.gl/abc123')
-        self.assertIn('<a href="https://maps.app.goo.gl/abc123" target="_blank" rel="noopener noreferrer">', result)
+        self.assertIn(
+            '<a href="https://maps.app.goo.gl/abc123" target="_blank" rel="noopener noreferrer" '
+            'class="inline-text-link">maps.app.goo.gl</a>',
+            result,
+        )
         self.assertIn('See it here:', result)
+
+    def test_strips_leading_www_from_the_displayed_domain(self):
+        result = linkify('https://www.flytap.com/en-pt')
+        self.assertIn('>flytap.com</a>', result)
+        self.assertIn('href="https://www.flytap.com/en-pt"', result)
+
+    def test_trailing_punctuation_stays_out_of_the_href(self):
+        result = linkify('Book with TAP (https://www.flytap.com/en-pt).')
+        self.assertIn('href="https://www.flytap.com/en-pt"', result)
+        self.assertIn('</a>).', result)
+
+    def test_a_closing_paren_that_is_part_of_the_url_is_kept(self):
+        result = linkify('See https://en.wikipedia.org/wiki/Albufeira_(Algarve) for more')
+        self.assertIn('href="https://en.wikipedia.org/wiki/Albufeira_(Algarve)"', result)
 
     def test_links_more_than_one_url(self):
         result = linkify('First https://a.example.com then https://b.example.com')
@@ -4217,7 +4235,8 @@ class BookingManageLocationViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertContains(
             response,
-            '<a href="https://maps.app.goo.gl/xyz789" target="_blank" rel="noopener noreferrer">',
+            '<a href="https://maps.app.goo.gl/xyz789" target="_blank" rel="noopener noreferrer" '
+            'class="inline-text-link">maps.app.goo.gl</a>',
         )
 
     def test_no_arrival_row_hides_self_check_in_section(self):
@@ -4521,6 +4540,164 @@ class BookingManageLocationViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertEqual(response.context['postbox_path'], 'conflict')
         self.assertContains(response, 'scheduling clash')
+
+    def test_inbound_transfer_replaces_directions_with_transfer_info(self):
+        AirportTransfer.objects.create(
+            booking=self.booking, direction=AirportTransferDirection.INBOUND,
+            time=time(14, 30), flight_number='TP1234',
+        )
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Your airport transfer')
+        self.assertContains(response, 'flight TP1234')
+        self.assertNotContains(response, 'Follow the coast road past the marina.')
+
+    def test_no_inbound_transfer_shows_directions_as_before(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Follow the coast road past the marina.')
+        self.assertNotContains(response, 'Your airport transfer')
+
+    def test_inbound_transfer_hides_in_person_call_ahead_line(self):
+        self.property.cleaning_company = ManagementCompany.objects.create(
+            name='LOC Cleaning Co Transfer', liaison_name='Maria', liaison_phone='+351 912 000 111',
+        )
+        self.property.save(update_fields=['cleaning_company'])
+        Arrival.objects.create(booking=self.booking, self_check_in=False, meet_greet=True)
+        AirportTransfer.objects.create(
+            booking=self.booking, direction=AirportTransferDirection.INBOUND, time=time(14, 30),
+        )
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'call or WhatsApp')
+        self.assertContains(response, "No need to call ahead")
+
+    def test_inbound_transfer_faro_meeting_point_shown_only_when_is_faro(self):
+        AirportTransfer.objects.create(
+            booking=self.booking, direction=AirportTransferDirection.INBOUND,
+            time=time(14, 30), is_faro=False,
+        )
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Baggage Reclaim')
+
+    def test_inbound_transfer_mentions_outbound_only_when_also_booked(self):
+        AirportTransfer.objects.create(
+            booking=self.booking, direction=AirportTransferDirection.INBOUND, time=time(14, 30),
+        )
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'return transfer')
+
+        AirportTransfer.objects.create(
+            booking=self.booking, direction=AirportTransferDirection.OUTBOUND, time=time(9, 0),
+        )
+        response = self.client.get(self.url)
+        self.assertContains(response, 'return transfer')
+
+    def test_inbound_transfer_fallback_contact_shown_only_when_both_fields_set(self):
+        AirportTransfer.objects.create(
+            booking=self.booking, direction=AirportTransferDirection.INBOUND, time=time(14, 30),
+        )
+        response = self.client.get(self.url)
+        self.assertNotContains(response, "don't see them")
+
+        settings = ExtrasSettings.load()
+        settings.airport_transfer_fallback_contact_name = 'Nick'
+        settings.airport_transfer_fallback_contact_phone = '+351 933 059 171'
+        settings.save()
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Nick')
+        self.assertContains(response, '+351 933 059 171')
+
+
+class BookingManageLastDaysViewTests(TestCase):
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Test Location Last Days', street='1 Last Days Street', zip_code='8000-000', city='Faro',
+            coordinates='37.0,-7.9', map_link='https://maps.example.com/lastdays',
+            nearest_bins='by the car park entrance',
+        )
+        self.property = Property.objects.create(
+            title='Test Property Last Days', short_title='TESTLASTDAYS', location=self.location,
+        )
+        self.guest = Guest.objects.create(first_name='Sofia', last_name='Pereira', email='sofia-ld@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Payment.objects.create(booking=self.booking, provider='revolut', status='paid')
+        self.url = reverse('bookings:manage_last_days', kwargs={'reference': self.booking.reference})
+        self.details_url = reverse('bookings:details', kwargs={'reference': self.booking.reference})
+
+    def test_not_paid_redirects_to_details(self):
+        self.booking.payment.status = 'pending'
+        self.booking.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.details_url, fetch_redirect_response=False)
+
+    def test_active_section_is_last_days(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['active_section'], 'last_days')
+
+    def test_standard_checkout_time_shown_by_default(self):
+        self.property.cleaning_company = ManagementCompany.objects.create(
+            name='LD Cleaning Co', standard_checkout_time=time(10, 0),
+        )
+        self.property.save(update_fields=['cleaning_company'])
+        response = self.client.get(self.url)
+        self.assertContains(response, '10:00')
+        self.assertNotContains(response, "You've booked a late checkout")
+
+    def test_late_checkout_time_shown_when_booked(self):
+        Extra.objects.create(booking=self.booking, late_checkout=True, late_checkout_time=time(12, 0))
+        response = self.client.get(self.url)
+        self.assertContains(response, "You've booked a late checkout")
+        self.assertContains(response, '12:00')
+
+    def test_no_outbound_transfer_hides_airport_section(self):
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Getting to the airport')
+
+    def test_outbound_transfer_shows_computed_pickup_time(self):
+        AirportTransfer.objects.create(
+            booking=self.booking, direction=AirportTransferDirection.OUTBOUND, time=time(12, 0),
+        )
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Getting to the airport')
+        self.assertContains(response, '09:15')
+
+    def test_no_bbq_amenity_hides_bbq_note(self):
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'BBQ')
+
+    def test_bbq_amenity_shows_bbq_note(self):
+        # Property.save() auto-creates an Amenity row (properties/models.py) - update it rather
+        # than Amenity.objects.create(), which would violate the OneToOneField's uniqueness.
+        self.property.amenities.barbecue = True
+        self.property.amenities.save(update_fields=['barbecue'])
+        response = self.client.get(self.url)
+        self.assertContains(response, 'BBQ')
+
+    def test_nearest_bins_shown_in_before_you_go(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, 'by the car park entrance')
+
+    def test_no_after_checkout_instructions_hides_section(self):
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Staying on-site after check-out')
+
+    def test_after_checkout_instructions_shown_when_present(self):
+        self.location.after_checkout_access_instructions = 'Use the keypad code 9999 to get back in.'
+        self.location.save(update_fields=['after_checkout_access_instructions'])
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Staying on-site after check-out')
+        self.assertContains(response, 'Use the keypad code 9999 to get back in.')
+
+    def test_after_checkout_instructions_renders_blank_line_separated_text_as_separate_paragraphs(self):
+        self.location.after_checkout_access_instructions = 'First paragraph.\n\nSecond paragraph.'
+        self.location.save(update_fields=['after_checkout_access_instructions'])
+        response = self.client.get(self.url)
+        self.assertContains(response, '<p class="details-note details-note-left">First paragraph.</p>', html=True)
+        self.assertContains(response, '<p class="details-note details-note-left">Second paragraph.</p>', html=True)
 
 
 class ResolveSharedPostboxPathTests(TestCase):

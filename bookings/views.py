@@ -2278,7 +2278,16 @@ class BookingManageLocationView(View):
     ManagementCompany.standard_checkin_time elsewhere (the cleaning company is who actually
     performs the meet & greet, per Thomas 2026-09-02). in_person_checkin_checkout is just the
     company itself (its two time fields always have a real value, unlike the other two) - None
-    only when there's no cleaning_company at all to read from."""
+    only when there's no cleaning_company at all to read from.
+
+    Airport transfer meeting info (2026-09-08, per Thomas): replaces the Directions section
+    whenever this booking has an inbound AirportTransfer - the driver coordinates with the team
+    directly, so the guest doesn't need to call ahead the way an in-person check-in normally asks
+    (see _self_check_in.html's own inbound_transfer check). has_outbound_transfer lets the payment
+    paragraph state definitively whether a return transfer is also booked, rather than the legacy
+    email's "if applicable" hedge - the hub can just check. transfer_fallback_contact is only set
+    (from ExtrasSettings) when both the name and phone are configured; template treats it as
+    "don't show this contact at all" otherwise, not a broken/partial credit."""
     template_name = 'bookings/manage_location.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -2291,6 +2300,12 @@ class BookingManageLocationView(View):
         location = booking.property.location
         arrival = Arrival.objects.filter(booking=booking).first()
         self_check_in = bool(arrival and arrival.self_check_in)
+        inbound_transfer = booking.airport_transfers.filter(
+            direction=AirportTransferDirection.INBOUND
+        ).first()
+        has_outbound_transfer = booking.airport_transfers.filter(
+            direction=AirportTransferDirection.OUTBOUND
+        ).exists()
         # A known meet-and-greet, distinct from "we don't know yet" (arrival is None) - only ever
         # true once an Arrival row exists and explicitly says self_check_in=False, never shown
         # prematurely before the guest's own arrival details (or a company policy) have actually
@@ -2324,6 +2339,15 @@ class BookingManageLocationView(View):
             else None
         )
 
+        transfer_fallback_contact = None
+        if inbound_transfer is not None:
+            extras_settings = ExtrasSettings.load()
+            if (
+                extras_settings.airport_transfer_fallback_contact_name
+                and extras_settings.airport_transfer_fallback_contact_phone
+            ):
+                transfer_fallback_contact = extras_settings
+
         context = _manage_nav_context(booking, 'location')
         context.update({
             'booking': booking, 'location': location,
@@ -2339,6 +2363,76 @@ class BookingManageLocationView(View):
             'code_reveal_days': reveal_days,
             'postbox_path': postbox_path,
             'postbox_location': location if postbox_path else None,
+            'inbound_transfer': inbound_transfer,
+            'has_outbound_transfer': has_outbound_transfer,
+            'transfer_fallback_contact': transfer_fallback_contact,
+        })
+        return render(request, self.template_name, context)
+
+
+class BookingManageLastDaysView(View):
+    """Holiday Info section of the Manage Booking hub - final-day checkout procedure and, where
+    applicable, departure-day airport transfer timing and after-checkout facility access. Ported
+    2026-09-08 (per Thomas) from the klt-management-software departure emails (final_days,
+    after_check_out), made dynamic where the old emails had to hedge: the outbound-transfer
+    pickup-time paragraph only ever shows when this booking actually has one (AirportTransferView's
+    inbound-side equivalent is BookingManageLocationView), rather than the legacy "if applicable"
+    wording. Read-only, same no-side-effect GET as BookingManageAmenitiesView.
+
+    checkout_time/late_checkout: Extra.late_checkout_time if the guest booked a late checkout,
+    else ManagementCompany.standard_checkout_time off cleaning_company - same source
+    BookingManageLocationView's own in_person_checkin_checkout already reads, so the two tabs never
+    disagree about what "standard checkout" means for this property. has_bbq reads
+    Property.amenities.barbecue rather than any hardcoded property name - MON T's flag was
+    backfilled (bookings/migrations/0055_...) as part of this change, since the legacy system knew
+    about its BBQ but nothing had ever set the structured flag."""
+    template_name = 'bookings/manage_last_days.html'
+
+    def get(self, request, reference, *args, **kwargs):
+        booking = Booking.objects.filter(reference=reference).first()
+        if booking is None:
+            raise Http404("No booking found for this reference.")
+        if not is_paid(booking):
+            return redirect('bookings:details', reference=reference)
+
+        location = booking.property.location
+        extra = getattr(booking, 'extras', None)
+        late_checkout = bool(extra and extra.late_checkout and extra.late_checkout_time)
+        cleaning_company = booking.property.cleaning_company
+        checkout_time = (
+            extra.late_checkout_time if late_checkout
+            else cleaning_company.standard_checkout_time if cleaning_company
+            else None
+        )
+        outbound_transfer = booking.airport_transfers.filter(
+            direction=AirportTransferDirection.OUTBOUND
+        ).first()
+        outbound_pickup_time = None
+        if outbound_transfer is not None:
+            pickup = (
+                datetime.combine(date.today(), outbound_transfer.time) - timedelta(hours=2, minutes=45)
+            ).time()
+            outbound_pickup_time = pickup
+
+        context = _manage_nav_context(booking, 'last_days')
+        context.update({
+            'booking': booking,
+            'checkout_time': checkout_time,
+            'late_checkout': late_checkout,
+            'outbound_transfer': outbound_transfer,
+            'outbound_pickup_time': outbound_pickup_time,
+            'has_bbq': bool(getattr(booking.property, 'amenities', None) and booking.property.amenities.barbecue),
+            'nearest_bins': location.nearest_bins if location else '',
+            # Split into paragraphs here rather than relying on {% linebreaks %} in the template -
+            # that filter always re-escapes its input even when already marked safe, which would
+            # mangle the <a> tags linkify (bookings_extras.py) has already built. A blank line in
+            # the stored text is a deliberate paragraph break (see the QdB/Monaco backfill,
+            # properties/migrations/0057_...) - collapsed into one run-on block by HTML whitespace
+            # rules if rendered as a single <p>.
+            'after_checkout_paragraphs': (
+                [p for p in location.after_checkout_access_instructions.split('\n\n') if p.strip()]
+                if location else []
+            ),
         })
         return render(request, self.template_name, context)
 

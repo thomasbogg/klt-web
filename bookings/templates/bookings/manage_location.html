@@ -47,7 +47,18 @@
             </div>
             {% endif %}
 
-            {% if location.directions %}
+            {% if inbound_transfer %}
+            <div class="details-section">
+                <h2 class="details-section-title">Your airport transfer</h2>
+                {% if inbound_transfer.is_faro %}
+                <p class="details-note details-note-left">After you leave Baggage Reclaim, pass through Customs, and enter the Arrivals Hall, look to your left for a row of travel company stands and representatives - your driver will be waiting there with your name displayed on a board.{% if transfer_fallback_contact %} If you don't see them, contact {{ transfer_fallback_contact.airport_transfer_fallback_contact_name }} on <strong>{{ transfer_fallback_contact.airport_transfer_fallback_contact_phone }}</strong>.{% endif %}</p>
+                {% else %}
+                <p class="details-note details-note-left">Your driver will be waiting for you on arrival with your name displayed.{% if transfer_fallback_contact %} If you don't see them, contact {{ transfer_fallback_contact.airport_transfer_fallback_contact_name }} on <strong>{{ transfer_fallback_contact.airport_transfer_fallback_contact_phone }}</strong>.{% endif %}</p>
+                {% endif %}
+                <p class="details-note details-note-left">Your driver already has your flight details{% if inbound_transfer.flight_number %} (flight {{ inbound_transfer.flight_number }}){% endif %} and will know about any changes to your landing time - there's no need to worry or call ahead, they'll be there to meet you.</p>
+                <p class="details-note details-note-left">Once you arrive at the apartment, please pay the driver in cash for the cost of the transfer{% if has_outbound_transfer %}, along with your return transfer{% endif %}. Unfortunately the driver isn't able to accept card payments.</p>
+            </div>
+            {% elif location.directions %}
             <div class="details-section">
                 <h2 class="details-section-title">Directions</h2>
                 <p class="details-note details-note-left">{{ location.directions|linkify }}</p>

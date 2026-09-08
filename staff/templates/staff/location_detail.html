@@ -138,6 +138,19 @@
                                 <button type="submit" class="staff-button">Update</button>
                             </form>
                         </div>
+
+                        <div class="staff-panel">
+                            <h2 class="staff-panel-title">After check-out access</h2>
+                            <p class="staff-hint">Only relevant where guests can stay on-site (luggage storage, communal showers) after checking out of the apartment itself - leave blank for a location where this isn't offered and the guest hub's Last Days &amp; Check-out tab simply won't show the section.</p>
+                            <form method="post" class="staff-form">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="update_after_checkout_access">
+                                <label class="staff-field">Instructions
+                                    <textarea name="after_checkout_access_instructions" class="staff-input" rows="4">{{ location.after_checkout_access_instructions }}</textarea>
+                                </label>
+                                <button type="submit" class="staff-button">Update</button>
+                            </form>
+                        </div>
                         </div>
                     </div>
                 </section>

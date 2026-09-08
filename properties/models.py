@@ -42,6 +42,9 @@ class Location(models.Model):
     self_check_in_preferred_code = models.CharField(max_length=100, blank=True, default='')
     self_check_in_fallback_instructions = models.TextField(blank=True, default='')
     self_check_in_fallback_code = models.CharField(max_length=100, blank=True, default='')
+    # Building-wide (not per-unit) - shown on the guest hub's Last Days & Check-out tab only where
+    # this is actually offered (most locations leave it blank and the section just doesn't show).
+    after_checkout_access_instructions = models.TextField(blank=True, default='')
 
     @property
     def slug(self):

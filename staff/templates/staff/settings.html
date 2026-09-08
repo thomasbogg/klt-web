@@ -586,7 +586,14 @@
                                 <label class="staff-field">Night surcharge window end
                                     <input type="time" name="airport_transfer_night_window_end" class="staff-input" value="{{ extras_settings.airport_transfer_night_window_end|time:'H:i' }}">
                                 </label>
+                                <label class="staff-field">Fallback contact name
+                                    <input type="text" name="airport_transfer_fallback_contact_name" class="staff-input" value="{{ extras_settings.airport_transfer_fallback_contact_name }}">
+                                </label>
+                                <label class="staff-field">Fallback contact phone
+                                    <input type="text" name="airport_transfer_fallback_contact_phone" class="staff-input" value="{{ extras_settings.airport_transfer_fallback_contact_phone }}">
+                                </label>
                             </div>
+                            <p class="staff-settings-hint">The fallback contact is shown to a guest with a booked transfer, only in case their driver isn't at the meeting point on arrival. Leave both blank to omit it from the guest hub entirely.</p>
                             <button type="submit" class="staff-button">Save airport transfer settings</button>
                         </form>
                     </div>
