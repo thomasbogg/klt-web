@@ -540,42 +540,37 @@
                         <form method="post" class="staff-form staff-settings-form">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="update_extras_settings">
-                            <div class="staff-settings-field-grid-compact staff-settings-field-grid-compact-3col">
+                            <div class="staff-settings-field-grid-compact">
                                 <label class="staff-field">Cot &amp; high chair - cutoff (days)
                                     <input type="text" name="cot_high_chair_cutoff_days_before_arrival" class="staff-input" value="{{ extras_settings.cot_high_chair_cutoff_days_before_arrival|default_if_none:'' }}">
                                 </label>
-                                <label class="staff-field">Cot &amp; high chair - last-minute window (hours)
+                                <label class="staff-field">Cot &amp; high chair - last-minute (hrs)
                                     <input type="text" name="cot_high_chair_last_minute_window_hours" class="staff-input" value="{{ extras_settings.cot_high_chair_last_minute_window_hours }}">
                                 </label>
-                                <span></span>
                                 <label class="staff-field">Airport transfers - cutoff (days)
                                     <input type="text" name="airport_transfer_cutoff_days_before_arrival" class="staff-input" value="{{ extras_settings.airport_transfer_cutoff_days_before_arrival|default_if_none:'' }}">
                                 </label>
-                                <label class="staff-field">Airport transfers - last-minute window (hours)
+                                <label class="staff-field">Airport transfers - last-minute (hrs)
                                     <input type="text" name="airport_transfer_last_minute_window_hours" class="staff-input" value="{{ extras_settings.airport_transfer_last_minute_window_hours }}">
                                 </label>
-                                <span></span>
                                 <label class="staff-field">Late checkout - cutoff (days)
                                     <input type="text" name="late_checkout_cutoff_days_before_arrival" class="staff-input" value="{{ extras_settings.late_checkout_cutoff_days_before_arrival|default_if_none:'' }}">
                                 </label>
-                                <label class="staff-field">Late checkout - last-minute window (hours)
+                                <label class="staff-field">Late checkout - last-minute (hrs)
                                     <input type="text" name="late_checkout_last_minute_window_hours" class="staff-input" value="{{ extras_settings.late_checkout_last_minute_window_hours }}">
                                 </label>
-                                <span></span>
                                 <label class="staff-field">Mid-stay clean - cutoff (days)
                                     <input type="text" name="mid_stay_clean_cutoff_days_before_arrival" class="staff-input" value="{{ extras_settings.mid_stay_clean_cutoff_days_before_arrival|default_if_none:'' }}">
                                 </label>
-                                <label class="staff-field">Mid-stay clean - last-minute window (hours)
+                                <label class="staff-field">Mid-stay clean - last-minute (hrs)
                                     <input type="text" name="mid_stay_clean_last_minute_window_hours" class="staff-input" value="{{ extras_settings.mid_stay_clean_last_minute_window_hours }}">
                                 </label>
-                                <span></span>
                                 <label class="staff-field">Welcome pack - cutoff (days)
                                     <input type="text" name="welcome_pack_cutoff_days_before_arrival" class="staff-input" value="{{ extras_settings.welcome_pack_cutoff_days_before_arrival|default_if_none:'' }}">
                                 </label>
-                                <label class="staff-field">Welcome pack - last-minute window (hours)
+                                <label class="staff-field">Welcome pack - last-minute (hrs)
                                     <input type="text" name="welcome_pack_last_minute_window_hours" class="staff-input" value="{{ extras_settings.welcome_pack_last_minute_window_hours }}">
                                 </label>
-                                <span></span>
                             </div>
                             <button type="submit" class="staff-button">Save ordering cutoffs</button>
                         </form>

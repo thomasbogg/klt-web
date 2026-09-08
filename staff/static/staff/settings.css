@@ -201,8 +201,28 @@
     width: 110px;
 }
 
+/* Cutoff (days) / Last-minute (hrs) (2026-09-08): two new narrow columns between Default price
+   and Active, same role as the other fixed-content columns above. Their header text is too long
+   to fit on one line at these widths - .staff-price-table th's own white-space: nowrap would spill
+   it into the neighbouring header instead of wrapping (same "OWNER LINKEXCLUDE TITLES CONTAINING"
+   bug .staff-ical-table th already fixed this way, see property_detail.css), so this table opts
+   back into normal wrapping too. */
+.staff-special-requests-table th {
+    white-space: normal;
+}
+
 .staff-special-requests-table th:nth-child(4),
 .staff-special-requests-table td:nth-child(4) {
+    width: 90px;
+}
+
+.staff-special-requests-table th:nth-child(5),
+.staff-special-requests-table td:nth-child(5) {
+    width: 100px;
+}
+
+.staff-special-requests-table th:nth-child(6),
+.staff-special-requests-table td:nth-child(6) {
     width: 70px;
 }
 
