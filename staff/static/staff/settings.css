@@ -244,6 +244,20 @@
 .staff-local-guide-table th:nth-child(6), .staff-local-guide-table td:nth-child(6) { width: 150px; }
 .staff-local-guide-table th:nth-child(7), .staff-local-guide-table td:nth-child(7) { width: 110px; }
 
+/* Same latent flex-td-height bug as .staff-booking-conditions-table/.staff-faq-table above (this
+   table's own Description column is a 3-row textarea) - identical fix. Confirmed via
+   getBoundingClientRect: the flex td was rendering 42px tall against a 79px row, pinning Save/
+   Delete near the top instead of following the row's actual (Description-driven) height. */
+.staff-local-guide-table .staff-price-row-actions {
+    display: table-cell;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.staff-local-guide-table .staff-price-row-actions .staff-button {
+    margin-left: 6px;
+}
+
 /* .staff-price-row-actions normally sets display:flex directly on the <td> itself (see
    property_detail.css) - harmless on the other catalog tables since every row there is exactly
    one input tall, so the flex td's content height already matches the row height. Booking
@@ -376,6 +390,21 @@
    button, just stacked under a status line instead of sitting next to a second button. */
 .staff-owner-portal-col {
     width: 130px;
+}
+
+/* th.staff-owner-portal-col (element+class), not the bare class above - needed to outrank the
+   base .staff-price-table th's own text-align: left (also element+class, so a bare class alone
+   loses that specificity fight and the header silently stayed left-aligned even with the rule
+   above in place - confirmed via getBoundingClientRect, not assumed; the td half worked first try
+   since .staff-price-table td never sets text-align at all). Matches Properties' own treatment
+   right next door (.staff-owners-table th:nth-child(12) above, same reasoning) so "Portal login"
+   and its column both read as centered. .staff-inline-delete (wrapping the Invite/Resend invite
+   button's own form) is display: inline, so centering is enough to center the button too - Invite,
+   "Invite sent" + Resend invite, and Active all just occupy the same centered spot in turn as the
+   account's state changes, never three different layouts. */
+.staff-owners-table th.staff-owner-portal-col,
+.staff-owners-table td.staff-owner-portal-col {
+    text-align: center;
 }
 
 /* Shared by Owners/Management companies/Accountants - the read-only property-assignment count
