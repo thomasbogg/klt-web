@@ -1,11 +1,21 @@
-"""Country-code dropdown for the Owner Suite Contact Details phone field (owners/views.py::
-OwnerContactDetailsView). CALLING_CODES is the standard ISO 3166-1 alpha-2 -> E.164 calling code
-table; PHONE_COUNTRY_CHOICES below turns it into one dropdown option per *unique calling code*
-(not per country) since several countries share a code - e.g. +1 covers the US, Canada and most
-of the Caribbean, +44 covers the UK, Guernsey, Jersey and the Isle of Man. Deduplicating means the
-dropdown's value is always an unambiguous calling code, so a stored phone number round-trips back
-to the same selected option - there'd be no way to tell "+1 555…" apart as US vs. Jamaica vs.
-Bermuda if every country kept its own option instead.
+"""Country-code dropdown for every phone field on the site that splits entry into a calling-code
+select plus a free-text local number - the guest-facing reservation form and Manage Booking
+Contact Details (bookings.forms.ReservationForm/GuestContactDetailsForm) and the Owner Suite
+Contact Details page (owners/views.py::OwnerContactDetailsView). None of these fields are two
+DB columns - every phone field in this codebase (Guest, Owner, Accountant, ManagementCompany
+contacts) stores one freeform string; split_phone()/join_phone() below are purely a form-layer
+convenience either side of that single column, per Thomas 2026-09-08 (deliberately not
+splitting the schema - see project_klt_web_owner_currency_field_cleanup memory-equivalent
+reasoning: no downstream consumer ever needs the calling code on its own, and two columns would
+leave every pre-existing row with no calling code to backfill).
+
+CALLING_CODES is the standard ISO 3166-1 alpha-2 -> E.164 calling code table; PHONE_COUNTRY_CHOICES
+below turns it into one dropdown option per *unique calling code* (not per country) since several
+countries share a code - e.g. +1 covers the US, Canada and most of the Caribbean, +44 covers the
+UK, Guernsey, Jersey and the Isle of Man. Deduplicating means the dropdown's value is always an
+unambiguous calling code, so a stored phone number round-trips back to the same selected option -
+there'd be no way to tell "+1 555…" apart as US vs. Jamaica vs. Bermuda if every country kept its
+own option instead.
 
 PRIMARY_COUNTRY_FOR_CODE picks which country's name labels a shared code's option (the most
 populous/best-known one, e.g. "United States" for +1 rather than "American Samoa") - every code
@@ -60,7 +70,7 @@ PRIMARY_COUNTRY_FOR_CODE = {
 def phone_country_choices():
     """(calling code, "Country name (+code)") pairs, one per unique calling code, sorted by
     country name - Portugal first, since this business is based there and it's the overwhelmingly
-    likely default for a new owner."""
+    likely default for anyone entering a phone number on this site."""
     from django_countries import countries
 
     names = dict(countries)
@@ -102,9 +112,9 @@ def split_phone(raw):
 
 def join_phone(calling_code, local_number):
     """Inverse of split_phone - combines the dropdown's calling code and the free-text local
-    number back into the single string Owner.phone stores. No calling code selected just stores
-    the local number as-is (matches how every phone field elsewhere in this codebase already
-    stores a single freeform string)."""
+    number back into the single string the model's phone field stores. No calling code selected
+    just stores the local number as-is (matches how every phone field in this codebase stores a
+    single freeform string)."""
     local_number = (local_number or '').strip()
     calling_code = (calling_code or '').strip()
     if not calling_code:
