@@ -2720,6 +2720,17 @@ class StaffBookingDetailView(View):
                 if currency != charge.currency:
                     charge_changed = True
                 charge.currency = currency
+                # Switching to GBP with no rate on file yet means this Charge never went through
+                # create_booking() (which always freezes one) - freeze the current live rate here
+                # too, the same way, so every GBP display path (Charge.to_gbp()/costs_in_gbp())
+                # has something to work with instead of silently rendering blank amounts (2026-09-09,
+                # found live: a staff-entered GBP booking showed "£" with no figures anywhere on its
+                # guest-facing Manage Booking hub). Never overwrites an already-frozen rate - a
+                # re-save of an existing GBP charge must keep showing the guest the same total they
+                # were originally quoted, same reasoning as Charge.gbp_conversion_rate's own docstring.
+                if currency == 'GBP' and charge.gbp_conversion_rate is None:
+                    charge.gbp_conversion_rate = BookingSettings.load().gbp_conversion_rate
+                    charge_changed = True
 
         # Platform Payout replaces Rental Charges on this page for a platform booking (see
         # booking_detail.html) - gross/commission/payout is structurally different money to a

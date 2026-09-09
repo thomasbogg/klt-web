@@ -422,6 +422,35 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertEqual(self.payment.status, 'paid')
         self.assertEqual(self.balance_payment.status, 'in_progress')
 
+    def test_switching_currency_to_gbp_freezes_the_current_live_rate(self):
+        # self.charge starts EUR with no gbp_conversion_rate (setUp) - a booking whose Charge never
+        # went through create_booking() (which always freezes one). Found live 2026-09-09: a
+        # staff-entered GBP booking rendered "£" with every amount blank across the guest-facing
+        # Manage Booking hub, since Charge.to_gbp()/costs_in_gbp() both return None with no rate.
+        settings = BookingSettings.load()
+        settings.gbp_conversion_rate = Decimal('0.8600')
+        settings.save()
+        response = self.client.post(self.url, {'action': 'update_booking', 'currency': 'GBP'})
+        self.assertRedirects(response, self.url)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.currency, 'GBP')
+        self.assertEqual(self.charge.gbp_conversion_rate, Decimal('0.8600'))
+
+    def test_resaving_an_existing_gbp_charge_does_not_overwrite_its_frozen_rate(self):
+        # A guest already quoted GBP at some rate must keep seeing that same total on a later
+        # staff re-save, even if the live rate has since moved - same reasoning as
+        # Charge.gbp_conversion_rate's own docstring for why balance time reuses the deposit-time rate.
+        self.charge.currency = 'GBP'
+        self.charge.gbp_conversion_rate = Decimal('0.9000')
+        self.charge.save(update_fields=['currency', 'gbp_conversion_rate'])
+        settings = BookingSettings.load()
+        settings.gbp_conversion_rate = Decimal('0.8600')  # the live rate has since moved
+        settings.save()
+        response = self.client.post(self.url, {'action': 'update_booking', 'currency': 'GBP', 'basic_rental': '750.00'})
+        self.assertRedirects(response, self.url)
+        self.charge.refresh_from_db()
+        self.assertEqual(self.charge.gbp_conversion_rate, Decimal('0.9000'))
+
     def test_update_booking_saves_discount_and_extra_guest_and_total_rental_reflects_them(self):
         response = self.client.post(self.url, {
             'action': 'update_booking', 'basic_rental': '700.00',
