@@ -575,6 +575,20 @@ class Command(BaseCommand):
                 #Booking.objects.filter(id=row['bookingId']).update(departure_date=parse_date(row['date']) if row['date'] else None)
 
     def migrate_charges(self, cursor, dry_run):
+        """NOTE for the next (pre-go-live) re-run of this command, 2026-09-09 per Thomas: this never
+        sets due_at_booking/due_at_balance/balance_due_date, and no step in this whole command ever
+        creates a Payment or BalancePayment row for any migrated booking - payment was tracked in
+        klt_main.db/PIMS itself, not here, so that's correct for a booking whose stay has already
+        happened. But an already-confirmed booking that HASN'T arrived yet by the time this
+        migration next runs genuinely still needs klt-web's own online balance-payment structure,
+        the same way the 55 bookings arriving >= 2026-12-01 (found this session) did. After this
+        command finishes, run `python manage.py backfill_legacy_balance_payments --apply`
+        (bookings/management/commands/) - it's the repeatable fix for exactly this gap: 25%/75%
+        deposit/balance split via BookingSettings.split_subtotal(), deposit marked paid, balance
+        left pending, idempotent against bookings it's already handled. Same command also zeroes
+        Charge.security for every booking in scope (2026-09-09, per Thomas: none of these
+        legacy-sourced cash-at-check-in deposits should carry one going forward) - also idempotent,
+        so re-running it is always safe even for bookings an earlier run already touched."""
         cursor.execute("SELECT * FROM charges")
         rows = cursor.fetchall()
         
