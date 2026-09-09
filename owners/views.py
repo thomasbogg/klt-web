@@ -454,6 +454,20 @@ class OwnerBookingDetailView(BookingFormMixin, View):
         arrival = getattr(booking, 'arrival', None)
         settings = ExtrasSettings.load()
         nights = (booking.departure_date - booking.arrival_date).days
+
+        # Late check-out permissibility (2026-09-09) - same rule engine and "trust an existing
+        # grant over a fresh live check" reasoning as BookingFormMixin._extras_context() on the
+        # guest side (bookings/views.py); see that method's own docstring. No extras_windows/
+        # cutoff concept applies here - this page has only the single whole-page `editable` gate.
+        existing_grant = getattr(booking, 'late_checkout_grant', None)
+        if existing_grant is not None:
+            late_checkout_unlimited = existing_grant.time is None
+            late_checkout_available_times = [] if late_checkout_unlimited else [existing_grant.time]
+        else:
+            from staff.utils import late_checkout_still_available
+            late_checkout_unlimited, _eligible, available = late_checkout_still_available(booking)
+            late_checkout_available_times = sorted(available)
+
         return {
             'owner_is_paying': owner_is_paying,
             # Extra.owner_is_paying is a whole-booking flag (see its own model docstring), but
@@ -486,6 +500,9 @@ class OwnerBookingDetailView(BookingFormMixin, View):
             'late_checkout': late_checkout,
             'late_checkout_time': late_checkout_time,
             'late_checkout_price': settings.late_checkout_price,
+            'late_checkout_unlimited': late_checkout_unlimited,
+            'late_checkout_available_times': late_checkout_available_times,
+            'late_checkout_offerable': late_checkout_unlimited or bool(late_checkout_available_times),
         }
 
     def _save_owner_extras(self, booking, post_data):
@@ -532,7 +549,13 @@ class OwnerBookingDetailView(BookingFormMixin, View):
         nights = (booking.departure_date - booking.arrival_date).days
         extra.cot_high_chair_charge = settings.compute_cot_high_chair_price(nights, extra.cot, extra.high_chair)
 
-        extra.late_checkout, extra.late_checkout_time, _ = self._parse_late_checkout(booking, post_data)
+        # Same parse-then-reconcile-against-any-existing-grant flow as BookingFormMixin._save_extras
+        # on the guest side (bookings/views.py) - an owner's late checkout is subject to the exact
+        # same eligibility/cap/calendar-block engine as a guest's, per Thomas 2026-09-09.
+        wants_late_checkout, requested_time, _ = self._parse_late_checkout(booking, post_data)
+        extra.late_checkout, extra.late_checkout_time = self._apply_late_checkout_request(
+            booking, wants_late_checkout, requested_time,
+        )
         extra.late_checkout_charge = settings.late_checkout_price if extra.late_checkout else None
 
         extra.save(update_fields=[
