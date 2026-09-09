@@ -2886,6 +2886,18 @@ class StaffPropertyDetailViewTests(TestCase):
         link = iCalLink.objects.get(property=self.property)
         self.assertTrue(link.is_owner_link)
 
+    def test_add_ical_link_as_an_owner_link_allows_a_blank_url(self):
+        """Per Thomas 2026-09-09: staff can flag a platform as the owner's own listing before the
+        owner has supplied a URL yet - they fill it in themselves via the Owner Suite's Calendar
+        Links page (owners/views.py::OwnerCalendarLinksView)."""
+        airbnb = Platform.objects.get_or_create(name='Airbnb')[0]
+        self.client.post(self.url, {
+            'action': 'add_ical_link', 'platform': airbnb.pk, 'ical_url': '', 'is_owner_link': 'on',
+        })
+        link = iCalLink.objects.get(property=self.property)
+        self.assertTrue(link.is_owner_link)
+        self.assertIsNone(link.ical_url)
+
     def test_update_ical_link_toggles_is_owner_link(self):
         link = iCalLink.objects.create(property=self.property, ical_url='https://old.example.com/feed.ics')
         self.client.post(self.url, {
@@ -2937,6 +2949,17 @@ class StaffPropertyDetailViewTests(TestCase):
         self.client.post(self.url, {'action': 'update_ical_link', 'link_id': link.pk, 'ical_url': ''})
         link.refresh_from_db()
         self.assertEqual(link.ical_url, 'https://old.example.com/feed.ics')
+
+    def test_update_ical_link_as_an_owner_link_allows_a_blank_url(self):
+        link = iCalLink.objects.create(
+            property=self.property, ical_url='https://old.example.com/feed.ics', is_owner_link=False,
+        )
+        self.client.post(self.url, {
+            'action': 'update_ical_link', 'link_id': link.pk, 'ical_url': '', 'is_owner_link': 'on',
+        })
+        link.refresh_from_db()
+        self.assertTrue(link.is_owner_link)
+        self.assertIsNone(link.ical_url)
 
     def test_update_ical_link_for_a_different_property_is_a_noop(self):
         other_property = Property.objects.create(title='Other', short_title='OTHERUPDPROP')

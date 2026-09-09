@@ -10,6 +10,7 @@ urlpatterns = [
     path('invite/<uidb64>/<token>/', views.OwnerAcceptInviteView.as_view(), name='accept_invite'),
     path('', views.OwnerHomeView.as_view(), name='home'),
     path('contact-details/', views.OwnerContactDetailsView.as_view(), name='contact_details'),
+    path('calendar-links/', views.OwnerCalendarLinksView.as_view(), name='calendar_links'),
     path('reports/', views.OwnerReportView.as_view(), name='reports'),
     path('calendar/', views.OwnerCalendarView.as_view(), name='calendar'),
     path('payouts-memos/', views.OwnerPayoutsMemosView.as_view(), name='payouts_memos'),

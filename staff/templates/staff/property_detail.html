@@ -8,7 +8,7 @@
     <title>{{ property }} | Staff</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
-    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=12">
+    <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=15">
     <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
     <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
     <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
@@ -431,6 +431,7 @@
                                         </td>
                                         <td><textarea name="exclude_summary_contains" form="ical-link-form-{{ link.pk }}" class="staff-input staff-ical-exclude-terms" rows="2" placeholder="Not Available" title="One term per line. An event whose title contains any of these (case-insensitive) is skipped entirely - e.g. 'Not Available' for Airbnb blocks, 'Tentative' for Vrbo enquiries.">{{ link.exclude_summary_contains }}</textarea></td>
                                         <td class="staff-ical-actions-cell">
+                                            <div class="staff-ical-actions-inner">
                                             <button type="submit" form="ical-link-form-{{ link.pk }}" class="staff-button staff-button-small">Save</button>
                                             <form method="post" action="{% url 'staff:ical_sync' property.pk link.pk %}" target="ical-sync-{{ link.pk }}" class="staff-inline-sync" data-ical-sync-popup>
                                                 {% csrf_token %}
@@ -442,6 +443,7 @@
                                                 <input type="hidden" name="link_id" value="{{ link.pk }}">
                                                 <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
                                             </form>
+                                            </div>
                                         </td>
                                     </tr>
                                     {% empty %}
@@ -462,7 +464,9 @@
                                         </td>
                                         <td><textarea name="exclude_summary_contains" form="ical-link-form-new" class="staff-input staff-ical-exclude-terms" rows="2" placeholder="One term per line, e.g. Not Available"></textarea></td>
                                         <td class="staff-ical-actions-cell">
+                                            <div class="staff-ical-actions-inner">
                                             <button type="submit" form="ical-link-form-new" class="staff-button staff-button-small">+ Add</button>
+                                            </div>
                                         </td>
                                     </tr>
                                 </tbody>

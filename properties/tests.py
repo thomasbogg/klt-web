@@ -11,7 +11,8 @@ from django.utils import timezone
 from bookings.models import Booking, BookingSettings
 from guests.models import Guest
 from properties.models import (
-    Amenity, Location, ManagementCompany, Owner, Price, Property, PropertyOwnership, PropertySpec,
+    Amenity, Location, ManagementCompany, Owner, Platform, Price, Property, PropertyOwnership,
+    PropertySpec,
 )
 from properties.utils import (
     apply_price_bulk_plan, build_price_bulk_plan, gross_up_for_commission, get_stay_total_price,
@@ -303,6 +304,66 @@ class PropertyCalendarExportViewTests(TestCase):
             adults=2, children=0, babies=0, last_updated=timezone.now(),
         )
         response = self.client.get(self.url)
+        content = response.content.decode()
+        self.assertEqual(content.count('BEGIN:VEVENT'), 1)
+
+    def test_exclude_platform_param_excludes_only_that_platform(self):
+        booking_com = Platform.objects.get_or_create(name='Booking.com')[0]
+        Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=self.start + timedelta(days=100), departure_date=self.end + timedelta(days=100),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Airbnb',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=self.start + timedelta(days=200), departure_date=self.end + timedelta(days=200),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Booking.com',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url, {'exclude_platform': booking_com.pk})
+        content = response.content.decode()
+        # Booking.com excluded, but the Website booking and the Airbnb-sourced one (a platform we
+        # still control, per Thomas 2026-09-09) both remain - the whole point of this param.
+        self.assertEqual(content.count('BEGIN:VEVENT'), 2)
+        self.assertIn(f"UID:{self.website_booking.reference}@algarvebeachapartments.com", content)
+
+    def test_exclude_platform_param_accepts_multiple_platforms(self):
+        airbnb = Platform.objects.get_or_create(name='Airbnb')[0]
+        booking_com = Platform.objects.get_or_create(name='Booking.com')[0]
+        Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=self.start + timedelta(days=100), departure_date=self.end + timedelta(days=100),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Airbnb',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=self.start + timedelta(days=200), departure_date=self.end + timedelta(days=200),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Booking.com',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=self.start + timedelta(days=300), departure_date=self.end + timedelta(days=300),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Vrbo',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(f'{self.url}?exclude_platform={airbnb.pk}&exclude_platform={booking_com.pk}')
+        content = response.content.decode()
+        # Airbnb and Booking.com both excluded (both owner-managed), the Website booking and the
+        # Vrbo one (a platform we still control, per Thomas 2026-09-09) both remain.
+        self.assertEqual(content.count('BEGIN:VEVENT'), 2)
+        self.assertIn(f"UID:{self.website_booking.reference}@algarvebeachapartments.com", content)
+
+    def test_unknown_exclude_platform_id_falls_back_to_excluding_all_platforms(self):
+        Booking.objects.create(
+            property=self.property, guest=self.guest,
+            arrival_date=self.start + timedelta(days=100), departure_date=self.end + timedelta(days=100),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Airbnb',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url, {'exclude_platform': '999999'})
         content = response.content.decode()
         self.assertEqual(content.count('BEGIN:VEVENT'), 1)
 
