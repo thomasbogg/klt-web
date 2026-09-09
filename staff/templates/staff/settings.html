@@ -1331,6 +1331,10 @@
                                 <input type="text" name="default_tax_rate_id" class="staff-input" value="{{ sage_settings.default_tax_rate_id|default:'' }}">
                             </label>
                             <p class="staff-settings-hint">The Sage-side id for standard Portuguese VAT - look it up via a signed GET to /accounts/v2/tax_rates once connected, there's no picker for it here yet.</p>
+                            <label class="staff-field">Commission (0% VAT) tax rate ID
+                                <input type="text" name="commission_tax_rate_id" class="staff-input" value="{{ sage_settings.commission_tax_rate_id|default:'' }}">
+                            </label>
+                            <p class="staff-settings-hint">Used for rental commission invoices (Owner Invoices tab) - commission VAT is absorbed internally, never passed on to the owner, so this should be a 0%/no-VAT rate rather than the standard one above.</p>
                             <button type="submit" class="staff-button">Save Sage settings</button>
                         </form>
                     </div>

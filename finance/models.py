@@ -3,6 +3,8 @@ from datetime import date
 from django.conf import settings
 from django.db import models
 
+from bookings.models import PAYMENT_STATUS_CHOICES, PROVIDER_CHOICES
+
 
 class Memo(models.Model):
     """A billing document for one property's turnover clean, 1:1 with the staff.CleaningTask that
@@ -58,6 +60,20 @@ class Memo(models.Model):
     # visible "this still needs fixing", not something that undoes sent_at.
     sage_invoice_id = models.CharField(max_length=50, blank=True, null=True)
     sage_invoice_error = models.TextField(blank=True, null=True)
+
+    # Scenario 4 only (Owner.is_paid_regularly=True, cleans_are_invoiced=False, see
+    # OwnerInvoice's own docstring for the full 4-scenario matrix): these owners are never
+    # formally invoiced for cleans/meet-greet and it's never deducted from their payout either -
+    # some simply choose to pay as soon as they receive this Memo. A genuine toggle (settable and
+    # unsettable), not a create-only record like PayoutRecord/DepositReturn - those model
+    # irreversible real-world events; this models a staff *belief* about an informal payment that
+    # may need correcting. Purely informational - no Sage/Revolut involvement ("no API connection
+    # for this type of payment endpoint", Thomas, 2026-09-10) and no payout-math interaction
+    # (a regular owner's payout never deducts management fee regardless of this flag).
+    management_fee_paid_at = models.DateTimeField(null=True, blank=True)
+    management_fee_paid_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
 
     class Meta:
         db_table = 'finance_memos'
@@ -173,6 +189,97 @@ class DepositReturn(models.Model):
         return f"{self.booking} deposit returned {self.amount} on {self.returned_at:%Y-%m-%d}"
 
 
+class OwnerInvoice(models.Model):
+    """A real Sage One invoice charged to a property owner for commission and/or cleans/meet-greet
+    fees - added 2026-09-10 for the real "everyday owner payout and payment handling" system,
+    covering the 4-scenario billing matrix Thomas defined (Owner.is_paid_regularly x
+    Owner.cleans_are_invoiced):
+
+      1. Regular + invoiced:     commission invoice per payout (pre-settled, see below) +
+                                  ONE real monthly Sage invoice for cleans/meet-greet (Revolut link)
+      2. Not regular + invoiced: ONE combined monthly Sage invoice (commission + cleans/meet-greet)
+      3. Not regular + not inv.: monthly Sage invoice for commission only
+      4. Regular + not invoiced: commission invoice per payout (pre-settled); cleans/meet-greet
+                                  never formally invoiced - see Memo.management_fee_paid_at instead
+
+    NOT finance.Memo (an informational per-clean record) and NOT finance.PayoutRecord (an
+    outflow: money KLT sent the owner) - this is the inflow side, money charged to the owner.
+
+    One table with a `kind` discriminator rather than four separate models - they differ only in
+    which figures got summed and whether Revolut applies, not in what the row represents.
+
+    COMMISSION_PAYOUT rows (scenarios 1 & 4) are issued already settled (status='paid', paid_at
+    set at creation) - an invoice+receipt pair, not a live request for payment, since the
+    commission was already collected via the owner's payout deduction (that math is unchanged,
+    see finance/services.py::compute_regular_owner_payout). No Revolut fields ever get populated
+    for this kind. CLEANS_MONTHLY (scenario 1) is the one genuine, live request for payment - a
+    Revolut order gets created and its fields populated. COMMISSION_MONTHLY/COMBINED_MONTHLY
+    (scenarios 2/3) get neither - settlement there is structural, already netted out of the
+    owner's end-of-month payout, same as it is today."""
+
+    class Kind(models.TextChoices):
+        COMMISSION_PAYOUT = 'commission_payout', 'Rental commission (per payout)'
+        CLEANS_MONTHLY = 'cleans_monthly', 'Cleans & meet-greet (monthly)'
+        COMMISSION_MONTHLY = 'commission_monthly', 'Rental commission (monthly)'
+        COMBINED_MONTHLY = 'combined_monthly', 'Commission + cleans (monthly)'
+
+    owner = models.ForeignKey('properties.Owner', on_delete=models.PROTECT, related_name='invoices')
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+
+    # COMMISSION_PAYOUT only - the one PayoutRecord this bills for. The OneToOne is the
+    # idempotency guard for the per-payout trigger: a second attempt for the same PayoutRecord
+    # fails fast (hasattr check in finance/services.py) rather than creating a duplicate.
+    payout_record = models.OneToOneField(
+        'finance.PayoutRecord', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='commission_invoice',
+    )
+    # *_MONTHLY kinds only - always the 1st of the billed month. Paired with the unique
+    # constraint below - the idempotency guard the monthly batch command depends on to be safely
+    # re-runnable without double-invoicing.
+    period_start = models.DateField(null=True, blank=True)
+
+    # Audit trail - which bookings' commission / which sent Memos' cleans fees fed this invoice.
+    bookings = models.ManyToManyField('bookings.Booking', blank=True, related_name='owner_invoices')
+    memos = models.ManyToManyField('finance.Memo', blank=True, related_name='owner_invoices')
+
+    commission_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    cleans_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Sage - same shape/semantics as Memo.sage_invoice_id/sage_invoice_error.
+    sage_invoice_id = models.CharField(max_length=50, blank=True, null=True)
+    sage_invoice_error = models.TextField(blank=True, null=True)
+
+    # Revolut - see class docstring for which kinds ever populate these. Field shape copied
+    # field-for-field from bookings.models.Payment.
+    provider = models.CharField(max_length=10, choices=PROVIDER_CHOICES, blank=True, null=True)
+    status = models.CharField(max_length=15, choices=PAYMENT_STATUS_CHOICES, blank=True, null=True)
+    revolut_order_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    revolut_checkout_url = models.URLField(blank=True, null=True)
+    last_event_type = models.CharField(max_length=100, blank=True, null=True)
+    in_progress_at = models.DateTimeField(blank=True, null=True)
+    paid_at = models.DateTimeField(blank=True, null=True)
+    failed_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'finance_owner_invoices'
+        verbose_name = 'Owner Invoice'
+        verbose_name_plural = 'Owner Invoices'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['owner', 'kind', 'period_start'], name='unique_owner_kind_period',
+                condition=models.Q(period_start__isnull=False),
+            ),
+        ]
+        ordering = ('-created_at',)
+
+    def __str__(self):
+        return f"{self.owner} - {self.get_kind_display()} (€{self.total()})"
+
+    def total(self):
+        return self.commission_amount + self.cleans_amount
+
+
 class SageSettings(models.Model):
     """Singleton (pk always 1, same load()/save() pattern as bookings.models.BookingSettings) -
     the LIVE, rotating half of the Sage One connection. The registered app's own credentials
@@ -185,11 +292,17 @@ class SageSettings(models.Model):
 
     default_tax_rate_id is separate from the token pair - the Sage-side ID for standard Portuguese
     VAT, looked up once via GET /accounts/v2/tax_rates and set by Thomas, since finance.Memo's
-    clean_fee/meet_greet_fee don't carry their own VAT breakdown today."""
+    clean_fee/meet_greet_fee don't carry their own VAT breakdown today.
+
+    commission_tax_rate_id (added 2026-09-10) is the same idea for OwnerInvoice's commission lines
+    specifically - a separate, 0%/no-VAT rate, since compute_owner_payout's own docstring already
+    establishes commission VAT is the agency's own absorbed liability, never passed on to the
+    owner, whether as a payout deduction or (now) as an invoiced charge."""
     access_token = models.CharField(max_length=200, blank=True, null=True)
     refresh_token = models.CharField(max_length=200, blank=True, null=True)
     token_expires_at = models.DateTimeField(blank=True, null=True)
     default_tax_rate_id = models.CharField(max_length=50, blank=True, null=True)
+    commission_tax_rate_id = models.CharField(max_length=50, blank=True, null=True)
 
     class Meta:
         db_table = 'finance_sage_settings'

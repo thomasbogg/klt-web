@@ -83,6 +83,10 @@ urlpatterns = [
     path('finance/memos/<int:pk>/', views.StaffFinanceMemoDetailView.as_view(), name='finance_memo_detail'),
     path('finance/memos/<int:pk>/send/', views.StaffFinanceMemoSendView.as_view(), name='finance_memo_send'),
     path(
+        'finance/memos/<int:pk>/toggle-management-fee-paid/',
+        views.StaffFinanceMemoManagementFeePaidView.as_view(), name='finance_memo_toggle_management_fee_paid',
+    ),
+    path(
         'finance/services/',
         views.StaffFinanceAdHocServiceListView.as_view(), name='finance_ad_hoc_services',
     ),
@@ -97,6 +101,11 @@ urlpatterns = [
         views.StaffFinanceDepositReturnMarkReturnedView.as_view(), name='finance_deposit_mark_returned',
     ),
     path('finance/statement/', views.StaffFinanceStatementView.as_view(), name='finance_statement'),
+    path('finance/owner-invoices/', views.StaffFinanceOwnerInvoicesView.as_view(), name='finance_owner_invoices'),
+    path(
+        'finance/owner-invoices/<int:pk>/retry/',
+        views.StaffFinanceOwnerInvoiceRetryView.as_view(), name='finance_owner_invoice_retry',
+    ),
     path('reports/', views.StaffReportsView.as_view(), name='reports'),
     path('reports/monthly/', views.StaffReportsMonthlyView.as_view(), name='reports_monthly'),
     path('reports/stays/', views.StaffReportsStaysView.as_view(), name='reports_stays'),

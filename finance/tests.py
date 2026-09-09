@@ -1,17 +1,19 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.management import call_command
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import Arrival, Booking, BookingSettings, Charge, Departure, PaymentSettings
 from bookings.payouts import clean_fee, meet_greet_fee
-from finance.models import AdHocService, DepositReturn, Memo, PayoutRecord, SageSettings
+from finance.models import AdHocService, DepositReturn, Memo, OwnerInvoice, PayoutRecord, SageSettings
 from finance.services import (
-    deposits_due_in_range, dispatch_memo_to_sage, open_memo_for_property, owner_balance_in_range,
+    compute_regular_owner_payout, deposits_due_in_range, dispatch_commission_receipt_for_payout,
+    dispatch_memo_to_sage, open_memo_for_property, owner_balance_in_range,
     recompute_unsent_memo_fees_for_settings_change, sweep_unattached_ad_hoc_services,
 )
 from guests.models import Guest
@@ -435,6 +437,49 @@ class FinanceViewSmokeTests(FinanceTestCase):
         response = self.client.get(reverse('staff:finance_payouts'))
         self.assertEqual(response.status_code, 200)
 
+    def test_mark_paid_creates_commission_receipt_and_excludes_management_fee(self):
+        """End-to-end through the real view (not calling the service functions directly) -
+        StaffFinancePayoutMarkPaidView must use compute_regular_owner_payout, not
+        compute_owner_payout, and must fire dispatch_commission_receipt_for_payout."""
+        self.property.owner.is_paid_regularly = True
+        self.property.owner.cleans_are_invoiced = True
+        self.property.owner.save()
+        booking = self._make_booking(1, 5)
+
+        response = self.client.post(reverse('staff:finance_payout_mark_paid', kwargs={'reference': booking.reference}))
+        self.assertEqual(response.status_code, 302)
+
+        record = PayoutRecord.objects.get(booking=booking)
+        # rental_base(300) - commission only, no clean_fee/meet_greet_fee subtracted - confirms
+        # the Payouts tab is really using compute_regular_owner_payout under the hood.
+        self.assertGreater(record.amount, Decimal('300') - Decimal('80'))
+
+        invoice = OwnerInvoice.objects.get(payout_record=record)
+        self.assertEqual(invoice.kind, OwnerInvoice.Kind.COMMISSION_PAYOUT)
+        self.assertEqual(invoice.status, 'paid')
+
+    def test_memo_management_fee_toggle(self):
+        self.property.owner.is_paid_regularly = True
+        self.property.owner.cleans_are_invoiced = False
+        self.property.owner.save()
+        booking = self._make_booking(10, 14)
+        memo = Memo.objects.get(cleaning_task__booking=booking)
+        self.client.post(reverse('staff:finance_memo_send', kwargs={'pk': memo.pk}))
+
+        url = reverse('staff:finance_memo_toggle_management_fee_paid', kwargs={'pk': memo.pk})
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, 302)
+        memo.refresh_from_db()
+        self.assertIsNotNone(memo.management_fee_paid_at)
+
+        self.client.post(url)
+        memo.refresh_from_db()
+        self.assertIsNone(memo.management_fee_paid_at)
+
+    def test_owner_invoices_tab_renders(self):
+        response = self.client.get(reverse('staff:finance_owner_invoices'))
+        self.assertEqual(response.status_code, 200)
+
     def test_statement_renders_for_owner_scope(self):
         booking = self._make_booking(10, 14)
         start = self.today.isoformat()
@@ -681,3 +726,250 @@ class DispatchMemoToSageTests(FinanceTestCase):
 
         self.memo.refresh_from_db()
         self.assertEqual(self.memo.sage_invoice_id, 'invoice-999')
+
+
+class ComputeRegularOwnerPayoutTests(TestCase):
+    """finance/services.py::compute_regular_owner_payout - deliberately separate from
+    bookings/payouts.py::compute_owner_payout (untouched, still covered by
+    bookings/tests.py::ComputeOwnerPayoutTests). cleaning_company IS set here (so management_fee
+    would be non-zero if it were computed) specifically to prove it's never deducted."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Regular Owner', email='regular-owner@example.com', currency=Owner.Currency.EUR,
+            is_paid_regularly=True, cleans_are_invoiced=True,
+        )
+        self.company = ManagementCompany.objects.create(name='Regular Test Co', finances_managed_internally=True)
+        self.property = Property.objects.create(
+            title='Regular Property', short_title='REGPROP', owner=self.owner,
+            cleaning_company=self.company, booking_company=self.company, standard_cleaning_fee=Decimal('80.00'),
+        )
+        PropertySpec.objects.create(property=self.property, bedrooms=2)
+        self.guest = Guest.objects.create(first_name='Reg', last_name='Ular', email='regular-guest@example.com')
+        self.settings = PaymentSettings.load()
+        self.settings.high_season_commission_percent = Decimal('15.00')
+        self.settings.low_season_commission_percent = Decimal('10.00')
+        self.settings.high_season_start_month = 4
+        self.settings.high_season_end_month = 10
+        self.settings.vat_rate_percent = Decimal('23.00')
+        self.settings.charge_vat_on_low_season_direct_commission = False
+        self.settings.regular_payout_days_after_arrival = 3
+        self.settings.cleaning_surcharge_one_bedroom = Decimal('10.00')
+        self.settings.cleaning_surcharge_multi_bedroom = Decimal('15.00')
+        self.settings.cleaning_high_occupancy_surcharge = Decimal('15.00')
+        self.settings.meet_greet_fee = Decimal('28.00')
+        self.settings.save()
+
+    def _make_booking(self, arrival_date):
+        booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=arrival_date,
+            departure_date=arrival_date + timedelta(days=4), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=booking, basic_rental=Decimal('300.00'))
+        Departure.objects.create(booking=booking, clean=True)
+        return booking
+
+    def test_never_deducts_management_fee(self):
+        """clean_fee for this property/settings would be 80 (standard) + 15 (multi-bedroom
+        surcharge) = 95, non-zero and real - confirm owner_balance doesn't reflect it at all,
+        only commission (10% of 300 = 30, low season) does."""
+        booking = self._make_booking(date(2026, 2, 1))
+        self.assertNotEqual(clean_fee(self.settings, booking), Decimal('0'))
+
+        payout = compute_regular_owner_payout(booking)
+        self.assertTrue(payout['available'])
+        self.assertEqual(payout['commission'], Decimal('30.00'))
+        self.assertEqual(payout['owner_balance'], Decimal('270.00'))
+        self.assertNotIn('management_fee', payout)
+
+    def test_unavailable_for_non_regular_owner(self):
+        self.owner.is_paid_regularly = False
+        self.owner.save()
+        booking = self._make_booking(date(2026, 2, 1))
+        payout = compute_regular_owner_payout(booking)
+        self.assertFalse(payout['available'])
+
+    def test_unavailable_for_owner_stay(self):
+        booking = self._make_booking(date(2026, 2, 1))
+        booking.is_owner = True
+        booking.save()
+        payout = compute_regular_owner_payout(booking)
+        self.assertFalse(payout['available'])
+
+
+class DispatchCommissionReceiptForPayoutTests(TestCase):
+    """finance/services.py::dispatch_commission_receipt_for_payout - the per-payout commission
+    invoice+receipt for scenarios 1 & 4 (Owner.is_paid_regularly=True)."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Commission Owner', email='commission-owner@example.com', currency=Owner.Currency.EUR,
+            is_paid_regularly=True, cleans_are_invoiced=True,
+        )
+        self.company = ManagementCompany.objects.create(name='Commission Test Co', finances_managed_internally=True)
+        self.property = Property.objects.create(
+            title='Commission Property', short_title='COMMPROP', owner=self.owner,
+            cleaning_company=self.company, booking_company=self.company,
+        )
+        PropertySpec.objects.create(property=self.property, bedrooms=2)
+        self.guest = Guest.objects.create(first_name='Com', last_name='Mission', email='commission-guest@example.com')
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=date(2026, 2, 1),
+            departure_date=date(2026, 2, 5), is_owner=False, enquiry_status='Booking confirmed',
+            enquiry_source='Website', adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=self.booking, basic_rental=Decimal('300.00'))
+        self.payout_record = PayoutRecord.objects.create(booking=self.booking, amount=Decimal('270.00'))
+        self.payout = {'commission': Decimal('30.00')}
+
+    def test_creates_presettled_invoice(self):
+        invoice = dispatch_commission_receipt_for_payout(self.payout_record, self.payout)
+        self.assertIsNotNone(invoice)
+        self.assertEqual(invoice.kind, OwnerInvoice.Kind.COMMISSION_PAYOUT)
+        self.assertEqual(invoice.commission_amount, Decimal('30.00'))
+        self.assertEqual(invoice.cleans_amount, Decimal('0'))
+        self.assertEqual(invoice.status, 'paid')
+        self.assertIsNotNone(invoice.paid_at)
+        self.assertIsNone(invoice.provider)  # no Revolut for this kind - pre-settled, not a live request
+        self.assertEqual(list(invoice.bookings.all()), [self.booking])
+
+    def test_idempotent_via_payout_record_onetoone(self):
+        first = dispatch_commission_receipt_for_payout(self.payout_record, self.payout)
+        second = dispatch_commission_receipt_for_payout(self.payout_record, self.payout)
+        self.assertIsNone(second)
+        self.assertEqual(OwnerInvoice.objects.filter(payout_record=self.payout_record).count(), 1)
+
+    def test_noop_for_non_regular_owner(self):
+        self.owner.is_paid_regularly = False
+        self.owner.save()
+        result = dispatch_commission_receipt_for_payout(self.payout_record, self.payout)
+        self.assertIsNone(result)
+        self.assertFalse(OwnerInvoice.objects.filter(payout_record=self.payout_record).exists())
+
+    def test_never_raises_when_sage_not_configured(self):
+        """No SAGE_CLIENT_ID/etc in this dev/test environment - _sage_client() returns None. The
+        invoice is still created (the receipt itself is real regardless of Sage), just with an
+        error recorded, same convention as dispatch_memo_to_sage."""
+        invoice = dispatch_commission_receipt_for_payout(self.payout_record, self.payout)
+        self.assertIsNotNone(invoice)
+        self.assertIsNotNone(invoice.sage_invoice_error)
+
+
+class GenerateMonthlyOwnerInvoicesCommandTests(TestCase):
+    """finance/management/commands/generate_monthly_owner_invoices.py - scenarios 1, 2, 3 of the
+    4-scenario matrix (scenario 4 is deliberately skipped by the command itself, see its own
+    docstring). Uses --month for a fixed, deterministic billing period rather than "this month"."""
+
+    def setUp(self):
+        self.company = ManagementCompany.objects.create(name='Batch Test Co', finances_managed_internally=True)
+        self.settings = PaymentSettings.load()
+        self.settings.high_season_commission_percent = Decimal('15.00')
+        self.settings.low_season_commission_percent = Decimal('10.00')
+        self.settings.high_season_start_month = 4
+        self.settings.high_season_end_month = 10
+        self.settings.cleaning_surcharge_one_bedroom = Decimal('10.00')
+        self.settings.cleaning_surcharge_multi_bedroom = Decimal('15.00')
+        self.settings.cleaning_high_occupancy_surcharge = Decimal('15.00')
+        self.settings.meet_greet_fee = Decimal('28.00')
+        self.settings.regular_payout_days_after_arrival = 3
+        self.settings.save()
+        self.guest = Guest.objects.create(first_name='Batch', last_name='Guest', email='batch-guest@example.com')
+
+    def _owner_and_property(self, name, is_paid_regularly, cleans_are_invoiced):
+        owner = Owner.objects.create(
+            name=name, email=f'{name.lower().replace(" ", "-")}@example.com', currency=Owner.Currency.EUR,
+            is_paid_regularly=is_paid_regularly, cleans_are_invoiced=cleans_are_invoiced,
+        )
+        property = Property.objects.create(
+            title=f'{name} Property', short_title=name[:10].upper(), owner=owner,
+            cleaning_company=self.company, booking_company=self.company, standard_cleaning_fee=Decimal('80.00'),
+        )
+        PropertySpec.objects.create(property=property, bedrooms=2)
+        return owner, property
+
+    def _booking_with_sent_memo(self, property, arrival_date, sent_at):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=arrival_date,
+            departure_date=arrival_date + timedelta(days=4), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=booking, basic_rental=Decimal('300.00'))
+        Departure.objects.create(booking=booking, clean=True)
+        memo = Memo.objects.get(cleaning_task__booking=booking)
+        memo.sent_at = timezone.make_aware(datetime(2026, 2, 15, 12, 0))
+        memo.save(update_fields=['sent_at'])
+        return booking, memo
+
+    @patch('finance.management.commands.generate_monthly_owner_invoices.create_revolut_order_for_owner_invoice')
+    def test_scenario_1_cleans_monthly_with_revolut(self, mock_revolut):
+        owner, property = self._owner_and_property('Scenario One', True, True)
+        self._booking_with_sent_memo(property, date(2026, 2, 1), timezone.make_aware(datetime(2026, 2, 15)))
+
+        call_command('generate_monthly_owner_invoices', '--month', '2026-02')
+
+        invoice = OwnerInvoice.objects.get(owner=owner, kind=OwnerInvoice.Kind.CLEANS_MONTHLY)
+        self.assertEqual(invoice.period_start, date(2026, 2, 1))
+        self.assertEqual(invoice.commission_amount, Decimal('0'))
+        self.assertGreater(invoice.cleans_amount, Decimal('0'))
+        mock_revolut.assert_called_once_with(invoice)
+        # No separate commission invoice from this command - that's per-payout, not monthly.
+        self.assertFalse(OwnerInvoice.objects.filter(owner=owner, kind=OwnerInvoice.Kind.COMMISSION_MONTHLY).exists())
+
+    def test_scenario_2_combined_monthly(self):
+        owner, property = self._owner_and_property('Scenario Two', False, True)
+        self._booking_with_sent_memo(property, date(2026, 2, 1), timezone.make_aware(datetime(2026, 2, 15)))
+
+        call_command('generate_monthly_owner_invoices', '--month', '2026-02')
+
+        invoice = OwnerInvoice.objects.get(owner=owner, kind=OwnerInvoice.Kind.COMBINED_MONTHLY)
+        self.assertGreater(invoice.commission_amount, Decimal('0'))
+        self.assertGreater(invoice.cleans_amount, Decimal('0'))
+
+    def test_scenario_3_commission_only(self):
+        owner, property = self._owner_and_property('Scenario Three', False, False)
+        self._booking_with_sent_memo(property, date(2026, 2, 1), timezone.make_aware(datetime(2026, 2, 15)))
+
+        call_command('generate_monthly_owner_invoices', '--month', '2026-02')
+
+        invoice = OwnerInvoice.objects.get(owner=owner, kind=OwnerInvoice.Kind.COMMISSION_MONTHLY)
+        self.assertGreater(invoice.commission_amount, Decimal('0'))
+        self.assertEqual(invoice.cleans_amount, Decimal('0'))
+
+    def test_scenario_4_skipped_entirely(self):
+        owner, property = self._owner_and_property('Scenario Four', True, False)
+        self._booking_with_sent_memo(property, date(2026, 2, 1), timezone.make_aware(datetime(2026, 2, 15)))
+
+        call_command('generate_monthly_owner_invoices', '--month', '2026-02')
+
+        self.assertFalse(OwnerInvoice.objects.filter(owner=owner).exists())
+
+    def test_idempotent_rerun_does_not_duplicate(self):
+        owner, property = self._owner_and_property('Idempotent Owner', False, False)
+        self._booking_with_sent_memo(property, date(2026, 2, 1), timezone.make_aware(datetime(2026, 2, 15)))
+
+        call_command('generate_monthly_owner_invoices', '--month', '2026-02')
+        call_command('generate_monthly_owner_invoices', '--month', '2026-02')
+
+        self.assertEqual(OwnerInvoice.objects.filter(owner=owner).count(), 1)
+
+    def test_dry_run_creates_nothing(self):
+        owner, property = self._owner_and_property('Dry Run Owner', False, False)
+        self._booking_with_sent_memo(property, date(2026, 2, 1), timezone.make_aware(datetime(2026, 2, 15)))
+
+        call_command('generate_monthly_owner_invoices', '--month', '2026-02', '--dry-run')
+
+        self.assertFalse(OwnerInvoice.objects.filter(owner=owner).exists())
+
+    def test_owner_id_filter(self):
+        owner_a, property_a = self._owner_and_property('Owner A', False, False)
+        owner_b, property_b = self._owner_and_property('Owner B', False, False)
+        self._booking_with_sent_memo(property_a, date(2026, 2, 1), timezone.make_aware(datetime(2026, 2, 15)))
+        self._booking_with_sent_memo(property_b, date(2026, 2, 1), timezone.make_aware(datetime(2026, 2, 15)))
+
+        call_command('generate_monthly_owner_invoices', '--month', '2026-02', '--owner-id', owner_a.pk)
+
+        self.assertTrue(OwnerInvoice.objects.filter(owner=owner_a).exists())
+        self.assertFalse(OwnerInvoice.objects.filter(owner=owner_b).exists())

@@ -27,9 +27,10 @@ from bookings.models import (
     PlatformPayout, RequestType, TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
-from finance.models import AdHocService, DepositReturn, Memo, PayoutRecord, SageSettings
+from finance.models import AdHocService, DepositReturn, Memo, OwnerInvoice, PayoutRecord, SageSettings
 from finance.services import (
-    backfill_memos_for_company, deposits_due_in_range, open_memo_for_property,
+    backfill_memos_for_company, compute_regular_owner_payout, deposits_due_in_range,
+    dispatch_commission_receipt_for_payout, dispatch_owner_invoice_to_sage, open_memo_for_property,
     owner_balance_in_range, payouts_due_in_range, sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
@@ -1904,12 +1905,14 @@ class StaffSettingsView(View):
         messages.success(request, "Payment settings updated.")
 
     def _update_sage_settings(self, request):
-        """Just default_tax_rate_id - access_token/refresh_token/token_expires_at are only ever
-        written by StaffSageCallbackView (the OAuth grant) or finance/services.py::_sage_client
-        (an automatic refresh), never edited by hand here."""
+        """default_tax_rate_id + commission_tax_rate_id (added 2026-09-10, for OwnerInvoice's
+        commission lines) - access_token/refresh_token/token_expires_at are only ever written by
+        StaffSageCallbackView (the OAuth grant) or finance/services.py::_sage_client (an automatic
+        refresh), never edited by hand here."""
         settings = SageSettings.load()
         settings.default_tax_rate_id = request.POST.get('default_tax_rate_id', '').strip() or None
-        settings.save(update_fields=['default_tax_rate_id'])
+        settings.commission_tax_rate_id = request.POST.get('commission_tax_rate_id', '').strip() or None
+        settings.save(update_fields=['default_tax_rate_id', 'commission_tax_rate_id'])
         messages.success(request, "Sage settings updated.")
 
     # --- Emails ---
@@ -3777,7 +3780,9 @@ class StaffFinanceMemoDetailView(View):
     template_name = 'staff/finance_memo_detail.html'
 
     def get(self, request, pk, *args, **kwargs):
-        memo = Memo.objects.select_related('property', 'cleaning_task', 'sent_by').filter(pk=pk).first()
+        memo = Memo.objects.select_related(
+            'property', 'property__owner', 'cleaning_task', 'sent_by', 'management_fee_paid_by',
+        ).filter(pk=pk).first()
         if memo is None:
             raise Http404("No memo found.")
         return render(request, self.template_name, {
@@ -3821,6 +3826,34 @@ class StaffFinanceMemoSendView(View):
         if redirect_date:
             redirect_url = f"{redirect_url}?date={redirect_date}"
         return redirect(redirect_url)
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceMemoManagementFeePaidView(View):
+    """Toggles finance.Memo.management_fee_paid_at/by on and off - scenario 4 only
+    (Owner.is_paid_regularly=True, cleans_are_invoiced=False, see finance.models.OwnerInvoice's
+    docstring for the full 4-scenario matrix): these owners are never formally invoiced for
+    cleans/meet-greet and it's never deducted from their payout either, but some choose to pay as
+    soon as they receive the Memo. A genuine toggle, not a one-way mark-done action like
+    StaffFinancePayoutMarkPaidView/StaffFinanceDepositReturnMarkReturnedView - this only records a
+    staff belief about an informal payment, which may need correcting either way."""
+
+    def post(self, request, pk, *args, **kwargs):
+        memo = Memo.objects.select_related('property__owner').filter(pk=pk).first()
+        if memo is None:
+            messages.error(request, "That memo no longer exists.")
+            return redirect('staff:finance_memos')
+
+        if memo.management_fee_paid_at:
+            memo.management_fee_paid_at = None
+            memo.management_fee_paid_by = None
+            messages.success(request, "Management fee marked as unpaid.")
+        else:
+            memo.management_fee_paid_at = timezone.now()
+            memo.management_fee_paid_by = request.user
+            messages.success(request, "Management fee marked as paid.")
+        memo.save(update_fields=['management_fee_paid_at', 'management_fee_paid_by'])
+        return redirect('staff:finance_memo_detail', pk=memo.pk)
 
 
 @method_decorator(superuser_required, name='dispatch')
@@ -4037,7 +4070,14 @@ class StaffFinancePayoutsView(View):
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinancePayoutMarkPaidView(View):
     """Snapshots the booking's current owner_balance into a new PayoutRecord - see that model's
-    own docstring for why the amount is frozen at mark-paid time rather than re-derived live."""
+    own docstring for why the amount is frozen at mark-paid time rather than re-derived live.
+
+    Uses compute_regular_owner_payout (finance/services.py), NOT bookings/payouts.py::
+    compute_owner_payout - this is the real everyday-payout system, not the Booking View's display
+    calculation (2026-09-10, per Thomas - see compute_regular_owner_payout's own docstring). Also
+    dispatches a pre-settled Sage commission invoice/receipt (finance/services.py::
+    dispatch_commission_receipt_for_payout) - see that function's own docstring for why it's
+    issued already paid rather than a live request for money."""
 
     def post(self, request, reference, *args, **kwargs):
         booking = Booking.objects.filter(reference=reference).first()
@@ -4048,12 +4088,13 @@ class StaffFinancePayoutMarkPaidView(View):
             messages.error(request, "That payout has already been marked as paid.")
             return redirect('staff:finance_payouts')
 
-        payout = compute_owner_payout(booking)
+        payout = compute_regular_owner_payout(booking)
         if not payout['available']:
             messages.error(request, "That booking's payout can't be computed right now.")
             return redirect('staff:finance_payouts')
 
-        PayoutRecord.objects.create(booking=booking, amount=payout['owner_balance'], paid_by=request.user)
+        record = PayoutRecord.objects.create(booking=booking, amount=payout['owner_balance'], paid_by=request.user)
+        dispatch_commission_receipt_for_payout(record, payout)
         messages.success(request, "Payout marked as paid.")
 
         redirect_date = request.POST.get('date', '').strip()
@@ -4223,6 +4264,51 @@ class StaffFinanceStatementView(View):
             if memo_section or payout_section:
                 sections.append({'property': prop, 'memo_section': memo_section, 'payout_section': payout_section})
         return sections
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceOwnerInvoicesView(View):
+    """The Owner Invoices tab - every finance.OwnerInvoice row, newest first, with its Sage/Revolut
+    status. Without this tab OwnerInvoice rows are invisible day-to-day - they're created by
+    StaffFinancePayoutMarkPaidView and finance/management/commands/generate_monthly_owner_invoices.py,
+    neither of which has its own UI for reviewing what got billed."""
+    template_name = 'staff/finance_owner_invoices.html'
+
+    def get(self, request, *args, **kwargs):
+        invoices = OwnerInvoice.objects.select_related('owner').order_by('-created_at')[:100]
+        return render(request, self.template_name, {
+            'invoices': invoices,
+            'active_tab': 'owner_invoices',
+            'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
+        })
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceOwnerInvoiceRetryView(View):
+    """Retries the Sage dispatch for one OwnerInvoice that previously failed
+    (sage_invoice_error set) - the only "action" the Owner Invoices tab offers, since everything
+    else about an OwnerInvoice is generated automatically, not staff-editable."""
+
+    def post(self, request, pk, *args, **kwargs):
+        invoice = OwnerInvoice.objects.select_related('owner').filter(pk=pk).first()
+        if invoice is None:
+            messages.error(request, "That invoice no longer exists.")
+            return redirect('staff:finance_owner_invoices')
+
+        sage_settings = SageSettings.load()
+        tax_rate_id = (
+            sage_settings.commission_tax_rate_id
+            if invoice.kind in (OwnerInvoice.Kind.COMMISSION_PAYOUT, OwnerInvoice.Kind.COMMISSION_MONTHLY)
+            else sage_settings.default_tax_rate_id
+        )
+        dispatch_owner_invoice_to_sage(
+            invoice, tax_rate_id, description=f'{invoice.owner} - {invoice.get_kind_display()}',
+        )
+        if invoice.sage_invoice_error:
+            messages.error(request, f"Still failing: {invoice.sage_invoice_error}")
+        else:
+            messages.success(request, "Sage invoice created.")
+        return redirect('staff:finance_owner_invoices')
 
 
 @method_decorator(staff_page_required('can_view_reports'), name='dispatch')

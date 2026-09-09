@@ -1,11 +1,15 @@
 from datetime import timedelta
+from decimal import Decimal
 
 from django.utils import timezone
 
 import env_settings
 from bookings.models import Booking, PaymentSettings
-from bookings.payouts import _round, clean_fee, compute_owner_payout, meet_greet_fee
-from finance.models import AdHocService, Memo, SageSettings
+from bookings.payouts import (
+    ZERO, _commission_percent, _due_date, _is_platform_booking, _off_platform_cash, _round,
+    _unavailable, clean_fee, compute_owner_payout, meet_greet_fee,
+)
+from finance.models import AdHocService, Memo, OwnerInvoice, SageSettings
 from staff.models import CleaningTask
 
 
@@ -102,6 +106,28 @@ def _sage_client():
     return Sage(access_token=sage_settings.access_token, signing_secret=env_settings.SAGE_SIGNING_SECRET)
 
 
+def _get_or_create_sage_contact(sage, owner):
+    """Finds (by name) or creates the Sage contact for this owner, persisting the id onto
+    Owner.sage_contact_id once found so future calls skip the lookup - shared by
+    dispatch_memo_to_sage and dispatch_commission_receipt_for_payout/the monthly batch job below,
+    extracted 2026-09-10 rather than duplicated a third/fourth time. Returns the contact id, or
+    None on failure (caller records the error on its own object, this stays framework-agnostic
+    about where that error message goes)."""
+    if owner.sage_contact_id:
+        return owner.sage_contact_id
+    existing = sage.contact.find_by_name(owner.name)
+    if existing is not None:
+        contact_id = existing['id']
+    else:
+        created = sage.contact.create(owner.name, email=owner.email, tax_number=owner.nif_number)
+        if created is None:
+            return None
+        contact_id = created['id']
+    owner.sage_contact_id = contact_id
+    owner.save(update_fields=['sage_contact_id'])
+    return contact_id
+
+
 def dispatch_memo_to_sage(memo):
     """Creates a real Sage One invoice for a single Memo, if its property's owner opted in
     (properties.models.Owner.cleans_are_invoiced - restored 2026-09-09, per Thomas, for exactly
@@ -144,20 +170,11 @@ def dispatch_memo_to_sage(memo):
         memo.save(update_fields=['sage_invoice_error'])
         return
 
-    contact_id = owner.sage_contact_id
-    if not contact_id:
-        existing = sage.contact.find_by_name(owner.name)
-        if existing is not None:
-            contact_id = existing['id']
-        else:
-            created = sage.contact.create(owner.name, email=owner.email, tax_number=owner.nif_number)
-            if created is None:
-                memo.sage_invoice_error = 'Failed to find or create a Sage contact for this owner.'
-                memo.save(update_fields=['sage_invoice_error'])
-                return
-            contact_id = created['id']
-        owner.sage_contact_id = contact_id
-        owner.save(update_fields=['sage_contact_id'])
+    contact_id = _get_or_create_sage_contact(sage, owner)
+    if contact_id is None:
+        memo.sage_invoice_error = 'Failed to find or create a Sage contact for this owner.'
+        memo.save(update_fields=['sage_invoice_error'])
+        return
 
     invoice_date = memo.cleaning_task.date if memo.cleaning_task else timezone.now().date()
     invoice = sage.sales_invoice.create(
@@ -173,6 +190,169 @@ def dispatch_memo_to_sage(memo):
     memo.sage_invoice_id = invoice['id']
     memo.sage_invoice_error = None
     memo.save(update_fields=['sage_invoice_id', 'sage_invoice_error'])
+
+
+def dispatch_owner_invoice_to_sage(invoice, tax_rate_id, description):
+    """Creates the real Sage sales invoice for an already-created OwnerInvoice row, recording
+    sage_invoice_id/sage_invoice_error on it exactly like dispatch_memo_to_sage does on a Memo.
+    Deliberately never raises - same reasoning as dispatch_memo_to_sage's own docstring."""
+    sage = _sage_client()
+    if sage is None:
+        invoice.sage_invoice_error = 'Sage One is not connected yet.'
+        invoice.save(update_fields=['sage_invoice_error'])
+        return
+    if not tax_rate_id:
+        invoice.sage_invoice_error = 'No Sage tax rate configured for this invoice kind.'
+        invoice.save(update_fields=['sage_invoice_error'])
+        return
+
+    contact_id = _get_or_create_sage_contact(sage, invoice.owner)
+    if contact_id is None:
+        invoice.sage_invoice_error = 'Failed to find or create a Sage contact for this owner.'
+        invoice.save(update_fields=['sage_invoice_error'])
+        return
+
+    sage_invoice = sage.sales_invoice.create(
+        contact_id=contact_id, date=invoice.created_at.date(),
+        description=description, net_amount=invoice.total(), tax_rate_id=tax_rate_id,
+    )
+    if sage_invoice is None:
+        invoice.sage_invoice_error = 'Failed to create the Sage sales invoice.'
+        invoice.save(update_fields=['sage_invoice_error'])
+        return
+
+    invoice.sage_invoice_id = sage_invoice['id']
+    invoice.sage_invoice_error = None
+    invoice.save(update_fields=['sage_invoice_id', 'sage_invoice_error'])
+
+
+def create_revolut_order_for_owner_invoice(invoice):
+    """Owner-facing sibling of bookings/views.py's four near-identical guest-facing
+    _create_revolut_order methods - same call shape, libraries/banking/revolut.py::Revolut.Payment
+    is already fully payer-agnostic. Only ever called for OwnerInvoice.Kind.CLEANS_MONTHLY - the
+    one kind that's a genuine, live request for payment (see OwnerInvoice's own docstring). Silent
+    no-op on failure, same convention as the Sage dispatch functions - staff can see an invoice
+    with no checkout link and know to investigate/retry, rather than this blocking anything."""
+    from libraries.banking.revolut import Revolut
+
+    owner = invoice.owner
+    order = Revolut(secretKey=env_settings.REVOLUT_API_SECRET_KEY).payment
+    order.amount = int(invoice.total() * 100)
+    order.currency = 'EUR'
+    order.description = f'{invoice.get_kind_display()} - {owner.name}'
+    order.customerEmail = owner.email
+    order.customerName = owner.name
+    order.create()
+    if order.id and order.has('checkout_url'):
+        invoice.provider = 'revolut'
+        invoice.status = 'pending'
+        invoice.revolut_order_id = order.id
+        invoice.revolut_checkout_url = order.checkoutUrl
+        invoice.save(update_fields=['provider', 'status', 'revolut_order_id', 'revolut_checkout_url'])
+
+
+def dispatch_commission_receipt_for_payout(payout_record, payout):
+    """Issues OwnerInvoice(kind=COMMISSION_PAYOUT) for a just-created PayoutRecord, already
+    marked settled (status='paid', paid_at=now()) - an invoice+receipt pair, not a live request
+    for payment, since the commission was already collected via the payout deduction itself (see
+    compute_regular_owner_payout - that math is unchanged, still deducts commission). This is
+    purely a formal Sage-side record of the charge, avoiding "sending out money part of which
+    we're asking back" (Thomas, 2026-09-10). Only for is_paid_regularly=True owners (scenarios 1
+    & 4 - commission is always invoiced now, no per-owner opt-out). Idempotent via
+    payout_record's OneToOneField - a second call for the same payout is a safe no-op. Never
+    raises - a Sage failure is recorded on the invoice, never blocks Mark-as-paid itself."""
+    owner = payout_record.booking.property.owner
+    if owner is None or not owner.is_paid_regularly or hasattr(payout_record, 'commission_invoice'):
+        return None
+
+    invoice = OwnerInvoice.objects.create(
+        owner=owner, kind=OwnerInvoice.Kind.COMMISSION_PAYOUT, payout_record=payout_record,
+        commission_amount=payout['commission'], status='paid', paid_at=timezone.now(),
+    )
+    invoice.bookings.add(payout_record.booking)
+    sage_settings = SageSettings.load()
+    dispatch_owner_invoice_to_sage(
+        invoice, sage_settings.commission_tax_rate_id,
+        description=f'{payout_record.booking.property} - rental commission ({payout_record.booking.reference})',
+    )
+    return invoice
+
+
+def compute_regular_owner_payout(booking, payment_settings=None):
+    """The real, everyday payout figure for a regularly-paid owner (Owner.is_paid_regularly=True)
+    - deliberately separate from bookings/payouts.py::compute_owner_payout(), which stays
+    untouched as a pure display calculation for the Booking View (2026-09-10, per Thomas: klt-web
+    is a brand-new system still being built up to match how the business actually runs, and the
+    Booking View's number was never meant to double as the real disbursement figure - "don't be
+    afraid of building separate functions... to nail down the perfect business flow").
+
+    Differs from compute_owner_payout in exactly one way: management_fee (clean + meet-greet) is
+    NEVER deducted here - a regularly-paid owner's payout only ever nets out commission ("it is
+    only the rental commission that gets automatically deducted", Thomas, 2026-09-10). Commission
+    itself is still deducted exactly as before - see dispatch_commission_receipt_for_payout for
+    why that's fine (a pre-settled invoice+receipt documents the charge, it doesn't ask for money
+    twice). Cleans/meet-greet fees are settled separately - either a real monthly Sage invoice
+    (Owner.cleans_are_invoiced=True) or an informal, optional payment tracked via Memo's own
+    management_fee_paid_at (cleans_are_invoiced=False) - never via this payout either way.
+
+    Reuses bookings/payouts.py's private helpers directly rather than duplicating them - same
+    framework-agnostic "import what's needed" convention already used elsewhere in this codebase."""
+    if booking.is_owner:
+        return _unavailable("Owner stay - no payout due.")
+
+    owner = booking.property.owner
+    if owner is None:
+        return _unavailable("Property has no owner assigned.")
+    if not owner.is_paid_regularly:
+        return _unavailable("Owner is not paid on a regular schedule.")
+
+    is_platform = _is_platform_booking(booking)
+    if is_platform:
+        platform_payout = getattr(booking, 'platform_payout', None)
+        if platform_payout is None or platform_payout.payout_amount is None:
+            return _unavailable("No PlatformPayout figures recorded yet.")
+        rental_base = platform_payout.payout_amount
+        platform_fee = platform_payout.platform_commission or ZERO
+        off_platform_cash = _off_platform_cash(booking)
+    else:
+        charge = getattr(booking, 'charges', None)
+        if charge is None or charge.basic_rental is None:
+            return _unavailable("No Charge record for this booking.")
+        rental_base = charge.total_rental
+        platform_fee = ZERO
+        off_platform_cash = ZERO
+
+    if payment_settings is None:
+        payment_settings = PaymentSettings.load()
+
+    commission_percent = _commission_percent(payment_settings, booking.arrival_date)
+    commission = _round((rental_base + off_platform_cash) * commission_percent / Decimal('100'))
+    platform_fee_vat = (
+        _round(platform_fee * payment_settings.vat_rate_percent / Decimal('100')) if is_platform else ZERO
+    )
+
+    ad_hoc_payments = list(booking.owner_payments.all())
+    ad_hoc_total = sum((p.amount for p in ad_hoc_payments), ZERO)
+    ad_hoc_payment_rows = [
+        {'id': p.pk, 'note': p.note, 'date': p.date, 'amount': abs(p.amount), 'is_credit': p.amount < 0}
+        for p in ad_hoc_payments
+    ]
+
+    owner_balance = rental_base + off_platform_cash - commission - platform_fee_vat - ad_hoc_total
+
+    return {
+        'available': True,
+        'reason': None,
+        'rental_base': rental_base,
+        'off_platform_cash': off_platform_cash,
+        'commission_percent': commission_percent,
+        'commission': commission,
+        'platform_fee': platform_fee,
+        'platform_fee_vat': platform_fee_vat,
+        'ad_hoc_payments': ad_hoc_payment_rows,
+        'owner_balance': owner_balance,
+        'due_date': _due_date(payment_settings, owner, booking.arrival_date),
+    }
 
 
 def backfill_memos_for_company(company, start=None):
@@ -218,7 +398,7 @@ def recompute_unsent_memo_fees_for_settings_change():
             memo.save(update_fields=['clean_fee', 'meet_greet_fee'])
 
 
-def _payouts_due_in_range(bookings_queryset, start, end):
+def _payouts_due_in_range(bookings_queryset, start, end, compute_fn=compute_owner_payout):
     """Shared by payouts_due_in_range() and owner_balance_in_range() below - given a bookings
     queryset already scoped to whatever properties/owners the caller cares about, computes each
     booking's owner payout and keeps only the ones whose due_date falls within [start, end].
@@ -229,6 +409,11 @@ def _payouts_due_in_range(bookings_queryset, start, end):
     +regular_payout_days_after_arrival for regular owners) and then computes/filters in Python.
     Fine at this business's booking volume; not a single indexed query, flagged as a known
     trade-off.
+
+    compute_fn defaults to compute_owner_payout (bookings/payouts.py's untouched Booking-View
+    calculation, still correct for owner_balance_in_range's non-regular-owner callers) but
+    payouts_due_in_range below passes compute_regular_owner_payout instead, since it's the real
+    everyday-payout figure, not a display one - see that function's own docstring.
 
     Returns a list of (booking, payout_dict) tuples, payout_dict always 'available' (unavailable
     bookings are silently excluded - nothing to show or pay out)."""
@@ -242,7 +427,7 @@ def _payouts_due_in_range(bookings_queryset, start, end):
 
     results = []
     for booking in candidates:
-        payout = compute_owner_payout(booking, payment_settings)
+        payout = compute_fn(booking, payment_settings)
         if payout['available'] and start <= payout['due_date'] <= end:
             results.append((booking, payout))
     return results
@@ -251,11 +436,13 @@ def _payouts_due_in_range(bookings_queryset, start, end):
 def payouts_due_in_range(start, end):
     """Bookings whose computed owner payout is due within [start, end], on a property whose
     booking_company has finances_managed_internally=True and whose owner is paid regularly - the
-    Payouts tab's own query (StaffFinancePayoutsView)."""
+    Payouts tab's own query (StaffFinancePayoutsView). Uses compute_regular_owner_payout, NOT
+    compute_owner_payout (2026-09-10) - this is the real everyday-payout system, not the Booking
+    View display; see compute_regular_owner_payout's own docstring for why they diverge."""
     return _payouts_due_in_range(Booking.objects.filter(
         property__owner__is_paid_regularly=True,
         property__booking_company__finances_managed_internally=True,
-    ), start, end)
+    ), start, end, compute_fn=compute_regular_owner_payout)
 
 
 def deposits_due_in_range(start, end):
