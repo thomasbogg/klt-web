@@ -33,8 +33,8 @@ from finance.services import (
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_deposit_waiver, compute_effective_self_check_in, create_booking,
-    create_owner_booking, extras_summary, parsed_arrival_departure_time, parsed_travel_method,
-    sync_ical_link, valid_flight_number,
+    create_owner_booking, exclude_block_bookings, extras_summary, parsed_arrival_departure_time,
+    parsed_travel_method, sync_ical_link, valid_flight_number,
 )
 from bookings.views import is_paid
 from communications.models import EmailTemplate, ScheduledEmail
@@ -127,9 +127,11 @@ class StaffHomeView(View):
     PIMS' own Home screen. Reuses availability/utils.py::get_property_calendar() as-is (built for
     the guest-facing property page's own calendar - same day-status logic, called once per
     property shown here rather than modified) and staff/utils.py::booking_stage() (built for the
-    booking detail page) for the reservation table's Status column. Deliberately no PIMS-style
-    "BLOCK - Unbookable" rows (no such model exists) or overlap-warning icons - see the plan this
-    was built from for what's deferred.
+    booking detail page) for the reservation table's Status column. No overlap-warning icons - see
+    the plan this was built from for what's deferred. 'BLOCK - Unbookable'/'BLOCK - Late Check-out'
+    placeholder Bookings (bookings/utils.py::exclude_block_bookings) are excluded from the
+    reservations list by default (2026-09-09, per Thomas) - the "Include Blocks" checkbox opts
+    back in for a staffer auditing them.
 
     The filter bar (property/status/checkboxes) is a single auto-submitting GET form
     (staff/templates/staff/home.html) - every real submission of it therefore always carries a
@@ -181,6 +183,13 @@ class StaffHomeView(View):
         ical_only = request.GET.get('ical_only') == 'on'
         owner_only = request.GET.get('owner_only') == 'on'
         exclude_owner = request.GET.get('exclude_owner') == 'on'
+        include_blocks = request.GET.get('include_blocks') == 'on'
+        if not include_blocks:
+            # 'BLOCK - Unbookable'/'BLOCK - Late Check-out' placeholders aren't real reservations
+            # (see bookings/utils.py::exclude_block_bookings) - off by default here for the same
+            # reason they're already excluded from every report (2026-09-09, per Thomas), with an
+            # explicit opt-in for a staffer who actually wants to see them (e.g. auditing blocks).
+            base = exclude_block_bookings(base)
         if direct_only:
             # Same "direct vs platform" definition already used for payout math - see
             # bookings/payouts.py::_is_platform_booking().
@@ -214,6 +223,7 @@ class StaffHomeView(View):
             'ical_only': ical_only,
             'owner_only': owner_only,
             'exclude_owner': exclude_owner,
+            'include_blocks': include_blocks,
         }
         return render(request, self.template_name, context)
 

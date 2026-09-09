@@ -2231,6 +2231,32 @@ class StaffHomeViewTests(TestCase):
         self.assertIn(historic_platform_booking.pk, booking_ids)
         self.assertNotIn(self.booking_a.pk, booking_ids)  # enquiry_source='Website', not a platform
 
+    def test_block_bookings_excluded_by_default(self):
+        block_guest = Guest.objects.create(last_name=BLOCK_UNBOOKABLE_LAST_NAME, first_name=None)
+        block_booking = Booking.objects.create(
+            property=self.property_a, guest=block_guest,
+            arrival_date=date.today() + timedelta(days=5), departure_date=date.today() + timedelta(days=6),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Direct',
+            adults=0, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url, {'status': 'All'})
+        self.assertFalse(response.context['include_blocks'])
+        booking_ids = {row['booking'].pk for row in response.context['rows']}
+        self.assertNotIn(block_booking.pk, booking_ids)
+
+    def test_include_blocks_checkbox_shows_block_bookings(self):
+        block_guest = Guest.objects.create(last_name=BLOCK_UNBOOKABLE_LAST_NAME, first_name=None)
+        block_booking = Booking.objects.create(
+            property=self.property_a, guest=block_guest,
+            arrival_date=date.today() + timedelta(days=5), departure_date=date.today() + timedelta(days=6),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Direct',
+            adults=0, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url, {'status': 'All', 'include_blocks': 'on'})
+        self.assertTrue(response.context['include_blocks'])
+        booking_ids = {row['booking'].pk for row in response.context['rows']}
+        self.assertIn(block_booking.pk, booking_ids)
+
     def test_includes_inline_booking_lookup_form(self):
         response = self.client.get(self.url)
         self.assertContains(response, f'action="{reverse("staff:booking_lookup")}"')
