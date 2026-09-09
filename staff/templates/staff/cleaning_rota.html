@@ -47,6 +47,15 @@
                     {% if row.task.task_type != 'turnover' %}
                     <span class="staff-cleaning-badge staff-cleaning-badge-{{ row.task.task_type }}">{{ row.task.get_task_type_display }}</span>
                     {% endif %}
+                    {% if row.late_checkout_grant %}
+                    <p class="staff-cleaning-late-checkout">
+                        {% if row.late_checkout_grant.time %}
+                        Late check-out granted - not ready to clean before {{ row.late_checkout_grant.time|time:'H:i' }}.
+                        {% else %}
+                        Late check-out granted - no fixed time, check with the guest before starting.
+                        {% endif %}
+                    </p>
+                    {% endif %}
                     {% if row.guest_booking %}
                     <p class="staff-cleaning-meta">
                         <a href="{% url 'staff:booking_detail' reference=row.guest_booking.reference %}">{{ row.guest_booking.guest }}</a>

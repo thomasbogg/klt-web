@@ -195,9 +195,9 @@ def pretty_title(title):
     unit code after a trailing ' - ' (e.g. 'CLUBE DO MONACO - AE', 'PARQUE DA CORCOVADA - 43-G'),
     which is kept exactly as stored rather than run through capitalize() - that would turn 'AE'
     into 'Ae' and '43-G' into '43-g', since capitalize() only uppercases a string's very first
-    character. A non-code suffix (e.g. 'QUINTA DA BARRACUDA - Penthouse') is unaffected: it's
-    already stored mixed-case in the DB rather than all-caps like every real unit code, so the
-    all-upper check below routes it through the normal word-by-word capitalization instead."""
+    character. A non-code suffix (mixed-case in the DB rather than all-caps like every real unit
+    code) is unaffected by that special-casing: the all-upper check below routes it through the
+    normal word-by-word capitalization instead, same as a title with no ' - ' at all."""
     def capitalize_words(text):
         return ' '.join(word.capitalize() if word.lower() not in ['de', 'do', 'da', 'dos', 'das', 'e'] else word.lower() for word in text.split())
 

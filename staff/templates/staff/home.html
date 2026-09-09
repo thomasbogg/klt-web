@@ -58,6 +58,9 @@
                 <label class="staff-checkbox-label">
                     <input type="checkbox" name="exclude_owner" onchange="this.form.submit()" {% if exclude_owner %}checked{% endif %}> Exclude Owner
                 </label>
+                <label class="staff-checkbox-label">
+                    <input type="checkbox" name="include_blocks" onchange="this.form.submit()" {% if include_blocks %}checked{% endif %}> Include Blocks
+                </label>
                 <noscript><button type="submit" class="staff-button">Apply</button></noscript>
             </form>
             <form method="post" action="{% url 'staff:booking_lookup' %}" class="staff-home-filter-group staff-home-search-group">

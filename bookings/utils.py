@@ -33,6 +33,23 @@ BLOCK_LATE_CHECK_OUT_LAST_NAME = 'block - late check-out'
 BLOCK_GUEST_LAST_NAMES = {BLOCK_UNBOOKABLE_LAST_NAME, BLOCK_LATE_CHECK_OUT_LAST_NAME}
 
 
+def exclude_block_bookings(queryset):
+    """`queryset` with both BLOCK_GUEST_LAST_NAMES categories excluded, by guest last_name -
+    the one place this two-way exclude chain is written, for every caller that needs to keep a
+    calendar-blocking placeholder out of a real-booking count/report/list (2026-09-09, per
+    Thomas - these carry no rental income and represent nobody's actual stay, but have no other
+    field distinguishing them: both categories were historically is_owner=True, which
+    incidentally (and incompletely) kept them out of anything already filtering on
+    is_owner=False - no longer true since 2026-09-09, when that flag was corrected to mean what
+    it actually says, see staff/utils.py::_create_late_checkout_block_booking's own docstring).
+    Callers so far: staff/monthly_reports.py's booking/stay totals, staff/reports.py's
+    booking_report_rows() (shared by the staff Reports page and owners/views.py::
+    OwnerReportView)."""
+    return queryset.exclude(guest__last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME).exclude(
+        guest__last_name__iexact=BLOCK_LATE_CHECK_OUT_LAST_NAME,
+    )
+
+
 def generate_reference_candidate():
     """One random booking-reference string, e.g. 'K7QX-3H9M'. Not guaranteed unique - the caller checks."""
     groups = [

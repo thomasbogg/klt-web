@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from bookings.models import Booking, PaymentSettings
 from bookings.payouts import clean_fee, compute_owner_payout, meet_greet_fee
+from bookings.utils import exclude_block_bookings
 from env_settings import VALID_BOOKING_STATUSES
 from finance.models import Memo
 
@@ -69,11 +70,17 @@ def booking_report_rows(start, end, properties=None):
 
     `properties`, if given, is an iterable of Property (or pk) to restrict to - plural because the
     owner-facing caller usually has several properties, not the staff caller's single-dropdown
-    choice."""
+    choice.
+
+    Calendar-blocking placeholder bookings ('BLOCK - Late Check-out'/'BLOCK - Unbookable') are
+    excluded (2026-09-09, per Thomas) - they carry VALID_BOOKING_STATUSES same as a real booking,
+    so without this they'd show up as a zero-money row with a guest name like "BLOCK - Late
+    Check-out" on both the staff Reports page and, worse, the owner-facing one (OwnerReportView) -
+    confusing either way, and not something an owner should ever see on their own report."""
     payment_settings = PaymentSettings.load()
-    bookings_qs = Booking.objects.filter(
+    bookings_qs = exclude_block_bookings(Booking.objects.filter(
         enquiry_status__in=VALID_BOOKING_STATUSES, arrival_date__range=(start, end),
-    ).select_related(
+    )).select_related(
         'property__owner', 'property__specs', 'guest', 'charges', 'platform_payout', 'departure', 'arrival',
     ).prefetch_related('owner_payments').order_by('arrival_date', 'property__title')
     if properties is not None:

@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import time, timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -17,7 +17,9 @@ from bookings.utils import create_owner_booking, guest_for_owner
 from finance.models import Memo, PayoutRecord
 from guests.models import Guest
 from libraries.phone_country_codes import join_phone, split_phone
-from properties.models import ManagementCompany, Owner, Platform, Property, PropertySpec, iCalLink
+from properties.models import Location, ManagementCompany, Owner, Platform, Property, PropertySpec, iCalLink
+from staff.models import LateCheckoutGrant
+from staff.utils import grant_late_checkout
 
 User = get_user_model()
 
@@ -796,6 +798,10 @@ class OwnerBookingsTests(TestCase):
         self.assertTrue(response.context['show_cot_high_chair'])
 
     def test_update_extras_saves_welcome_pack_cot_high_chair_and_late_checkout(self):
+        # create_owner_booking() creates a real Departure(clean=True) eagerly, so this booking has
+        # a genuine turnover CleaningTask scheduled with no same-day arrival - both 11:00/12:00 are
+        # eligible (2026-09-09: late checkout is validated against real permissibility rules now,
+        # no longer any freeform time - '13:00' would be rejected).
         self.client.login(username='staysowner', password='pw')
         self.client.post(
             reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
@@ -803,7 +809,7 @@ class OwnerBookingsTests(TestCase):
                 'action': 'update_extras',
                 'welcome_pack': 'on', 'welcome_pack_food': 'vegan', 'welcome_pack_drinks': 'non_alcoholic',
                 'cot': 'on', 'high_chair': 'on',
-                'late_checkout': 'on', 'late_checkout_time': '13:00',
+                'late_checkout': 'on', 'late_checkout_time': '11:00',
             },
         )
         extra = Extra.objects.get(booking=self.upcoming_booking)
@@ -814,8 +820,81 @@ class OwnerBookingsTests(TestCase):
         self.assertTrue(extra.high_chair)
         self.assertIsNotNone(extra.cot_high_chair_charge)
         self.assertTrue(extra.late_checkout)
-        self.assertEqual(extra.late_checkout_time.strftime('%H:%M'), '13:00')
+        self.assertEqual(extra.late_checkout_time.strftime('%H:%M'), '11:00')
         self.assertEqual(extra.late_checkout_charge, ExtrasSettings.load().late_checkout_price)
+
+    def test_update_extras_grants_an_unlimited_late_checkout_and_creates_a_block_booking(self):
+        # Departure.clean=False means no clean is ever scheduled for this departure at all (see
+        # sync_cleaning_tasks_for_booking()'s own docstring) - late_checkout_eligibility() then
+        # returns unlimited=True, same rule an owner's own stay is subject to as a guest's
+        # (2026-09-09, per Thomas). Proves this form now calls the real grant/block-booking engine
+        # rather than only setting Extra fields, unlike before this date. (Directly deleting the
+        # CleaningTask instead of doing this doesn't work - the Extra.objects.get_or_create() at
+        # the top of _save_owner_extras() fires Extra's post_save sync signal, which would just
+        # recreate it from Departure.clean=True before the late-checkout check even runs.)
+        self.upcoming_booking.departure.clean = False
+        self.upcoming_booking.departure.save(update_fields=['clean'])
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {'action': 'update_extras', 'late_checkout': 'on', 'late_checkout_time': ''},
+        )
+        extra = Extra.objects.get(booking=self.upcoming_booking)
+        self.assertTrue(extra.late_checkout)
+        self.assertIsNone(extra.late_checkout_time)
+        grant = LateCheckoutGrant.objects.get(booking=self.upcoming_booking)
+        self.assertIsNone(grant.time)
+        self.assertIsNotNone(grant.block_booking)
+        self.assertEqual(grant.block_booking.arrival_date, self.upcoming_booking.departure_date)
+
+    def test_update_extras_rejects_a_late_checkout_time_already_claimed_in_the_same_location(self):
+        # Same location-wide 1-slot-per-time cap a guest's own request is subject to
+        # (staff/utils.py::late_checkout_still_available) - grabbing the only 11:00 slot for
+        # another property in the same Location before the owner submits must reject the owner's
+        # request too, proving the cap is shared across guest and owner bookings alike.
+        location = Location.objects.create(title='Owner Grant Location')
+        self.property.location = location
+        self.property.save(update_fields=['location'])
+
+        # A same-day arrival at self.property forces the "fixed slots only, if the crew has slack"
+        # branch of late_checkout_eligibility() rather than "no same-day arrival, both times free".
+        Booking.objects.create(
+            property=self.property, guest=guest_for_owner(self.owner),
+            arrival_date=self.upcoming_booking.departure_date,
+            departure_date=self.upcoming_booking.departure_date + timedelta(days=3),
+            is_owner=True, enquiry_status='Booking confirmed', enquiry_source='Owner Suite',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        # Two other same-day turnover cleans in the same Location unlock the 11:00 slot (2 needed).
+        other_bookings = []
+        for n in range(2):
+            other_property = Property.objects.create(
+                title=f'Owner Grant Other {n}', short_title=f'OWNGRNT{n}', location=location,
+            )
+            other_guest = Guest.objects.create(
+                first_name='Other', last_name=f'OwnerGrant{n}', email=f'owner-grant-{n}@example.com',
+            )
+            other_booking = Booking.objects.create(
+                property=other_property, guest=other_guest,
+                arrival_date=self.upcoming_booking.departure_date - timedelta(days=5),
+                departure_date=self.upcoming_booking.departure_date,
+                is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+                adults=2, children=0, babies=0, last_updated=timezone.now(),
+            )
+            Departure.objects.create(booking=other_booking, clean=True)
+            other_bookings.append(other_booking)
+
+        # One of those other bookings claims the only 11:00 slot first.
+        grant, error = grant_late_checkout(other_bookings[0], time(11, 0))
+        self.assertIsNone(error)
+
+        self.client.login(username='staysowner', password='pw')
+        self.client.post(
+            reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
+            {'action': 'update_extras', 'late_checkout': 'on', 'late_checkout_time': '11:00'},
+        )
+        self.assertFalse(Extra.objects.filter(booking=self.upcoming_booking, late_checkout=True).exists())
+        self.assertFalse(LateCheckoutGrant.objects.filter(booking=self.upcoming_booking).exists())
 
     def test_extras_shows_owner_is_paying_only_when_meet_greet_is_required(self):
         """create_owner_booking() defaults meet_greet=True, so self.upcoming_booking's Arrival

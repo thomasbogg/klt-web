@@ -1396,18 +1396,22 @@ class BookingDetailsViewTests(TestCase):
         self.assertEqual(self.booking.extras.cot_high_chair_charge, Decimal('0'))
 
     def test_post_persists_late_checkout_with_flat_charge(self):
+        # No Departure/CleaningTask exists yet at this stage (booking isn't even paid yet) - the
+        # booking is eligible for the unlimited case (late_checkout_eligibility()'s rule 1), so
+        # ticking the box with no time submitted is a valid request, not an error (2026-09-08 -
+        # late checkout used to accept any freeform time; now it's granted against real
+        # permissibility rules instead, see staff/utils.py::grant_late_checkout()).
         settings = ExtrasSettings.load()
         settings.late_checkout_price = Decimal('30.00')
         settings.save()
         self._set_session()
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
         data['late_checkout'] = 'on'
-        data['late_checkout_time'] = '13:00'
         response = self.client.post(self.url, data)
         self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
         self.booking.refresh_from_db()
         self.assertTrue(self.booking.extras.late_checkout)
-        self.assertEqual(self.booking.extras.late_checkout_time, time(13, 0))
+        self.assertIsNone(self.booking.extras.late_checkout_time)
         self.assertEqual(self.booking.extras.late_checkout_charge, Decimal('30.00'))
 
     def test_post_without_late_checkout_charges_nothing(self):
@@ -1420,7 +1424,24 @@ class BookingDetailsViewTests(TestCase):
         self.assertIsNone(self.booking.extras.late_checkout_time)
         self.assertIsNone(self.booking.extras.late_checkout_charge)
 
-    def test_post_late_checkout_without_a_time_is_rejected(self):
+    def test_post_late_checkout_with_no_time_succeeds_when_unlimited_is_offered(self):
+        # 2026-09-08: replaces the old "no time = always an error" behaviour - a blank time is
+        # only an error when the booking is offered fixed 11:00/12:00 choices and doesn't pick one
+        # (see the next test); here there's no CleaningTask at all yet, so the unlimited case
+        # applies and no time is needed.
+        self._set_session()
+        data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
+        data['late_checkout'] = 'on'
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
+        self.booking.refresh_from_db()
+        self.assertTrue(self.booking.extras.late_checkout)
+        self.assertIsNone(self.booking.extras.late_checkout_time)
+
+    def test_post_late_checkout_with_no_time_is_rejected_when_fixed_slots_are_offered(self):
+        from staff.models import CleaningTask
+
+        CleaningTask.objects.create(booking=self.booking, task_type='turnover', date=self.booking.departure_date)
         self._set_session()
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
         data['late_checkout'] = 'on'
@@ -1774,7 +1795,7 @@ class BookingBalanceDetailsViewTests(TestCase):
         settings = ExtrasSettings.load()
         settings.late_checkout_price = Decimal('20.00')
         settings.save()
-        response = self.client.post(self.url, self._unchanged_party(late_checkout='on', late_checkout_time='13:00'))
+        response = self.client.post(self.url, self._unchanged_party(late_checkout='on'))
         self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
         self.booking.refresh_from_db()
         self.assertTrue(self.booking.extras.late_checkout)
@@ -1904,7 +1925,7 @@ class BookingBalanceDetailsViewTests(TestCase):
 
     def test_post_invalid_flight_number_rerenders_without_saving_anything(self):
         response = self.client.post(self.url, self._unchanged_party(
-            arrival_method='flight_faro', arrival_flight_number='DDPP-3QSK', late_checkout='on', late_checkout_time='13:00',
+            arrival_method='flight_faro', arrival_flight_number='DDPP-3QSK', late_checkout='on',
         ))
         self.assertEqual(response.status_code, 200)
         self.assertIn('arrival_flight_number', response.context['errors'])
@@ -3128,7 +3149,7 @@ class BookingManageExtrasViewTests(TestCase):
         self.assertFalse(response.context['extras_locked'])
 
     def test_post_within_cutoff_persists_extras_without_touching_charge(self):
-        response = self.client.post(self.url, {'late_checkout': 'on', 'late_checkout_time': '13:00'})
+        response = self.client.post(self.url, {'late_checkout': 'on'})
         self.assertRedirects(response, f"{self.url}?extras_saved=1", fetch_redirect_response=False)
         self.booking.refresh_from_db()
         self.assertTrue(self.booking.extras.late_checkout)
@@ -3196,9 +3217,7 @@ class BookingManageExtrasViewTests(TestCase):
         # last-minute, and correctly stays open).
         Booking.objects.filter(pk=self.booking.pk).update(
             created_at=timezone.now() - timedelta(days=60))
-        self.client.post(self.url, {
-            'late_checkout': 'on', 'late_checkout_time': '13:00', 'welcome_pack': 'on',
-        })
+        self.client.post(self.url, {'late_checkout': 'on', 'welcome_pack': 'on'})
         extra = Extra.objects.get(booking=self.booking)
         self.assertTrue(extra.late_checkout)
         self.assertFalse(extra.welcome_pack)
@@ -3214,7 +3233,7 @@ class BookingManageExtrasViewTests(TestCase):
         # last-minute, and correctly stays open).
         Booking.objects.filter(pk=self.booking.pk).update(
             created_at=timezone.now() - timedelta(days=60))
-        self.client.post(self.url, {'late_checkout': 'on', 'late_checkout_time': '13:00'})
+        self.client.post(self.url, {'late_checkout': 'on'})
         extra = Extra.objects.get(booking=self.booking)
         self.assertTrue(extra.welcome_pack)
 

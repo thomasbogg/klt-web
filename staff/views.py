@@ -33,8 +33,8 @@ from finance.services import (
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_deposit_waiver, compute_effective_self_check_in, create_booking,
-    create_owner_booking, extras_summary, parsed_arrival_departure_time, parsed_travel_method,
-    sync_ical_link, valid_flight_number,
+    create_owner_booking, exclude_block_bookings, extras_summary, parsed_arrival_departure_time,
+    parsed_travel_method, sync_ical_link, valid_flight_number,
 )
 from bookings.views import is_paid
 from communications.models import EmailTemplate, ScheduledEmail
@@ -127,9 +127,11 @@ class StaffHomeView(View):
     PIMS' own Home screen. Reuses availability/utils.py::get_property_calendar() as-is (built for
     the guest-facing property page's own calendar - same day-status logic, called once per
     property shown here rather than modified) and staff/utils.py::booking_stage() (built for the
-    booking detail page) for the reservation table's Status column. Deliberately no PIMS-style
-    "BLOCK - Unbookable" rows (no such model exists) or overlap-warning icons - see the plan this
-    was built from for what's deferred.
+    booking detail page) for the reservation table's Status column. No overlap-warning icons - see
+    the plan this was built from for what's deferred. 'BLOCK - Unbookable'/'BLOCK - Late Check-out'
+    placeholder Bookings (bookings/utils.py::exclude_block_bookings) are excluded from the
+    reservations list by default (2026-09-09, per Thomas) - the "Include Blocks" checkbox opts
+    back in for a staffer auditing them.
 
     The filter bar (property/status/checkboxes) is a single auto-submitting GET form
     (staff/templates/staff/home.html) - every real submission of it therefore always carries a
@@ -181,6 +183,13 @@ class StaffHomeView(View):
         ical_only = request.GET.get('ical_only') == 'on'
         owner_only = request.GET.get('owner_only') == 'on'
         exclude_owner = request.GET.get('exclude_owner') == 'on'
+        include_blocks = request.GET.get('include_blocks') == 'on'
+        if not include_blocks:
+            # 'BLOCK - Unbookable'/'BLOCK - Late Check-out' placeholders aren't real reservations
+            # (see bookings/utils.py::exclude_block_bookings) - off by default here for the same
+            # reason they're already excluded from every report (2026-09-09, per Thomas), with an
+            # explicit opt-in for a staffer who actually wants to see them (e.g. auditing blocks).
+            base = exclude_block_bookings(base)
         if direct_only:
             # Same "direct vs platform" definition already used for payout math - see
             # bookings/payouts.py::_is_platform_booking().
@@ -214,6 +223,7 @@ class StaffHomeView(View):
             'ical_only': ical_only,
             'owner_only': owner_only,
             'exclude_owner': exclude_owner,
+            'include_blocks': include_blocks,
         }
         return render(request, self.template_name, context)
 
@@ -1118,6 +1128,7 @@ class StaffSettingsView(View):
             'payment_clearing_business_days', 'adult_min_age', 'child_min_age',
             'self_check_in_code_reveal_days', 'tourist_tax_min_age', 'tourist_tax_max_nights',
             'tourist_tax_season_start_month', 'tourist_tax_season_end_month',
+            'cleaning_gap_nights_per_block_day',
         ):
             value = _parsed_int(post.get(field))
             if value is not None:
@@ -3126,13 +3137,13 @@ class StaffCleaningRotaView(View):
         )
         if request.user.is_superuser:
             tasks = CleaningTask.objects.filter(date__range=(window_dates[0], window_dates[-1])).select_related(
-                'booking__property', 'booking__guest', 'booking__extras',
+                'booking__property', 'booking__guest', 'booking__extras', 'booking__late_checkout_grant',
             ).prefetch_related('assigned_to', *extras_relations)
         else:
             tasks = CleaningTask.objects.filter(
                 date__range=(window_dates[0], window_dates[-1]), assigned_to=request.user,
             ).select_related(
-                'booking__property', 'booking__guest', 'booking__extras',
+                'booking__property', 'booking__guest', 'booking__extras', 'booking__late_checkout_grant',
             ).prefetch_related('assigned_to', *extras_relations)
         tasks = list(tasks)
 
@@ -3145,6 +3156,14 @@ class StaffCleaningRotaView(View):
                 'task': task,
                 'guest_booking': guest_booking,
                 'extras': extras,
+                # The DEPARTING guest's own grant (task.booking), never the arriving guest's -
+                # unlike guest_booking/extras above (which deliberately show the next arrival's
+                # info for prep purposes), this is about when the crew can even start THIS clean,
+                # which only ever depends on who's leaving. None for every non-turnover task_type
+                # (mid_stay/freshen have no departure/checkout concept at all).
+                'late_checkout_grant': (
+                    getattr(task.booking, 'late_checkout_grant', None) if task.task_type == 'turnover' else None
+                ),
                 # sorted(), not .order_by('username') - the latter would issue a fresh query
                 # against this already-prefetched relation, silently reintroducing an N+1 (same
                 # prefetch-cache-bypass bug already fixed once in extras_summary(), see its own
@@ -3242,7 +3261,7 @@ class StaffCleaningEventsView(View):
         start_date = _parsed_date((request.GET.get('start') or '').split('T')[0])
         end_date = _parsed_date((request.GET.get('end') or '').split('T')[0])
         tasks = CleaningTask.objects.select_related(
-            'booking__property__location',
+            'booking__property__location', 'booking__late_checkout_grant',
         ).prefetch_related('assigned_to').exclude(status='dismissed')
         if start_date:
             tasks = tasks.filter(date__gte=start_date)

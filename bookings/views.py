@@ -158,7 +158,10 @@ class BookingFormMixin:
             update_fields += ['cot', 'high_chair', 'cot_high_chair_charge']
 
         if windows['late_checkout']:
-            extra.late_checkout, extra.late_checkout_time, _ = self._parse_late_checkout(post_data)
+            wants_late_checkout, requested_time, _ = self._parse_late_checkout(booking, post_data)
+            extra.late_checkout, extra.late_checkout_time = self._apply_late_checkout_request(
+                booking, wants_late_checkout, requested_time,
+            )
             extra.late_checkout_charge = settings.late_checkout_price if extra.late_checkout else None
             update_fields += ['late_checkout', 'late_checkout_time', 'late_checkout_charge']
 
@@ -234,6 +237,26 @@ class BookingFormMixin:
         settings = ExtrasSettings.load()
         windows = extras_request_windows(booking)
         nights = (booking.departure_date - booking.arrival_date).days
+
+        # Late check-out permissibility (2026-09-08, per Thomas) - only worth computing while the
+        # section is even open at all (windows['late_checkout']). If a grant already exists for
+        # this booking, show exactly what it says rather than a fresh live eligibility check - the
+        # grant is a committed decision (see LateCheckoutGrant's own docstring: durable, not
+        # auto-revoked when later bookings change what's eligible), so re-deriving live here could
+        # show a guest "nothing available" on a page reload despite them already holding a valid
+        # grant. late_checkout_available_times is sorted for a stable radio-button order, not
+        # because ordering matters otherwise.
+        late_checkout_unlimited, late_checkout_available_times = False, []
+        if windows['late_checkout']:
+            existing_grant = getattr(booking, 'late_checkout_grant', None)
+            if existing_grant is not None:
+                late_checkout_unlimited = existing_grant.time is None
+                late_checkout_available_times = [] if late_checkout_unlimited else [existing_grant.time]
+            else:
+                from staff.utils import late_checkout_still_available
+                late_checkout_unlimited, _eligible, available = late_checkout_still_available(booking)
+                late_checkout_available_times = sorted(available)
+
         return {
             'welcome_pack_items': WelcomePackItem.objects.filter(active=True),
             'welcome_pack': welcome_pack,
@@ -255,6 +278,9 @@ class BookingFormMixin:
             'late_checkout': late_checkout,
             'late_checkout_time': late_checkout_time,
             'late_checkout_price': settings.late_checkout_price,
+            'late_checkout_unlimited': late_checkout_unlimited,
+            'late_checkout_available_times': late_checkout_available_times,
+            'late_checkout_offerable': late_checkout_unlimited or bool(late_checkout_available_times),
             'mid_stay_clean': mid_stay_clean,
             'mid_stay_clean_price': settings.compute_mid_stay_clean_price(booking.property),
             # ExtrasSettings.mid_stay_clean_minimum_nights (staff-configurable, floor of 2 - a
@@ -407,21 +433,77 @@ class BookingFormMixin:
             })
         return rows, None
 
-    def _parse_late_checkout(self, post_data):
-        """A requested time is only required (and only an error) when the checkbox itself is
-        ticked - matches the pattern of transfer rows requiring a time, but here it's a single
-        optional field rather than a repeated row."""
+    def _parse_late_checkout(self, booking, post_data):
+        """Validates the late-checkout portion of the Extras form - whether it's well-formed
+        enough to save, NOT whether it's currently actually available (that's a live check,
+        deliberately performed only once, at the moment of actually saving in
+        _apply_late_checkout_request() below - this function is also called from several read-only
+        "did anything on this page fail validation" call sites that must never have side effects).
+
+        Returns (late_checkout, requested_time, error). requested_time is a `time` object, or None
+        - which means "whatever the system can offer" when late_checkout is on and no specific time
+        was submitted, only valid when late_checkout_still_available() isn't currently offering a
+        fixed-time choice at all (the unlimited case, or nothing available). A submitted time must
+        be one of staff.models.LATE_CHECKOUT_TIMES - no freeform choice any more (2026-09-08, per
+        Thomas: the whole point of the new permissibility rules is a guest can no longer just type
+        in any time and have it silently accepted)."""
+        from staff.models import LATE_CHECKOUT_TIMES
+        from staff.utils import late_checkout_still_available
+
         late_checkout = post_data.get('late_checkout') == 'on'
-        time_raw = post_data.get('late_checkout_time', '').strip()
         if not late_checkout:
             return False, None, None
 
+        time_raw = post_data.get('late_checkout_time', '').strip()
         if not time_raw:
-            return True, None, "Enter your preferred checkout time."
+            unlimited, _eligible, available_times = late_checkout_still_available(booking)
+            if not unlimited and available_times:
+                return True, None, "Choose a checkout time."
+            return True, None, None
+
         try:
-            return True, datetime.strptime(time_raw, '%H:%M').time(), None
+            requested_time = datetime.strptime(time_raw, '%H:%M').time()
         except ValueError:
             return True, None, "Enter a valid checkout time."
+        if requested_time not in LATE_CHECKOUT_TIMES:
+            return True, None, "Enter a valid checkout time."
+        return True, requested_time, None
+
+    def _apply_late_checkout_request(self, booking, wants_late_checkout, requested_time):
+        """Reconciles a guest's late-checkout choice (already validated by _parse_late_checkout
+        above) against any existing LateCheckoutGrant for this booking - called from _save_extras()
+        on every Extras-form save, not just when late checkout itself changed, so it must be a safe
+        no-op when nothing here actually changed. Returns (late_checkout, late_checkout_time) for
+        Extra's own fields - deliberately no error return: by the time this runs, the calling view
+        has already re-rendered on any _parse_late_checkout() validation error, so a grant failure
+        here would only ever be the live-availability race (another guest claimed the slot between
+        page load and this submit) - rare enough to just silently fall back to "no late checkout"
+        rather than block the rest of this save over it.
+
+        A guest switching from one granted time to a different one revokes the old grant before
+        attempting the new one, since grant_late_checkout() itself refuses a booking that already
+        has a grant. Accepted trade-off: if the new time then turns out unavailable, the guest
+        loses the old grant too, rather than never letting a guest switch times at all - expected
+        to be a rare edge case, not worth a "try new, restore old on failure" path."""
+        from staff.utils import grant_late_checkout, revoke_late_checkout
+
+        existing_grant = getattr(booking, 'late_checkout_grant', None)
+
+        if not wants_late_checkout:
+            if existing_grant is not None:
+                revoke_late_checkout(existing_grant)
+            return False, None
+
+        if existing_grant is not None and existing_grant.time == requested_time:
+            return True, existing_grant.time
+
+        if existing_grant is not None:
+            revoke_late_checkout(existing_grant)
+
+        grant, _error = grant_late_checkout(booking, requested_time)
+        if grant is None:
+            return False, None
+        return True, grant.time
 
     def _mid_stay_clean_default_date(self, booking):
         """The one date shown to the guest for a mid-stay clean - not guest-editable (an earlier
@@ -636,7 +718,7 @@ class BookingDetailsView(BookingFormMixin, View):
         rows, non_field_error = self._parse_rows(request.POST)
         if not is_two_stage:
             transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
-            _, _, late_checkout_error = self._parse_late_checkout(request.POST)
+            _, _, late_checkout_error = self._parse_late_checkout(booking, request.POST)
             _, _, mid_stay_clean_error = self._parse_mid_stay_clean(booking, request.POST)
         else:
             transfer_rows, transfer_non_field_error, late_checkout_error = [], None, None
@@ -795,7 +877,7 @@ class BookingBalanceDetailsView(BookingFormMixin, View):
         max_guests = booking.property.specs.max_guests
         rows, non_field_error = self._parse_rows(request.POST)
         transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
-        _, _, late_checkout_error = self._parse_late_checkout(request.POST)
+        _, _, late_checkout_error = self._parse_late_checkout(booking, request.POST)
         _, _, mid_stay_clean_error = self._parse_mid_stay_clean(booking, request.POST)
         arrival_data = _arrival_data_from_post(request.POST)
         departure_data = _departure_data_from_post(request.POST)
@@ -1945,7 +2027,7 @@ class BookingManageExtrasView(BookingFormMixin, View):
             return redirect('bookings:manage_extras', reference=reference)
 
         transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
-        _, _, late_checkout_error = self._parse_late_checkout(request.POST)
+        _, _, late_checkout_error = self._parse_late_checkout(booking, request.POST)
         _, _, mid_stay_clean_error = self._parse_mid_stay_clean(booking, request.POST)
         context = {'booking': booking, 'extras_locked': False,
                    'show_cot_high_chair': self._show_cot_high_chair(booking)}

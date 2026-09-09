@@ -19,6 +19,7 @@ from bookings.models import (
     BookingRequestedExtra, BookingSettings, Charge, CheckinSettings, Departure, Extra, FAQ, Payment,
     PaymentSettings, PlatformPayout, RequestType, TravelMethod,
 )
+from bookings.utils import BLOCK_LATE_CHECK_OUT_LAST_NAME, BLOCK_UNBOOKABLE_LAST_NAME
 from finance.models import AdHocService
 from guests.models import Guest
 from properties.models import (
@@ -26,7 +27,10 @@ from properties.models import (
     Owner, Platform, Price, Property, PropertyAccessCode, PropertyImage, PropertyOwnership,
     PropertyPlatformID, PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
-from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
+from staff.models import (
+    Checkin, CleaningGapBlock, CleaningTask, Deduction, LateCheckoutGrant, OwnerPayment, StaffProfile,
+    StaffRole, TaskHistoryEntry,
+)
 from staff.monthly_reports import (
     bookings_trend_rows, commissions_trend_rows, extras_trend_rows, location_groups,
     management_trend_rows, monthly_bookings_rows, monthly_commissions_rows, monthly_extras_rows,
@@ -35,8 +39,9 @@ from staff.monthly_reports import (
 )
 from staff.reports import booking_report_rows, report_totals
 from staff.utils import (
-    apply_manual_checkin_time, apply_manual_task_date, booking_stage, checkin_valid_range,
-    cleaning_task_valid_range, compute_arrival_eta, next_step_hint, status_bucket,
+    apply_manual_checkin_time, apply_manual_task_date, batch_cleaning_task_valid_ranges,
+    booking_stage, checkin_valid_range, cleaning_task_valid_range, compute_arrival_eta,
+    grant_late_checkout, late_checkout_eligibility, next_step_hint, revoke_late_checkout, status_bucket,
 )
 
 User = get_user_model()
@@ -1339,6 +1344,22 @@ class FreshenTaskSyncTests(TestCase):
         )
         self.assertFalse(CleaningTask.objects.filter(booking=block_booking).exists())
 
+    def test_late_checkout_block_booking_gets_no_freshen_task_of_its_own(self):
+        # Same treatment as 'BLOCK - Unbookable' above (2026-09-08 fix - this exclusion previously
+        # only covered Unbookable, from before 'BLOCK - Late Check-out' bookings were ever actually
+        # created) - nobody arrives for a late-checkout block either.
+        self._seed_last_clean()
+        block_guest = Guest.objects.create(
+            first_name='', last_name=BLOCK_LATE_CHECK_OUT_LAST_NAME, email='block-late-checkout@example.com',
+        )
+        block_booking = Booking.objects.create(
+            property=self.property, guest=block_guest,
+            arrival_date=self.baseline + timedelta(days=10), departure_date=self.baseline + timedelta(days=11),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=0, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.assertFalse(CleaningTask.objects.filter(booking=block_booking).exists())
+
     def test_unbookable_block_period_still_counts_toward_the_next_real_bookings_gap(self):
         # Unlike an owner's own clean=False departure (see the test above), an unbookable period
         # says nothing about whether the property is actually clean - it must still count toward
@@ -1729,6 +1750,45 @@ class StaffCleaningRotaViewTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.task.refresh_from_db()
         self.assertEqual(self.task.status, 'pending')
+
+    def test_fixed_time_grant_shown_on_the_departing_bookings_own_card(self):
+        LateCheckoutGrant.objects.create(booking=self.booking, time=time(11, 0))
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Late check-out granted - not ready to clean before 11:00')
+
+    def test_unlimited_grant_shown_with_no_fixed_time_wording(self):
+        block_guest = Guest.objects.create(
+            first_name='', last_name=BLOCK_LATE_CHECK_OUT_LAST_NAME, email='rota-block@example.com',
+        )
+        block_booking = Booking.objects.create(
+            property=self.property, guest=block_guest,
+            arrival_date=self.today, departure_date=self.today + timedelta(days=1),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=0, children=0, babies=0, last_updated=timezone.now(),
+        )
+        LateCheckoutGrant.objects.create(booking=self.booking, time=None, block_booking=block_booking)
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Late check-out granted - no fixed time, check with the guest before starting')
+
+    def test_no_grant_shows_no_late_checkout_note(self):
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        self.assertNotContains(response, 'Late check-out granted')
+
+    def test_grant_shown_once_even_when_the_same_booking_also_has_a_mid_stay_task(self):
+        # A grant is only ever meaningful for the departure (turnover) it belongs to - the SAME
+        # booking's mid-stay clean card must not also show it, even though both tasks share
+        # task.booking (and so both would naively see the same late_checkout_grant relation).
+        Extra.objects.create(
+            booking=self.booking, mid_stay_clean=True, mid_stay_clean_date=self.today - timedelta(days=1),
+        )
+        LateCheckoutGrant.objects.create(booking=self.booking, time=time(12, 0))
+        self.client.login(username='rotasuperuser', password='pw')
+        response = self.client.get(self.url)
+        self.assertContains(response, 'Mid-stay')  # sanity check the mid-stay card itself rendered
+        self.assertContains(response, 'Late check-out granted', count=1)
 
 
 class StaffBookingLookupViewTests(TestCase):
@@ -2170,6 +2230,32 @@ class StaffHomeViewTests(TestCase):
         booking_ids = {row['booking'].pk for row in response.context['rows']}
         self.assertIn(historic_platform_booking.pk, booking_ids)
         self.assertNotIn(self.booking_a.pk, booking_ids)  # enquiry_source='Website', not a platform
+
+    def test_block_bookings_excluded_by_default(self):
+        block_guest = Guest.objects.create(last_name=BLOCK_UNBOOKABLE_LAST_NAME, first_name=None)
+        block_booking = Booking.objects.create(
+            property=self.property_a, guest=block_guest,
+            arrival_date=date.today() + timedelta(days=5), departure_date=date.today() + timedelta(days=6),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Direct',
+            adults=0, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url, {'status': 'All'})
+        self.assertFalse(response.context['include_blocks'])
+        booking_ids = {row['booking'].pk for row in response.context['rows']}
+        self.assertNotIn(block_booking.pk, booking_ids)
+
+    def test_include_blocks_checkbox_shows_block_bookings(self):
+        block_guest = Guest.objects.create(last_name=BLOCK_UNBOOKABLE_LAST_NAME, first_name=None)
+        block_booking = Booking.objects.create(
+            property=self.property_a, guest=block_guest,
+            arrival_date=date.today() + timedelta(days=5), departure_date=date.today() + timedelta(days=6),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Direct',
+            adults=0, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url, {'status': 'All', 'include_blocks': 'on'})
+        self.assertTrue(response.context['include_blocks'])
+        booking_ids = {row['booking'].pk for row in response.context['rows']}
+        self.assertIn(block_booking.pk, booking_ids)
 
     def test_includes_inline_booking_lookup_form(self):
         response = self.client.get(self.url)
@@ -4103,6 +4189,13 @@ class StaffSettingsViewTests(TestCase):
         self.assertEqual(settings.tourist_tax_season_start_month, 5)
         self.assertEqual(settings.tourist_tax_season_end_month, 9)
 
+    def test_update_booking_settings_saves_cleaning_gap_nights_per_block_day(self):
+        response = self.client.post(self.url, {
+            'action': 'update_booking_settings', 'cleaning_gap_nights_per_block_day': '14',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=bookings')
+        self.assertEqual(BookingSettings.load().cleaning_gap_nights_per_block_day, 14)
+
 
 class CleaningTaskValidRangeTests(TestCase):
     """staff/utils.py::cleaning_task_valid_range() - both ends inclusive for both task types
@@ -4148,6 +4241,472 @@ class CleaningTaskValidRangeTests(TestCase):
         min_date, max_date = cleaning_task_valid_range(mid_task)
         self.assertEqual(min_date, self.start + timedelta(days=4))
         self.assertEqual(max_date, self.start + timedelta(days=6))
+
+    def test_unlimited_late_checkout_grant_pushes_the_turnover_floor_a_day_later(self):
+        # 2026-09-09, per Thomas: dragging this clean back onto departure_date would silently
+        # break the "check out whenever you like" promise an unlimited grant makes.
+        LateCheckoutGrant.objects.create(booking=self.booking, time=None)
+        min_date, max_date = cleaning_task_valid_range(self.task)
+        self.assertEqual(min_date, self.end + timedelta(days=1))
+
+    def test_fixed_time_late_checkout_grant_does_not_move_the_turnover_floor(self):
+        # A fixed 11:00/12:00 grant needs no calendar protection at all (staff know exactly when
+        # the property will be ready) - only the unlimited case blocks the date.
+        LateCheckoutGrant.objects.create(booking=self.booking, time=time(11, 0))
+        min_date, max_date = cleaning_task_valid_range(self.task)
+        self.assertEqual(min_date, self.end)
+
+    def test_batch_valid_ranges_agrees_with_the_single_task_path_on_unlimited_grants(self):
+        # StaffCleaningEventsView's calendar feed uses the batched path, not
+        # cleaning_task_valid_range() directly (see batch_cleaning_task_valid_ranges' own
+        # docstring) - both must agree, or the calendar could visually allow a drag the single-task
+        # save endpoint would then reject.
+        LateCheckoutGrant.objects.create(booking=self.booking, time=None)
+        ranges = batch_cleaning_task_valid_ranges([self.task])
+        self.assertEqual(ranges[self.task.pk], cleaning_task_valid_range(self.task))
+        self.assertEqual(ranges[self.task.pk][0], self.end + timedelta(days=1))
+
+
+class LateCheckoutEligibilityTests(TestCase):
+    """staff/utils.py::late_checkout_eligibility() - Thomas's late check-out permissibility rules,
+    2026-09-08. Deliberately tests only the eligibility computation itself, not slot-claiming
+    across bookings (no grant record exists yet - see that function's own docstring)."""
+
+    def setUp(self):
+        self.location = Location.objects.create(title='Eligibility Location')
+        self.property = Property.objects.create(
+            title='Eligibility Property', short_title='ELIGPROP', location=self.location,
+        )
+        self.guest = Guest.objects.create(first_name='Rita', last_name='Nunes', email='eligibility@example.com')
+        self.start = date.today() + timedelta(days=30)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def _other_booking_departing(self, departure_date, location=None):
+        """A separate property (in `location`, defaulting to self.location) with its own confirmed,
+        cleaned booking departing on `departure_date` - used to populate "other same-day cleans"."""
+        location = self.location if location is None else location
+        n = Property.objects.count()
+        property = Property.objects.create(title=f'Other Property {n}', short_title=f'OTHERP{n}', location=location)
+        guest = Guest.objects.create(
+            first_name='Other', last_name=f'Guest{n}', email=f'other-elig-{n}@example.com',
+        )
+        booking = Booking.objects.create(
+            property=property, guest=guest, arrival_date=departure_date - timedelta(days=5),
+            departure_date=departure_date, is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Departure.objects.create(booking=booking, clean=True)
+        return booking
+
+    def _give_same_day_arrival(self):
+        next_guest = Guest.objects.create(first_name='Next', last_name='Guest', email='next-guest-elig@example.com')
+        Booking.objects.create(
+            property=self.property, guest=next_guest, arrival_date=self.end,
+            departure_date=self.end + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_unlimited_when_no_clean_scheduled_at_all(self):
+        # No Departure row at all - sync_cleaning_tasks_for_booking() never creates a turnover task.
+        unlimited, eligible_times = late_checkout_eligibility(self.booking)
+        self.assertTrue(unlimited)
+        self.assertEqual(eligible_times, set())
+
+    def test_unlimited_when_clean_manually_moved_to_a_later_day(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        error = apply_manual_task_date(task, self.end + timedelta(days=1))
+        self.assertIsNone(error)
+        unlimited, eligible_times = late_checkout_eligibility(self.booking)
+        self.assertTrue(unlimited)
+        self.assertEqual(eligible_times, set())
+
+    def test_both_slots_eligible_when_clean_scheduled_and_no_same_day_arrival(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        unlimited, eligible_times = late_checkout_eligibility(self.booking)
+        self.assertFalse(unlimited)
+        self.assertEqual(eligible_times, {time(11, 0), time(12, 0)})
+
+    def test_no_slots_eligible_with_same_day_arrival_and_no_other_cleans(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        self._give_same_day_arrival()
+        unlimited, eligible_times = late_checkout_eligibility(self.booking)
+        self.assertFalse(unlimited)
+        self.assertEqual(eligible_times, set())
+
+    def test_no_slots_eligible_with_same_day_arrival_and_only_one_other_clean(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        self._give_same_day_arrival()
+        self._other_booking_departing(self.end)
+        unlimited, eligible_times = late_checkout_eligibility(self.booking)
+        self.assertEqual(eligible_times, set())
+
+    def test_eleven_oclock_eligible_with_same_day_arrival_and_two_other_cleans(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        self._give_same_day_arrival()
+        self._other_booking_departing(self.end)
+        self._other_booking_departing(self.end)
+        unlimited, eligible_times = late_checkout_eligibility(self.booking)
+        self.assertFalse(unlimited)
+        self.assertEqual(eligible_times, {time(11, 0)})
+
+    def test_both_slots_eligible_with_same_day_arrival_and_three_other_cleans(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        self._give_same_day_arrival()
+        self._other_booking_departing(self.end)
+        self._other_booking_departing(self.end)
+        self._other_booking_departing(self.end)
+        unlimited, eligible_times = late_checkout_eligibility(self.booking)
+        self.assertEqual(eligible_times, {time(11, 0), time(12, 0)})
+
+    def test_other_cleans_in_a_different_location_dont_count(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        self._give_same_day_arrival()
+        other_location = Location.objects.create(title='Other Location')
+        self._other_booking_departing(self.end, location=other_location)
+        self._other_booking_departing(self.end, location=other_location)
+        unlimited, eligible_times = late_checkout_eligibility(self.booking)
+        self.assertEqual(eligible_times, set())
+
+    def test_never_eligible_with_same_day_arrival_and_no_location(self):
+        self.property.location = None
+        self.property.save(update_fields=['location'])
+        Departure.objects.create(booking=self.booking, clean=True)
+        self._give_same_day_arrival()
+        unlimited, eligible_times = late_checkout_eligibility(self.booking)
+        self.assertFalse(unlimited)
+        self.assertEqual(eligible_times, set())
+
+    def test_dismissed_other_task_does_not_count(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        self._give_same_day_arrival()
+        other_booking = self._other_booking_departing(self.end)
+        self._other_booking_departing(self.end)
+        other_task = CleaningTask.objects.get(booking=other_booking, task_type='turnover')
+        other_task.status = 'dismissed'
+        other_task.save(update_fields=['status'])
+        # Only 1 real (non-dismissed) other clean left - below the 2-clean threshold for 11:00.
+        unlimited, eligible_times = late_checkout_eligibility(self.booking)
+        self.assertEqual(eligible_times, set())
+
+
+class GrantLateCheckoutTests(TestCase):
+    """staff/utils.py::grant_late_checkout() - the location-wide slot cap and unlimited-case
+    calendar block layered on top of late_checkout_eligibility(), 2026-09-08 per Thomas."""
+
+    def setUp(self):
+        self.location = Location.objects.create(title='Grant Location')
+        self.property = Property.objects.create(
+            title='Grant Property', short_title='GRANTPROP', location=self.location,
+        )
+        self.guest = Guest.objects.create(first_name='Mara', last_name='Dias', email='grant@example.com')
+        self.start = date.today() + timedelta(days=30)
+        self.end = self.start + timedelta(days=7)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def _other_property_booking(self, departure_date, location=None):
+        location = self.location if location is None else location
+        n = Property.objects.count()
+        property = Property.objects.create(title=f'Grant Other {n}', short_title=f'GRANTOTH{n}', location=location)
+        guest = Guest.objects.create(
+            first_name='Other', last_name=f'Guest{n}', email=f'grant-other-{n}@example.com',
+        )
+        booking = Booking.objects.create(
+            property=property, guest=guest, arrival_date=departure_date - timedelta(days=5),
+            departure_date=departure_date, is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Departure.objects.create(booking=booking, clean=True)
+        return booking
+
+    def test_unlimited_grant_creates_block_booking_covering_the_departure_date(self):
+        # No Departure at all - late_checkout_eligibility() returns unlimited=True (rule 1).
+        grant, error = grant_late_checkout(self.booking)
+        self.assertIsNone(error)
+        self.assertIsNone(grant.time)
+        self.assertIsNotNone(grant.block_booking)
+        self.assertEqual(grant.block_booking.property, self.property)
+        self.assertEqual(grant.block_booking.arrival_date, self.end)
+        self.assertEqual(grant.block_booking.departure_date, self.end + timedelta(days=1))
+        self.assertEqual(grant.block_booking.guest.last_name, BLOCK_LATE_CHECK_OUT_LAST_NAME)
+        # is_owner=False (2026-09-09, per Thomas) - the legacy PIMS convention this was migrated
+        # from used is_owner=True as a block signal, but that made these show up in the Owner
+        # Suite as if they were the owner's own stay. enquiry_source='Direct' still matches the
+        # legacy convention - that part was never the problem.
+        self.assertFalse(grant.block_booking.is_owner)
+        self.assertEqual(grant.block_booking.enquiry_source, 'Direct')
+        # The whole point: a new arrival can no longer land on the departure date.
+        self.assertTrue(
+            Booking.objects.overlapping(self.property, self.end, self.end + timedelta(days=1)).exists()
+        )
+
+    def test_unlimited_grant_reuses_the_existing_canonical_block_guest(self):
+        # The migration folded every legacy duplicate onto one canonical Guest row - a newly
+        # granted block must reuse that same row (matched case-insensitively, same as every other
+        # query against this guest), never create a second one.
+        canonical_guest = Guest.objects.create(first_name=None, last_name='BLOCK - Late Check-out')
+        grant, error = grant_late_checkout(self.booking)
+        self.assertIsNone(error)
+        self.assertEqual(grant.block_booking.guest_id, canonical_guest.pk)
+        self.assertEqual(Guest.objects.filter(last_name__iexact='block - late check-out').count(), 1)
+
+    def test_unlimited_grant_rejected_when_not_eligible(self):
+        Departure.objects.create(booking=self.booking, clean=True)  # clean scheduled today - not rule 1
+        grant, error = grant_late_checkout(self.booking)
+        self.assertIsNone(grant)
+        self.assertIn('not available', error)
+        self.assertFalse(LateCheckoutGrant.objects.filter(booking=self.booking).exists())
+
+    def test_slotted_grant_succeeds_when_eligible(self):
+        Departure.objects.create(booking=self.booking, clean=True)  # no same-day arrival -> both eligible
+        grant, error = grant_late_checkout(self.booking, requested_time=time(11, 0))
+        self.assertIsNone(error)
+        self.assertEqual(grant.time, time(11, 0))
+        self.assertIsNone(grant.block_booking)
+
+    def test_slotted_grant_rejected_when_time_not_eligible(self):
+        # Same-day arrival, no other same-day cleans at all - nothing is eligible (rules 6/7).
+        Departure.objects.create(booking=self.booking, clean=True)
+        next_guest = Guest.objects.create(first_name='Next', last_name='Guest', email='next-grant@example.com')
+        Booking.objects.create(
+            property=self.property, guest=next_guest, arrival_date=self.end,
+            departure_date=self.end + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        grant, error = grant_late_checkout(self.booking, requested_time=time(11, 0))
+        self.assertIsNone(grant)
+        self.assertIn('not available', error)
+
+    def test_slotted_grant_rejected_for_an_invalid_time(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        grant, error = grant_late_checkout(self.booking, requested_time=time(13, 0))
+        self.assertIsNone(grant)
+        self.assertEqual(error, 'Not a valid late check-out time.')
+
+    def test_second_property_in_same_location_cant_claim_an_already_granted_slot(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        grant, error = grant_late_checkout(self.booking, requested_time=time(11, 0))
+        self.assertIsNone(error)
+
+        other_booking = self._other_property_booking(self.end)
+        other_grant, other_error = grant_late_checkout(other_booking, requested_time=time(11, 0))
+        self.assertIsNone(other_grant)
+        self.assertIn('already been claimed', other_error)
+
+        # The 12:00 slot is untouched - still grantable to the same property.
+        other_grant_12, error_12 = grant_late_checkout(other_booking, requested_time=time(12, 0))
+        self.assertIsNone(error_12)
+        self.assertEqual(other_grant_12.time, time(12, 0))
+
+    def test_properties_in_different_locations_dont_share_the_cap(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        grant, error = grant_late_checkout(self.booking, requested_time=time(11, 0))
+        self.assertIsNone(error)
+
+        other_location = Location.objects.create(title='Other Grant Location')
+        other_booking = self._other_property_booking(self.end, location=other_location)
+        other_grant, other_error = grant_late_checkout(other_booking, requested_time=time(11, 0))
+        self.assertIsNone(other_error)
+        self.assertEqual(other_grant.time, time(11, 0))
+
+    def test_a_booking_cant_be_granted_twice(self):
+        grant, error = grant_late_checkout(self.booking)
+        self.assertIsNone(error)
+        second_grant, second_error = grant_late_checkout(self.booking)
+        self.assertIsNone(second_grant)
+        self.assertEqual(second_error, 'This booking already has a late check-out granted.')
+
+    def test_revoking_an_unlimited_grant_deletes_the_block_booking_and_the_grant(self):
+        grant, error = grant_late_checkout(self.booking)
+        self.assertIsNone(error)
+        block_booking_id = grant.block_booking_id
+        revoke_late_checkout(grant)
+        self.assertFalse(Booking.objects.filter(pk=block_booking_id).exists())
+        self.assertFalse(LateCheckoutGrant.objects.filter(booking=self.booking).exists())
+        # The date is free again immediately.
+        self.assertFalse(
+            Booking.objects.overlapping(self.property, self.end, self.end + timedelta(days=1)).exists()
+        )
+
+    def test_revoking_a_slotted_grant_frees_it_for_another_property_in_the_same_location(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        grant, error = grant_late_checkout(self.booking, requested_time=time(11, 0))
+        self.assertIsNone(error)
+
+        other_booking = self._other_property_booking(self.end)
+        blocked_grant, blocked_error = grant_late_checkout(other_booking, requested_time=time(11, 0))
+        self.assertIsNone(blocked_grant)
+        self.assertIn('already been claimed', blocked_error)
+
+        revoke_late_checkout(grant)
+        self.assertFalse(LateCheckoutGrant.objects.filter(booking=self.booking).exists())
+        freed_grant, freed_error = grant_late_checkout(other_booking, requested_time=time(11, 0))
+        self.assertIsNone(freed_error)
+        self.assertEqual(freed_grant.time, time(11, 0))
+
+    def test_re_granting_after_revoke_is_allowed(self):
+        grant, error = grant_late_checkout(self.booking)
+        self.assertIsNone(error)
+        revoke_late_checkout(grant)
+        self.booking.refresh_from_db()  # clear the cached reverse-OneToOne accessor
+        second_grant, second_error = grant_late_checkout(self.booking)
+        self.assertIsNone(second_error)
+        self.assertIsNotNone(second_grant)
+
+
+class CleaningGapBlockTests(TestCase):
+    """staff/utils.py::sync_cleaning_gap_blocks_for_property() - the trailing cleaning-gap block
+    for long stays, 2026-09-09 per Thomas. Signal-driven (staff/signals.py), so every test here
+    exercises it purely by creating/editing real Booking rows, the same way it fires in
+    production - no direct calls to the sync functions themselves."""
+
+    def setUp(self):
+        settings = BookingSettings.load()
+        settings.cleaning_gap_nights_per_block_day = 10
+        settings.save()
+        self.property = Property.objects.create(title='Gap Property', short_title='GAPPROP')
+        self.start = date.today() + timedelta(days=30)
+
+    def _booking(self, arrival, departure, **overrides):
+        n = Booking.objects.count()
+        guest = overrides.pop('guest', None) or Guest.objects.create(
+            first_name='Guest', last_name=f'Gap{n}', email=f'gap-guest-{n}@example.com',
+        )
+        defaults = dict(
+            property=self.property, guest=guest, arrival_date=arrival, departure_date=departure,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        defaults.update(overrides)
+        return Booking.objects.create(**defaults)
+
+    def test_a_stay_shorter_than_the_threshold_gets_no_block(self):
+        booking = self._booking(self.start, self.start + timedelta(days=9))  # 9 // 10 = 0
+        self.assertFalse(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+    def test_a_qualifying_stay_with_no_next_booking_blocks_the_full_calculated_days(self):
+        departure = self.start + timedelta(days=25)  # 25 // 10 = 2 days
+        booking = self._booking(self.start, departure)
+        gap_block = CleaningGapBlock.objects.get(booking=booking)
+        self.assertEqual(gap_block.block_booking.arrival_date, departure)
+        self.assertEqual(gap_block.block_booking.departure_date, departure + timedelta(days=2))
+        self.assertEqual(gap_block.block_booking.guest.last_name, BLOCK_UNBOOKABLE_LAST_NAME)
+        self.assertFalse(gap_block.block_booking.is_owner)
+
+    def test_booking_up_to_an_existing_arrival_needs_no_block(self):
+        departure = self.start + timedelta(days=25)
+        booking = self._booking(self.start, departure)
+        self.assertTrue(CleaningGapBlock.objects.filter(booking=booking).exists())
+        # Back-to-back turnover - the next booking arrives exactly on this one's departure.
+        self._booking(departure, departure + timedelta(days=5))
+        self.assertFalse(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+    def test_a_short_gap_caps_the_block_at_the_gap(self):
+        departure = self.start + timedelta(days=25)  # calculated 2 days
+        booking = self._booking(self.start, departure)
+        next_arrival = departure + timedelta(days=1)  # only a 1-day gap
+        self._booking(next_arrival, next_arrival + timedelta(days=5))
+        gap_block = CleaningGapBlock.objects.get(booking=booking)
+        self.assertEqual(gap_block.block_booking.departure_date, next_arrival)
+
+    def test_a_long_gap_only_blocks_the_calculated_days(self):
+        departure = self.start + timedelta(days=25)  # calculated 2 days
+        booking = self._booking(self.start, departure)
+        next_arrival = departure + timedelta(days=10)  # gap of 10, well beyond the 2 calculated
+        self._booking(next_arrival, next_arrival + timedelta(days=5))
+        gap_block = CleaningGapBlock.objects.get(booking=booking)
+        self.assertEqual(gap_block.block_booking.departure_date, departure + timedelta(days=2))
+
+    def test_cancelling_the_long_stay_removes_its_block(self):
+        departure = self.start + timedelta(days=25)
+        booking = self._booking(self.start, departure)
+        self.assertTrue(CleaningGapBlock.objects.filter(booking=booking).exists())
+        booking.enquiry_status = 'Cancelled by guest'
+        booking.save(update_fields=['enquiry_status'])
+        self.assertFalse(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+    def test_cancelling_the_next_booking_widens_an_existing_block_up_to_the_new_gap(self):
+        departure = self.start + timedelta(days=25)  # calculated 2 days
+        booking = self._booking(self.start, departure)
+        next_arrival = departure + timedelta(days=1)  # capped to 1 day for now
+        blocking_booking = self._booking(next_arrival, next_arrival + timedelta(days=5))
+        gap_block = CleaningGapBlock.objects.get(booking=booking)
+        self.assertEqual(gap_block.block_booking.departure_date, next_arrival)
+
+        blocking_booking.enquiry_status = 'Cancelled by guest'
+        blocking_booking.save(update_fields=['enquiry_status'])
+        gap_block.block_booking.refresh_from_db()
+        self.assertEqual(gap_block.block_booking.departure_date, departure + timedelta(days=2))
+
+    def test_a_new_booking_filling_part_of_the_gap_shrinks_an_existing_block(self):
+        departure = self.start + timedelta(days=25)  # calculated 2 days, no next booking yet
+        booking = self._booking(self.start, departure)
+        gap_block = CleaningGapBlock.objects.get(booking=booking)
+        self.assertEqual(gap_block.block_booking.departure_date, departure + timedelta(days=2))
+
+        self._booking(departure + timedelta(days=1), departure + timedelta(days=6))
+        gap_block.block_booking.refresh_from_db()
+        self.assertEqual(gap_block.block_booking.departure_date, departure + timedelta(days=1))
+
+    def test_default_setting_of_zero_never_creates_a_block(self):
+        BookingSettings.objects.filter(pk=1).update(cleaning_gap_nights_per_block_day=0)
+        booking = self._booking(self.start, self.start + timedelta(days=60))
+        self.assertFalse(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+    def test_turning_the_setting_off_removes_an_existing_block_on_the_next_booking_save(self):
+        # BookingSettings itself isn't a watched signal sender (unlike CheckinSettings/
+        # PaymentSettings) - flipping this setting doesn't proactively resync every property, only
+        # the next real Booking save on one does. Documented limitation, exercised explicitly here.
+        departure = self.start + timedelta(days=25)
+        booking = self._booking(self.start, departure)
+        self.assertTrue(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+        settings = BookingSettings.load()
+        settings.cleaning_gap_nights_per_block_day = 0
+        settings.save()
+        booking.save(update_fields=['last_updated'])
+        self.assertFalse(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+    def test_creating_a_qualifying_booking_creates_exactly_one_block_no_recursion(self):
+        # Regression test for the is_block_booking() guard in staff/signals.py - without it,
+        # _create_cleaning_gap_block_booking()'s own Booking.objects.create() would re-fire the
+        # same signal and recurse unboundedly. This would raise RecursionError, not just fail an
+        # assertion, if the guard were ever removed.
+        departure = self.start + timedelta(days=25)
+        booking = self._booking(self.start, departure)
+        self.assertEqual(CleaningGapBlock.objects.filter(booking=booking).count(), 1)
+        self.assertEqual(
+            Booking.objects.filter(
+                property=self.property, guest__last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME,
+            ).count(),
+            1,
+        )
+
+    def test_the_block_makes_those_dates_unavailable_to_search(self):
+        departure = self.start + timedelta(days=25)  # calculated 2 days
+        self._booking(self.start, departure)
+        self.assertTrue(
+            Booking.objects.overlapping(self.property, departure, departure + timedelta(days=1)).exists()
+        )
+        # The day right after the 2-day block is genuinely free again.
+        self.assertFalse(
+            Booking.objects.overlapping(
+                self.property, departure + timedelta(days=2), departure + timedelta(days=3),
+            ).exists()
+        )
 
 
 class ApplyManualTaskDateTests(TestCase):
@@ -4203,6 +4762,22 @@ class ApplyManualTaskDateTests(TestCase):
         self.assertIsNotNone(error)
         self.task.refresh_from_db()
         self.assertFalse(self.task.manually_scheduled)
+
+    def test_dragging_back_onto_an_unlimited_late_checkout_date_is_rejected(self):
+        # 2026-09-09, per Thomas: the whole point of granting "check out whenever you like" is
+        # that staff can't then turn around and schedule a clean on that same date after all.
+        # First move the task off departure_date entirely (the actual precondition for granting
+        # unlimited in the first place - see late_checkout_eligibility()'s rule 1).
+        apply_manual_task_date(self.task, self.end + timedelta(days=1))
+        LateCheckoutGrant.objects.create(booking=self.booking, time=None)
+        # refresh_from_db() clears self.task.booking's cached reverse-OneToOne lookup - without
+        # it, the FIRST apply_manual_task_date() call above already queried (and Django cached)
+        # "no grant exists yet" on that same booking instance, before the grant was created.
+        self.task.refresh_from_db()
+        error = apply_manual_task_date(self.task, self.end)
+        self.assertIsNotNone(error)
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.date, self.end + timedelta(days=1))
 
 
 class StaffCleaningCalendarEndpointTests(TestCase):
@@ -5403,6 +5978,25 @@ class StaffReportsTests(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['booking'].property, self.property)
 
+    def test_block_bookings_never_appear_as_a_report_row(self):
+        # 2026-09-09, per Thomas: a calendar-blocking placeholder ('BLOCK - Late Check-out'/
+        # 'BLOCK - Unbookable') carries VALID_BOOKING_STATUSES same as a real booking, so without
+        # an explicit exclusion it would show up as a zero-money row with a guest name like
+        # "BLOCK - Late Check-out" - on both the staff Reports page and, worse, the owner-facing
+        # one (owners/views.py::OwnerReportView).
+        self._make_booking(5, 9)  # a real booking, so the report isn't trivially empty either way
+        for last_name in (BLOCK_LATE_CHECK_OUT_LAST_NAME, BLOCK_UNBOOKABLE_LAST_NAME):
+            block_guest = Guest.objects.create(first_name=None, last_name=last_name)
+            Booking.objects.create(
+                property=self.property, guest=block_guest,
+                arrival_date=self.today + timedelta(days=6), departure_date=self.today + timedelta(days=7),
+                is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Direct',
+                adults=0, children=0, babies=0, last_updated=timezone.now(),
+            )
+        rows = booking_report_rows(self.today, self.today + timedelta(days=10))
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn('BLOCK', rows[0]['booking'].guest.last_name.upper())
+
     def test_report_totals_sums_and_excludes_unavailable_figures(self):
         self._make_booking(5, 9)
         self._make_booking(6, 10, is_owner=True)
@@ -5689,6 +6283,22 @@ class MonthlyStaysRowsTests(TestCase):
         march = next(r for r in rows if r['month'].month == 3)
         self.assertEqual(march['groups']['Airbnb']['arrivals'], 1)
 
+    def test_late_checkout_block_booking_never_counted_as_a_stay(self):
+        # 2026-09-09: block bookings are is_owner=False now (previously is_owner=True kept them
+        # out of this is_owner=False-vs-'Owner' split incidentally) - must be excluded by guest
+        # name instead, or they'd inflate 'Direct' with placeholder, zero-adult "stays".
+        block_guest = Guest.objects.create(first_name=None, last_name=BLOCK_LATE_CHECK_OUT_LAST_NAME)
+        Booking.objects.create(
+            property=self.property, guest=block_guest, arrival_date=date(2024, 3, 20),
+            departure_date=date(2024, 3, 21), is_owner=False, enquiry_status='Booking confirmed',
+            enquiry_source='Direct', adults=0, children=0, babies=0, last_updated=timezone.now(),
+        )
+        rows = monthly_stays_rows(2024, include_owner=True)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups']['Total']['arrivals'], 0)
+        self.assertEqual(march['groups']['Direct']['arrivals'], 0)
+        self.assertEqual(march['groups']['Owner']['arrivals'], 0)
+
     def test_group_percent_share_of_the_months_total(self):
         self._make_booking(date(2024, 3, 5), date(2024, 3, 9), enquiry_source='Website')  # 4 nights
         self._make_booking(date(2024, 3, 10), date(2024, 3, 14), enquiry_source='Airbnb')  # 4 nights
@@ -5905,6 +6515,20 @@ class MonthlyBookingsRowsTests(TestCase):
         march = next(r for r in rows if r['month'].month == 3)
         self.assertEqual(march['groups']['Airbnb']['bookings'], 0)
         self.assertEqual(march['groups']['Airbnb']['enquiries'], 1)
+
+    def test_late_checkout_block_booking_never_counted_as_a_booking_or_enquiry(self):
+        # 2026-09-09: block bookings are is_owner=False now - the is_owner=False filter here alone
+        # would otherwise count a granted late-checkout block as a real Direct booking/enquiry.
+        block_guest = Guest.objects.create(first_name=None, last_name=BLOCK_LATE_CHECK_OUT_LAST_NAME)
+        Booking.objects.create(
+            property=self.property, guest=block_guest, arrival_date=date(2024, 3, 12),
+            departure_date=date(2024, 3, 13), is_owner=False, enquiry_status='Booking confirmed',
+            enquiry_source='Direct', adults=0, children=0, babies=0, last_updated=timezone.now(),
+        )
+        rows = monthly_bookings_rows(2024)
+        march = next(r for r in rows if r['month'].month == 3)
+        self.assertEqual(march['groups']['Direct']['bookings'], 0)
+        self.assertEqual(march['groups']['Direct']['enquiries'], 0)
 
     def test_owner_stay_excluded_entirely(self):
         self._make_booking(date(2024, 3, 15), enquiry_source='Owner Suite', is_owner=True)

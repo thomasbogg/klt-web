@@ -4,7 +4,7 @@ from django.db.models import Max
 from django.utils import timezone
 
 import env_settings
-from bookings.utils import BLOCK_GUEST_LAST_NAMES, BLOCK_UNBOOKABLE_LAST_NAME
+from bookings.utils import BLOCK_GUEST_LAST_NAMES, BLOCK_LATE_CHECK_OUT_LAST_NAME, BLOCK_UNBOOKABLE_LAST_NAME
 from properties.utils import natural_sort_key
 
 # PIMS' own tab bar, minus 'Open Enquiry' - every klt-web Booking already has committed dates
@@ -436,14 +436,15 @@ def sync_freshen_tasks_for_property(property):
     Departure row (bookings/utils.py::sync_ical_link()) so they never register as a "last clean"
     even though the platform's own cleaner may have serviced the property in between.
 
-    'BLOCK - Unbookable' placeholder bookings are excluded from the walk entirely (2026-09-03, per
-    Thomas) - same reasoning as sync_cleaning_tasks_for_booking()'s own gate: nobody arrives for
-    one, so a freshen task tied to its "arrival" is meaningless. They're still fully visible to
-    property_last_clean_before()'s gap calculation for every *other* booking though (simply by
-    never contributing a CleaningTask of their own to that chain) - an unbookable period says
-    nothing about whether the property is actually clean, unlike an owner's own clean=False
-    departure (see that function's own docstring), so it's correct for a long unbookable stretch to
-    still count toward the next real guest's gap, not get treated as covering it."""
+    Both BLOCK placeholder categories ('BLOCK - Unbookable' and, since it started actually being
+    created 2026-09-08 for granted unlimited late check-outs, 'BLOCK - Late Check-out') are
+    excluded from the walk entirely - same reasoning as sync_cleaning_tasks_for_booking()'s own
+    gate: nobody arrives for either, so a freshen task tied to its "arrival" is meaningless. They're
+    still fully visible to property_last_clean_before()'s gap calculation for every *other* booking
+    though (simply by never contributing a CleaningTask of their own to that chain) - a blocked
+    period says nothing about whether the property is actually clean, unlike an owner's own
+    clean=False departure (see that function's own docstring), so it's correct for a long blocked
+    stretch to still count toward the next real guest's gap, not get treated as covering it."""
     from bookings.models import Booking
     from staff.models import CleaningTask
 
@@ -454,7 +455,9 @@ def sync_freshen_tasks_for_property(property):
 
     bookings = Booking.objects.filter(property=property).exclude(
         enquiry_status__in=CLOSED_STATUSES,
-    ).exclude(guest__last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME).order_by('arrival_date')
+    ).exclude(guest__last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME).exclude(
+        guest__last_name__iexact=BLOCK_LATE_CHECK_OUT_LAST_NAME,
+    ).order_by('arrival_date')
 
     today = timezone.now().date()
     for booking in bookings:
@@ -493,6 +496,117 @@ def sync_freshen_tasks_for_property(property):
                 existing.save(update_fields=['status', 'dismissed_by', 'dismissed_at', 'dismissed_reason'])
 
 
+def _create_cleaning_gap_block_booking(booking, block_departure_date):
+    """The calendar-occupying side effect of a trailing cleaning-gap block (see
+    sync_cleaning_gap_blocks_for_property() below) - a 'BLOCK - Unbookable' fake-guest Booking
+    covering [booking.departure_date, block_departure_date). Exact mirror of
+    _create_late_checkout_block_booking() above (same canonical-guest reuse, same is_owner=False
+    reasoning) - only the guest sentinel and the departure date (caller-computed, not always +1)
+    differ."""
+    from bookings.models import Booking
+    from guests.models import Guest
+
+    guest = Guest.objects.filter(last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME).order_by('pk').first()
+    if guest is None:
+        guest = Guest.objects.create(last_name=BLOCK_UNBOOKABLE_LAST_NAME, first_name=None)
+    return Booking.objects.create(
+        property=booking.property, guest=guest,
+        arrival_date=booking.departure_date, departure_date=block_departure_date,
+        is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Direct',
+        adults=0, children=0, babies=0, last_updated=timezone.now(),
+    )
+
+
+def _sync_cleaning_gap_block_for_booking(booking, nights_per_block_day):
+    """Per-booking upsert behind sync_cleaning_gap_blocks_for_property() below - never called
+    directly from a signal itself (see that function's own docstring for why). Idempotent, same
+    shape as sync_cleaning_tasks_for_booking(): a cancelled or too-short-to-qualify booking never
+    has a block, a booking whose circumstances change resizes its existing block in place rather
+    than deleting and recreating it.
+
+    Thomas's rule, in order:
+    1. A cancelled booking, or the block-booking placeholder itself (is_block_booking() - a block
+       is never a source for its own further block), never has one.
+    2. nights // nights_per_block_day (floor) is how many days get blocked - 0 for a stay shorter
+       than nights_per_block_day, same as "not enough nights to earn a block day yet".
+    3. No block at all if the property's next confirmed booking already arrives exactly on this
+       one's departure date (gap=0) - a normal back-to-back turnover needs no extra buffer, per
+       Thomas's own framing ("book up to an existing arrival, nothing happens").
+    4. Otherwise the block is capped at the actual gap (never reaching into, let alone past,
+       another confirmed booking) - a short gap just gets fully blocked rather than left as a
+       booking-length mismatch someone would need to notice and fix by hand."""
+    from staff.models import CleaningGapBlock
+
+    existing = getattr(booking, 'cleaning_gap_block', None)
+
+    if booking.enquiry_status in CLOSED_STATUSES or is_block_booking(booking):
+        if existing is not None:
+            existing.block_booking.delete()
+        return
+
+    nights = (booking.departure_date - booking.arrival_date).days
+    calculated_days = nights // nights_per_block_day
+    if calculated_days <= 0:
+        if existing is not None:
+            existing.block_booking.delete()
+        return
+
+    from bookings.models import Booking
+
+    next_arrival = Booking.objects.next_confirmed_arrival_after(booking.property, booking.departure_date)
+    gap = (next_arrival - booking.departure_date).days if next_arrival else None
+    if gap == 0:
+        if existing is not None:
+            existing.block_booking.delete()
+        return
+
+    block_days = calculated_days if gap is None else min(calculated_days, gap)
+    block_departure_date = booking.departure_date + timedelta(days=block_days)
+
+    if existing is not None:
+        block_booking = existing.block_booking
+        if block_booking.departure_date != block_departure_date:
+            block_booking.departure_date = block_departure_date
+            block_booking.save(update_fields=['departure_date'])
+    else:
+        block_booking = _create_cleaning_gap_block_booking(booking, block_departure_date)
+        CleaningGapBlock.objects.create(booking=booking, block_booking=block_booking)
+
+
+def sync_cleaning_gap_blocks_for_property(property):
+    """Property-scoped, signal-driven sweep keeping each qualifying booking's trailing cleaning
+    gap block in sync (staff/signals.py, 2026-09-09 per Thomas) - same shape and reasoning as
+    sync_freshen_tasks_for_property() above: a gap depends on a property's whole booking
+    timeline, so it can't be driven off one booking's own save alone (a *different* booking being
+    created, cancelled, or moved nearby must reshrink/regrow an existing block that booking itself
+    never touched).
+
+    Called only from staff/signals.py's Booking receiver, guarded there by
+    `if not is_block_booking(instance)`. That guard is load-bearing, not incidental: the block
+    Booking this function creates is itself an instance of the exact model the signal watches.
+    Without it, _create_cleaning_gap_block_booking()'s own Booking.objects.create() would
+    synchronously re-fire that same receiver, re-enter this function for the same property before
+    the outer call has had a chance to create the CleaningGapBlock row that would otherwise say
+    "already handled", and create a second (then third, ...) block booking - unbounded recursion.
+    Skipping the whole sweep whenever the just-saved Booking is itself a block short-circuits the
+    nested call immediately, since is_block_booking() is true for every save this function's own
+    create/resize steps trigger. A block being deleted only fires post_delete, which nothing here
+    listens to, so no recursion risk on that side either - same as revoke_late_checkout()."""
+    from bookings.models import Booking, BookingSettings
+    from staff.models import CleaningGapBlock
+
+    nights_per_block_day = BookingSettings.load().cleaning_gap_nights_per_block_day
+    if not nights_per_block_day:
+        for gap_block in CleaningGapBlock.objects.filter(
+            booking__property=property,
+        ).select_related('block_booking'):
+            gap_block.block_booking.delete()
+        return
+
+    for booking in Booking.objects.filter(property=property).order_by('arrival_date'):
+        _sync_cleaning_gap_block_for_booking(booking, nights_per_block_day)
+
+
 def _sync_task_date(task, computed_date):
     """computed_date = booking.departure_date (turnover) or extra.mid_stay_clean_date (mid_stay) -
     the date this task would auto-place at absent any manual drag (see
@@ -524,6 +638,22 @@ def _sync_task_date(task, computed_date):
         task.save(update_fields=['date', 'manually_scheduled', 'auto_date'])
 
 
+def _turnover_min_date(booking):
+    """The earliest date `booking`'s own turnover clean may occupy - normally departure_date, but
+    the day after that when an unlimited LateCheckoutGrant exists for it (time=None - see
+    grant_late_checkout() below). Dragging the clean back onto the very date staff already told
+    this guest no clean was happening at all would silently break that promise (2026-09-09, per
+    Thomas's own stated calendar-blocking requirement: "no longer permitting the clean to be
+    (re)assigned to that date"). Shared by cleaning_task_valid_range() and
+    batch_cleaning_task_valid_ranges() below, which otherwise duplicate this same turnover-range
+    math for batching efficiency - keeping this one piece of logic in a single place stops the two
+    from silently drifting apart on exactly this kind of edge case."""
+    grant = getattr(booking, 'late_checkout_grant', None)
+    if grant is not None and grant.time is None:
+        return booking.departure_date + timedelta(days=1)
+    return booking.departure_date
+
+
 def cleaning_task_valid_range(task):
     """(min_date, max_date_or_None) this task's date may occupy, both ends inclusive - a turnover
     clean can land on the same day the next guest arrives (a normal same-day turnover: guest
@@ -540,7 +670,7 @@ def cleaning_task_valid_range(task):
 
     booking = task.booking
     if task.task_type == 'turnover':
-        min_date = booking.departure_date
+        min_date = _turnover_min_date(booking)
         return min_date, Booking.objects.next_confirmed_arrival_after(booking.property, min_date)
     if task.task_type == 'freshen':
         last_clean = property_last_clean_before(booking.property, booking)
@@ -571,7 +701,7 @@ def batch_cleaning_task_valid_ranges(tasks):
 
     ranges = {}
     for task in turnover_tasks:
-        min_date = task.booking.departure_date
+        min_date = _turnover_min_date(task.booking)
         dates = arrivals_by_property.get(task.booking.property_id, [])
         idx = bisect.bisect_left(dates, min_date)
         max_date = dates[idx] if idx < len(dates) else None
@@ -581,6 +711,192 @@ def batch_cleaning_task_valid_ranges(tasks):
         if task.task_type != 'turnover':
             ranges[task.pk] = cleaning_task_valid_range(task)
     return ranges
+
+
+def late_checkout_eligibility(booking):
+    """Which late check-out times are permissible for `booking`'s departure, before accounting for
+    whether another property in the same Location has already claimed one of them - that part
+    needs a persisted grant record, which doesn't exist yet (2026-09-08, per Thomas: this function
+    is deliberately scoped to just the permissibility rules themselves, as a standalone, testable
+    piece ahead of the calendar-blocking/guest-form work that will consume it). Once that grant
+    record exists, a caller subtracts whatever's already been granted for this property's Location
+    and date from the `eligible_times` this returns - simple set difference, not modelled here.
+
+    Returns (unlimited, eligible_times):
+
+    - unlimited=True means no CleaningTask is actually scheduled at THIS property on its own
+      departure_date - either none was ever created (e.g. Departure.clean=False - see
+      sync_cleaning_tasks_for_booking()), or staff manually dragged it to a later date
+      (cleaning_task_valid_range() only ever allows moving a turnover task later, never earlier
+      than its own departure_date - see that function's own docstring). Either way, no one is
+      coming to clean this property that day, so there's no capacity to protect and the guest can
+      check out whenever they like. eligible_times is always empty in this case - a fixed 11:00/
+      12:00 slot would be a strictly worse offer than "whenever", and isn't location-capped either,
+      since it isn't competing with anything.
+
+    - Otherwise, a turnover clean IS scheduled here today. If this property has no same-day
+      arrival of its own, staff are already coming regardless, so both LATE_CHECKOUT_TIMES are
+      eligible in principle (subject only to the location-wide 1-slot-per-time cap layered on by
+      the caller, not modelled here).
+
+    - If this property DOES have a same-day arrival, its own clean is normally on the critical
+      path (must finish before the new guest checks in), so it's only eligible if OTHER same-day
+      turnover cleans in the same Location give the crew enough slack to justify the delay: 2 other
+      same-day cleans for 11:00, 3 for 12:00 (per Thomas - deliberately NOT requiring those other
+      cleans to be confirmed early-finishing departures; an earlier draft of this rule required
+      that, but more same-day cleans scheduled at all already implies the crew has room to juggle
+      the day's order, so the count alone is the trigger). A property with no Location at all can
+      never satisfy "2 other same-day cleans" (nothing to share slack with), so it's never eligible
+      in this branch."""
+    from bookings.models import Booking
+    from staff.models import LATE_CHECKOUT_TIMES, CleaningTask
+
+    property = booking.property
+    departure_date = booking.departure_date
+
+    own_task = CleaningTask.objects.filter(
+        booking=booking, task_type='turnover',
+    ).exclude(status='dismissed').first()
+    clean_scheduled_today = own_task is not None and own_task.date == departure_date
+    if not clean_scheduled_today:
+        return True, set()
+
+    same_day_arrival = (
+        Booking.objects.next_confirmed_arrival_after(property, departure_date) == departure_date
+    )
+    if not same_day_arrival:
+        return False, set(LATE_CHECKOUT_TIMES)
+
+    if property.location_id is None:
+        return False, set()
+
+    other_same_day_count = CleaningTask.objects.filter(
+        task_type='turnover', date=departure_date, booking__property__location_id=property.location_id,
+    ).exclude(status='dismissed').exclude(booking=booking).count()
+
+    eligible_times = set()
+    if other_same_day_count >= 2:
+        eligible_times.add(time(11, 0))
+    if other_same_day_count >= 3:
+        eligible_times.add(time(12, 0))
+    return False, eligible_times
+
+
+def _create_late_checkout_block_booking(booking):
+    """The calendar-occupying side effect of an unlimited (time=None) LateCheckoutGrant - a
+    'BLOCK - Late Check-out' fake-guest Booking covering [departure_date, departure_date + 1).
+    is_owner=False (2026-09-09, per Thomas): the legacy PIMS system that migrated 110+ historical
+    rows of this same placeholder used is_owner=True instead, purely as a convenient way to keep
+    them off guest-facing surfaces - but that's incomplete double duty, since it also makes them
+    show up in the Owner Suite ("My Stays") as if they were the owner's own booking, which they
+    aren't. The real "this isn't a guest stay" signal this codebase already has is the guest's own
+    last_name (BLOCK_GUEST_LAST_NAMES) - every place that actually needs to exclude a block
+    (calendar/check-in/cleaning sync) already keys off that, never is_owner, so is_owner is free to
+    mean what it actually says. All 279 existing historical block rows (both categories) were
+    bulk-updated to is_owner=False to match, same day - see staff/monthly_reports.py's
+    _bookings_totals_for_month/_stays_totals_for_month for the two report functions that had to
+    gain an explicit block exclusion alongside this change, since they'd previously leaned on
+    is_owner=True to keep blocks out of guest-booking counts.
+
+    Reuses the single canonical shared Guest row the legacy migration already folded every
+    duplicate onto (guest identity is meaningless here - only guest__last_name is ever queried
+    against, see BookingQuerySet.next_confirmed_arrival_after and sync_freshen_tasks_for_property
+    above) - looked up case-insensitively since that's how every query elsewhere already matches
+    it, rather than by exact string, so this never creates a second duplicate guest row if the
+    casing on file ever differs."""
+    from bookings.models import Booking
+    from guests.models import Guest
+
+    guest = Guest.objects.filter(last_name__iexact=BLOCK_LATE_CHECK_OUT_LAST_NAME).order_by('pk').first()
+    if guest is None:
+        guest = Guest.objects.create(last_name=BLOCK_LATE_CHECK_OUT_LAST_NAME, first_name=None)
+    return Booking.objects.create(
+        property=booking.property, guest=guest,
+        arrival_date=booking.departure_date, departure_date=booking.departure_date + timedelta(days=1),
+        is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Direct',
+        adults=0, children=0, babies=0, last_updated=timezone.now(),
+    )
+
+
+def late_checkout_still_available(booking):
+    """late_checkout_eligibility()'s own (unlimited, eligible_times), further narrowed by
+    available_times: eligible_times minus whatever's already been granted to another booking
+    sharing this property's Location (or, with no Location, this exact property) on the same date.
+    Returns (unlimited, eligible_times, available_times).
+
+    Read-only - doesn't create or change anything. Two callers: the guest-facing Extras form (what
+    to actually offer someone looking at this page right now) and grant_late_checkout() below
+    (re-validated at the moment of granting, since another guest could have claimed a slot between
+    page-load and submit). Kept as eligible_times AND available_times, not just the narrower one,
+    so a caller can tell "never on offer for this booking at all" apart from "was on offer, but
+    someone else got there first" - two different guest-facing messages."""
+    unlimited, eligible_times = late_checkout_eligibility(booking)
+    if unlimited or not eligible_times:
+        return unlimited, eligible_times, eligible_times
+
+    from staff.models import LateCheckoutGrant
+
+    already_taken = LateCheckoutGrant.objects.filter(
+        time__in=eligible_times, booking__departure_date=booking.departure_date,
+    ).exclude(booking=booking)
+    if booking.property.location_id is not None:
+        already_taken = already_taken.filter(booking__property__location_id=booking.property.location_id)
+    else:
+        already_taken = already_taken.filter(booking__property_id=booking.property_id)
+    taken_times = set(already_taken.values_list('time', flat=True))
+    return unlimited, eligible_times, eligible_times - taken_times
+
+
+def grant_late_checkout(booking, requested_time=None, granted_by=None):
+    """Grants a late check-out for `booking`'s departure if permissible, per
+    late_checkout_still_available() above. Returns (grant, error) - exactly one of the two is not
+    None.
+
+    `requested_time` is one of LATE_CHECKOUT_TIMES, or None to request the unlimited case - there's
+    no "requesting" unlimited otherwise; it's simply not on offer unless
+    late_checkout_eligibility() itself says so.
+
+    A booking that already has a grant is rejected outright rather than silently replaced - a
+    change of mind should call revoke_late_checkout() first, so `granted_at` keeps meaning what it
+    says and a block_booking doesn't get orphaned by a second, unrelated grant overwriting it."""
+    from staff.models import LATE_CHECKOUT_TIMES, LateCheckoutGrant
+
+    if hasattr(booking, 'late_checkout_grant'):
+        return None, 'This booking already has a late check-out granted.'
+
+    unlimited, eligible_times, available_times = late_checkout_still_available(booking)
+
+    if requested_time is None:
+        if not unlimited:
+            return None, 'An unrestricted late check-out is not available for this booking.'
+        block_booking = _create_late_checkout_block_booking(booking)
+        grant = LateCheckoutGrant.objects.create(
+            booking=booking, time=None, block_booking=block_booking, granted_by=granted_by,
+        )
+        return grant, None
+
+    if requested_time not in LATE_CHECKOUT_TIMES:
+        return None, 'Not a valid late check-out time.'
+    if requested_time not in eligible_times:
+        return None, f'{requested_time:%H:%M} is not available for this booking.'
+    if requested_time not in available_times:
+        return None, f'The {requested_time:%H:%M} slot for this location has already been claimed today.'
+
+    grant = LateCheckoutGrant.objects.create(booking=booking, time=requested_time, granted_by=granted_by)
+    return grant, None
+
+
+def revoke_late_checkout(grant):
+    """Undoes a LateCheckoutGrant. For an unlimited grant, deletes the calendar-blocking
+    block_booking, which cascades to delete the grant row itself (LateCheckoutGrant.block_booking
+    is on_delete=CASCADE - see that model's own docstring for why an orphaned grant would be worse
+    than none at all); for a fixed-time grant (no block_booking) just deletes the grant directly.
+    Either way, the freed slot/date is available again immediately on the next read - nothing else
+    persists a copy of a grant's effect to separately clean up."""
+    if grant.block_booking is not None:
+        grant.block_booking.delete()
+    else:
+        grant.delete()
 
 
 def apply_manual_task_date(task, new_date):

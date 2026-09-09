@@ -4,8 +4,8 @@ from django.dispatch import receiver
 from bookings.models import Arrival, Booking, CheckinSettings, Departure, Extra, PaymentSettings
 from finance.services import recompute_unsent_memo_fees_for_settings_change, sync_memo_for_turnover_task
 from staff.utils import (
-    resync_checkin_times_for_settings_change, sync_checkins_for_booking, sync_cleaning_tasks_for_booking,
-    sync_freshen_tasks_for_property,
+    is_block_booking, resync_checkin_times_for_settings_change, sync_checkins_for_booking,
+    sync_cleaning_gap_blocks_for_property, sync_cleaning_tasks_for_booking, sync_freshen_tasks_for_property,
 )
 
 
@@ -29,6 +29,12 @@ def _sync_cleaning_tasks_on_booking_save(sender, instance, **kwargs):
     sync_freshen_tasks_for_property(instance.property)
     sync_checkins_for_booking(instance)
     sync_memo_for_turnover_task(instance)
+    # Guard against unbounded recursion: sync_cleaning_gap_blocks_for_property() creates/resizes
+    # 'BLOCK - Unbookable' Booking rows, which are themselves instances of the model this signal
+    # watches - see that function's own docstring (staff/utils.py) for why skipping it here for a
+    # block booking's own save is load-bearing, not incidental.
+    if not is_block_booking(instance):
+        sync_cleaning_gap_blocks_for_property(instance.property)
 
 
 @receiver(post_save, sender=Arrival)
