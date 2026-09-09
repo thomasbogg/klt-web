@@ -4291,6 +4291,16 @@ class LateCheckoutEligibilityTests(TestCase):
             is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
             adults=2, children=0, babies=0, last_updated=timezone.now(),
         )
+        self.cleaner = User.objects.create_user(username='eligibility_cleaner', password='x')
+
+    def _assign_own_task(self):
+        """Assigns a cleaner to self.booking's own turnover CleaningTask - clean_scheduled_today
+        requires an actual assignment, not just row existence (2026-09-09, per Thomas: a task is
+        created eagerly at booking time, often long before the cleaning manager staffs it, so an
+        unassigned row shouldn't force a guest to commit to a fixed slot - see
+        late_checkout_eligibility()'s own docstring)."""
+        task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        task.assigned_to.set([self.cleaner])
 
     def _other_booking_departing(self, departure_date, location=None):
         """A separate property (in `location`, defaulting to self.location) with its own confirmed,
@@ -4334,14 +4344,24 @@ class LateCheckoutEligibilityTests(TestCase):
         self.assertTrue(unlimited)
         self.assertEqual(eligible_times, set())
 
+    def test_unlimited_when_own_task_exists_but_is_unassigned(self):
+        # Row exists (sync creates it eagerly at booking time) but no cleaner is assigned yet -
+        # not a real commitment, so this is still the unlimited case, not a fixed-slot offer.
+        Departure.objects.create(booking=self.booking, clean=True)
+        unlimited, eligible_times = late_checkout_eligibility(self.booking)
+        self.assertTrue(unlimited)
+        self.assertEqual(eligible_times, set())
+
     def test_both_slots_eligible_when_clean_scheduled_and_no_same_day_arrival(self):
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         unlimited, eligible_times = late_checkout_eligibility(self.booking)
         self.assertFalse(unlimited)
         self.assertEqual(eligible_times, {time(11, 0), time(12, 0)})
 
     def test_no_slots_eligible_with_same_day_arrival_and_no_other_cleans(self):
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         self._give_same_day_arrival()
         unlimited, eligible_times = late_checkout_eligibility(self.booking)
         self.assertFalse(unlimited)
@@ -4349,6 +4369,7 @@ class LateCheckoutEligibilityTests(TestCase):
 
     def test_no_slots_eligible_with_same_day_arrival_and_only_one_other_clean(self):
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         self._give_same_day_arrival()
         self._other_booking_departing(self.end)
         unlimited, eligible_times = late_checkout_eligibility(self.booking)
@@ -4356,6 +4377,7 @@ class LateCheckoutEligibilityTests(TestCase):
 
     def test_eleven_oclock_eligible_with_same_day_arrival_and_two_other_cleans(self):
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         self._give_same_day_arrival()
         self._other_booking_departing(self.end)
         self._other_booking_departing(self.end)
@@ -4365,6 +4387,7 @@ class LateCheckoutEligibilityTests(TestCase):
 
     def test_both_slots_eligible_with_same_day_arrival_and_three_other_cleans(self):
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         self._give_same_day_arrival()
         self._other_booking_departing(self.end)
         self._other_booking_departing(self.end)
@@ -4374,6 +4397,7 @@ class LateCheckoutEligibilityTests(TestCase):
 
     def test_other_cleans_in_a_different_location_dont_count(self):
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         self._give_same_day_arrival()
         other_location = Location.objects.create(title='Other Location')
         self._other_booking_departing(self.end, location=other_location)
@@ -4385,6 +4409,7 @@ class LateCheckoutEligibilityTests(TestCase):
         self.property.location = None
         self.property.save(update_fields=['location'])
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         self._give_same_day_arrival()
         unlimited, eligible_times = late_checkout_eligibility(self.booking)
         self.assertFalse(unlimited)
@@ -4392,6 +4417,7 @@ class LateCheckoutEligibilityTests(TestCase):
 
     def test_dismissed_other_task_does_not_count(self):
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         self._give_same_day_arrival()
         other_booking = self._other_booking_departing(self.end)
         self._other_booking_departing(self.end)
@@ -4420,6 +4446,15 @@ class GrantLateCheckoutTests(TestCase):
             is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
             adults=2, children=0, babies=0, last_updated=timezone.now(),
         )
+        self.cleaner = User.objects.create_user(username='grant_cleaner', password='x')
+
+    def _assign_own_task(self, booking=None):
+        """Assigns a cleaner to `booking`'s (default self.booking's) own turnover CleaningTask -
+        clean_scheduled_today requires an actual assignment, not just row existence, so any test
+        exercising the "clean scheduled" (as opposed to unlimited) branch needs this."""
+        booking = booking or self.booking
+        task = CleaningTask.objects.get(booking=booking, task_type='turnover')
+        task.assigned_to.set([self.cleaner])
 
     def _other_property_booking(self, departure_date, location=None):
         location = self.location if location is None else location
@@ -4435,6 +4470,7 @@ class GrantLateCheckoutTests(TestCase):
             adults=2, children=0, babies=0, last_updated=timezone.now(),
         )
         Departure.objects.create(booking=booking, clean=True)
+        self._assign_own_task(booking)
         return booking
 
     def test_unlimited_grant_creates_block_booking_covering_the_departure_date(self):
@@ -4470,6 +4506,7 @@ class GrantLateCheckoutTests(TestCase):
 
     def test_unlimited_grant_rejected_when_not_eligible(self):
         Departure.objects.create(booking=self.booking, clean=True)  # clean scheduled today - not rule 1
+        self._assign_own_task()
         grant, error = grant_late_checkout(self.booking)
         self.assertIsNone(grant)
         self.assertIn('not available', error)
@@ -4477,6 +4514,7 @@ class GrantLateCheckoutTests(TestCase):
 
     def test_slotted_grant_succeeds_when_eligible(self):
         Departure.objects.create(booking=self.booking, clean=True)  # no same-day arrival -> both eligible
+        self._assign_own_task()
         grant, error = grant_late_checkout(self.booking, requested_time=time(11, 0))
         self.assertIsNone(error)
         self.assertEqual(grant.time, time(11, 0))
@@ -4485,6 +4523,7 @@ class GrantLateCheckoutTests(TestCase):
     def test_slotted_grant_rejected_when_time_not_eligible(self):
         # Same-day arrival, no other same-day cleans at all - nothing is eligible (rules 6/7).
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         next_guest = Guest.objects.create(first_name='Next', last_name='Guest', email='next-grant@example.com')
         Booking.objects.create(
             property=self.property, guest=next_guest, arrival_date=self.end,
@@ -4504,6 +4543,7 @@ class GrantLateCheckoutTests(TestCase):
 
     def test_second_property_in_same_location_cant_claim_an_already_granted_slot(self):
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         grant, error = grant_late_checkout(self.booking, requested_time=time(11, 0))
         self.assertIsNone(error)
 
@@ -4519,6 +4559,7 @@ class GrantLateCheckoutTests(TestCase):
 
     def test_properties_in_different_locations_dont_share_the_cap(self):
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         grant, error = grant_late_checkout(self.booking, requested_time=time(11, 0))
         self.assertIsNone(error)
 
@@ -4549,6 +4590,7 @@ class GrantLateCheckoutTests(TestCase):
 
     def test_revoking_a_slotted_grant_frees_it_for_another_property_in_the_same_location(self):
         Departure.objects.create(booking=self.booking, clean=True)
+        self._assign_own_task()
         grant, error = grant_late_checkout(self.booking, requested_time=time(11, 0))
         self.assertIsNone(error)
 
@@ -4571,6 +4613,32 @@ class GrantLateCheckoutTests(TestCase):
         second_grant, second_error = grant_late_checkout(self.booking)
         self.assertIsNone(second_error)
         self.assertIsNotNone(second_grant)
+
+    def test_granting_unlimited_late_checkout_bumps_an_existing_unassigned_task_off_the_departure_date(self):
+        # The task exists (created eagerly at booking time) but unassigned - that's exactly what
+        # makes this booking eligible for the unlimited case in the first place (2026-09-09, per
+        # Thomas - see late_checkout_eligibility()). Granting it must move the task immediately,
+        # not just block it from being dragged back onto departure_date later.
+        Departure.objects.create(booking=self.booking, clean=True)
+        task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        self.assertEqual(task.date, self.end)
+
+        grant, error = grant_late_checkout(self.booking)
+        self.assertIsNone(error)
+        task.refresh_from_db()
+        self.assertEqual(task.date, self.end + timedelta(days=1))
+
+    def test_revoking_an_unlimited_grant_moves_the_task_back_to_the_departure_date(self):
+        Departure.objects.create(booking=self.booking, clean=True)
+        task = CleaningTask.objects.get(booking=self.booking, task_type='turnover')
+        grant, error = grant_late_checkout(self.booking)
+        self.assertIsNone(error)
+        task.refresh_from_db()
+        self.assertEqual(task.date, self.end + timedelta(days=1))
+
+        revoke_late_checkout(grant)
+        task.refresh_from_db()
+        self.assertEqual(task.date, self.end)
 
 
 class CleaningGapBlockTests(TestCase):

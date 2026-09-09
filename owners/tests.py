@@ -18,7 +18,7 @@ from finance.models import Memo, PayoutRecord
 from guests.models import Guest
 from libraries.phone_country_codes import join_phone, split_phone
 from properties.models import Location, ManagementCompany, Owner, Property, PropertySpec
-from staff.models import LateCheckoutGrant
+from staff.models import CleaningTask, LateCheckoutGrant
 from staff.utils import grant_late_checkout
 
 User = get_user_model()
@@ -357,6 +357,14 @@ class OwnerBookingsTests(TestCase):
         self.upcoming_booking = create_owner_booking(
             self.property, self.owner, self.today + timedelta(days=30), self.today + timedelta(days=34),
             adults=2, children=0, babies=0,
+        )
+        # create_owner_booking() creates the turnover CleaningTask eagerly, long before the
+        # cleaning manager would actually staff it - assign someone here so late-checkout tests
+        # below exercise the "clean scheduled" (fixed-slot) branch by default, same as a real
+        # assigned clean would (2026-09-09, per Thomas: clean_scheduled_today requires an actual
+        # assignment now, not just row existence - see late_checkout_eligibility()).
+        CleaningTask.objects.get(booking=self.upcoming_booking, task_type='turnover').assigned_to.add(
+            User.objects.create_user(username='owner_tests_cleaner', password='x'),
         )
         # Built directly rather than via create_owner_booking() - that helper now rejects a past
         # arrival date outright (2026-08-30), which a *real* past stay would only have picked up
@@ -754,6 +762,9 @@ class OwnerBookingsTests(TestCase):
                 adults=2, children=0, babies=0, last_updated=timezone.now(),
             )
             Departure.objects.create(booking=other_booking, clean=True)
+            CleaningTask.objects.get(booking=other_booking, task_type='turnover').assigned_to.add(
+                User.objects.create_user(username=f'owner_grant_other_cleaner_{n}', password='x'),
+            )
             other_bookings.append(other_booking)
 
         # One of those other bookings claims the only 11:00 slot first.

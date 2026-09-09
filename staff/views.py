@@ -3395,6 +3395,7 @@ class StaffCleaningTaskDetailView(View):
                 'heading': 'Departing' if task.task_type == 'mid_stay' else 'Departure',
                 'date': booking.departure_date, 'record': departure,
                 'method_label': departure_method_label, 'booking': booking, 'is_arrival': False,
+                'late_checkout_grant': getattr(booking, 'late_checkout_grant', None),
             })
 
         arrival_html = ''

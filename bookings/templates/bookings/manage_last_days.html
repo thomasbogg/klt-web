@@ -27,7 +27,9 @@
 
             <div class="details-section">
                 <h2 class="details-section-title">Check-out</h2>
-                {% if checkout_time %}
+                {% if late_checkout_unlimited %}
+                <p class="details-note details-note-left">You've been granted a flexible late checkout on {{ booking.departure_date|date:"j F Y" }} - no fixed time, so check out whenever suits you. When you're ready to leave for the final time, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% elif checkout_time %}
                 {% if late_checkout %}
                 <p class="details-note details-note-left">You've booked a late checkout for <strong>{{ checkout_time|time:"H:i" }}</strong> on {{ booking.departure_date|date:"j F Y" }}. When you're ready to leave for the final time, simply leave the keys and fobs on the dining table and close the door behind you.</p>
                 {% else %}

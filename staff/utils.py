@@ -325,10 +325,18 @@ def sync_cleaning_tasks_for_booking(booking):
 
     departure = getattr(booking, 'departure', None)
     if departure and departure.clean:
+        # _turnover_min_date(), not the raw departure_date - this is what actually enacts the
+        # day-after bump for an unlimited LateCheckoutGrant (2026-09-09, per Thomas: an
+        # already-existing, not-yet-assigned task must move off the departure date the moment such
+        # a grant lands, not just be prevented from being dragged back onto it - see that
+        # function's own docstring). grant_late_checkout()/revoke_late_checkout() below both call
+        # this function again right after changing a grant, specifically so the move happens
+        # immediately rather than waiting on some unrelated future resync.
+        computed_date = _turnover_min_date(booking)
         task, _ = CleaningTask.objects.get_or_create(
-            booking=booking, task_type='turnover', defaults={'date': booking.departure_date},
+            booking=booking, task_type='turnover', defaults={'date': computed_date},
         )
-        _sync_task_date(task, booking.departure_date)
+        _sync_task_date(task, computed_date)
     else:
         CleaningTask.objects.filter(booking=booking, task_type='turnover', status='pending').delete()
 
@@ -724,17 +732,22 @@ def late_checkout_eligibility(booking):
 
     Returns (unlimited, eligible_times):
 
-    - unlimited=True means no CleaningTask is actually scheduled at THIS property on its own
+    - unlimited=True means no ASSIGNED CleaningTask exists at THIS property on its own
       departure_date - either none was ever created (e.g. Departure.clean=False - see
-      sync_cleaning_tasks_for_booking()), or staff manually dragged it to a later date
+      sync_cleaning_tasks_for_booking()), staff manually dragged it to a later date
       (cleaning_task_valid_range() only ever allows moving a turnover task later, never earlier
-      than its own departure_date - see that function's own docstring). Either way, no one is
-      coming to clean this property that day, so there's no capacity to protect and the guest can
-      check out whenever they like. eligible_times is always empty in this case - a fixed 11:00/
-      12:00 slot would be a strictly worse offer than "whenever", and isn't location-capped either,
-      since it isn't competing with anything.
+      than its own departure_date - see that function's own docstring), or it exists but has no one
+      in assigned_to yet (2026-09-09, per Thomas: sync_cleaning_tasks_for_booking() creates this row
+      eagerly the moment a booking exists, often a year or more before the cleaning manager actually
+      builds the rota - a `status='pending'`, zero-staff task is not a real commitment to a crew
+      showing up, so it shouldn't force a guest to pre-commit to a fixed slot either; assignment,
+      not row existence, is what "someone's actually coming" means here). Either way, no one is
+      committed to cleaning this property that day, so there's no capacity to protect yet and the
+      guest can check out whenever they like. eligible_times is always empty in this case - a fixed
+      11:00/12:00 slot would be a strictly worse offer than "whenever", and isn't location-capped
+      either, since it isn't competing with anything.
 
-    - Otherwise, a turnover clean IS scheduled here today. If this property has no same-day
+    - Otherwise, an ASSIGNED turnover clean IS scheduled here today. If this property has no same-day
       arrival of its own, staff are already coming regardless, so both LATE_CHECKOUT_TIMES are
       eligible in principle (subject only to the location-wide 1-slot-per-time cap layered on by
       the caller, not modelled here).
@@ -757,7 +770,9 @@ def late_checkout_eligibility(booking):
     own_task = CleaningTask.objects.filter(
         booking=booking, task_type='turnover',
     ).exclude(status='dismissed').first()
-    clean_scheduled_today = own_task is not None and own_task.date == departure_date
+    clean_scheduled_today = (
+        own_task is not None and own_task.date == departure_date and own_task.assigned_to.exists()
+    )
     if not clean_scheduled_today:
         return True, set()
 
@@ -873,6 +888,10 @@ def grant_late_checkout(booking, requested_time=None, granted_by=None):
         grant = LateCheckoutGrant.objects.create(
             booking=booking, time=None, block_booking=block_booking, granted_by=granted_by,
         )
+        # Bumps an already-existing (not-yet-assigned) turnover task off the departure date
+        # immediately - see sync_cleaning_tasks_for_booking()'s own comment on why this call is
+        # here rather than waiting for some unrelated future resync to notice the new grant.
+        sync_cleaning_tasks_for_booking(booking)
         return grant, None
 
     if requested_time not in LATE_CHECKOUT_TIMES:
@@ -892,11 +911,22 @@ def revoke_late_checkout(grant):
     is on_delete=CASCADE - see that model's own docstring for why an orphaned grant would be worse
     than none at all); for a fixed-time grant (no block_booking) just deletes the grant directly.
     Either way, the freed slot/date is available again immediately on the next read - nothing else
-    persists a copy of a grant's effect to separately clean up."""
+    persists a copy of a grant's effect to separately clean up.
+
+    booking is captured before either delete - grant.block_booking's cascade takes the grant row
+    with it, and `booking` is needed afterward to re-sync the turnover task's date (an unlimited
+    grant's departure_date+1 bump, per _turnover_min_date(), no longer applies once the grant is
+    gone - 2026-09-09, per Thomas). refresh_from_db() clears `booking`'s cached late_checkout_grant
+    reverse-relation - without it, _turnover_min_date() would still see the grant object we just
+    deleted (same stale-cache reason callers elsewhere already need this, e.g.
+    test_re_granting_after_revoke_is_allowed) and skip the un-bump entirely."""
+    booking = grant.booking
     if grant.block_booking is not None:
         grant.block_booking.delete()
     else:
         grant.delete()
+    booking.refresh_from_db()
+    sync_cleaning_tasks_for_booking(booking)
 
 
 def apply_manual_task_date(task, new_date):

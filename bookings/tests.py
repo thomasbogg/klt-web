@@ -16,7 +16,7 @@ from bookings.models import (
     TouristTax, TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
-from staff.models import OwnerPayment
+from staff.models import LateCheckoutGrant, OwnerPayment
 from bookings.utils import (
     add_business_days, apply_supplementary_payment, compute_deposit_waiver,
     compute_effective_self_check_in, compute_eta_from_given_time, compute_initial_hold_expiry,
@@ -1439,9 +1439,16 @@ class BookingDetailsViewTests(TestCase):
         self.assertIsNone(self.booking.extras.late_checkout_time)
 
     def test_post_late_checkout_with_no_time_is_rejected_when_fixed_slots_are_offered(self):
+        from django.contrib.auth import get_user_model
+
         from staff.models import CleaningTask
 
-        CleaningTask.objects.create(booking=self.booking, task_type='turnover', date=self.booking.departure_date)
+        task = CleaningTask.objects.create(
+            booking=self.booking, task_type='turnover', date=self.booking.departure_date,
+        )
+        # An assigned cleaner is what makes this "scheduled" (2026-09-09, per Thomas) - a bare
+        # unassigned row wouldn't force a fixed-slot choice, see late_checkout_eligibility().
+        task.assigned_to.set([get_user_model().objects.create_user(username='fixed_slot_cleaner', password='x')])
         self._set_session()
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
         data['late_checkout'] = 'on'
@@ -5262,10 +5269,21 @@ class BookingManageLastDaysViewTests(TestCase):
         self.assertNotContains(response, "You've booked a late checkout")
 
     def test_late_checkout_time_shown_when_booked(self):
-        Extra.objects.create(booking=self.booking, late_checkout=True, late_checkout_time=time(12, 0))
+        # Sourced from LateCheckoutGrant directly, not Extra.late_checkout_time (2026-09-09, per
+        # Thomas - see BookingManageLastDaysView's own docstring for why).
+        LateCheckoutGrant.objects.create(booking=self.booking, time=time(12, 0))
         response = self.client.get(self.url)
         self.assertContains(response, "You've booked a late checkout")
         self.assertContains(response, '12:00')
+
+    def test_unlimited_late_checkout_shows_flexible_message_and_hides_after_checkout_section(self):
+        self.location.after_checkout_access_instructions = 'Use the keypad code 9999 to get back in.'
+        self.location.save(update_fields=['after_checkout_access_instructions'])
+        LateCheckoutGrant.objects.create(booking=self.booking, time=None)
+        response = self.client.get(self.url)
+        self.assertContains(response, "You've been granted a flexible late checkout")
+        self.assertNotContains(response, 'Staying on-site after check-out')
+        self.assertNotContains(response, 'Use the keypad code 9999 to get back in.')
 
     def test_no_outbound_transfer_hides_airport_section(self):
         response = self.client.get(self.url)

@@ -164,7 +164,7 @@ for the one substring that differs per caller ("the amount due now" / "your bala
     <h2 class="details-section-title">Late Checkout</h2>
 {% if extras_windows.late_checkout %}
     {% if late_checkout_offerable %}
-    <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}.</p>
+    <p class="details-note">This is a complimentary courtesy, offered whenever our cleaning schedule allows it.</p>
     {% else %}
     <p class="details-note">No late check-out is currently available for your stay - this can change closer to your arrival, so feel free to check back.</p>
     {% endif %}
@@ -182,6 +182,7 @@ for the one substring that differs per caller ("the amount due now" / "your bala
             {% if late_checkout_unlimited %}
             <p class="details-note details-note-left">There's no clean scheduled for your property that day yet, so you can check out whenever suits you - no fixed time needed.</p>
             {% elif late_checkout_available_times %}
+            <p class="details-note details-note-left">Checkout times are limited to the slots below, based on what our cleaning team's schedule can accommodate that day.</p>
             <div class="welcome-pack-field">
                 <span>Checkout time</span>
                 {% for choice in late_checkout_available_times %}
@@ -193,7 +194,6 @@ for the one substring that differs per caller ("the amount due now" / "your bala
             </div>
             {% endif %}
             {% if late_checkout_error %}<p class="reserve-form-error">{{ late_checkout_error }}</p>{% endif %}
-            <p class="cot-high-chair-price">Flat fee: &euro;{{ late_checkout_price|floatformat:2 }}</p>
         </div>
     </div>
 </section>

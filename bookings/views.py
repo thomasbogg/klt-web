@@ -2635,13 +2635,20 @@ class BookingManageLastDaysView(View):
     inbound-side equivalent is BookingManageLocationView), rather than the legacy "if applicable"
     wording. Read-only, same no-side-effect GET as BookingManageAmenitiesView.
 
-    checkout_time/late_checkout: Extra.late_checkout_time if the guest booked a late checkout,
-    else ManagementCompany.standard_checkout_time off cleaning_company - same source
-    BookingManageLocationView's own in_person_checkin_checkout already reads, so the two tabs never
-    disagree about what "standard checkout" means for this property. has_bbq reads
-    Property.amenities.barbecue rather than any hardcoded property name - MON T's flag was
-    backfilled (bookings/migrations/0055_...) as part of this change, since the legacy system knew
-    about its BBQ but nothing had ever set the structured flag."""
+    checkout_time/late_checkout/late_checkout_unlimited: read from booking.late_checkout_grant
+    directly (staff/models.py::LateCheckoutGrant), not Extra.late_checkout/late_checkout_time -
+    2026-09-09, per Thomas: Extra's fields mirror the grant for a fixed 11:00/12:00 slot, but for
+    an unlimited grant (time=None - "check out whenever") Extra.late_checkout_time is also None, so
+    the old `bool(extra.late_checkout and extra.late_checkout_time)` check silently read that case
+    as "no late checkout granted at all" and fell back to showing the standard checkout time -
+    wrong for exactly the guest who was told there wasn't a fixed time. Reading the grant directly
+    has no such blind spot. Falls back to ManagementCompany.standard_checkout_time off
+    cleaning_company when there's no grant - same source BookingManageLocationView's own
+    in_person_checkin_checkout already reads, so the two tabs never disagree about what "standard
+    checkout" means for this property. has_bbq reads Property.amenities.barbecue rather than any
+    hardcoded property name - MON T's flag was backfilled (bookings/migrations/0055_...) as part of
+    this change, since the legacy system knew about its BBQ but nothing had ever set the structured
+    flag."""
     template_name = 'bookings/manage_last_days.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -2652,11 +2659,12 @@ class BookingManageLastDaysView(View):
             return redirect('bookings:details', reference=reference)
 
         location = booking.property.location
-        extra = getattr(booking, 'extras', None)
-        late_checkout = bool(extra and extra.late_checkout and extra.late_checkout_time)
+        late_checkout_grant = getattr(booking, 'late_checkout_grant', None)
+        late_checkout = late_checkout_grant is not None
+        late_checkout_unlimited = late_checkout and late_checkout_grant.time is None
         cleaning_company = booking.property.cleaning_company
         checkout_time = (
-            extra.late_checkout_time if late_checkout
+            late_checkout_grant.time if late_checkout and not late_checkout_unlimited
             else cleaning_company.standard_checkout_time if cleaning_company
             else None
         )
@@ -2670,11 +2678,21 @@ class BookingManageLastDaysView(View):
             ).time()
             outbound_pickup_time = pickup
 
+        # Empty outright for an unlimited late checkout (2026-09-09, per Thomas) - the whole point
+        # of this section is bridging the gap between a fixed checkout time and being ready to
+        # actually leave, which doesn't exist when there's no fixed time to bridge from.
+        after_checkout_paragraphs = []
+        if location and not late_checkout_unlimited:
+            after_checkout_paragraphs = [
+                p for p in location.after_checkout_access_instructions.split('\n\n') if p.strip()
+            ]
+
         context = _manage_nav_context(booking, 'last_days')
         context.update({
             'booking': booking,
             'checkout_time': checkout_time,
             'late_checkout': late_checkout,
+            'late_checkout_unlimited': late_checkout_unlimited,
             'outbound_transfer': outbound_transfer,
             'outbound_pickup_time': outbound_pickup_time,
             'has_bbq': bool(getattr(booking.property, 'amenities', None) and booking.property.amenities.barbecue),
@@ -2685,10 +2703,7 @@ class BookingManageLastDaysView(View):
             # the stored text is a deliberate paragraph break (see the QdB/Monaco backfill,
             # properties/migrations/0057_...) - collapsed into one run-on block by HTML whitespace
             # rules if rendered as a single <p>.
-            'after_checkout_paragraphs': (
-                [p for p in location.after_checkout_access_instructions.split('\n\n') if p.strip()]
-                if location else []
-            ),
+            'after_checkout_paragraphs': after_checkout_paragraphs,
         })
         return render(request, self.template_name, context)
 
