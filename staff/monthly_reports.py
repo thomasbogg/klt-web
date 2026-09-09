@@ -6,6 +6,7 @@ from django.db.models import Max, Min, Q
 import env_settings
 from bookings.models import AirportTransfer, Booking, Extra, PaymentSettings
 from bookings.payouts import compute_owner_payout
+from bookings.utils import exclude_block_bookings as _exclude_block_bookings
 from env_settings import VALID_BOOKING_STATUSES
 from properties.models import Location
 from staff.utils import last_day_of_month
@@ -127,7 +128,9 @@ def _stays_totals_for_month(year, month):
     independently of whether it's been priced/reconciled yet (owner stays never have either)."""
     start = date(year, month, 1)
     end = last_day_of_month(start)
-    bookings = Booking.objects.filter(enquiry_status__in=VALID_BOOKING_STATUSES, arrival_date__range=(start, end))
+    bookings = _exclude_block_bookings(
+        Booking.objects.filter(enquiry_status__in=VALID_BOOKING_STATUSES, arrival_date__range=(start, end))
+    )
     totals = {group: {'arrivals': 0, 'nights': 0} for group in REVENUE_GROUPS + ('Owner',)}
     for booking in bookings:
         group = 'Owner' if booking.is_owner else _group_for_booking(booking)
@@ -257,7 +260,7 @@ def _bookings_totals_for_month(year, month):
     genuine invisible case, not cancellations."""
     start = date(year, month, 1)
     end = last_day_of_month(start)
-    bookings = Booking.objects.filter(is_owner=False, arrival_date__range=(start, end))
+    bookings = _exclude_block_bookings(Booking.objects.filter(is_owner=False, arrival_date__range=(start, end)))
     totals = {group: {'bookings': 0, 'enquiries': 0} for group in REVENUE_GROUPS}
     for booking in bookings:
         group = _group_for_booking(booking)
