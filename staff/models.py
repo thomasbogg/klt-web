@@ -1,7 +1,12 @@
-from datetime import date
+from datetime import date, time
 
 from django.conf import settings
 from django.db import models
+
+# The two fixed late check-out times a guest can be granted, per Thomas's permissibility rules
+# (2026-09-08) - see LateCheckoutGrant below and staff/utils.py::late_checkout_eligibility(). Not
+# pricing (deliberately out of scope for now, per Thomas) - just which times are ever offerable.
+LATE_CHECKOUT_TIMES = (time(11, 0), time(12, 0))
 
 
 class Deduction(models.Model):
@@ -239,6 +244,53 @@ class CleaningTask(models.Model):
 
     def __str__(self):
         return f"{self.booking} - {self.get_task_type_display()} clean ({self.date})"
+
+
+class LateCheckoutGrant(models.Model):
+    """A late check-out granted to one booking's departure, per Thomas's permissibility rules
+    (staff/utils.py::late_checkout_eligibility()/grant_late_checkout(), 2026-09-08). One per
+    Booking (OneToOne) - a change of mind revokes and re-grants rather than editing in place, so
+    `granted_at` always means what it says.
+
+    `time=None` is the "unlimited" case (late_checkout_eligibility()'s rule 1: no clean is
+    scheduled at this property that day at all) - check out whenever, no fixed slot to protect.
+    This is the ONLY case that also blocks the calendar, via `block_booking` below: per Thomas, an
+    open-ended check-out means staff can't promise the property will be ready for a same-day
+    arrival, so neither a new arrival nor a (re)dragged cleaning task should be allowed to land on
+    this date. A fixed `time` (11:00/12:00) grant needs no calendar block at all - staff know
+    exactly when the property will be ready, so a same-day arrival is still fine; only the day's
+    cleaning ORDER needs to reflect it, which is a rota-display concern, not modelled here.
+
+    `block_booking` is a 'BLOCK - Late Check-out' fake-guest Booking (see
+    bookings.utils.BLOCK_LATE_CHECK_OUT_LAST_NAME) covering [departure_date, departure_date + 1) -
+    reusing the exact same overlap/availability machinery (BookingQuerySet.holding()/overlapping())
+    every other calendar block already relies on, rather than inventing a second mechanism. Null
+    for a fixed-time grant. CASCADE on both FKs: this row has no meaning independent of the
+    departure it was granted for, or (for the unlimited case) the calendar block that's its entire
+    real-world effect - if either disappears, an orphaned grant row would be actively misleading,
+    not just stale."""
+    booking = models.OneToOneField(
+        'bookings.Booking', on_delete=models.CASCADE, related_name='late_checkout_grant',
+    )
+    time = models.TimeField(
+        choices=[(t, t.strftime('%H:%M')) for t in LATE_CHECKOUT_TIMES], null=True, blank=True,
+    )
+    block_booking = models.OneToOneField(
+        'bookings.Booking', on_delete=models.CASCADE, null=True, blank=True, related_name='+',
+    )
+    granted_at = models.DateTimeField(auto_now_add=True)
+    granted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+
+    class Meta:
+        db_table = 'staff_late_checkout_grants'
+        verbose_name = 'Late Check-out Grant'
+        verbose_name_plural = 'Late Check-out Grants'
+
+    def __str__(self):
+        label = self.time.strftime('%H:%M') if self.time else 'unlimited'
+        return f"{self.booking} - late check-out ({label})"
 
 
 class Checkin(models.Model):

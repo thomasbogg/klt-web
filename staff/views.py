@@ -3120,13 +3120,13 @@ class StaffCleaningRotaView(View):
         )
         if request.user.is_superuser:
             tasks = CleaningTask.objects.filter(date__range=(window_dates[0], window_dates[-1])).select_related(
-                'booking__property', 'booking__guest', 'booking__extras',
+                'booking__property', 'booking__guest', 'booking__extras', 'booking__late_checkout_grant',
             ).prefetch_related('assigned_to', *extras_relations)
         else:
             tasks = CleaningTask.objects.filter(
                 date__range=(window_dates[0], window_dates[-1]), assigned_to=request.user,
             ).select_related(
-                'booking__property', 'booking__guest', 'booking__extras',
+                'booking__property', 'booking__guest', 'booking__extras', 'booking__late_checkout_grant',
             ).prefetch_related('assigned_to', *extras_relations)
         tasks = list(tasks)
 
@@ -3139,6 +3139,14 @@ class StaffCleaningRotaView(View):
                 'task': task,
                 'guest_booking': guest_booking,
                 'extras': extras,
+                # The DEPARTING guest's own grant (task.booking), never the arriving guest's -
+                # unlike guest_booking/extras above (which deliberately show the next arrival's
+                # info for prep purposes), this is about when the crew can even start THIS clean,
+                # which only ever depends on who's leaving. None for every non-turnover task_type
+                # (mid_stay/freshen have no departure/checkout concept at all).
+                'late_checkout_grant': (
+                    getattr(task.booking, 'late_checkout_grant', None) if task.task_type == 'turnover' else None
+                ),
                 # sorted(), not .order_by('username') - the latter would issue a fresh query
                 # against this already-prefetched relation, silently reintroducing an N+1 (same
                 # prefetch-cache-bypass bug already fixed once in extras_summary(), see its own
@@ -3236,7 +3244,7 @@ class StaffCleaningEventsView(View):
         start_date = _parsed_date((request.GET.get('start') or '').split('T')[0])
         end_date = _parsed_date((request.GET.get('end') or '').split('T')[0])
         tasks = CleaningTask.objects.select_related(
-            'booking__property__location',
+            'booking__property__location', 'booking__late_checkout_grant',
         ).prefetch_related('assigned_to').exclude(status='dismissed')
         if start_date:
             tasks = tasks.filter(date__gte=start_date)

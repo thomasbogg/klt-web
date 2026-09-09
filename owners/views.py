@@ -532,7 +532,7 @@ class OwnerBookingDetailView(BookingFormMixin, View):
         nights = (booking.departure_date - booking.arrival_date).days
         extra.cot_high_chair_charge = settings.compute_cot_high_chair_price(nights, extra.cot, extra.high_chair)
 
-        extra.late_checkout, extra.late_checkout_time, _ = self._parse_late_checkout(post_data)
+        extra.late_checkout, extra.late_checkout_time, _ = self._parse_late_checkout(booking, post_data)
         extra.late_checkout_charge = settings.late_checkout_price if extra.late_checkout else None
 
         extra.save(update_fields=[
@@ -544,7 +544,7 @@ class OwnerBookingDetailView(BookingFormMixin, View):
 
     def _update_extras(self, request, booking):
         transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
-        _, _, late_checkout_error = self._parse_late_checkout(request.POST)
+        _, _, late_checkout_error = self._parse_late_checkout(booking, request.POST)
         if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
             messages.error(request, transfer_non_field_error or "Please fix the airport transfer details below.")
             return

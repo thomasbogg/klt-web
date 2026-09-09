@@ -75,6 +75,26 @@
     margin-top: -6px;
 }
 
+/* Same "hugs the title, no badge to close the gap" treatment as .staff-cleaning-meta above -
+   turnover is the only task_type that ever renders this note (see cleaning_rota.html), and
+   turnover cards never render a badge, so this is always the first thing under the title. A
+   separate selector rather than reusing .staff-cleaning-meta itself (2026-09-09) - this note
+   needs its own accent colour to read as an operational flag, not routine metadata like the
+   assigned-to/notes lines that class is otherwise used for. */
+.staff-panel-title + .staff-cleaning-late-checkout {
+    margin-top: -6px;
+}
+
+.staff-cleaning-late-checkout {
+    margin: 0;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: var(--status-provisional-bg);
+    color: var(--status-provisional-color);
+}
+
 .staff-cleaning-badge {
     align-self: flex-start;
     /* Pulls it closer to the property title above it than the card's general 10px row gap - the

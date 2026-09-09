@@ -163,23 +163,36 @@ for the one substring that differs per caller ("the amount due now" / "your bala
 <section class="details-section">
     <h2 class="details-section-title">Late Checkout</h2>
 {% if extras_windows.late_checkout %}
-    <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}. Let us know your preferred time and we'll confirm whether it's possible.</p>
+    {% if late_checkout_offerable %}
+    <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}.</p>
     {% else %}
-    <p class="details-note">{% include 'bookings/_extra_closed_note.html' %}</p>
+    <p class="details-note">No late check-out is currently available for your stay - this can change closer to your arrival, so feel free to check back.</p>
     {% endif %}
+{% else %}
+    <p class="details-note">{% include 'bookings/_extra_closed_note.html' %}</p>
+{% endif %}
 
     <div class="welcome-pack-block">
         <label class="details-checkbox-label details-checkbox-label-primary">
-            <input type="checkbox" name="late_checkout" id="late_checkout_checkbox" data-price="{{ late_checkout_price|floatformat:2 }}" {% if late_checkout %}checked{% endif %}{% if not extras_windows.late_checkout %} disabled{% endif %}>
+            <input type="checkbox" name="late_checkout" id="late_checkout_checkbox" data-price="{{ late_checkout_price|floatformat:2 }}" {% if late_checkout %}checked{% endif %}{% if not extras_windows.late_checkout or not late_checkout_offerable %} disabled{% endif %}>
             I'd like a late checkout
         </label>
 
         <div class="welcome-pack-picker{% if not late_checkout %} welcome-pack-picker-hidden{% endif %}" id="late-checkout-picker">
+            {% if late_checkout_unlimited %}
+            <p class="details-note details-note-left">There's no clean scheduled for your property that day yet, so you can check out whenever suits you - no fixed time needed.</p>
+            {% elif late_checkout_available_times %}
             <div class="welcome-pack-field">
-                <label for="late_checkout_time">Preferred checkout time</label>
-                <input type="time" name="late_checkout_time" id="late_checkout_time" class="reserve-input" value="{{ late_checkout_time }}"{% if not extras_windows.late_checkout %} disabled{% endif %}>
-                {% if late_checkout_error %}<p class="reserve-form-error">{{ late_checkout_error }}</p>{% endif %}
+                <span>Checkout time</span>
+                {% for choice in late_checkout_available_times %}
+                <label class="details-checkbox-label">
+                    <input type="radio" name="late_checkout_time" value="{{ choice|time:'H:i' }}" {% if late_checkout_time == choice|time:'H:i' %}checked{% endif %}{% if not extras_windows.late_checkout %} disabled{% endif %}>
+                    {{ choice|time:'H:i' }}
+                </label>
+                {% endfor %}
             </div>
+            {% endif %}
+            {% if late_checkout_error %}<p class="reserve-form-error">{{ late_checkout_error }}</p>{% endif %}
             <p class="cot-high-chair-price">Flat fee: &euro;{{ late_checkout_price|floatformat:2 }}</p>
         </div>
     </div>

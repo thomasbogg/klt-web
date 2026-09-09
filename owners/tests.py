@@ -668,6 +668,10 @@ class OwnerBookingsTests(TestCase):
         self.assertTrue(response.context['show_cot_high_chair'])
 
     def test_update_extras_saves_welcome_pack_cot_high_chair_and_late_checkout(self):
+        # create_owner_booking() creates a real Departure(clean=True) eagerly, so this booking has
+        # a genuine turnover CleaningTask scheduled with no same-day arrival - both 11:00/12:00 are
+        # eligible (2026-09-09: late checkout is validated against real permissibility rules now,
+        # no longer any freeform time - '13:00' would be rejected).
         self.client.login(username='staysowner', password='pw')
         self.client.post(
             reverse('owners:booking_detail', kwargs={'reference': self.upcoming_booking.reference}),
@@ -675,7 +679,7 @@ class OwnerBookingsTests(TestCase):
                 'action': 'update_extras',
                 'welcome_pack': 'on', 'welcome_pack_food': 'vegan', 'welcome_pack_drinks': 'non_alcoholic',
                 'cot': 'on', 'high_chair': 'on',
-                'late_checkout': 'on', 'late_checkout_time': '13:00',
+                'late_checkout': 'on', 'late_checkout_time': '11:00',
             },
         )
         extra = Extra.objects.get(booking=self.upcoming_booking)
@@ -686,7 +690,7 @@ class OwnerBookingsTests(TestCase):
         self.assertTrue(extra.high_chair)
         self.assertIsNotNone(extra.cot_high_chair_charge)
         self.assertTrue(extra.late_checkout)
-        self.assertEqual(extra.late_checkout_time.strftime('%H:%M'), '13:00')
+        self.assertEqual(extra.late_checkout_time.strftime('%H:%M'), '11:00')
         self.assertEqual(extra.late_checkout_charge, ExtrasSettings.load().late_checkout_price)
 
     def test_extras_shows_owner_is_paying_only_when_meet_greet_is_required(self):
