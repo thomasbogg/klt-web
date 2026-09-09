@@ -28,8 +28,8 @@ from properties.models import (
     PropertyPlatformID, PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
 from staff.models import (
-    Checkin, CleaningTask, Deduction, LateCheckoutGrant, OwnerPayment, StaffProfile, StaffRole,
-    TaskHistoryEntry,
+    Checkin, CleaningGapBlock, CleaningTask, Deduction, LateCheckoutGrant, OwnerPayment, StaffProfile,
+    StaffRole, TaskHistoryEntry,
 )
 from staff.monthly_reports import (
     bookings_trend_rows, commissions_trend_rows, extras_trend_rows, location_groups,
@@ -4140,6 +4140,13 @@ class StaffSettingsViewTests(TestCase):
         self.assertEqual(settings.tourist_tax_season_start_month, 5)
         self.assertEqual(settings.tourist_tax_season_end_month, 9)
 
+    def test_update_booking_settings_saves_cleaning_gap_nights_per_block_day(self):
+        response = self.client.post(self.url, {
+            'action': 'update_booking_settings', 'cleaning_gap_nights_per_block_day': '14',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=bookings')
+        self.assertEqual(BookingSettings.load().cleaning_gap_nights_per_block_day, 14)
+
 
 class CleaningTaskValidRangeTests(TestCase):
     """staff/utils.py::cleaning_task_valid_range() - both ends inclusive for both task types
@@ -4509,6 +4516,148 @@ class GrantLateCheckoutTests(TestCase):
         second_grant, second_error = grant_late_checkout(self.booking)
         self.assertIsNone(second_error)
         self.assertIsNotNone(second_grant)
+
+
+class CleaningGapBlockTests(TestCase):
+    """staff/utils.py::sync_cleaning_gap_blocks_for_property() - the trailing cleaning-gap block
+    for long stays, 2026-09-09 per Thomas. Signal-driven (staff/signals.py), so every test here
+    exercises it purely by creating/editing real Booking rows, the same way it fires in
+    production - no direct calls to the sync functions themselves."""
+
+    def setUp(self):
+        settings = BookingSettings.load()
+        settings.cleaning_gap_nights_per_block_day = 10
+        settings.save()
+        self.property = Property.objects.create(title='Gap Property', short_title='GAPPROP')
+        self.start = date.today() + timedelta(days=30)
+
+    def _booking(self, arrival, departure, **overrides):
+        n = Booking.objects.count()
+        guest = overrides.pop('guest', None) or Guest.objects.create(
+            first_name='Guest', last_name=f'Gap{n}', email=f'gap-guest-{n}@example.com',
+        )
+        defaults = dict(
+            property=self.property, guest=guest, arrival_date=arrival, departure_date=departure,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        defaults.update(overrides)
+        return Booking.objects.create(**defaults)
+
+    def test_a_stay_shorter_than_the_threshold_gets_no_block(self):
+        booking = self._booking(self.start, self.start + timedelta(days=9))  # 9 // 10 = 0
+        self.assertFalse(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+    def test_a_qualifying_stay_with_no_next_booking_blocks_the_full_calculated_days(self):
+        departure = self.start + timedelta(days=25)  # 25 // 10 = 2 days
+        booking = self._booking(self.start, departure)
+        gap_block = CleaningGapBlock.objects.get(booking=booking)
+        self.assertEqual(gap_block.block_booking.arrival_date, departure)
+        self.assertEqual(gap_block.block_booking.departure_date, departure + timedelta(days=2))
+        self.assertEqual(gap_block.block_booking.guest.last_name, BLOCK_UNBOOKABLE_LAST_NAME)
+        self.assertFalse(gap_block.block_booking.is_owner)
+
+    def test_booking_up_to_an_existing_arrival_needs_no_block(self):
+        departure = self.start + timedelta(days=25)
+        booking = self._booking(self.start, departure)
+        self.assertTrue(CleaningGapBlock.objects.filter(booking=booking).exists())
+        # Back-to-back turnover - the next booking arrives exactly on this one's departure.
+        self._booking(departure, departure + timedelta(days=5))
+        self.assertFalse(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+    def test_a_short_gap_caps_the_block_at_the_gap(self):
+        departure = self.start + timedelta(days=25)  # calculated 2 days
+        booking = self._booking(self.start, departure)
+        next_arrival = departure + timedelta(days=1)  # only a 1-day gap
+        self._booking(next_arrival, next_arrival + timedelta(days=5))
+        gap_block = CleaningGapBlock.objects.get(booking=booking)
+        self.assertEqual(gap_block.block_booking.departure_date, next_arrival)
+
+    def test_a_long_gap_only_blocks_the_calculated_days(self):
+        departure = self.start + timedelta(days=25)  # calculated 2 days
+        booking = self._booking(self.start, departure)
+        next_arrival = departure + timedelta(days=10)  # gap of 10, well beyond the 2 calculated
+        self._booking(next_arrival, next_arrival + timedelta(days=5))
+        gap_block = CleaningGapBlock.objects.get(booking=booking)
+        self.assertEqual(gap_block.block_booking.departure_date, departure + timedelta(days=2))
+
+    def test_cancelling_the_long_stay_removes_its_block(self):
+        departure = self.start + timedelta(days=25)
+        booking = self._booking(self.start, departure)
+        self.assertTrue(CleaningGapBlock.objects.filter(booking=booking).exists())
+        booking.enquiry_status = 'Cancelled by guest'
+        booking.save(update_fields=['enquiry_status'])
+        self.assertFalse(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+    def test_cancelling_the_next_booking_widens_an_existing_block_up_to_the_new_gap(self):
+        departure = self.start + timedelta(days=25)  # calculated 2 days
+        booking = self._booking(self.start, departure)
+        next_arrival = departure + timedelta(days=1)  # capped to 1 day for now
+        blocking_booking = self._booking(next_arrival, next_arrival + timedelta(days=5))
+        gap_block = CleaningGapBlock.objects.get(booking=booking)
+        self.assertEqual(gap_block.block_booking.departure_date, next_arrival)
+
+        blocking_booking.enquiry_status = 'Cancelled by guest'
+        blocking_booking.save(update_fields=['enquiry_status'])
+        gap_block.block_booking.refresh_from_db()
+        self.assertEqual(gap_block.block_booking.departure_date, departure + timedelta(days=2))
+
+    def test_a_new_booking_filling_part_of_the_gap_shrinks_an_existing_block(self):
+        departure = self.start + timedelta(days=25)  # calculated 2 days, no next booking yet
+        booking = self._booking(self.start, departure)
+        gap_block = CleaningGapBlock.objects.get(booking=booking)
+        self.assertEqual(gap_block.block_booking.departure_date, departure + timedelta(days=2))
+
+        self._booking(departure + timedelta(days=1), departure + timedelta(days=6))
+        gap_block.block_booking.refresh_from_db()
+        self.assertEqual(gap_block.block_booking.departure_date, departure + timedelta(days=1))
+
+    def test_default_setting_of_zero_never_creates_a_block(self):
+        BookingSettings.objects.filter(pk=1).update(cleaning_gap_nights_per_block_day=0)
+        booking = self._booking(self.start, self.start + timedelta(days=60))
+        self.assertFalse(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+    def test_turning_the_setting_off_removes_an_existing_block_on_the_next_booking_save(self):
+        # BookingSettings itself isn't a watched signal sender (unlike CheckinSettings/
+        # PaymentSettings) - flipping this setting doesn't proactively resync every property, only
+        # the next real Booking save on one does. Documented limitation, exercised explicitly here.
+        departure = self.start + timedelta(days=25)
+        booking = self._booking(self.start, departure)
+        self.assertTrue(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+        settings = BookingSettings.load()
+        settings.cleaning_gap_nights_per_block_day = 0
+        settings.save()
+        booking.save(update_fields=['last_updated'])
+        self.assertFalse(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+    def test_creating_a_qualifying_booking_creates_exactly_one_block_no_recursion(self):
+        # Regression test for the is_block_booking() guard in staff/signals.py - without it,
+        # _create_cleaning_gap_block_booking()'s own Booking.objects.create() would re-fire the
+        # same signal and recurse unboundedly. This would raise RecursionError, not just fail an
+        # assertion, if the guard were ever removed.
+        departure = self.start + timedelta(days=25)
+        booking = self._booking(self.start, departure)
+        self.assertEqual(CleaningGapBlock.objects.filter(booking=booking).count(), 1)
+        self.assertEqual(
+            Booking.objects.filter(
+                property=self.property, guest__last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME,
+            ).count(),
+            1,
+        )
+
+    def test_the_block_makes_those_dates_unavailable_to_search(self):
+        departure = self.start + timedelta(days=25)  # calculated 2 days
+        self._booking(self.start, departure)
+        self.assertTrue(
+            Booking.objects.overlapping(self.property, departure, departure + timedelta(days=1)).exists()
+        )
+        # The day right after the 2-day block is genuinely free again.
+        self.assertFalse(
+            Booking.objects.overlapping(
+                self.property, departure + timedelta(days=2), departure + timedelta(days=3),
+            ).exists()
+        )
 
 
 class ApplyManualTaskDateTests(TestCase):

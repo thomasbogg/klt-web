@@ -1118,6 +1118,7 @@ class StaffSettingsView(View):
             'payment_clearing_business_days', 'adult_min_age', 'child_min_age',
             'self_check_in_code_reveal_days', 'tourist_tax_min_age', 'tourist_tax_max_nights',
             'tourist_tax_season_start_month', 'tourist_tax_season_end_month',
+            'cleaning_gap_nights_per_block_day',
         ):
             value = _parsed_int(post.get(field))
             if value is not None:

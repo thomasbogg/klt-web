@@ -145,6 +145,19 @@ class BookingSettings(models.Model):
         choices=MONTH_CHOICES, default=10,
         help_text="Last month tourist tax applies to a stay's arrival date (inclusive)."
     )
+    # 2026-09-09, per Thomas: long stays need extra time to bring a property back to standard.
+    # For every N nights a confirmed stay lasts, one extra day right after departure is blocked
+    # from booking - but only into a real gap before the property's next confirmed arrival, and
+    # capped at that gap (see staff/utils.py::sync_cleaning_gap_blocks_for_property()). 0 (the
+    # default) disables this entirely - no specific ratio was given up front, and this changes
+    # live availability, so it ships off until a real number is set here.
+    cleaning_gap_nights_per_block_day = models.PositiveIntegerField(
+        default=0,
+        help_text="For every N nights a confirmed stay lasts, one extra day right after departure "
+                  "is blocked from booking (only into a real gap before the next confirmed "
+                  "arrival, capped at that gap) so the cleaning crew gets more time on long "
+                  "stays. 0 disables this."
+    )
 
     # Cost dict keys from compute_costs() that represent a money amount and are shown converted to
     # GBP when a guest toggles the currency display. security_deposit is deliberately excluded: it's

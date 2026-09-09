@@ -496,6 +496,117 @@ def sync_freshen_tasks_for_property(property):
                 existing.save(update_fields=['status', 'dismissed_by', 'dismissed_at', 'dismissed_reason'])
 
 
+def _create_cleaning_gap_block_booking(booking, block_departure_date):
+    """The calendar-occupying side effect of a trailing cleaning-gap block (see
+    sync_cleaning_gap_blocks_for_property() below) - a 'BLOCK - Unbookable' fake-guest Booking
+    covering [booking.departure_date, block_departure_date). Exact mirror of
+    _create_late_checkout_block_booking() above (same canonical-guest reuse, same is_owner=False
+    reasoning) - only the guest sentinel and the departure date (caller-computed, not always +1)
+    differ."""
+    from bookings.models import Booking
+    from guests.models import Guest
+
+    guest = Guest.objects.filter(last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME).order_by('pk').first()
+    if guest is None:
+        guest = Guest.objects.create(last_name=BLOCK_UNBOOKABLE_LAST_NAME, first_name=None)
+    return Booking.objects.create(
+        property=booking.property, guest=guest,
+        arrival_date=booking.departure_date, departure_date=block_departure_date,
+        is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Direct',
+        adults=0, children=0, babies=0, last_updated=timezone.now(),
+    )
+
+
+def _sync_cleaning_gap_block_for_booking(booking, nights_per_block_day):
+    """Per-booking upsert behind sync_cleaning_gap_blocks_for_property() below - never called
+    directly from a signal itself (see that function's own docstring for why). Idempotent, same
+    shape as sync_cleaning_tasks_for_booking(): a cancelled or too-short-to-qualify booking never
+    has a block, a booking whose circumstances change resizes its existing block in place rather
+    than deleting and recreating it.
+
+    Thomas's rule, in order:
+    1. A cancelled booking, or the block-booking placeholder itself (is_block_booking() - a block
+       is never a source for its own further block), never has one.
+    2. nights // nights_per_block_day (floor) is how many days get blocked - 0 for a stay shorter
+       than nights_per_block_day, same as "not enough nights to earn a block day yet".
+    3. No block at all if the property's next confirmed booking already arrives exactly on this
+       one's departure date (gap=0) - a normal back-to-back turnover needs no extra buffer, per
+       Thomas's own framing ("book up to an existing arrival, nothing happens").
+    4. Otherwise the block is capped at the actual gap (never reaching into, let alone past,
+       another confirmed booking) - a short gap just gets fully blocked rather than left as a
+       booking-length mismatch someone would need to notice and fix by hand."""
+    from staff.models import CleaningGapBlock
+
+    existing = getattr(booking, 'cleaning_gap_block', None)
+
+    if booking.enquiry_status in CLOSED_STATUSES or is_block_booking(booking):
+        if existing is not None:
+            existing.block_booking.delete()
+        return
+
+    nights = (booking.departure_date - booking.arrival_date).days
+    calculated_days = nights // nights_per_block_day
+    if calculated_days <= 0:
+        if existing is not None:
+            existing.block_booking.delete()
+        return
+
+    from bookings.models import Booking
+
+    next_arrival = Booking.objects.next_confirmed_arrival_after(booking.property, booking.departure_date)
+    gap = (next_arrival - booking.departure_date).days if next_arrival else None
+    if gap == 0:
+        if existing is not None:
+            existing.block_booking.delete()
+        return
+
+    block_days = calculated_days if gap is None else min(calculated_days, gap)
+    block_departure_date = booking.departure_date + timedelta(days=block_days)
+
+    if existing is not None:
+        block_booking = existing.block_booking
+        if block_booking.departure_date != block_departure_date:
+            block_booking.departure_date = block_departure_date
+            block_booking.save(update_fields=['departure_date'])
+    else:
+        block_booking = _create_cleaning_gap_block_booking(booking, block_departure_date)
+        CleaningGapBlock.objects.create(booking=booking, block_booking=block_booking)
+
+
+def sync_cleaning_gap_blocks_for_property(property):
+    """Property-scoped, signal-driven sweep keeping each qualifying booking's trailing cleaning
+    gap block in sync (staff/signals.py, 2026-09-09 per Thomas) - same shape and reasoning as
+    sync_freshen_tasks_for_property() above: a gap depends on a property's whole booking
+    timeline, so it can't be driven off one booking's own save alone (a *different* booking being
+    created, cancelled, or moved nearby must reshrink/regrow an existing block that booking itself
+    never touched).
+
+    Called only from staff/signals.py's Booking receiver, guarded there by
+    `if not is_block_booking(instance)`. That guard is load-bearing, not incidental: the block
+    Booking this function creates is itself an instance of the exact model the signal watches.
+    Without it, _create_cleaning_gap_block_booking()'s own Booking.objects.create() would
+    synchronously re-fire that same receiver, re-enter this function for the same property before
+    the outer call has had a chance to create the CleaningGapBlock row that would otherwise say
+    "already handled", and create a second (then third, ...) block booking - unbounded recursion.
+    Skipping the whole sweep whenever the just-saved Booking is itself a block short-circuits the
+    nested call immediately, since is_block_booking() is true for every save this function's own
+    create/resize steps trigger. A block being deleted only fires post_delete, which nothing here
+    listens to, so no recursion risk on that side either - same as revoke_late_checkout()."""
+    from bookings.models import Booking, BookingSettings
+    from staff.models import CleaningGapBlock
+
+    nights_per_block_day = BookingSettings.load().cleaning_gap_nights_per_block_day
+    if not nights_per_block_day:
+        for gap_block in CleaningGapBlock.objects.filter(
+            booking__property=property,
+        ).select_related('block_booking'):
+            gap_block.block_booking.delete()
+        return
+
+    for booking in Booking.objects.filter(property=property).order_by('arrival_date'):
+        _sync_cleaning_gap_block_for_booking(booking, nights_per_block_day)
+
+
 def _sync_task_date(task, computed_date):
     """computed_date = booking.departure_date (turnover) or extra.mid_stay_clean_date (mid_stay) -
     the date this task would auto-place at absent any manual drag (see

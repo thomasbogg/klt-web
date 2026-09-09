@@ -293,6 +293,32 @@ class LateCheckoutGrant(models.Model):
         return f"{self.booking} - late check-out ({label})"
 
 
+class CleaningGapBlock(models.Model):
+    """Tracks the 'BLOCK - Unbookable' placeholder Booking (bookings.utils.
+    BLOCK_UNBOOKABLE_LAST_NAME) automatically created after a long stay's departure, when a real
+    gap exists before the property's next confirmed booking (staff/utils.py::
+    sync_cleaning_gap_blocks_for_property(), 2026-09-09 per Thomas). One per source Booking
+    (OneToOne) - kept in sync (resized/removed), never recreated, as the property's timeline
+    changes around it.
+
+    CASCADE on both FKs, same reasoning as LateCheckoutGrant.block_booking above: this row has no
+    meaning independent of the stay it was computed for, or the calendar block that's its entire
+    real-world effect."""
+    booking = models.OneToOneField(
+        'bookings.Booking', on_delete=models.CASCADE, related_name='cleaning_gap_block',
+    )
+    block_booking = models.OneToOneField('bookings.Booking', on_delete=models.CASCADE, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'staff_cleaning_gap_blocks'
+        verbose_name = 'Cleaning Gap Block'
+        verbose_name_plural = 'Cleaning Gap Blocks'
+
+    def __str__(self):
+        return f"{self.booking} - cleaning gap block until {self.block_booking.departure_date}"
+
+
 class Checkin(models.Model):
     """A check-in task for one booking's arrival - either the arrival itself (task_type='arrival',
     always exactly one per booking, though see below) or, for a self-check-in booking, two
