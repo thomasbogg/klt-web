@@ -443,3 +443,71 @@
 .owner-button-danger:hover {
     background: #a13b34;
 }
+
+.owner-button-small {
+    padding: 8px 14px;
+    font-size: 0.82rem;
+}
+
+/* Calendar Links (per Thomas 2026-09-09) - "Your calendar link" needs the URL letting it grow to
+   fill the row, unlike Contact Details' fixed .owner-input-wide/-narrow (those widths were sized
+   for short values like email/phone, nowhere near enough for a full iCal feed URL). */
+.owner-ical-url-label {
+    flex: 1 1 auto;
+}
+
+.owner-ical-url-label input {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: 0.85rem;
+}
+
+/* A plain status line, not an alert - .owner-note/.owner-message-error's pink/red styling reads
+   as something having gone wrong, which "Not synced yet" hasn't. */
+.owner-ical-sync-status {
+    color: #999;
+    font-size: 0.82rem;
+    margin: 6px 0 16px;
+}
+
+/* Mirrors staff/property_detail.css's .staff-ical-export/-label/-row exactly, so both sides of
+   this same feature (staff's iCal Export box on a property, this reciprocal owner-facing one)
+   read as the same visual pattern. */
+.owner-ical-export {
+    background: #f7f7f7;
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 20px;
+}
+
+.owner-ical-export-label {
+    display: block;
+    font-size: 0.78rem;
+    color: #666;
+    margin-bottom: 8px;
+}
+
+.owner-ical-export-row {
+    display: flex;
+    gap: 8px;
+}
+
+.owner-ical-export-row input {
+    flex: 1;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+    font-size: 0.85rem;
+    background: #fff;
+}
+
+.owner-ical-export-row input[readonly] {
+    background: #f4f4f4;
+    color: #777;
+    cursor: default;
+}

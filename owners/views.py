@@ -23,7 +23,7 @@ from bookings.views import BookingFormMixin
 from finance.models import Memo, PayoutRecord
 from owners.permissions import owner_login_required
 from libraries.phone_country_codes import join_phone, phone_country_choices, split_phone
-from properties.models import Property
+from properties.models import Property, iCalLink
 from staff.models import TaskHistoryEntry
 from staff.reports import OWNER_SAFE_REPORT_COLUMNS, booking_report_rows, report_totals
 from staff.utils import CLOSED_STATUSES, last_day_of_month, parsed_date
@@ -142,6 +142,71 @@ class OwnerContactDetailsView(View):
         owner.save(update_fields=['email', 'phone', 'nif_number'])
         messages.success(request, "Contact details updated.")
         return redirect('owners:contact_details')
+
+
+@method_decorator(owner_login_required, name='dispatch')
+class OwnerCalendarLinksView(View):
+    """Self-service page for a property the owner lists themselves on a platform we don't manage
+    (e.g. their own separate Booking.com listing) - per Thomas 2026-09-09. Which platform, if any,
+    is owner-managed for a given property is still a staff decision (properties.models.iCalLink.
+    is_owner_link, ticked on the property's iCal Imports panel in staff/templates/staff/
+    property_detail.html) - this page only lets the owner fill in/update the URL for a link staff
+    has already flagged that way, the same trust boundary as everywhere else in this app (an owner
+    edits their own data, never declares new relationships staff hasn't already set up).
+
+    Also hands back our own calendar_export link for each such platform (see properties/views.py::
+    PropertyCalendarExportView), with ?exclude_platform= set to EVERY owner-managed platform's id
+    on this property, not just the one the link is "for" - per Thomas 2026-09-09, if an owner
+    self-manages more than one platform on the same property (say Airbnb and Booking.com), each
+    link should only ever carry bookings we actually manage ourselves (direct + platforms we
+    control), never relay one of the owner's own listings into their other one. With only one
+    owner-managed platform this is the same URL either way."""
+    template_name = 'owners/calendar_links.html'
+
+    def _properties_with_owner_links(self, owner, request):
+        properties = list(
+            Property.objects.filter(owner=owner).select_related('location').order_by('title')
+        )
+        for property in properties:
+            property.owner_links = list(
+                iCalLink.objects.filter(property=property, is_owner_link=True)
+                .select_related('platform').order_by('platform__name')
+            )
+            export_url = request.build_absolute_uri(
+                reverse('properties:calendar_export', kwargs={'token': property.ical_export_token})
+            )
+            owner_managed_platform_ids = [link.platform_id for link in property.owner_links if link.platform_id]
+            query = '&'.join(f'exclude_platform={pid}' for pid in owner_managed_platform_ids)
+            for link in property.owner_links:
+                link.export_url = f"{export_url}?{query}" if query else export_url
+        return properties
+
+    def get(self, request, *args, **kwargs):
+        owner = request.user.owner_profile
+        properties = self._properties_with_owner_links(owner, request)
+        return render(request, self.template_name, {
+            'owner': owner, 'active_section': 'calendar_links',
+            'properties': properties,
+            'has_owner_links': any(property.owner_links for property in properties),
+        })
+
+    def post(self, request, *args, **kwargs):
+        owner = request.user.owner_profile
+        link = iCalLink.objects.filter(
+            pk=request.POST.get('link_id'), property__owner=owner, is_owner_link=True,
+        ).first()
+        if link is None:
+            messages.error(request, "That calendar link couldn't be found.")
+            return redirect('owners:calendar_links')
+        link.ical_url = request.POST.get('ical_url', '').strip() or None
+        try:
+            link.full_clean()
+        except ValidationError as error:
+            _flash_validation_error(request, error)
+            return redirect('owners:calendar_links')
+        link.save(update_fields=['ical_url'])
+        messages.success(request, "Calendar link updated.")
+        return redirect('owners:calendar_links')
 
 
 @method_decorator(owner_login_required, name='dispatch')

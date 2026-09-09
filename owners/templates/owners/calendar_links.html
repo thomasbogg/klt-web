@@ -1,0 +1,72 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendar Links | Owner Suite | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'owners/owners.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script src="{% static 'owners/calendar_links.js' %}" defer></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'owners/_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content">
+            <h1>Calendar Links</h1>
+            <p class="owner-welcome">If you list a property yourself on a platform we don't manage, give us your calendar link below so those bookings show up on our side too - and use the link we give you back to keep that platform's calendar blocked against everything else we hold.</p>
+
+            {% if messages %}
+            <div class="owner-messages">
+                {% for message in messages %}
+                <p class="owner-message owner-message-{{ message.tags }}">{{ message }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if not has_owner_links %}
+            <p class="owner-empty">None of your properties are set up for this yet - get in touch if you list one yourself on a platform and want it linked here.</p>
+            {% endif %}
+
+            {% for property in properties %}
+            {% if property.owner_links %}
+            <div class="owner-filter-panel">
+                <h2 class="owner-panel-title">{{ property }}</h2>
+                {% for link in property.owner_links %}
+                <h3 class="owner-panel-title owner-panel-title-spaced">{{ link.platform.name|default:"Unknown platform" }}</h3>
+                <form method="post" class="owner-filter-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="link_id" value="{{ link.pk }}">
+                    <label class="owner-ical-url-label">Your calendar link
+                        <input type="url" name="ical_url" value="{{ link.ical_url|default:'' }}" placeholder="https://...">
+                    </label>
+                    <button type="submit" class="owner-button">Save</button>
+                </form>
+                <p class="owner-ical-sync-status">
+                    {% if link.last_synced %}Last synced {{ link.last_synced|date:"j M Y, H:i" }}.{% else %}Not synced yet.{% endif %}
+                </p>
+                <div class="owner-ical-export">
+                    <span class="owner-ical-export-label">Give this link to {{ link.platform.name|default:"your listing" }}</span>
+                    <div class="owner-ical-export-row">
+                        <input type="text" value="{{ link.export_url }}" readonly id="owner-ical-export-{{ link.pk }}">
+                        <button type="button" class="owner-button owner-button-small" data-copy-target="owner-ical-export-{{ link.pk }}">Copy</button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    {% include 'footer/footer.html' %}
+</body>
+</html>

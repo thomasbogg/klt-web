@@ -284,9 +284,16 @@
     width: 26%;
 }
 
+/* 205px, not a round number - measured directly against the rendered Save/Sync/Delete buttons
+   (getBoundingClientRect: ~192px of content plus this cell's own 4px/side padding), so the column
+   doesn't carry the ~40-70px of dead trailing space the old 235px did. Per Thomas 2026-09-09: with
+   that dead space gone, the row's visible content (URL input, buttons) now actually reaches the
+   panel's right edge instead of visibly stopping short of it, matching the iCal Export box's own
+   flush-right layout directly above this table. The freed width flows to the unsized URL column
+   (2nd), same fixed-layout redistribution described above. */
 .staff-ical-table th:last-child,
 .staff-ical-actions-cell {
-    width: 235px;
+    width: 205px;
 }
 
 .staff-ical-platform-cell {
@@ -311,18 +318,38 @@
     font-size: 0.8rem;
 }
 
-/* Same technique the Rate card table already uses for its own actions column (see
-   .staff-price-row-actions) - a <td> can carry display: flex to lay out the several small
-   forms/buttons it holds without breaking the table's row/column structure. */
+/* The Rate card table's own actions column puts display:flex directly on the <td> (see
+   .staff-price-row-actions) - tried the same here first, but a table-cell with display:flex
+   stops stretching to the row's own height (confirmed via getBoundingClientRect: the cell
+   rendered ~42px tall inside a 58px row, everywhere else in the row 58px) - so its border-bottom
+   landed higher than the rest of the row's, a visible step where this column's divider line
+   doesn't meet its neighbours' (2026-09-09, per Thomas - this is the actual "borders don't match
+   up" bug, not a width/alignment issue). Splitting the flex layout onto an inner
+   .staff-ical-actions-inner <div> instead - the <td> itself stays a plain table-cell (stretches
+   to full row height like every sibling, so its border-bottom sits at the same Y as the rest of
+   the row), and vertical-align:middle centres the (shorter) flex wrapper within that full-height
+   cell. */
 .staff-ical-actions-cell {
+    vertical-align: middle;
+}
+
+/* justify-content: flex-end - a populated row holds 3 buttons (Save/Sync/Delete), the "add new"
+   row only 1 (+Add), so no single fixed column width can size itself to content and have both
+   look right: sized for 3 buttons, the 1-button row was left with a huge trailing gap before the
+   panel's true right edge, which is what originally read as "doesn't span the panel". Right-
+   aligning means content always ends flush against that boundary no matter how many buttons a
+   given row has, matching the iCal Export box's own flush-right Copy button directly above this
+   table. */
+.staff-ical-actions-inner {
     display: flex;
     flex-wrap: nowrap;
+    justify-content: flex-end;
     gap: 6px;
     align-items: center;
 }
 
-.staff-ical-actions-cell .staff-button,
-.staff-ical-actions-cell form {
+.staff-ical-actions-inner .staff-button,
+.staff-ical-actions-inner form {
     flex: 0 0 auto;
 }
 

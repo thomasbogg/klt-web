@@ -17,7 +17,7 @@ from bookings.utils import create_owner_booking, guest_for_owner
 from finance.models import Memo, PayoutRecord
 from guests.models import Guest
 from libraries.phone_country_codes import join_phone, split_phone
-from properties.models import Location, ManagementCompany, Owner, Property, PropertySpec
+from properties.models import Location, ManagementCompany, Owner, Platform, Property, PropertySpec, iCalLink
 from staff.models import CleaningTask, LateCheckoutGrant
 from staff.utils import grant_late_checkout
 
@@ -319,6 +319,134 @@ class OwnerContactDetailsTests(TestCase):
     def test_anonymous_visitor_is_redirected_to_login(self):
         self.client.logout()
         response = self.client.get(reverse('owners:contact_details'))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse('owners:login'), response.url)
+
+
+class OwnerCalendarLinksTests(TestCase):
+    """Self-service submission of an owner's own calendar feed for a platform they list
+    themselves, plus our own reciprocal export link back - added 2026-09-09 per Thomas. Which
+    platform is owner-managed for a property is still staff's call (iCalLink.is_owner_link, set
+    from the property's iCal Imports panel) - this view only lets the owner fill in/update the URL
+    for a link staff already flagged that way."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Calendar Links Owner', email='calendar-links-owner@example.com',
+            currency=Owner.Currency.EUR, is_paid_regularly=False,
+        )
+        self.owner_user = User.objects.create_user(username='calendarlinksowner', password='pw')
+        self.owner.user = self.owner_user
+        self.owner.save(update_fields=['user'])
+        self.property = Property.objects.create(
+            title='Calendar Links Property', short_title='CALLINKPROP', owner=self.owner,
+        )
+        self.booking_com = Platform.objects.create(name='Calendar Links Booking.com')
+        self.owner_link = iCalLink.objects.create(
+            property=self.property, platform=self.booking_com, is_owner_link=True,
+        )
+
+        self.other_owner = Owner.objects.create(
+            name='Other Calendar Links Owner', email='other-calendar-links-owner@example.com',
+            currency=Owner.Currency.EUR, is_paid_regularly=False,
+        )
+        self.other_property = Property.objects.create(
+            title='Other Calendar Links Property', short_title='OTHCALLINKPROP', owner=self.other_owner,
+        )
+        self.other_link = iCalLink.objects.create(
+            property=self.other_property, platform=self.booking_com, is_owner_link=True,
+        )
+
+        self.client.login(username='calendarlinksowner', password='pw')
+
+    def test_get_shows_own_owner_managed_link(self):
+        response = self.client.get(reverse('owners:calendar_links'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Calendar Links Booking.com')
+        self.assertNotContains(response, self.other_property.title)
+
+    def test_get_does_not_show_a_staff_managed_non_owner_link(self):
+        airbnb = Platform.objects.create(name='Calendar Links Airbnb')
+        iCalLink.objects.create(
+            property=self.property, platform=airbnb, ical_url='https://staff-managed.example.com/feed.ics',
+            is_owner_link=False,
+        )
+        response = self.client.get(reverse('owners:calendar_links'))
+        self.assertNotContains(response, 'Calendar Links Airbnb')
+
+    def test_get_export_url_includes_this_links_platform_id(self):
+        response = self.client.get(reverse('owners:calendar_links'))
+        properties = response.context['properties']
+        [link] = properties[0].owner_links
+        self.assertIn(f'exclude_platform={self.booking_com.pk}', link.export_url)
+
+    def test_export_url_excludes_every_owner_managed_platform_on_the_property_not_just_its_own(self):
+        """Per Thomas 2026-09-09: if an owner self-manages two platforms on the same property, the
+        link for either one should exclude both, not just the one it's "for" - it should only ever
+        carry bookings we actually manage ourselves, never relay one owner-managed listing into
+        the owner's other one."""
+        airbnb = Platform.objects.create(name='Calendar Links Airbnb')
+        airbnb_link = iCalLink.objects.create(property=self.property, platform=airbnb, is_owner_link=True)
+        response = self.client.get(reverse('owners:calendar_links'))
+        [prop] = [p for p in response.context['properties'] if p.pk == self.property.pk]
+        links_by_platform = {link.platform_id: link for link in prop.owner_links}
+        for link in (links_by_platform[self.booking_com.pk], links_by_platform[airbnb.pk]):
+            self.assertIn(f'exclude_platform={self.booking_com.pk}', link.export_url)
+            self.assertIn(f'exclude_platform={airbnb_link.platform_id}', link.export_url)
+
+    def test_empty_state_shown_when_no_property_has_an_owner_managed_link(self):
+        self.owner_link.delete()
+        response = self.client.get(reverse('owners:calendar_links'))
+        self.assertContains(response, "None of your properties are set up for this yet")
+
+    def test_post_updates_the_url(self):
+        response = self.client.post(reverse('owners:calendar_links'), {
+            'link_id': self.owner_link.pk, 'ical_url': 'https://my-booking-com-listing.example.com/feed.ics',
+        }, follow=True)
+        self.assertRedirects(response, reverse('owners:calendar_links'))
+        self.owner_link.refresh_from_db()
+        self.assertEqual(self.owner_link.ical_url, 'https://my-booking-com-listing.example.com/feed.ics')
+        self.assertContains(response, 'Calendar link updated.')
+
+    def test_post_allows_clearing_the_url(self):
+        self.owner_link.ical_url = 'https://my-booking-com-listing.example.com/feed.ics'
+        self.owner_link.save(update_fields=['ical_url'])
+        self.client.post(reverse('owners:calendar_links'), {'link_id': self.owner_link.pk, 'ical_url': ''})
+        self.owner_link.refresh_from_db()
+        self.assertIsNone(self.owner_link.ical_url)
+
+    def test_post_rejects_a_malformed_url(self):
+        response = self.client.post(reverse('owners:calendar_links'), {
+            'link_id': self.owner_link.pk, 'ical_url': 'not-a-valid-url',
+        }, follow=True)
+        self.assertContains(response, 'valid URL')
+        self.owner_link.refresh_from_db()
+        self.assertIsNone(self.owner_link.ical_url)
+
+    def test_post_cannot_update_another_owners_link(self):
+        response = self.client.post(reverse('owners:calendar_links'), {
+            'link_id': self.other_link.pk, 'ical_url': 'https://hijacked.example.com/feed.ics',
+        }, follow=True)
+        # apostrophe renders HTML-escaped (&#x27;) in the message, so split the assertion around it
+        self.assertContains(response, "That calendar link")
+        self.assertContains(response, "be found.")
+        self.other_link.refresh_from_db()
+        self.assertIsNone(self.other_link.ical_url)
+
+    def test_post_cannot_update_a_staff_managed_non_owner_link(self):
+        staff_link = iCalLink.objects.create(
+            property=self.property, platform=self.booking_com,
+            ical_url='https://staff-managed.example.com/feed.ics', is_owner_link=False,
+        )
+        self.client.post(reverse('owners:calendar_links'), {
+            'link_id': staff_link.pk, 'ical_url': 'https://hijacked.example.com/feed.ics',
+        })
+        staff_link.refresh_from_db()
+        self.assertEqual(staff_link.ical_url, 'https://staff-managed.example.com/feed.ics')
+
+    def test_anonymous_visitor_is_redirected_to_login(self):
+        self.client.logout()
+        response = self.client.get(reverse('owners:calendar_links'))
         self.assertEqual(response.status_code, 302)
         self.assertIn(reverse('owners:login'), response.url)
 

@@ -2207,12 +2207,17 @@ class StaffPropertyDetailView(View):
         platform_id = post.get('platform', '').strip()
         platform = Platform.objects.filter(pk=platform_id).first() if platform_id else None
         url = post.get('ical_url', '').strip()
-        if not url:
+        is_owner_link = post.get('is_owner_link') == 'on'
+        # A blank URL is only allowed for an owner-managed stub - staff flags the platform as the
+        # owner's own listing here, and the owner fills in the actual URL themselves later via
+        # owners/views.py::OwnerCalendarLinksView. A staff-managed sync link still needs a real URL
+        # up front, since nobody else is going to supply one for it.
+        if not url and not is_owner_link:
             messages.error(request, "An iCal link needs a URL.")
             return
         iCalLink.objects.create(
-            property=property, platform=platform, ical_url=url,
-            is_owner_link=post.get('is_owner_link') == 'on',
+            property=property, platform=platform, ical_url=url or None,
+            is_owner_link=is_owner_link,
             exclude_summary_contains=post.get('exclude_summary_contains', '').strip(),
         )
         messages.success(request, "iCal link added.")
@@ -2222,11 +2227,12 @@ class StaffPropertyDetailView(View):
         if link is None:
             return
         url = request.POST.get('ical_url', '').strip()
-        if not url:
+        is_owner_link = request.POST.get('is_owner_link') == 'on'
+        if not url and not is_owner_link:
             messages.error(request, "An iCal link needs a URL.")
             return
-        link.ical_url = url
-        link.is_owner_link = request.POST.get('is_owner_link') == 'on'
+        link.ical_url = url or None
+        link.is_owner_link = is_owner_link
         link.exclude_summary_contains = request.POST.get('exclude_summary_contains', '').strip()
         link.save(update_fields=['ical_url', 'is_owner_link', 'exclude_summary_contains'])
         messages.success(request, "iCal link updated.")

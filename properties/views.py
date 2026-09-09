@@ -6,7 +6,7 @@ from django.shortcuts import get_object_or_404, redirect
 from django.views import View, generic
 
 import env_settings
-from .models import Property, Location, Price
+from .models import Property, Location, Platform, Price
 from .utils import get_stay_total_price
 from availability.utils import (
     date_string_to_date,
@@ -196,7 +196,20 @@ class PropertyCalendarExportView(View):
     ical_export_token alone (see Property.save()) - a 404 on an unknown/wrong token, not a 403, so
     a guess doesn't confirm a token format is even in use. Events are deliberately content-free
     ("Reserved", no guest name) - the point is purely to block dates on another platform, not to
-    hand guest PII to a competitor booking site."""
+    hand guest PII to a competitor booking site.
+
+    Optional repeated ?exclude_platform=<Platform pk> narrows the exclusion to just those
+    platforms instead of all three - added 2026-09-09, per Thomas, for owners who list a property
+    themselves on a platform we don't otherwise manage (see owners/views.py::
+    OwnerCalendarLinksView): they need a feed that still includes bookings from platforms we DO
+    control (e.g. our own Airbnb listing) so their self-run listing doesn't get double-booked
+    against those too. OwnerCalendarLinksView always passes the property's FULL set of
+    owner-managed platform ids here, not just the one a given link is "for" - per Thomas
+    2026-09-09, if an owner self-manages two platforms (say Airbnb and Booking.com), the link we
+    give them for either one should only ever carry bookings we actually manage ourselves (direct
+    + platforms we control), never relay one of the owner's own listings into their other one -
+    that's the owner's own business, not ours to sync for them. Unknown/missing ids fall back to
+    the original all-platforms exclusion unchanged."""
 
     def get(self, request, token, *args, **kwargs):
         property = Property.objects.filter(ical_export_token=token).first()
@@ -207,7 +220,10 @@ class PropertyCalendarExportView(View):
         calendar.add('prodid', '-//Algarve Beach Apartments//klt-web//EN')
         calendar.add('version', '2.0')
 
-        bookings = property.booking_set.holding().exclude(enquiry_source__in=env_settings.PLATFORMS)
+        exclude_platform_ids = request.GET.getlist('exclude_platform')
+        platforms = Platform.objects.filter(pk__in=exclude_platform_ids) if exclude_platform_ids else None
+        exclude_names = [p.name for p in platforms] if platforms else list(env_settings.PLATFORMS)
+        bookings = property.booking_set.holding().exclude(enquiry_source__in=exclude_names)
         for booking in bookings:
             event = Event()
             # reference should always be set for a genuine website booking (Booking.save() always
