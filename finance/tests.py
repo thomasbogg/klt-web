@@ -593,9 +593,9 @@ class SageClientRequestTests(TestCase):
 
 
 class DispatchMemoToSageTests(FinanceTestCase):
-    """finance/services.py::dispatch_memo_to_sage - the send-flow wiring itself is exercised at
-    the HTTP level in FinanceViewSmokeTests.test_memo_detail_and_send_render (owner opted out
-    there, so it's a no-op); these cover the function's own branches directly."""
+    """finance/services.py::dispatch_memo_to_sage - NOT currently called from anywhere (see its own
+    docstring); these tests cover its branches directly so the logic stays proven ahead of being
+    reused/adapted for the real monthly-batch Sage invoicing mechanism."""
 
     def setUp(self):
         super().setUp()

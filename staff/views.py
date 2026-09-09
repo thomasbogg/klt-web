@@ -29,7 +29,7 @@ from bookings.models import (
 from bookings.payouts import compute_owner_payout
 from finance.models import AdHocService, DepositReturn, Memo, PayoutRecord, SageSettings
 from finance.services import (
-    backfill_memos_for_company, deposits_due_in_range, dispatch_memo_to_sage, open_memo_for_property,
+    backfill_memos_for_company, deposits_due_in_range, open_memo_for_property,
     owner_balance_in_range, payouts_due_in_range, sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
@@ -3795,11 +3795,11 @@ class StaffFinanceMemoSendView(View):
     owner is explicitly out of scope/stubbed - this project has no outbound email yet - so Send
     here just records who/when.
 
-    Also dispatches a real Sage One invoice (finance/services.py::dispatch_memo_to_sage,
-    2026-09-09) for an owner who opted in (properties.models.Owner.cleans_are_invoiced) - a no-op
-    for everyone else. Called unconditionally, after the send itself is already committed: a Sage
-    failure is recorded on the memo but never rolls back or blocks "Memo marked as sent," since
-    that message is about the internal record existing, not about Sage delivery succeeding."""
+    Does NOT dispatch anything to Sage - a Memo is purely informational to the owner that a clean/
+    meet-greet happened, never itself a billing trigger. finance/services.py::dispatch_memo_to_sage
+    was briefly wired to fire here (2026-09-09) but reverted same day once Thomas clarified the
+    real model: cleans/meet-greet invoicing is batched monthly, not per-Memo. dispatch_memo_to_sage
+    itself stays in finance/services.py, unused for now, pending that batch mechanism being built."""
 
     def post(self, request, pk, *args, **kwargs):
         memo = Memo.objects.select_related('property__owner', 'cleaning_task').filter(pk=pk).first()
@@ -3814,7 +3814,6 @@ class StaffFinanceMemoSendView(View):
         memo.sent_by = request.user
         memo.save(update_fields=['sent_at', 'sent_by'])
         sweep_unattached_ad_hoc_services(memo.property)
-        dispatch_memo_to_sage(memo)
         messages.success(request, "Memo marked as sent.")
 
         redirect_date = request.POST.get('date', '').strip()

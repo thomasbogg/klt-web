@@ -103,10 +103,19 @@ def _sage_client():
 
 
 def dispatch_memo_to_sage(memo):
-    """Creates a real Sage One invoice for a sent Memo, if its property's owner opted in
+    """Creates a real Sage One invoice for a single Memo, if its property's owner opted in
     (properties.models.Owner.cleans_are_invoiced - restored 2026-09-09, per Thomas, for exactly
-    this). Called from staff/views.py::StaffFinanceMemoSendView right after sent_at/sent_by are
-    saved - a no-op (not an error) for an owner who hasn't opted in, or who has no owner at all.
+    this).
+
+    NOT currently called from anywhere (2026-09-09) - briefly wired into
+    staff/views.py::StaffFinanceMemoSendView the same day, then deliberately unwired once Thomas
+    clarified the real billing model: cleans/meet-greet invoicing to Sage happens as one batched
+    invoice per owner per month, not one invoice per Memo. This function's contact-lookup/creation
+    and error-recording logic will likely be reused/adapted when that monthly batch job is built,
+    but as it stands today it would create one incorrect Sage invoice per clean - left in place,
+    unused, rather than deleted, for exactly that reuse.
+
+    a no-op (not an error) for an owner who hasn't opted in, or who has no owner at all.
 
     Getting a real Sage connection working requires a one-time, Thomas-only manual step this
     function cannot perform: registering a developer app in Sage's portal (developers.sageone.com)

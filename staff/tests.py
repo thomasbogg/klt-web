@@ -4284,9 +4284,12 @@ class StaffSageViewsTests(TestCase):
         response = self.client.get(reverse('staff:sage_connect'))
         self.assertEqual(response.status_code, 403)
 
-    def test_connect_shows_error_when_client_id_not_set(self):
-        # Real env_settings.SAGE_CLIENT_ID, genuinely unset in this dev/test environment - the
-        # actual state until Thomas completes the developer-portal registration.
+    @patch('staff.views.env_settings')
+    def test_connect_shows_error_when_client_id_not_set(self, mock_env_settings):
+        # Mocked rather than relying on the real .env leaving SAGE_CLIENT_ID unset - true only
+        # until Thomas completed the developer-portal registration (2026-09-09), not a permanent
+        # property of this dev environment.
+        mock_env_settings.SAGE_CLIENT_ID = None
         self.client.login(username='sagesuper', password='pw')
         response = self.client.get(reverse('staff:sage_connect'), follow=True)
         self.assertRedirects(response, self.settings_url)

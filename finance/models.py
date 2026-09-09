@@ -49,12 +49,12 @@ class Memo(models.Model):
     sent_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
     )
-    # Set by finance/services.py::dispatch_memo_to_sage, called right after send - only attempted
-    # at all when the property's owner has cleans_are_invoiced=True (properties.models.Owner,
-    # restored 2026-09-09 for exactly this). Exactly one of these two is ever set; both null means
-    # either cleans_are_invoiced=False (this owner doesn't want it) or the memo predates this
-    # feature - never a distinct third state to track. A Sage failure never blocks the send action
-    # itself (see dispatch_memo_to_sage's own docstring), so sage_invoice_error existing is a
+    # Set by finance/services.py::dispatch_memo_to_sage - NOT currently called from anywhere
+    # (2026-09-09): cleans/meet-greet Sage invoicing is batched monthly per owner, not per Memo, so
+    # these stay null on every Memo until that monthly batch mechanism exists and sets them itself
+    # (see dispatch_memo_to_sage's own docstring for why the per-Memo version was reverted the same
+    # day it shipped). Exactly one of these two is ever set once that mechanism is live. A Sage
+    # failure should never block the send action itself, so sage_invoice_error existing would be a
     # visible "this still needs fixing", not something that undoes sent_at.
     sage_invoice_id = models.CharField(max_length=50, blank=True, null=True)
     sage_invoice_error = models.TextField(blank=True, null=True)
