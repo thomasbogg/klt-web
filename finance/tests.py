@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase
@@ -8,9 +9,9 @@ from django.utils import timezone
 
 from bookings.models import Arrival, Booking, BookingSettings, Charge, Departure, PaymentSettings
 from bookings.payouts import clean_fee, meet_greet_fee
-from finance.models import AdHocService, DepositReturn, Memo, PayoutRecord
+from finance.models import AdHocService, DepositReturn, Memo, PayoutRecord, SageSettings
 from finance.services import (
-    deposits_due_in_range, open_memo_for_property, owner_balance_in_range,
+    deposits_due_in_range, dispatch_memo_to_sage, open_memo_for_property, owner_balance_in_range,
     recompute_unsent_memo_fees_for_settings_change, sweep_unattached_ad_hoc_services,
 )
 from guests.models import Guest
@@ -24,7 +25,7 @@ class FinanceTestCase(TestCase):
 
     def setUp(self):
         self.owner = Owner.objects.create(
-            name='Finance Owner', email='finance-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False,
+            name='Finance Owner', email='finance-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False, cleans_are_invoiced=False,
         )
         self.company = ManagementCompany.objects.create(
             name='Finance Test Co', finances_managed_internally=True,
@@ -442,3 +443,241 @@ class FinanceViewSmokeTests(FinanceTestCase):
             'scope': 'owner', 'owner_id': self.owner.pk, 'start': start, 'end': end,
         })
         self.assertEqual(response.status_code, 200)
+
+
+class SageSigningTests(TestCase):
+    """libraries.accounting.sage's request-signing math, checked against Sage's own documented
+    worked example (developers.sageone.com/docs/pt/v2) wherever the example is actually checkable.
+    The example's signing_secret/access_token are partially redacted (shown as 'xxxx...'), so only
+    the base-string and signing-key construction (fully unredacted in the example) can be verified
+    against Sage's own numbers - the final HMAC-SHA1+base64 step is instead checked for internal
+    consistency (recomputed independently with the stdlib hmac module, structurally decoupled from
+    the module's own helpers, and compared)."""
+
+    def test_base_string_matches_sages_documented_example(self):
+        from libraries.accounting.sage import _build_base_string
+        params = {'config_setting': 'foo', 'contact[contact_type_id]': 1, 'contact[name]': 'My Customer'}
+        base_string = _build_base_string(
+            'post', 'https://api.sageone.com/accounts/v2/contacts', params, 'd6657d14f6d3d9de453ff4b0dc686c6d',
+        )
+        self.assertEqual(base_string, (
+            'POST&https%3A%2F%2Fapi.sageone.com%2Faccounts%2Fv2%2Fcontacts&'
+            'config_setting%3Dfoo%26contact%255Bcontact_type_id%255D%3D1%26contact%255Bname%255D%3DMy%2520Customer&'
+            'd6657d14f6d3d9de453ff4b0dc686c6d'
+        ))
+
+    def test_signing_key_matches_sages_documented_example(self):
+        from libraries.accounting.sage import _signing_key
+        key = _signing_key('297850d556xxxxxxxxxxxxxxxxxxxxe722db1d2a', 'cULSIjxxxxxIhbgbjX0R6MkKO')
+        self.assertEqual(key, '297850d556xxxxxxxxxxxxxxxxxxxxe722db1d2a&cULSIjxxxxxIhbgbjX0R6MkKO')
+
+    def test_sign_matches_an_independently_computed_hmac(self):
+        import base64
+        import hashlib
+        import hmac as hmac_module
+        from libraries.accounting.sage import _sign
+
+        signature = _sign(
+            'POST', 'https://api.sageone.com/accounts/v2/contacts',
+            {'contact[name]': 'Test'}, 'a-fixed-test-nonce', 'test-signing-secret', 'test-access-token',
+        )
+        base_string = (
+            'POST&https%3A%2F%2Fapi.sageone.com%2Faccounts%2Fv2%2Fcontacts&'
+            'contact%255Bname%255D%3DTest&a-fixed-test-nonce'
+        )
+        key = 'test-signing-secret&test-access-token'
+        expected = base64.b64encode(
+            hmac_module.new(key.encode('ascii'), base_string.encode('ascii'), hashlib.sha1).digest()
+        ).decode('ascii')
+        self.assertEqual(signature, expected)
+
+    def test_generate_nonce_is_alphanumeric_and_reasonably_random(self):
+        from libraries.accounting.sage import generate_nonce
+        nonce_a = generate_nonce()
+        nonce_b = generate_nonce()
+        self.assertRegex(nonce_a, r'^\w+$')
+        self.assertNotEqual(nonce_a, nonce_b)
+
+
+class SageClientRequestTests(TestCase):
+    """libraries.accounting.sage.Sage's HTTP calls - mocking requests the same way
+    bookings/tests.py already mocks libraries.banking.revolut."""
+
+    @patch('libraries.accounting.sage.requests.post')
+    def test_contact_create_sends_bracketed_form_params_and_signed_headers(self, mock_post):
+        from libraries.accounting.sage import Sage
+
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {'id': 'contact-123', 'name': 'Test Owner'}
+
+        sage = Sage(access_token='token-abc', signing_secret='secret-xyz')
+        result = sage.contact.create('Test Owner', email='owner@example.com', tax_number='123456789')
+
+        self.assertEqual(result['id'], 'contact-123')
+        _args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['data']['contact[name]'], 'Test Owner')
+        self.assertEqual(kwargs['data']['contact[contact_type_id]'], 1)
+        self.assertEqual(kwargs['data']['contact[email]'], 'owner@example.com')
+        self.assertEqual(kwargs['data']['contact[tax_number]'], '123456789')
+        self.assertEqual(kwargs['headers']['Authorization'], 'Bearer token-abc')
+        self.assertIn('X-Signature', kwargs['headers'])
+        self.assertIn('X-Nonce', kwargs['headers'])
+
+    @patch('libraries.accounting.sage.requests.post')
+    def test_contact_create_returns_none_and_logs_on_failure(self, mock_post):
+        from libraries.accounting.sage import Sage
+
+        mock_post.return_value.status_code = 400
+        mock_post.return_value.text = 'bad request'
+        sage = Sage(access_token='token-abc', signing_secret='secret-xyz')
+        self.assertIsNone(sage.contact.create('Test Owner'))
+
+    @patch('libraries.accounting.sage.requests.get')
+    def test_contact_find_by_name_reads_first_result(self, mock_get):
+        from libraries.accounting.sage import Sage
+
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {'$resources': [{'id': 'contact-456', 'name': 'Test Owner'}]}
+        sage = Sage(access_token='token-abc', signing_secret='secret-xyz')
+        result = sage.contact.find_by_name('Test Owner')
+        self.assertEqual(result['id'], 'contact-456')
+
+    @patch('libraries.accounting.sage.requests.get')
+    def test_contact_find_by_name_returns_none_when_no_match(self, mock_get):
+        from libraries.accounting.sage import Sage
+
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {'$resources': []}
+        sage = Sage(access_token='token-abc', signing_secret='secret-xyz')
+        self.assertIsNone(sage.contact.find_by_name('Nobody'))
+
+    @patch('libraries.accounting.sage.requests.post')
+    def test_sales_invoice_create_sends_line_item_and_signed_headers(self, mock_post):
+        from libraries.accounting.sage import Sage
+
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {'id': 'invoice-789'}
+        sage = Sage(access_token='token-abc', signing_secret='secret-xyz')
+        result = sage.sales_invoice.create(
+            contact_id='contact-123', date=date(2026, 9, 9), description='Cleaning',
+            net_amount=Decimal('150.00'), tax_rate_id='tax-rate-1',
+        )
+        self.assertEqual(result['id'], 'invoice-789')
+        _args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['data']['sales_invoice[contact_id]'], 'contact-123')
+        self.assertEqual(kwargs['data']['sales_invoice[invoice_lines][][net_amount]'], '150.00')
+        self.assertEqual(kwargs['data']['sales_invoice[invoice_lines][][tax_rate_id]'], 'tax-rate-1')
+
+    @patch('libraries.accounting.sage.requests.post')
+    def test_refresh_access_token_returns_rotated_tokens(self, mock_post):
+        from libraries.accounting.sage import refresh_access_token
+
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {
+            'access_token': 'new-access', 'refresh_token': 'new-refresh', 'expires_in': 3600,
+        }
+        tokens = refresh_access_token('client-id', 'client-secret', 'old-refresh')
+        self.assertEqual(tokens['access_token'], 'new-access')
+        self.assertEqual(tokens['refresh_token'], 'new-refresh')
+        _args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['data']['grant_type'], 'refresh_token')
+        self.assertEqual(kwargs['data']['refresh_token'], 'old-refresh')
+
+    @patch('libraries.accounting.sage.requests.post')
+    def test_refresh_access_token_returns_none_on_failure(self, mock_post):
+        from libraries.accounting.sage import refresh_access_token
+
+        mock_post.return_value.status_code = 400
+        mock_post.return_value.text = 'invalid_grant'
+        self.assertIsNone(refresh_access_token('client-id', 'client-secret', 'old-refresh'))
+
+
+class DispatchMemoToSageTests(FinanceTestCase):
+    """finance/services.py::dispatch_memo_to_sage - the send-flow wiring itself is exercised at
+    the HTTP level in FinanceViewSmokeTests.test_memo_detail_and_send_render (owner opted out
+    there, so it's a no-op); these cover the function's own branches directly."""
+
+    def setUp(self):
+        super().setUp()
+        booking = self._make_booking(10, 14)
+        self.memo = Memo.objects.get(cleaning_task__booking=booking)
+
+    def test_noop_when_owner_has_not_opted_in(self):
+        self.owner.cleans_are_invoiced = False
+        self.owner.save()
+        dispatch_memo_to_sage(self.memo)
+        self.memo.refresh_from_db()
+        self.assertIsNone(self.memo.sage_invoice_id)
+        self.assertIsNone(self.memo.sage_invoice_error)
+
+    def test_records_error_when_sage_not_configured(self):
+        # No env_settings.SAGE_CLIENT_ID/etc and no SageSettings.refresh_token in this dev/test
+        # environment - the real state until Thomas completes the developer-portal registration.
+        self.owner.cleans_are_invoiced = True
+        self.owner.save()
+        dispatch_memo_to_sage(self.memo)
+        self.memo.refresh_from_db()
+        self.assertIsNone(self.memo.sage_invoice_id)
+        self.assertIsNotNone(self.memo.sage_invoice_error)
+
+    @patch('finance.services.env_settings')
+    @patch('libraries.accounting.sage.requests.post')
+    def test_creates_contact_and_invoice_on_full_success(self, mock_post, mock_env_settings):
+        mock_env_settings.SAGE_CLIENT_ID = 'client-id'
+        mock_env_settings.SAGE_CLIENT_SECRET = 'client-secret'
+        mock_env_settings.SAGE_SIGNING_SECRET = 'signing-secret'
+
+        sage_settings = SageSettings.load()
+        sage_settings.refresh_token = 'refresh-token'
+        sage_settings.access_token = 'access-token'
+        sage_settings.token_expires_at = timezone.now() + timedelta(hours=1)
+        sage_settings.default_tax_rate_id = 'tax-rate-1'
+        sage_settings.save()
+
+        self.owner.cleans_are_invoiced = True
+        self.owner.save()
+
+        # First call: contact search (GET, not mocked here) returns nothing found -> falls through
+        # to create. Both contact create and invoice create go through the mocked POST below, in
+        # that order - status 201 with an 'id' satisfies both.
+        with patch('libraries.accounting.sage.requests.get') as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.json.return_value = {'$resources': []}
+            mock_post.return_value.status_code = 201
+            mock_post.return_value.json.side_effect = [
+                {'id': 'contact-123'}, {'id': 'invoice-789'},
+            ]
+            dispatch_memo_to_sage(self.memo)
+
+        self.memo.refresh_from_db()
+        self.owner.refresh_from_db()
+        self.assertEqual(self.memo.sage_invoice_id, 'invoice-789')
+        self.assertIsNone(self.memo.sage_invoice_error)
+        self.assertEqual(self.owner.sage_contact_id, 'contact-123')
+
+    def test_reuses_existing_sage_contact_id_without_a_lookup(self):
+        self.owner.cleans_are_invoiced = True
+        self.owner.sage_contact_id = 'existing-contact'
+        self.owner.save()
+
+        with patch('finance.services.env_settings') as mock_env_settings, \
+                patch('libraries.accounting.sage.requests.post') as mock_post, \
+                patch('libraries.accounting.sage.requests.get') as mock_get:
+            mock_env_settings.SAGE_CLIENT_ID = 'client-id'
+            mock_env_settings.SAGE_CLIENT_SECRET = 'client-secret'
+            mock_env_settings.SAGE_SIGNING_SECRET = 'signing-secret'
+            sage_settings = SageSettings.load()
+            sage_settings.refresh_token = 'refresh-token'
+            sage_settings.access_token = 'access-token'
+            sage_settings.token_expires_at = timezone.now() + timedelta(hours=1)
+            sage_settings.default_tax_rate_id = 'tax-rate-1'
+            sage_settings.save()
+
+            mock_post.return_value.status_code = 201
+            mock_post.return_value.json.return_value = {'id': 'invoice-999'}
+            dispatch_memo_to_sage(self.memo)
+
+            mock_get.assert_not_called()
+
+        self.memo.refresh_from_db()
+        self.assertEqual(self.memo.sage_invoice_id, 'invoice-999')

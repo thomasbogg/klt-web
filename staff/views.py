@@ -1,4 +1,5 @@
 from datetime import datetime, time, timedelta
+from urllib.parse import urlencode
 from decimal import Decimal, InvalidOperation
 
 import requests
@@ -26,10 +27,10 @@ from bookings.models import (
     PlatformPayout, RequestType, TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
-from finance.models import AdHocService, DepositReturn, Memo, PayoutRecord
+from finance.models import AdHocService, DepositReturn, Memo, PayoutRecord, SageSettings
 from finance.services import (
-    backfill_memos_for_company, deposits_due_in_range, open_memo_for_property, owner_balance_in_range,
-    payouts_due_in_range, sweep_unattached_ad_hoc_services,
+    backfill_memos_for_company, deposits_due_in_range, dispatch_memo_to_sage, open_memo_for_property,
+    owner_balance_in_range, payouts_due_in_range, sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_deposit_waiver, compute_effective_self_check_in, create_booking,
@@ -973,6 +974,7 @@ class StaffSettingsView(View):
         'add_washing_material': 'people',
         'delete_washing_material': 'people',
         'update_payment_settings': 'payments',
+        'update_sage_settings': 'payments',
         'update_email_template': 'emails',
     }
 
@@ -1038,6 +1040,7 @@ class StaffSettingsView(View):
             'add_washing_material': self._add_washing_material,
             'delete_washing_material': self._delete_washing_material,
             'update_payment_settings': self._update_payment_settings,
+            'update_sage_settings': self._update_sage_settings,
             'update_email_template': self._update_email_template,
         }.get(action)
         if handler is not None:
@@ -1058,6 +1061,8 @@ class StaffSettingsView(View):
             'local_guide_categories': LocalGuideEntry.Category.choices,
             'extras_settings': ExtrasSettings.load(),
             'payment_settings': PaymentSettings.load(),
+            'sage_settings': SageSettings.load(),
+            'sage_client_id_configured': bool(env_settings.SAGE_CLIENT_ID),
             'month_choices': MONTH_CHOICES,
             'welcome_pack_items': WelcomePackItem.objects.all(),
             'welcome_pack_categories': WelcomePackItem.Category.choices,
@@ -1581,6 +1586,7 @@ class StaffSettingsView(View):
         owner = Owner(
             name=post.get('name', '').strip(),
             email=post.get('email', '').strip(),
+            secondary_email=post.get('secondary_email', '').strip() or None,
             phone=post.get('phone', '').strip() or None,
             nif_number=post.get('nif_number', '').strip() or None,
             currency=currency,
@@ -1602,6 +1608,7 @@ class StaffSettingsView(View):
         post = request.POST
         owner.name = post.get('name', '').strip()
         owner.email = post.get('email', '').strip()
+        owner.secondary_email = post.get('secondary_email', '').strip() or None
         owner.phone = post.get('phone', '').strip() or None
         owner.nif_number = post.get('nif_number', '').strip() or None
         currency = post.get('currency')
@@ -1895,6 +1902,15 @@ class StaffSettingsView(View):
             return
         settings.save()
         messages.success(request, "Payment settings updated.")
+
+    def _update_sage_settings(self, request):
+        """Just default_tax_rate_id - access_token/refresh_token/token_expires_at are only ever
+        written by StaffSageCallbackView (the OAuth grant) or finance/services.py::_sage_client
+        (an automatic refresh), never edited by hand here."""
+        settings = SageSettings.load()
+        settings.default_tax_rate_id = request.POST.get('default_tax_rate_id', '').strip() or None
+        settings.save(update_fields=['default_tax_rate_id'])
+        messages.success(request, "Sage settings updated.")
 
     # --- Emails ---
 
@@ -3777,10 +3793,16 @@ class StaffFinanceMemoSendView(View):
     memo is now open next (finance/services.py::sweep_unattached_ad_hoc_services), satisfying "any
     new ad-hoc service rolls onto the next memo from this moment". Emailing the memo to the
     owner is explicitly out of scope/stubbed - this project has no outbound email yet - so Send
-    here just records who/when."""
+    here just records who/when.
+
+    Also dispatches a real Sage One invoice (finance/services.py::dispatch_memo_to_sage,
+    2026-09-09) for an owner who opted in (properties.models.Owner.cleans_are_invoiced) - a no-op
+    for everyone else. Called unconditionally, after the send itself is already committed: a Sage
+    failure is recorded on the memo but never rolls back or blocks "Memo marked as sent," since
+    that message is about the internal record existing, not about Sage delivery succeeding."""
 
     def post(self, request, pk, *args, **kwargs):
-        memo = Memo.objects.select_related('property').filter(pk=pk).first()
+        memo = Memo.objects.select_related('property__owner', 'cleaning_task').filter(pk=pk).first()
         if memo is None:
             messages.error(request, "That memo no longer exists.")
             return redirect('staff:finance_memos')
@@ -3792,6 +3814,7 @@ class StaffFinanceMemoSendView(View):
         memo.sent_by = request.user
         memo.save(update_fields=['sent_at', 'sent_by'])
         sweep_unattached_ad_hoc_services(memo.property)
+        dispatch_memo_to_sage(memo)
         messages.success(request, "Memo marked as sent.")
 
         redirect_date = request.POST.get('date', '').strip()
@@ -3799,6 +3822,43 @@ class StaffFinanceMemoSendView(View):
         if redirect_date:
             redirect_url = f"{redirect_url}?date={redirect_date}"
         return redirect(redirect_url)
+
+
+@method_decorator(superuser_required, name='dispatch')
+class StaffSageConnectView(View):
+    """Kicks off the one-time Sage One OAuth2 authorization grant (2026-09-09) - "This can only be
+    authorized by the business owner (the user that created the Sage One subscription)" per Sage's
+    own docs, so Thomas has to be the one who actually completes the redirect/login/consent on
+    Sage's own site; this view only builds the link and sends the browser there. Superuser-only -
+    a real, sensitive external-account connection action, not routine settings editing.
+
+    redirect_uri points at klt-hooks (env_settings.KLT_WEBHOOK_URL), not back into this app
+    (2026-09-09, per Thomas) - klt-web only ever runs as 127.0.0.1 on someone's own machine (see
+    CLAUDE.md), never a real deployed URL, so it can't itself be a redirect target Sage's OAuth
+    server can reach. klt-hooks already plays exactly this role for Revolut/Wise (a publicly
+    reachable receiver that writes straight into this app's shared Postgres via raw SQL, see
+    klt-hooks/postgres_bookings.py) - the actual token exchange, and the finance_sage_settings
+    write, both happen over there now (klt-hooks/main.py::sage_oauth_callback). state carries the
+    URL back to this Settings page, so klt-hooks' confirmation page has somewhere to send Thomas
+    once it's done - opaque to Sage, just round-tripped through its OAuth redirect unchanged.
+
+    Requires SAGE_CLIENT_ID (env_settings.py) to already be set, from Thomas's own manual
+    developer-app registration at developers.sageone.com - that registration needs to be told
+    about klt-hooks' callback URL, so klt-hooks' own route has to exist first (it does)."""
+
+    def get(self, request, *args, **kwargs):
+        from libraries.accounting.sage import AUTH_URL
+
+        if not env_settings.SAGE_CLIENT_ID:
+            messages.error(request, "SAGE_CLIENT_ID isn't set yet - register the app at developers.sageone.com first.")
+            return redirect('staff:settings')
+        return_url = request.build_absolute_uri(f"{reverse('staff:settings')}?panel=payments")
+        redirect_uri = f"{env_settings.KLT_WEBHOOK_URL}sage/oauth-callback"
+        query = urlencode({
+            'response_type': 'code', 'client_id': env_settings.SAGE_CLIENT_ID,
+            'redirect_uri': redirect_uri, 'state': return_url,
+        })
+        return redirect(f'{AUTH_URL}?{query}')
 
 
 @method_decorator(staff_email_action_required, name='dispatch')

@@ -20,7 +20,7 @@ from bookings.models import (
     PaymentSettings, PlatformPayout, RequestType, TravelMethod,
 )
 from bookings.utils import BLOCK_LATE_CHECK_OUT_LAST_NAME, BLOCK_UNBOOKABLE_LAST_NAME
-from finance.models import AdHocService
+from finance.models import AdHocService, SageSettings
 from guests.models import Guest
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
@@ -50,6 +50,7 @@ User = get_user_model()
 def make_owner(**overrides):
     defaults = dict(
         name='Test Owner', email='owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=True,
+        cleans_are_invoiced=False,
     )
     defaults.update(overrides)
     return Owner.objects.create(**defaults)
@@ -3786,6 +3787,34 @@ class StaffSettingsViewTests(TestCase):
         owner.refresh_from_db()
         self.assertEqual(owner.currency, 'EUR')
 
+    def test_add_owner_saves_secondary_email(self):
+        # Added 2026-09-09, per Thomas - a real second contact for a co-owned property (a couple,
+        # business partners), not a scratch field. See properties/migrations/0060_
+        # owner_secondary_email for the real-data split this replaced.
+        self.client.post(self.url, {
+            'action': 'add_owner', 'name': 'Two Contact Owner', 'email': 'first@example.com',
+            'secondary_email': 'second@example.com', 'currency': 'EUR',
+        })
+        self.assertEqual(Owner.objects.get(email='first@example.com').secondary_email, 'second@example.com')
+
+    def test_update_owner_saves_and_clears_secondary_email(self):
+        owner = make_owner()
+        self.client.post(self.url, {
+            'action': 'update_owner', 'owner_id': owner.pk, 'name': owner.name, 'email': owner.email,
+            'secondary_email': 'added-later@example.com', 'currency': owner.currency,
+        })
+        owner.refresh_from_db()
+        self.assertEqual(owner.secondary_email, 'added-later@example.com')
+
+        # Blank must clear it to None, not save an empty string (which would collide with every
+        # other owner's own blank secondary_email under the field's unique=True constraint).
+        self.client.post(self.url, {
+            'action': 'update_owner', 'owner_id': owner.pk, 'name': owner.name, 'email': owner.email,
+            'secondary_email': '', 'currency': owner.currency,
+        })
+        owner.refresh_from_db()
+        self.assertIsNone(owner.secondary_email)
+
     def test_add_platform(self):
         self.client.post(self.url, {'action': 'add_platform', 'name': 'Direct'})
         platform = Platform.objects.get(name='Direct')
@@ -3854,6 +3883,10 @@ class StaffSettingsViewTests(TestCase):
         self.client.post(self.url, {'action': 'delete_platform', 'platform_id': platform.pk})
         self.assertTrue(Platform.objects.filter(pk=platform.pk).exists())
         self.assertTrue(PropertyPlatformID.objects.filter(property=property, platform=platform).exists())
+
+    def test_update_sage_settings_saves_tax_rate_id(self):
+        self.client.post(self.url, {'action': 'update_sage_settings', 'default_tax_rate_id': 'tax-rate-42'})
+        self.assertEqual(SageSettings.load().default_tax_rate_id, 'tax-rate-42')
 
     def test_add_management_company_with_no_contacts_set_succeeds(self):
         # Every contact role is genuinely optional - a company can be added with just a name.
@@ -4224,6 +4257,57 @@ class StaffSettingsViewTests(TestCase):
         })
         self.assertRedirects(response, f'{self.url}?panel=bookings')
         self.assertEqual(BookingSettings.load().cleaning_gap_nights_per_block_day, 14)
+
+
+class StaffSageViewsTests(TestCase):
+    """StaffSageConnectView (staff/views.py) - the klt-web half of the Sage One OAuth2 grant that
+    unblocks finance/services.py::dispatch_memo_to_sage. The token exchange itself, and the
+    finance_sage_settings write, both moved to klt-hooks 2026-09-09 (per Thomas) - klt-web only
+    ever runs as 127.0.0.1 on someone's own machine, never a real deployed URL Sage's OAuth server
+    could redirect back to; klt-hooks already plays that "publicly reachable, writes into this
+    app's Postgres" role for Revolut/Wise. This view's only remaining job is building the
+    authorize link and sending the browser to it. Superuser-only, unlike most of Settings, since
+    connecting a real external accounting account is a different kind of action than routine
+    settings editing."""
+
+    def setUp(self):
+        self.superuser = User.objects.create_user(
+            username='sagesuper', password='pw', is_staff=True, is_superuser=True,
+        )
+        self.staff_non_super = User.objects.create_user(
+            username='sagestaff', password='pw', is_staff=True, is_superuser=False,
+        )
+        self.settings_url = reverse('staff:settings')
+
+    def test_connect_requires_superuser(self):
+        self.client.login(username='sagestaff', password='pw')
+        response = self.client.get(reverse('staff:sage_connect'))
+        self.assertEqual(response.status_code, 403)
+
+    def test_connect_shows_error_when_client_id_not_set(self):
+        # Real env_settings.SAGE_CLIENT_ID, genuinely unset in this dev/test environment - the
+        # actual state until Thomas completes the developer-portal registration.
+        self.client.login(username='sagesuper', password='pw')
+        response = self.client.get(reverse('staff:sage_connect'), follow=True)
+        self.assertRedirects(response, self.settings_url)
+        messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('SAGE_CLIENT_ID' in m for m in messages))
+
+    @patch('staff.views.env_settings')
+    def test_connect_redirects_to_sage_auth_url_via_klt_hooks(self, mock_env_settings):
+        mock_env_settings.SAGE_CLIENT_ID = 'test-client-id'
+        mock_env_settings.KLT_WEBHOOK_URL = 'https://klt-hooks.up.railway.app/'
+        self.client.login(username='sagesuper', password='pw')
+        response = self.client.get(reverse('staff:sage_connect'))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('sageone.com/oauth2/auth', response.url)
+        self.assertIn('client_id=test-client-id', response.url)
+        self.assertIn('response_type=code', response.url)
+        # redirect_uri points at klt-hooks' callback, not back into klt-web itself.
+        self.assertIn('redirect_uri=https%3A%2F%2Fklt-hooks.up.railway.app%2Fsage%2Foauth-callback', response.url)
+        # state carries this Settings page's own URL, so klt-hooks' confirmation page can link back.
+        self.assertIn('state=', response.url)
+        self.assertIn('settings', response.url.split('state=')[1])
 
 
 class CleaningTaskValidRangeTests(TestCase):

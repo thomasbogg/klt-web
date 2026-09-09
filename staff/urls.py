@@ -26,6 +26,7 @@ urlpatterns = [
     path('locations/new/', views.StaffLocationCreateView.as_view(), name='location_create'),
     path('quick-add/<str:model>/', views.StaffQuickAddView.as_view(), name='quick_add'),
     path('settings/', views.StaffSettingsView.as_view(), name='settings'),
+    path('settings/sage/connect/', views.StaffSageConnectView.as_view(), name='sage_connect'),
     path('properties/<int:pk>/', views.StaffPropertyDetailView.as_view(), name='property_detail'),
     path(
         'properties/<int:pk>/platform-rates/',

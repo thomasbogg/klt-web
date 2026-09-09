@@ -374,12 +374,19 @@
     vertical-align: bottom;
 }
 
-.staff-owners-table th:nth-child(1), .staff-owners-table td:nth-child(1) { width: 140px; }
-.staff-owners-table th:nth-child(2), .staff-owners-table td:nth-child(2) { width: 190px; }
+/* Class, not nth-child (2026-09-09 rework, same "don't let this table's CSS depend on column
+   position" fix already applied to the checkbox/Properties columns below - inserting Secondary
+   Email as the new 3rd column silently shifted every nth-child(3)/(4) rule onto the wrong column
+   the moment it was added, exactly the trap those other columns were already hardened against;
+   this leading group just hadn't needed it yet). */
+.staff-owners-table th.staff-owners-name-col, .staff-owners-table td.staff-owners-name-col { width: 140px; }
+.staff-owners-table th.staff-owners-email-col, .staff-owners-table td.staff-owners-email-col { width: 190px; }
+.staff-owners-table th.staff-owners-secondary-email-col,
+.staff-owners-table td.staff-owners-secondary-email-col { width: 190px; }
 /* Phone/NIF widened 2026-09-08, per Thomas - both were clipping their own real values (a
    country-coded phone number, a 9-digit NIF) at the old 110px/90px. */
-.staff-owners-table th:nth-child(3), .staff-owners-table td:nth-child(3) { width: 160px; }
-.staff-owners-table th:nth-child(4), .staff-owners-table td:nth-child(4) { width: 130px; }
+.staff-owners-table th.staff-owners-phone-col, .staff-owners-table td.staff-owners-phone-col { width: 160px; }
+.staff-owners-table th.staff-owners-nif-col, .staff-owners-table td.staff-owners-nif-col { width: 130px; }
 
 .staff-owners-currency-col {
     width: 90px;

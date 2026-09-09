@@ -321,6 +321,15 @@ class Owner(models.Model):
 
     name = models.CharField(max_length=200, unique=True)
     email = models.EmailField(unique=True)
+    # Added 2026-09-09, per Thomas - a real second contact for a household/co-ownership sharing one
+    # Owner row (a couple, business partners, etc.), not a scratch field. Found live: 7 real owners
+    # had two genuinely different people's addresses jammed into `email` as "first@x.com,
+    # second@y.com" - passed Django's own EmailField validator just fine at raw .save() time (no
+    # full_clean() call in whatever wrote them, likely the legacy migration), but broke both the
+    # browser's native email input validation AND _update_owner's own full_clean() call the moment
+    # staff tried to save anything else on that row. See properties/migrations/0060_
+    # owner_secondary_email for the one-off split of those 7 rows into email/secondary_email.
+    secondary_email = models.EmailField(blank=True, null=True, unique=True)
     phone = models.CharField(max_length=50, blank=True, null=True, unique=True)
     nif_number = models.CharField(max_length=50, blank=True, null=True, unique=True)
     # Replaces the old separate takes_euros/takes_pounds booleans (2026-09-08, per Thomas) - no
@@ -328,6 +337,19 @@ class Owner(models.Model):
     # is_paid_regularly below (see OWNER_BOOLEAN_FIELDS' own comment in staff/utils.py).
     currency = models.CharField(max_length=4, choices=Currency.choices)
     is_paid_regularly = models.BooleanField()
+    # Restored 2026-09-09, per Thomas - removed the day before (52549ed) as dead weight ("never
+    # actually consulted anywhere in the booking-creation flow"), now genuinely needed as the
+    # per-owner gate for the Sage One cleaning/meet-greet invoicing integration
+    # (finance/services.py::dispatch_memo_to_sage). No default, same "a real choice always has to
+    # be made" convention as the fields above. Its sibling rental_commissions_are_invoiced was
+    # restored alongside this one but then dropped again same day (per Thomas: rental commission
+    # is always invoiced now, no per-owner opt-out exists) - not a boolean worth a field for.
+    cleans_are_invoiced = models.BooleanField()
+    # Sage One (Portugal) contact id for this owner, set lazily on first invoice dispatch
+    # (finance/services.py::dispatch_memo_to_sage) rather than eagerly for every owner - most
+    # owners may never actually get a Sage invoice (see cleans_are_invoiced/
+    # rental_commissions_are_invoiced above).
+    sage_contact_id = models.CharField(max_length=50, blank=True, null=True)
     # Owner Suite login (owners app) - staff.views.py::StaffSettingsView._invite_owner creates the
     # User (with set_unusable_password()) and links it here in one step; owners/utils.py::
     # send_owner_invite_email then emails the owner a link to owners.views.OwnerAcceptInviteView

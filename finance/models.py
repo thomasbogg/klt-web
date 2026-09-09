@@ -49,6 +49,15 @@ class Memo(models.Model):
     sent_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
     )
+    # Set by finance/services.py::dispatch_memo_to_sage, called right after send - only attempted
+    # at all when the property's owner has cleans_are_invoiced=True (properties.models.Owner,
+    # restored 2026-09-09 for exactly this). Exactly one of these two is ever set; both null means
+    # either cleans_are_invoiced=False (this owner doesn't want it) or the memo predates this
+    # feature - never a distinct third state to track. A Sage failure never blocks the send action
+    # itself (see dispatch_memo_to_sage's own docstring), so sage_invoice_error existing is a
+    # visible "this still needs fixing", not something that undoes sent_at.
+    sage_invoice_id = models.CharField(max_length=50, blank=True, null=True)
+    sage_invoice_error = models.TextField(blank=True, null=True)
 
     class Meta:
         db_table = 'finance_memos'
@@ -162,3 +171,42 @@ class DepositReturn(models.Model):
 
     def __str__(self):
         return f"{self.booking} deposit returned {self.amount} on {self.returned_at:%Y-%m-%d}"
+
+
+class SageSettings(models.Model):
+    """Singleton (pk always 1, same load()/save() pattern as bookings.models.BookingSettings) -
+    the LIVE, rotating half of the Sage One connection. The registered app's own credentials
+    (client_id/client_secret/signing_secret) are static config and live in env_settings.py, same
+    convention as every other external API key in this codebase; access_token/refresh_token are
+    the opposite - refresh_token rotates on every use (per Sage's docs), so they have to be
+    read/written from somewhere mutable, not a .env file. Empty (all-null) until Thomas completes
+    the one-time developer-portal registration and OAuth grant - see finance/services.py::
+    dispatch_memo_to_sage's own docstring for what that involves.
+
+    default_tax_rate_id is separate from the token pair - the Sage-side ID for standard Portuguese
+    VAT, looked up once via GET /accounts/v2/tax_rates and set by Thomas, since finance.Memo's
+    clean_fee/meet_greet_fee don't carry their own VAT breakdown today."""
+    access_token = models.CharField(max_length=200, blank=True, null=True)
+    refresh_token = models.CharField(max_length=200, blank=True, null=True)
+    token_expires_at = models.DateTimeField(blank=True, null=True)
+    default_tax_rate_id = models.CharField(max_length=50, blank=True, null=True)
+
+    class Meta:
+        db_table = 'finance_sage_settings'
+        verbose_name = 'Sage Settings'
+        verbose_name_plural = 'Sage Settings'
+
+    def __str__(self):
+        return "Sage Settings"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def load(cls):
+        settings, _ = cls.objects.get_or_create(pk=1)
+        return settings

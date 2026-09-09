@@ -340,6 +340,7 @@ class ComputeOwnerPayoutTests(TestCase):
     def setUp(self):
         self.owner = Owner.objects.create(
             name='Payout Owner', email='payout-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=True,
+            cleans_are_invoiced=False,
         )
         self.management_company = ManagementCompany.objects.create(name='Test Management Co')
         self.property = Property.objects.create(
@@ -1091,11 +1092,11 @@ class CreateOwnerBookingTests(TestCase):
     def setUp(self):
         self.owner = Owner.objects.create(
             name='Owner Booking Test Owner', email='owner-booking-test@example.com',
-            currency=Owner.Currency.EUR, is_paid_regularly=False,
+            currency=Owner.Currency.EUR, is_paid_regularly=False, cleans_are_invoiced=False,
         )
         self.other_owner = Owner.objects.create(
             name='Other Owner Booking Test Owner', email='other-owner-booking-test@example.com',
-            currency=Owner.Currency.EUR, is_paid_regularly=False,
+            currency=Owner.Currency.EUR, is_paid_regularly=False, cleans_are_invoiced=False,
         )
         self.property = Property.objects.create(
             title='Owner Booking Test Property', short_title='OWNBOOK', owner=self.owner,

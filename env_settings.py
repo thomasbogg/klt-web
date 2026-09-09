@@ -219,6 +219,24 @@ REVOLUT_BASE_PAYMENT_LINK = 'https://checkout.revolut.com/payment-link/'
 WISE_BASE_PAYMENT_LINK = 'https://wise.com/pay/business/algarvebeachapartments'
 
 ##################################################
+# SAGE ONE CREDENTIALS
+##################################################
+
+# The registered developer-app credentials for Sage One (Portugal) - see libraries/accounting/
+# sage.py. Static, unlike the OAuth2 access/refresh tokens, which rotate and live in
+# finance.SageSettings (a DB-persisted singleton, not env config) instead.
+SAGE_CLIENT_ID = os.getenv('SAGE_CLIENT_ID')
+SAGE_CLIENT_SECRET = os.getenv('SAGE_CLIENT_SECRET')
+SAGE_SIGNING_SECRET = os.getenv('SAGE_SIGNING_SECRET')
+
+# Points libraries/accounting/sage.py at Sage's sandbox (api.sageone.com/test/...) instead of
+# production, independent of TEST above (which is only ever true during an automated pytest run,
+# not a real interactive dev session) - set this locally while verifying the connection for the
+# first time, and while the developer-app registration is still using its own separate sandbox
+# credentials rather than the real client_id/client_secret/signing_secret.
+SAGE_SANDBOX = os.getenv('SAGE_SANDBOX', 'False').lower() == 'true'
+
+##################################################
 # TOURIST TAX SETTINGS
 ##################################################
 

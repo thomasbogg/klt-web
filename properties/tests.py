@@ -20,10 +20,11 @@ from properties.utils import (
 
 
 def make_owner(name, email):
-    """currency/is_paid_regularly have no model default - every test that needs an Owner has to
-    supply them explicitly, so this is shared across test classes below."""
+    """currency/is_paid_regularly/cleans_are_invoiced have no model default - every test that
+    needs an Owner has to supply them explicitly, so this is shared across test classes below."""
     return Owner.objects.create(
         name=name, email=email, currency=Owner.Currency.EUR, is_paid_regularly=False,
+        cleans_are_invoiced=False,
     )
 
 
@@ -549,6 +550,47 @@ class PopulateOwnerCurrencyMigrationTests(TestCase):
 
     def test_neither_set_falls_back_to_eur(self):
         self.assertEqual(self.currency_for(False, False), 'EUR')
+
+
+class SplitCommaJoinedOwnerEmailsMigrationTests(TestCase):
+    """split_comma_joined_emails/rejoin_comma_joined_emails
+    (properties/migrations/0060_owner_secondary_email.py) - unlike
+    PopulateOwnerCurrencyMigrationTests above, this migration's fields (email/secondary_email)
+    both still exist on the current Owner model, so the real model/app registry (django.apps.apps)
+    can be used directly rather than needing a frozen historical one."""
+
+    def setUp(self):
+        migration_module = importlib.import_module('properties.migrations.0060_owner_secondary_email')
+        self.split = migration_module.split_comma_joined_emails
+        self.rejoin = migration_module.rejoin_comma_joined_emails
+
+    def test_splits_a_comma_joined_email_into_both_fields(self):
+        owner = make_owner('Comma Owner', 'first@example.com, second@example.com')
+        self.split(apps, None)
+        owner.refresh_from_db()
+        self.assertEqual(owner.email, 'first@example.com')
+        self.assertEqual(owner.secondary_email, 'second@example.com')
+
+    def test_leaves_a_single_email_untouched(self):
+        owner = make_owner('Single Owner', 'only@example.com')
+        self.split(apps, None)
+        owner.refresh_from_db()
+        self.assertEqual(owner.email, 'only@example.com')
+        self.assertIsNone(owner.secondary_email)
+
+    def test_rejoin_is_a_lossless_reverse(self):
+        owner = make_owner('Reverse Owner', 'first@example.com, second@example.com')
+        self.split(apps, None)
+        self.rejoin(apps, None)
+        owner.refresh_from_db()
+        self.assertEqual(owner.email, 'first@example.com, second@example.com')
+        self.assertIsNone(owner.secondary_email)
+
+    def test_rejoin_leaves_a_never_split_owner_untouched(self):
+        owner = make_owner('Untouched Owner', 'only@example.com')
+        self.rejoin(apps, None)
+        owner.refresh_from_db()
+        self.assertEqual(owner.email, 'only@example.com')
 
 
 class GetStayTotalPriceTests(TestCase):

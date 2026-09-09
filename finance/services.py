@@ -2,9 +2,10 @@ from datetime import timedelta
 
 from django.utils import timezone
 
+import env_settings
 from bookings.models import Booking, PaymentSettings
 from bookings.payouts import _round, clean_fee, compute_owner_payout, meet_greet_fee
-from finance.models import AdHocService, Memo
+from finance.models import AdHocService, Memo, SageSettings
 from staff.models import CleaningTask
 
 
@@ -69,6 +70,100 @@ def sync_memo_for_turnover_task(booking):
         memo.save(update_fields=['clean_fee', 'meet_greet_fee'])
 
     sweep_unattached_ad_hoc_services(property)
+
+
+def _sage_client():
+    """A ready-to-use libraries.accounting.sage.Sage, with a valid (refreshed if necessary)
+    access_token - or None if Sage isn't configured/connected yet. Refreshing rewrites
+    SageSettings' access_token/refresh_token/token_expires_at immediately (refresh_token itself
+    rotates on every use, per Sage's docs - the old one becomes worthless the instant this
+    succeeds, so it must be persisted before this function returns, not left for the caller)."""
+    from libraries.accounting.sage import Sage, refresh_access_token
+
+    if not (env_settings.SAGE_CLIENT_ID and env_settings.SAGE_CLIENT_SECRET and env_settings.SAGE_SIGNING_SECRET):
+        return None
+
+    sage_settings = SageSettings.load()
+    if not sage_settings.refresh_token:
+        return None  # Thomas hasn't done the one-time OAuth grant yet
+
+    if sage_settings.access_token and sage_settings.token_expires_at and sage_settings.token_expires_at > timezone.now():
+        return Sage(access_token=sage_settings.access_token, signing_secret=env_settings.SAGE_SIGNING_SECRET)
+
+    tokens = refresh_access_token(
+        env_settings.SAGE_CLIENT_ID, env_settings.SAGE_CLIENT_SECRET, sage_settings.refresh_token,
+    )
+    if tokens is None:
+        return None
+    sage_settings.access_token = tokens['access_token']
+    sage_settings.refresh_token = tokens['refresh_token']
+    sage_settings.token_expires_at = timezone.now() + timedelta(seconds=tokens['expires_in'])
+    sage_settings.save(update_fields=['access_token', 'refresh_token', 'token_expires_at'])
+    return Sage(access_token=sage_settings.access_token, signing_secret=env_settings.SAGE_SIGNING_SECRET)
+
+
+def dispatch_memo_to_sage(memo):
+    """Creates a real Sage One invoice for a sent Memo, if its property's owner opted in
+    (properties.models.Owner.cleans_are_invoiced - restored 2026-09-09, per Thomas, for exactly
+    this). Called from staff/views.py::StaffFinanceMemoSendView right after sent_at/sent_by are
+    saved - a no-op (not an error) for an owner who hasn't opted in, or who has no owner at all.
+
+    Getting a real Sage connection working requires a one-time, Thomas-only manual step this
+    function cannot perform: registering a developer app in Sage's portal (developers.sageone.com)
+    and completing the OAuth2 authorization grant as the Sage One account owner - see
+    finance.SageSettings' own docstring for what that populates. Until then, this always ends in
+    sage_invoice_error being set, which is expected, not a bug.
+
+    Deliberately never raises - a Sage failure (not yet connected, contact/invoice creation
+    rejected, etc.) is recorded on the memo (sage_invoice_error) but never blocks the send action
+    itself, which staff already rely on as a plain record-keeping step independent of any
+    downstream delivery succeeding (same reasoning StaffFinanceMemoSendView's own docstring
+    already gives for why emailing the memo is out of scope there)."""
+    owner = getattr(memo.property, 'owner', None)
+    if owner is None or not owner.cleans_are_invoiced:
+        return
+
+    sage = _sage_client()
+    if sage is None:
+        memo.sage_invoice_error = 'Sage One is not connected yet.'
+        memo.save(update_fields=['sage_invoice_error'])
+        return
+
+    sage_settings = SageSettings.load()
+    if not sage_settings.default_tax_rate_id:
+        memo.sage_invoice_error = 'No default Sage tax rate configured (finance.SageSettings.default_tax_rate_id).'
+        memo.save(update_fields=['sage_invoice_error'])
+        return
+
+    contact_id = owner.sage_contact_id
+    if not contact_id:
+        existing = sage.contact.find_by_name(owner.name)
+        if existing is not None:
+            contact_id = existing['id']
+        else:
+            created = sage.contact.create(owner.name, email=owner.email, tax_number=owner.nif_number)
+            if created is None:
+                memo.sage_invoice_error = 'Failed to find or create a Sage contact for this owner.'
+                memo.save(update_fields=['sage_invoice_error'])
+                return
+            contact_id = created['id']
+        owner.sage_contact_id = contact_id
+        owner.save(update_fields=['sage_contact_id'])
+
+    invoice_date = memo.cleaning_task.date if memo.cleaning_task else timezone.now().date()
+    invoice = sage.sales_invoice.create(
+        contact_id=contact_id, date=invoice_date,
+        description=f'{memo.property} - cleaning & meet-greet',
+        net_amount=memo.total(), tax_rate_id=sage_settings.default_tax_rate_id,
+    )
+    if invoice is None:
+        memo.sage_invoice_error = 'Failed to create the Sage sales invoice.'
+        memo.save(update_fields=['sage_invoice_error'])
+        return
+
+    memo.sage_invoice_id = invoice['id']
+    memo.sage_invoice_error = None
+    memo.save(update_fields=['sage_invoice_id', 'sage_invoice_error'])
 
 
 def backfill_memos_for_company(company, start=None):

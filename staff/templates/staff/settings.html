@@ -858,7 +858,11 @@
                         <table class="staff-price-table staff-owners-table{% if not owners %} staff-price-table-empty{% endif %}">
                             <thead>
                                 <tr>
-                                    <th>Name</th><th>Email</th><th>Phone</th><th>NIF</th>
+                                    <th class="staff-owners-name-col">Name</th>
+                                    <th class="staff-owners-email-col">Email</th>
+                                    <th class="staff-owners-secondary-email-col">Secondary Email</th>
+                                    <th class="staff-owners-phone-col">Phone</th>
+                                    <th class="staff-owners-nif-col">NIF</th>
                                     <th class="staff-owners-currency-col">Currency</th>
                                     {% for field, label in owner_boolean_fields %}
                                     <th class="staff-owners-checkbox-col" title="{{ label }}">{{ label }}</th>
@@ -871,10 +875,11 @@
                             <tbody>
                                 {% for owner in owners %}
                                 <tr>
-                                    <td><input type="text" name="name" form="owner-form-{{ owner.pk }}" value="{{ owner.name }}" class="staff-input"></td>
-                                    <td><input type="email" name="email" form="owner-form-{{ owner.pk }}" value="{{ owner.email }}" class="staff-input"></td>
-                                    <td><input type="text" name="phone" form="owner-form-{{ owner.pk }}" value="{{ owner.phone|default:'' }}" class="staff-input"></td>
-                                    <td><input type="text" name="nif_number" form="owner-form-{{ owner.pk }}" value="{{ owner.nif_number|default:'' }}" class="staff-input"></td>
+                                    <td class="staff-owners-name-col"><input type="text" name="name" form="owner-form-{{ owner.pk }}" value="{{ owner.name }}" class="staff-input"></td>
+                                    <td class="staff-owners-email-col"><input type="email" name="email" form="owner-form-{{ owner.pk }}" value="{{ owner.email }}" class="staff-input"></td>
+                                    <td class="staff-owners-secondary-email-col"><input type="email" name="secondary_email" form="owner-form-{{ owner.pk }}" value="{{ owner.secondary_email|default:'' }}" class="staff-input"></td>
+                                    <td class="staff-owners-phone-col"><input type="text" name="phone" form="owner-form-{{ owner.pk }}" value="{{ owner.phone|default:'' }}" class="staff-input"></td>
+                                    <td class="staff-owners-nif-col"><input type="text" name="nif_number" form="owner-form-{{ owner.pk }}" value="{{ owner.nif_number|default:'' }}" class="staff-input"></td>
                                     <td class="staff-owners-currency-col">
                                         <select name="currency" form="owner-form-{{ owner.pk }}" class="staff-input">
                                             {% for value, label in owner_currency_choices %}
@@ -919,13 +924,14 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="{{ owner_boolean_fields|length|add:8 }}" class="staff-empty">No owners yet.</td></tr>
+                                <tr><td colspan="{{ owner_boolean_fields|length|add:9 }}" class="staff-empty">No owners yet.</td></tr>
                                 {% endfor %}
                                 <tr class="staff-price-row-new">
-                                    <td><input type="text" name="name" form="owner-form-new" class="staff-input"></td>
-                                    <td><input type="email" name="email" form="owner-form-new" class="staff-input"></td>
-                                    <td><input type="text" name="phone" form="owner-form-new" class="staff-input"></td>
-                                    <td><input type="text" name="nif_number" form="owner-form-new" class="staff-input"></td>
+                                    <td class="staff-owners-name-col"><input type="text" name="name" form="owner-form-new" class="staff-input"></td>
+                                    <td class="staff-owners-email-col"><input type="email" name="email" form="owner-form-new" class="staff-input"></td>
+                                    <td class="staff-owners-secondary-email-col"><input type="email" name="secondary_email" form="owner-form-new" class="staff-input"></td>
+                                    <td class="staff-owners-phone-col"><input type="text" name="phone" form="owner-form-new" class="staff-input"></td>
+                                    <td class="staff-owners-nif-col"><input type="text" name="nif_number" form="owner-form-new" class="staff-input"></td>
                                     <td class="staff-owners-currency-col">
                                         <select name="currency" form="owner-form-new" class="staff-input">
                                             {% for value, label in owner_currency_choices %}
@@ -1302,6 +1308,30 @@
                             </label>
                             <p class="staff-settings-hint">High-season commission always carries VAT, regardless of origin.</p>
                             <button type="submit" class="staff-button">Save payment settings</button>
+                        </form>
+                    </div>
+
+                    <div class="staff-panel">
+                        <h2 class="staff-panel-title">Sage One</h2>
+                        <p class="staff-settings-hint">
+                            Automatic owner invoicing for cleans &amp; meet-greets (finance/services.py::dispatch_memo_to_sage) - gated per owner by the "Cleans &amp; meet-greets invoiced" checkbox on the People tab.
+                        </p>
+                        {% if sage_settings.refresh_token %}
+                        <p class="staff-settings-hint"><strong>Connected.</strong>{% if sage_settings.token_expires_at %} Access token valid until {{ sage_settings.token_expires_at }}.{% endif %}</p>
+                        {% elif not sage_client_id_configured %}
+                        <p class="staff-settings-hint">Not connected - register a developer app at <a href="https://developers.sageone.com/" target="_blank" rel="noopener">developers.sageone.com</a> first, then set SAGE_CLIENT_ID/SAGE_CLIENT_SECRET/SAGE_SIGNING_SECRET (env_settings.py).</p>
+                        {% else %}
+                        <p class="staff-settings-hint">Not connected yet.</p>
+                        <a href="{% url 'staff:sage_connect' %}" class="staff-button">Connect Sage One</a>
+                        {% endif %}
+                        <form method="post" class="staff-form staff-settings-form">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="update_sage_settings">
+                            <label class="staff-field">Default VAT tax rate ID
+                                <input type="text" name="default_tax_rate_id" class="staff-input" value="{{ sage_settings.default_tax_rate_id|default:'' }}">
+                            </label>
+                            <p class="staff-settings-hint">The Sage-side id for standard Portuguese VAT - look it up via a signed GET to /accounts/v2/tax_rates once connected, there's no picker for it here yet.</p>
+                            <button type="submit" class="staff-button">Save Sage settings</button>
                         </form>
                     </div>
                 </section>

@@ -135,14 +135,19 @@ AMENITY_BOOLEAN_FIELDS = (
 # properties.models.Owner's boolean fields have no model-level default (a genuine choice always
 # has to be made, unlike e.g. ManagementCompany's optional contact roles), so the quick-add panel on the
 # Create Property page surfaces all of them rather than guessing - same (field, label) pattern as
-# AMENITY_BOOLEAN_FIELDS above, driving both the panel's checkboxes and StaffQuickAddView. Down to
-# one field (2026-09-08, per Thomas) - default_clean/default_meet_greet were dead weight (never
+# AMENITY_BOOLEAN_FIELDS above, driving both the panel's checkboxes and StaffQuickAddView. Trimmed
+# to one field 2026-09-08 (per Thomas) - default_clean/default_meet_greet were dead weight (never
 # actually consulted when creating an owner booking) and cleans_are_invoiced/
 # rental_commissions_are_invoiced were removed outright; takes_euros/takes_pounds became
 # Owner.currency instead (not boolean, so not part of this tuple - handled explicitly alongside
-# email/phone in _add_owner/_update_owner/_build_owner).
+# email/phone in _add_owner/_update_owner/_build_owner). cleans_are_invoiced restored 2026-09-09
+# (per Thomas) - genuinely needed now as the per-owner gate for the Sage One cleaning/meet-greet
+# invoicing integration (finance/services.py::dispatch_memo_to_sage). Its sibling
+# rental_commissions_are_invoiced was restored alongside it, then dropped again the same session
+# (per Thomas: rental commission is always invoiced now, no per-owner opt-out exists).
 OWNER_BOOLEAN_FIELDS = (
     ('is_paid_regularly', 'Paid on a regular schedule'),
+    ('cleans_are_invoiced', 'Cleans & meet-greets invoiced'),
 )
 
 # properties.models.LocationSpec's boolean fields, same (field, label) pattern as

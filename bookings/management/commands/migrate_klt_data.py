@@ -231,13 +231,18 @@ class Command(BaseCommand):
                     email=row['email'],
                     phone=row['phone'],
                     nif_number=row['nifNumber'],
-                    # wants_accounting has no current equivalent field on Owner (dropped along
-                    # with the rest of the model's restructure) - not migrated. default_clean/
-                    # default_meet_greet/cleans_are_invoiced/rental_commissions_are_invoiced were
+                    # wants_accounting/rental_commissions_are_invoiced have no current equivalent
+                    # field on Owner (rental commission is always invoiced now, per Thomas - not a
+                    # real per-owner choice) - not migrated. default_clean/default_meet_greet were
                     # themselves dropped 2026-09-08 (dead weight, never actually consulted anywhere
-                    # in the booking-creation flow) - also not migrated.
+                    # in the booking-creation flow) - not migrated either. cleans_are_invoiced was
+                    # dropped that same day for the same reason, then restored 2026-09-09 (per
+                    # Thomas) as the per-owner gate for Sage One cleaning/meet-greet invoicing -
+                    # migrated again below now that it's a real, non-nullable field on Owner once
+                    # more.
                     currency=currency,
-                    is_paid_regularly=bool(row['isPaidRegularly'])
+                    is_paid_regularly=bool(row['isPaidRegularly']),
+                    cleans_are_invoiced=bool(row['cleansAreInvoiced']),
                 )
 
     def migrate_accountants(self, cursor, dry_run):
