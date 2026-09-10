@@ -60,42 +60,8 @@
                 </div>
                 {% endfor %}
                 {% else %}
-                {% if not day.owner_rows %}
                 <p class="staff-empty">No payouts due.</p>
                 {% endif %}
-                {% endif %}
-                {% for row in day.owner_rows %}
-                <div class="staff-panel staff-cleaning-card{% if row.invoice.status == 'paid' %} staff-cleaning-card-done{% endif %}">
-                    <h3 class="staff-panel-title">{{ row.owner }}</h3>
-                    <p class="staff-cleaning-meta">Month-end payout &middot; {{ row.bookings|length }} booking{{ row.bookings|length|pluralize }}</p>
-                    <p class="staff-finance-total">Owner balance &euro;{{ row.owner_balance }}</p>
-
-                    {% if row.invoice %}
-                    <p class="staff-finance-sent-note">
-                        Sage:
-                        {% if row.invoice.sage_invoice_id %}Sent (#{{ row.invoice.sage_invoice_id }})
-                        {% elif row.invoice.sage_invoice_error %}<span title="{{ row.invoice.sage_invoice_error }}">Failed</span>
-                        {% else %}Not dispatched{% endif %}
-                    </p>
-                    {% if row.invoice.status == 'paid' %}
-                    <p class="staff-finance-sent-note">Paid{% if row.invoice.paid_at %} {{ row.invoice.paid_at|date:'j M Y H:i' }}{% endif %}</p>
-                    {% else %}
-                    <form method="post" action="{% url 'staff:finance_owner_invoice_mark_paid' pk=row.invoice.pk %}">
-                        {% csrf_token %}
-                        <input type="hidden" name="date" value="{{ target_date|date:'Y-m-d' }}">
-                        <button type="submit" class="staff-button staff-button-small">Mark as paid</button>
-                    </form>
-                    {% endif %}
-                    {% else %}
-                    <form method="post" action="{% url 'staff:finance_owner_payout_generate' owner_id=row.owner.pk %}">
-                        {% csrf_token %}
-                        <input type="hidden" name="period_start" value="{{ row.period_start|date:'Y-m-d' }}">
-                        <input type="hidden" name="date" value="{{ target_date|date:'Y-m-d' }}">
-                        <button type="submit" class="staff-button staff-button-small">Generate &amp; send invoice</button>
-                    </form>
-                    {% endif %}
-                </div>
-                {% endfor %}
             </div>
             {% endfor %}
         </div>

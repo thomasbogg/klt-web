@@ -15,7 +15,7 @@ from finance.models import AdHocService, DepositReturn, Memo, OwnerInvoice, Payo
 from finance.services import (
     compute_regular_owner_payout, consolidate_informal_cleans_payment, deposits_due_in_range,
     dispatch_commission_receipt_for_payout, dispatch_memo_to_sage, generate_non_regular_owner_invoice,
-    needs_informal_cleans_tracking, non_regular_owner_balances_due_in_range, open_memo_for_property,
+    needs_informal_cleans_tracking, non_regular_owner_settlements, open_memo_for_property,
     owner_balance_in_range, owner_outstanding_balance, payouts_due_in_range,
     recompute_unsent_memo_fees_for_settings_change, sweep_unattached_ad_hoc_services,
 )
@@ -399,6 +399,29 @@ class FinanceViewSmokeTests(FinanceTestCase):
         response = self.client.get(reverse('staff:finance_memos'))
         self.assertEqual(response.status_code, 200)
 
+    def test_memo_detail_back_link_honours_safe_next_defaults_to_memos(self):
+        """2026-09-10, per Thomas: the back-link used to hardcode 'Back to Memos' even when the
+        memo was genuinely opened from Expected Payments. Only a same-host ?next= is honoured -
+        anything else (missing, or an external URL) falls back to the Memos tab."""
+        booking = self._make_booking(10, 14)
+        memo = Memo.objects.get(cleaning_task__booking=booking)
+
+        response = self.client.get(reverse('staff:finance_memo_detail', kwargs={'pk': memo.pk}))
+        self.assertEqual(response.context['back_url'], reverse('staff:finance_memos'))
+        self.assertEqual(response.context['back_label'], 'Memos')
+
+        expected_payments_url = reverse('staff:finance_expected_payments') + '?view=unpaid'
+        response = self.client.get(
+            reverse('staff:finance_memo_detail', kwargs={'pk': memo.pk}), {'next': expected_payments_url},
+        )
+        self.assertEqual(response.context['back_url'], expected_payments_url)
+        self.assertEqual(response.context['back_label'], 'Expected Payments')
+
+        response = self.client.get(
+            reverse('staff:finance_memo_detail', kwargs={'pk': memo.pk}), {'next': 'https://evil.example/'},
+        )
+        self.assertEqual(response.context['back_url'], reverse('staff:finance_memos'))
+
     def test_memo_detail_and_send_render(self):
         booking = self._make_booking(10, 14)
         memo = Memo.objects.get(cleaning_task__booking=booking)
@@ -438,6 +461,11 @@ class FinanceViewSmokeTests(FinanceTestCase):
         self.property.owner.save()
         self._make_booking(1, 5)
         response = self.client.get(reverse('staff:finance_payouts'))
+        self.assertEqual(response.status_code, 200)
+
+    def test_settlements_tab_renders(self):
+        self._make_booking(1, 5)
+        response = self.client.get(reverse('staff:finance_settlements'))
         self.assertEqual(response.status_code, 200)
 
     def test_mark_paid_creates_commission_receipt_and_excludes_management_fee(self):
@@ -1111,9 +1139,13 @@ class ExcludeUnconfirmedBookingsFromPayoutsTests(FinanceTestCase):
         self.assertEqual([b.pk for b, _ in rows], [booking.pk])
 
 
-class NonRegularOwnerBalancesDueInRangeTests(TestCase):
-    """finance/services.py::non_regular_owner_balances_due_in_range - the aggregate, owner-level
-    counterpart to payouts_due_in_range, powering the month-end Payouts-tab cards."""
+class NonRegularOwnerSettlementsTests(TestCase):
+    """finance/services.py::non_regular_owner_settlements - the Settlements tab's row set
+    (2026-09-10, replaces non_regular_owner_balances_due_in_range). Unlike its predecessor, this
+    lists every is_paid_regularly=False owner outright rather than only ones with a booking-based
+    balance due - see test_owner_with_no_bookings_still_appears_with_zero_total below and
+    StaffOwnerSettlementViewsTests.test_booking_less_cleans_invoiced_owner_still_appears for the
+    cleans-invoiced case this was actually built to fix."""
 
     def setUp(self):
         self.owner = Owner.objects.create(
@@ -1149,24 +1181,32 @@ class NonRegularOwnerBalancesDueInRangeTests(TestCase):
         Departure.objects.create(booking=booking, clean=True)
         return booking
 
-    def test_aggregates_owner_balance_across_multiple_bookings(self):
+    def test_aggregates_commission_across_multiple_bookings(self):
         b1 = self._make_booking(date(2026, 2, 1))
         b2 = self._make_booking(date(2026, 2, 10))
 
-        rows = non_regular_owner_balances_due_in_range(date(2026, 2, 1), date(2026, 2, 28))
+        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        row = next(row for row in rows if row['owner'] == self.owner)
 
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['owner'], self.owner)
-        self.assertEqual(set(row.pk for row in rows[0]['bookings']), {b1.pk, b2.pk})
-        self.assertGreater(rows[0]['owner_balance'], Decimal('0'))
+        self.assertEqual(set(b.pk for b in row['bookings']), {b1.pk, b2.pk})
+        self.assertGreater(row['commission_amount'], Decimal('0'))
+        self.assertEqual(row['kind'], OwnerInvoice.Kind.COMMISSION_MONTHLY)
 
     def test_excludes_regularly_paid_owners(self):
         self.owner.is_paid_regularly = True
         self.owner.save()
         self._make_booking(date(2026, 2, 1))
 
-        rows = non_regular_owner_balances_due_in_range(date(2026, 2, 1), date(2026, 2, 28))
-        self.assertEqual(rows, [])
+        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        self.assertFalse(any(row['owner'] == self.owner for row in rows))
+
+    def test_owner_with_no_bookings_still_appears_with_zero_total(self):
+        """The core behavioural change from the old function: an owner is listed even with
+        nothing due this month, rather than being silently absent."""
+        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        row = next(row for row in rows if row['owner'] == self.owner)
+        self.assertEqual(row['total'], Decimal('0'))
+        self.assertEqual(row['bookings'], [])
 
 
 class GenerateNonRegularOwnerInvoiceTests(TestCase):
@@ -1278,9 +1318,10 @@ class GenerateNonRegularOwnerInvoiceTests(TestCase):
         self.assertIsNotNone(invoice.sage_invoice_error)
 
 
-class StaffOwnerPayoutMonthEndViewsTests(FinanceTestCase):
-    """staff/views.py::StaffFinancePayoutsView's month-end owner cards, and the two new views
-    behind them - StaffFinanceOwnerPayoutGenerateView and StaffFinanceOwnerInvoiceMarkPaidView."""
+class StaffOwnerSettlementViewsTests(FinanceTestCase):
+    """staff/views.py::StaffFinanceSettlementsView (2026-09-10 - split out of the old day-by-day
+    Payouts tab's month-end owner cards), and the two views behind it -
+    StaffFinanceOwnerPayoutGenerateView and StaffFinanceOwnerInvoiceMarkPaidView."""
 
     def setUp(self):
         super().setUp()
@@ -1292,25 +1333,45 @@ class StaffOwnerPayoutMonthEndViewsTests(FinanceTestCase):
         self.settings.high_season_end_month = 10
         self.settings.save()
 
-    def test_month_end_owner_card_renders_and_generates_invoice(self):
-        month_end = date(2026, 2, 28)
+    def test_settlement_row_renders_and_generates_invoice(self):
         self._make_booking_on(date(2026, 2, 1))
 
-        response = self.client.get(reverse('staff:finance_payouts'), {'date': month_end.isoformat()})
+        response = self.client.get(reverse('staff:finance_settlements'), {'month': '2026-02'})
         self.assertEqual(response.status_code, 200)
-        owner_rows = [
-            row for day in response.context['days'] if day['date'] == month_end for row in day['owner_rows']
-        ]
-        self.assertEqual(len(owner_rows), 1)
-        self.assertIsNone(owner_rows[0]['invoice'])
+        rows = [row for row in response.context['rows'] if row['owner'] == self.owner]
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]['invoice'])
 
         response = self.client.post(
             reverse('staff:finance_owner_payout_generate', kwargs={'owner_id': self.owner.pk}),
-            {'period_start': '2026-02-01', 'date': month_end.isoformat()},
+            {'period_start': '2026-02-01', 'month': '2026-02'},
         )
         self.assertEqual(response.status_code, 302)
         invoice = OwnerInvoice.objects.get(owner=self.owner, period_start=date(2026, 2, 1))
         self.assertEqual(invoice.kind, OwnerInvoice.Kind.COMMISSION_MONTHLY)
+
+    def test_booking_less_cleans_invoiced_owner_still_appears(self):
+        """The actual gap this split was built to close (2026-09-10): an owner with
+        cleans_are_invoiced=True but zero bookings under internal management (all ins, no outs)
+        never appeared anywhere on the old Payouts tab, since its month-end cards were driven off
+        a booking-based balance query. They must show up here regardless, with a real
+        cleans_amount and no bookings at all."""
+        self.owner.cleans_are_invoiced = True
+        self.owner.save()
+        booking = self._make_booking_on(date(2026, 2, 1))
+        memo = Memo.objects.get(cleaning_task__booking=booking)
+        memo.sent_at = timezone.make_aware(datetime(2026, 2, 15))
+        memo.save(update_fields=['sent_at'])
+        # No booking under an internally-managed booking_company at all - detach this one so
+        # commission_amount comes back genuinely zero, isolating the "no outs" case.
+        booking.property.booking_company = None
+        booking.property.save(update_fields=['booking_company'])
+
+        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        row = next(row for row in rows if row['owner'] == self.owner)
+        self.assertEqual(row['commission_amount'], Decimal('0'))
+        self.assertGreater(row['cleans_amount'], Decimal('0'))
+        self.assertEqual(row['kind'], OwnerInvoice.Kind.COMBINED_MONTHLY)
 
     def test_mark_paid_sets_status_and_is_rejected_only_for_commission_payout(self):
         invoice = OwnerInvoice.objects.create(
@@ -1647,6 +1708,23 @@ class StaffFinanceExpectedPaymentsViewTests(FinanceTestCase):
         recent_rows = self.client.get(reverse('staff:finance_expected_payments'), {'view': 'recent'}).context['rows']
         self.assertEqual(len(recent_rows), 1)
         self.assertEqual(recent_rows[0]['invoice'].pk, invoice.pk)
+
+    def test_real_scenario_3_owner_memo_never_shown(self):
+        """self.owner/self.property (FinanceTestCase.setUp) are already a real scenario-3 owner by
+        default: not regular, not invoiced, on an internally-managed booking company - their
+        management fee is netted into owner_balance at payout time, so their Memos should never
+        surface here in any view, reset or no reset (2026-09-10 fix - see
+        finance/services.py::owner_ids_with_no_separate_cleans_payment)."""
+        self._sent_memo_for(self.property, self.guest, self.today - timedelta(days=5))
+
+        for view in ('unpaid', 'recent', 'historic'):
+            rows = self.client.get(reverse('staff:finance_expected_payments'), {'view': view}).context['rows']
+            self.assertEqual(rows, [])
+
+        self.assertEqual(
+            self.client.get(reverse('staff:finance_expected_payments'), {'view': 'unpaid'}).context['consolidatable_owners'],
+            [],
+        )
 
     def test_management_only_owner_gets_individual_toggle_on_memo_detail(self):
         external_company = ManagementCompany.objects.create(name='External Co', finances_managed_internally=False)

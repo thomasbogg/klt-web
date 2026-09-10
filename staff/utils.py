@@ -1179,6 +1179,34 @@ def last_day_of_month(day):
     return next_month - timedelta(days=next_month.day)
 
 
+def first_of_next_month(month_start):
+    return last_day_of_month(month_start) + timedelta(days=1)
+
+
+def previous_month_start(today):
+    """The 1st of the calendar month before `today`'s - shared by the Settlements tab
+    (staff/views.py::StaffFinanceSettlementsView, 2026-09-10) and
+    finance/management/commands/generate_monthly_owner_invoices.py's own --month default, which
+    used to duplicate this exact calculation locally."""
+    first_of_this_month = today.replace(day=1)
+    last_day_of_prev_month = first_of_this_month - timedelta(days=1)
+    return last_day_of_prev_month.replace(day=1)
+
+
+def parsed_month(raw):
+    """'YYYY-MM' -> the first-of-that-month date, or None for anything missing/malformed - shared
+    by the Settlements tab's ?month= param and generate_monthly_owner_invoices' own --month
+    option."""
+    raw = (raw or '').strip()
+    if not raw:
+        return None
+    try:
+        year, month = (int(part) for part in raw.split('-'))
+        return date(year, month, 1)
+    except (ValueError, TypeError):
+        return None
+
+
 def send_staff_invite_email(request, user):
     """Sends `user` the link to set their own password (staff/views.py::
     StaffSettingsView._add_staff_user creates the account with set_unusable_password() instead of

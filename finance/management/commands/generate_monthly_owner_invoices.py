@@ -1,17 +1,10 @@
-from datetime import date, timedelta
+from datetime import date
 
 from django.core.management.base import BaseCommand, CommandError
 
 from finance.services import generate_non_regular_owner_invoice, generate_scenario_1_cleans_invoice
 from properties.models import Owner
-from staff.utils import last_day_of_month
-
-
-def _previous_month_start(today):
-    first_of_this_month = today.replace(day=1)
-    last_day_of_prev_month = first_of_this_month - timedelta(days=1)
-    return last_day_of_prev_month.replace(day=1)
-
+from staff.utils import last_day_of_month, previous_month_start
 
 _STATUS_MESSAGES = {
     'created': "created €{total} invoice (id={pk}) - {sage_status}",
@@ -64,7 +57,7 @@ class Command(BaseCommand):
             except (ValueError, TypeError):
                 raise CommandError("--month must be in YYYY-MM format, e.g. 2026-08")
         else:
-            period_start = _previous_month_start(date.today())
+            period_start = previous_month_start(date.today())
         period_end = last_day_of_month(period_start)
         dry_run = options['dry_run']
 

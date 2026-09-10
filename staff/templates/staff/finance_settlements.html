@@ -1,0 +1,110 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>End of Month Settlements | Finance | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/cleaning_rota.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/finance.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Finance</h1>
+        </header>
+
+        {% include 'staff/_finance_nav.html' %}
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <p class="staff-finance-statement-note">
+            Every non-regularly-paid owner's monthly commission and/or cleans/meet-greet settlement, one month at a time - including an owner with no bookings at all this month, who can still owe a cleans/meet-greet amount.
+        </p>
+
+        <div class="staff-cleaning-date-nav">
+            <a href="?month={{ prev_month|date:'Y-m' }}" class="staff-button staff-button-small">&larr; Previous month</a>
+            <span class="staff-cleaning-date-label">{{ period_start|date:'F Y' }}</span>
+            <a href="?month={{ next_month|date:'Y-m' }}" class="staff-button staff-button-small">Next month &rarr;</a>
+        </div>
+
+        <div class="staff-panel">
+            {% if rows %}
+            <div class="staff-table-scroll">
+            <table class="staff-price-table">
+                <thead>
+                    <tr>
+                        <th>Owner</th>
+                        <th>Kind</th>
+                        <th>Bookings</th>
+                        <th>Commission</th>
+                        <th>Cleans/meet-greet</th>
+                        <th>Total</th>
+                        <th>Sage</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    <tr>
+                        <td>{{ row.owner }}</td>
+                        <td>{% if row.kind == 'combined_monthly' %}Commission + cleans (monthly){% else %}Rental commission (monthly){% endif %}</td>
+                        <td>{{ row.bookings|length }}</td>
+                        <td>&euro;{{ row.commission_amount }}</td>
+                        <td>&euro;{{ row.cleans_amount }}</td>
+                        <td>&euro;{{ row.total }}</td>
+                        <td>
+                            {% if row.invoice %}
+                            {% if row.invoice.sage_invoice_id %}Sent (#{{ row.invoice.sage_invoice_id }})
+                            {% elif row.invoice.sage_invoice_error %}<span title="{{ row.invoice.sage_invoice_error }}">Failed</span>
+                            {% else %}Not dispatched{% endif %}
+                            {% else %}
+                            <span class="staff-empty">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="staff-finance-actions-cell">
+                            <div class="staff-finance-actions-inner">
+                                {% if row.invoice %}
+                                {% if row.invoice.status == 'paid' %}
+                                <span class="staff-finance-sent-note">Paid{% if row.invoice.paid_at %} {{ row.invoice.paid_at|date:'j M Y' }}{% endif %}</span>
+                                {% else %}
+                                <form method="post" action="{% url 'staff:finance_owner_invoice_mark_paid' pk=row.invoice.pk %}">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="month" value="{{ period_start|date:'Y-m' }}">
+                                    <button type="submit" class="staff-button staff-button-small">Mark as paid</button>
+                                </form>
+                                {% endif %}
+                                {% elif row.total > 0 %}
+                                <form method="post" action="{% url 'staff:finance_owner_payout_generate' owner_id=row.owner.pk %}">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="period_start" value="{{ period_start|date:'Y-m-d' }}">
+                                    <input type="hidden" name="month" value="{{ period_start|date:'Y-m' }}">
+                                    <button type="submit" class="staff-button staff-button-small">Generate &amp; send invoice</button>
+                                </form>
+                                {% else %}
+                                <span class="staff-empty">Nothing to bill</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}
+            <p class="staff-empty">No non-regularly-paid owners.</p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

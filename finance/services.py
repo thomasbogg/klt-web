@@ -557,11 +557,11 @@ def generate_non_regular_owner_invoice(owner, period_start, period_end, dry_run=
     (scenario 2), else COMMISSION_MONTHLY (scenario 3 - commission only; cleans/meet-greet stays
     informational-only via Memo either way, see Memo.management_fee_paid_at). No Revolut order -
     settlement for these two scenarios is structural, already netted out of the owner's month-end
-    payout (see non_regular_owner_balances_due_in_range), not a live request for payment.
+    payout (see non_regular_owner_settlements), not a live request for payment.
 
     Shared by finance/management/commands/generate_monthly_owner_invoices.py (the CLI/cron batch
-    path) and staff/views.py::StaffFinanceOwnerPayoutGenerateView (the interactive month-end
-    Payouts-tab 'Generate' button, 2026-09-10) - one place this billing logic lives. Returns
+    path) and staff/views.py::StaffFinanceOwnerPayoutGenerateView (the Settlements tab's
+    'Generate' button, 2026-09-10) - one place this billing logic lives. Returns
     (None, 'not_applicable') for a regularly-paid owner - see generate_scenario_1_cleans_invoice
     for that case. See _create_owner_invoice for the rest of the return contract."""
     if owner.is_paid_regularly:
@@ -598,27 +598,44 @@ def generate_scenario_1_cleans_invoice(owner, period_start, period_end, dry_run=
     )
 
 
-def non_regular_owner_balances_due_in_range(start, end):
-    """Aggregates compute_owner_payout's owner_balance (the real, final net-payout figure - unlike
-    _commission_in_range's commission-only total, which is what gets documented as charged, not
-    what gets transferred) per owner, across every is_paid_regularly=False owner's bookings whose
-    payout is due within [start, end]. Every such booking's due_date lands on its arrival month's
-    last day (bookings/payouts.py::_due_date), so passing one calendar month here returns exactly
-    that month's owners - the aggregate, owner-level counterpart to payouts_due_in_range's
-    per-booking regular-owner rows. Powers staff/views.py::StaffFinancePayoutsView's month-end
-    owner cards (2026-09-10)."""
-    rows = _payouts_due_in_range(Booking.objects.filter(
-        property__owner__is_paid_regularly=False,
-        property__booking_company__finances_managed_internally=True,
-    ), start, end)
+def non_regular_owner_settlements(period_start, period_end):
+    """Every is_paid_regularly=False owner's month-end settlement for one calendar month - the
+    Settlements tab's row set (2026-09-10, split out of the old day-by-day Payouts tab: "Payouts"
+    read as misleading for an owner who is only ever billed, never paid a lump sum, and burying
+    these cards inside whichever single day of a 3-day payout window happened to be the month's
+    last day made them easy to miss on a normal skim of that tab - Thomas, 2026-09-10).
 
-    by_owner = {}
-    for booking, payout in rows:
-        owner = booking.property.owner
-        entry = by_owner.setdefault(owner.pk, {'owner': owner, 'owner_balance': ZERO, 'bookings': []})
-        entry['owner_balance'] += payout['owner_balance']
-        entry['bookings'].append(booking)
-    return sorted(by_owner.values(), key=lambda entry: entry['owner'].name)
+    Replaces the old non_regular_owner_balances_due_in_range, which only surfaced an owner when
+    they had a booking-based balance due that period. This lists EVERY non-regular owner outright
+    instead: a cleans-invoiced owner with zero bookings (all ins, no outs at all) has
+    commission_amount == 0 but can still have a real cleans_amount, and would otherwise never
+    appear anywhere at all (found 2026-09-10 - see owner_ids_with_no_separate_cleans_payment for
+    the mirror-image gap this shares a root cause with, on the Expected Payments tab).
+
+    Uses the exact same math as generate_non_regular_owner_invoice (same _commission_in_range/
+    _sent_memos_in_range calls, same kind selection) so a row's total here always matches what
+    clicking Generate would actually create - see that function for the kind/commission/cleans
+    logic itself, not duplicated here beyond what's needed to preview it."""
+    rows = []
+    for owner in Owner.objects.filter(is_paid_regularly=False).order_by('name'):
+        commission_amount, bookings = _commission_in_range(owner, period_start, period_end)
+        cleans_amount, memos = ZERO, []
+        kind = OwnerInvoice.Kind.COMMISSION_MONTHLY
+        if owner.cleans_are_invoiced:
+            kind = OwnerInvoice.Kind.COMBINED_MONTHLY
+            memos = _sent_memos_in_range(owner, period_start, period_end)
+            cleans_amount = sum((memo.total() for memo in memos), ZERO)
+        rows.append({
+            'owner': owner,
+            'kind': kind,
+            'commission_amount': commission_amount,
+            'cleans_amount': cleans_amount,
+            'total': commission_amount + cleans_amount,
+            'bookings': bookings,
+            'memos': memos,
+            'invoice': OwnerInvoice.objects.filter(owner=owner, kind=kind, period_start=period_start).first(),
+        })
+    return rows
 
 
 def owner_outstanding_balance(owner, as_of, property=None):
@@ -711,6 +728,20 @@ def needs_informal_cleans_tracking(owner):
     if owner.is_paid_regularly:
         return True
     return not Property.objects.filter(owner=owner, booking_company__finances_managed_internally=True).exists()
+
+
+def owner_ids_with_no_separate_cleans_payment():
+    """Real scenario-3 owners (not regular, not invoiced, on an internally-managed booking
+    company) - see needs_informal_cleans_tracking's own docstring for why their management fee is
+    already netted into owner_balance at payout time and never gets a separate Sage/Revolut/
+    informal-consolidation line of its own. Their Memos are real (a clean did happen) but never
+    represent a payment KLT is separately expecting, so StaffFinanceExpectedPaymentsView excludes
+    them from every view (unpaid/recent/historic) rather than letting them pile up forever with
+    no mark-paid mechanism that could ever clear them."""
+    return Owner.objects.filter(
+        is_paid_regularly=False, cleans_are_invoiced=False,
+        property__booking_company__finances_managed_internally=True,
+    ).values_list('pk', flat=True).distinct()
 
 
 def consolidate_informal_cleans_payment(owner):

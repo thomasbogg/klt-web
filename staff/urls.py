@@ -95,8 +95,9 @@ urlpatterns = [
         'finance/payouts/<str:reference>/mark-paid/',
         views.StaffFinancePayoutMarkPaidView.as_view(), name='finance_payout_mark_paid',
     ),
+    path('finance/settlements/', views.StaffFinanceSettlementsView.as_view(), name='finance_settlements'),
     path(
-        'finance/payouts/month-end/<int:owner_id>/generate/',
+        'finance/settlements/<int:owner_id>/generate/',
         views.StaffFinanceOwnerPayoutGenerateView.as_view(), name='finance_owner_payout_generate',
     ),
     path('finance/deposits/', views.StaffFinanceDepositsView.as_view(), name='finance_deposits'),

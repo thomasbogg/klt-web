@@ -15,7 +15,7 @@
 
         <header class="staff-header">
             <h1 class="staff-page-title">Memo &mdash; {{ memo.property }}</h1>
-            <a href="{% url 'staff:finance_memos' %}" class="staff-header-link">&larr; Back to Memos</a>
+            <a href="{{ back_url }}" class="staff-header-link">&larr; Back to {{ back_label }}</a>
         </header>
 
         {% if messages %}

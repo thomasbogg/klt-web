@@ -16,6 +16,7 @@ from django.template.loader import render_to_string
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.utils.decorators import method_decorator
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views import View
 from django_countries import countries as country_choices
 
@@ -31,8 +32,9 @@ from finance.models import AdHocService, DepositReturn, Memo, OwnerInvoice, Payo
 from finance.services import (
     backfill_memos_for_company, compute_regular_owner_payout, consolidate_informal_cleans_payment,
     deposits_due_in_range, dispatch_commission_receipt_for_payout, dispatch_owner_invoice_to_sage,
-    generate_non_regular_owner_invoice, needs_informal_cleans_tracking, non_regular_owner_balances_due_in_range,
-    open_memo_for_property, owner_outstanding_balance, payouts_due_in_range, sweep_unattached_ad_hoc_services,
+    generate_non_regular_owner_invoice, needs_informal_cleans_tracking, non_regular_owner_settlements,
+    open_memo_for_property, owner_ids_with_no_separate_cleans_payment, owner_outstanding_balance,
+    payouts_due_in_range, sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_deposit_waiver, compute_effective_self_check_in, create_booking,
@@ -71,8 +73,10 @@ from staff.utils import (
     compute_arrival_eta, next_step_hint, properties_grouped_by_location, property_last_clean_before,
     reservation_rows, send_staff_invite_email,
 )
+from staff.utils import first_of_next_month, previous_month_start
 from staff.utils import last_day_of_month as _last_day_of_month
 from staff.utils import parsed_date as _parsed_date
+from staff.utils import parsed_month as _parsed_month
 
 
 class StaffLoginView(auth_views.LoginView):
@@ -3778,7 +3782,14 @@ class StaffFinanceMemosView(View):
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinanceMemoDetailView(View):
     """The memo document itself - property, clean date, Clean/Meet & Greet/Ad-hoc lines, total,
-    sent status - as its own printable-feeling page with a back-link to the Memos tab."""
+    sent status - as its own printable-feeling page with a back-link.
+
+    That back-link honours an optional ?next= (2026-09-10, per Thomas: it was always hardcoded to
+    the Memos tab even when genuinely opened from Expected Payments, landing staff somewhere they
+    never came from) - validated via url_has_allowed_host_and_scheme so an arbitrary redirect
+    target can't be smuggled in, falling back to the Memos tab whenever ?next= is absent/unsafe,
+    which covers every existing link to this page that doesn't pass one (finance_memos.html,
+    booking_detail.html)."""
     template_name = 'staff/finance_memo_detail.html'
 
     def get(self, request, pk, *args, **kwargs):
@@ -3787,11 +3798,22 @@ class StaffFinanceMemoDetailView(View):
         ).filter(pk=pk).first()
         if memo is None:
             raise Http404("No memo found.")
+
+        next_url = request.GET.get('next', '')
+        if next_url and url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
+            back_url = next_url
+            back_label = "Expected Payments" if 'expected-payments' in next_url else "Memos"
+        else:
+            back_url = reverse('staff:finance_memos')
+            back_label = "Memos"
+
         return render(request, self.template_name, {
             'memo': memo,
             'ad_hoc_services': memo.ad_hoc_services.order_by('date'),
             'needs_informal_cleans_tracking': memo.property.owner_id and needs_informal_cleans_tracking(memo.property.owner),
             'consolidated_bundle': memo.owner_invoices.first(),
+            'back_url': back_url,
+            'back_label': back_label,
         })
 
 
@@ -4032,20 +4054,19 @@ class StaffFinanceAdHocServiceListView(View):
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinancePayoutsView(View):
-    """The Payouts tab - only owners paid on a regular schedule (Owner.is_paid_regularly=True) on
-    properties whose booking_company has finances_managed_internally=True, grouped by due_date
-    (bookings/payouts.py::compute_owner_payout's own due_date figure), same -1..+3-window/3-day-
-    paging shape as StaffFinanceMemosView/StaffCleaningRotaView. Rows that already have a
-    PayoutRecord stay visible showing who paid it and when, rather than disappearing - matching
-    the cleaning rota's own completed-rows-stay-visible convention, so the list stays a complete
-    record.
+    """The Daily Payouts tab - only owners paid on a regular schedule
+    (Owner.is_paid_regularly=True) on properties whose booking_company has
+    finances_managed_internally=True, grouped by due_date (bookings/payouts.py::
+    compute_owner_payout's own due_date figure), same -1..+3-window/3-day-paging shape as
+    StaffFinanceMemosView/StaffCleaningRotaView. Rows that already have a PayoutRecord stay
+    visible showing who paid it and when, rather than disappearing - matching the cleaning rota's
+    own completed-rows-stay-visible convention, so the list stays a complete record.
 
-    Also surfaces a second, owner-level card set (day['owner_rows']) on whichever day in the
-    window is the last day of its month - that's where every non-regularly-paid owner's (scenarios
-    2 & 3) bookings all land at once (bookings/payouts.py::_due_date puts them there), so their
-    month-end batch payout belongs alongside the regular per-booking cards on that same day, not a
-    separate tab (2026-09-10, per Thomas: the underlying withholding logic is the same, only the
-    timing differs)."""
+    Non-regular owners' (scenarios 2 & 3) month-end billing used to also surface here, as a second
+    owner-level card set on whichever day in the window happened to be the month's last day - split
+    out to its own StaffFinanceSettlementsView/tab (2026-09-10, per Thomas): "Payouts" read as
+    misleading for owners who are only ever billed, never paid a lump sum, and burying those cards
+    inside one day of a day-by-day window made them easy to miss on a normal skim of this tab."""
     template_name = 'staff/finance_payouts.html'
 
     def get(self, request, *args, **kwargs):
@@ -4068,13 +4089,7 @@ class StaffFinancePayoutsView(View):
         for rows in rows_by_date.values():
             rows.sort(key=lambda row: row['booking'].property.title)
 
-        owner_rows_by_date = {
-            day: self._month_end_owner_rows(day) for day in window_dates if day == _last_day_of_month(day)
-        }
-        days = [
-            {'date': day, 'rows': rows_by_date.get(day, []), 'owner_rows': owner_rows_by_date.get(day, [])}
-            for day in window_dates
-        ]
+        days = [{'date': day, 'rows': rows_by_date.get(day, [])} for day in window_dates]
 
         return render(request, self.template_name, {
             'days': days,
@@ -4086,25 +4101,6 @@ class StaffFinancePayoutsView(View):
             'active_tab': 'payouts',
             'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
         })
-
-    def _month_end_owner_rows(self, day):
-        month_start = day.replace(day=1)
-        rows = non_regular_owner_balances_due_in_range(month_start, day)
-        if not rows:
-            return []
-
-        owner_ids = [row['owner'].pk for row in rows]
-        invoices = {
-            invoice.owner_id: invoice
-            for invoice in OwnerInvoice.objects.filter(
-                owner_id__in=owner_ids, period_start=month_start,
-                kind__in=[OwnerInvoice.Kind.COMMISSION_MONTHLY, OwnerInvoice.Kind.COMBINED_MONTHLY],
-            )
-        }
-        for row in rows:
-            row['invoice'] = invoices.get(row['owner'].pk)
-            row['period_start'] = month_start
-        return rows
 
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
@@ -4146,12 +4142,11 @@ class StaffFinancePayoutMarkPaidView(View):
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinanceOwnerPayoutGenerateView(View):
-    """The month-end Payouts-tab 'Generate & send invoice' button for one non-regularly-paid
-    owner's card (StaffFinancePayoutsView._month_end_owner_rows) - creates and Sage-dispatches
-    that owner's OwnerInvoice for the given month via finance/services.py::
-    generate_non_regular_owner_invoice, the same billing logic generate_monthly_owner_invoices
-    (the CLI/cron path) already uses. Safe to click more than once - the underlying function is
-    idempotent via OwnerInvoice's own unique constraint."""
+    """The Settlements tab's 'Generate & send invoice' button for one non-regularly-paid owner's
+    row (StaffFinanceSettlementsView) - creates and Sage-dispatches that owner's OwnerInvoice for
+    the given month via finance/services.py::generate_non_regular_owner_invoice, the same billing
+    logic generate_monthly_owner_invoices (the CLI/cron path) already uses. Safe to click more
+    than once - the underlying function is idempotent via OwnerInvoice's own unique constraint."""
 
     def post(self, request, owner_id, *args, **kwargs):
         owner = Owner.objects.filter(pk=owner_id).first()
@@ -4178,11 +4173,43 @@ class StaffFinanceOwnerPayoutGenerateView(View):
         return self._redirect(request)
 
     def _redirect(self, request):
-        redirect_date = request.POST.get('date', '').strip()
-        redirect_url = reverse('staff:finance_payouts')
-        if redirect_date:
-            redirect_url = f"{redirect_url}?date={redirect_date}"
+        redirect_month = request.POST.get('month', '').strip()
+        redirect_url = reverse('staff:finance_settlements')
+        if redirect_month:
+            redirect_url = f"{redirect_url}?month={redirect_month}"
         return redirect(redirect_url)
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceSettlementsView(View):
+    """The End of Month Settlements tab (2026-09-10) - split out of the day-by-day Payouts tab per
+    Thomas: "Payouts" read as misleading for an owner who is only ever billed for commission
+    and/or cleans and never actually paid a lump sum by KLT, and burying these cards inside
+    whichever single day in a 3-day window happened to land on a month's last day made them easy
+    to miss on a normal skim of that tab, risking a missed invoice.
+
+    Month-scoped (prev/next calendar month via ?month=YYYY-MM, default the most recently completed
+    month - same default generate_monthly_owner_invoices' own --month uses), not a day window -
+    every is_paid_regularly=False owner for that one month is listed outright via finance/
+    services.py::non_regular_owner_settlements, not just owners with a booking-based balance due:
+    a cleans-invoiced owner with zero bookings (all ins, no outs) previously never appeared on the
+    old Payouts tab's month-end cards at all, since those were driven off a booking-based query -
+    the actual gap this split was built to close."""
+    template_name = 'staff/finance_settlements.html'
+
+    def get(self, request, *args, **kwargs):
+        period_start = _parsed_month(request.GET.get('month')) or previous_month_start(timezone.now().date())
+        period_end = _last_day_of_month(period_start)
+        rows = non_regular_owner_settlements(period_start, period_end)
+
+        return render(request, self.template_name, {
+            'rows': rows,
+            'period_start': period_start,
+            'prev_month': previous_month_start(period_start),
+            'next_month': first_of_next_month(period_start),
+            'active_tab': 'settlements',
+            'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
+        })
 
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
@@ -4363,6 +4390,11 @@ class StaffFinanceExpectedPaymentsView(View):
     that's never been bundled into one (owner_invoices empty) - a bundled Memo is only ever shown
     via its invoice's row, never both (see finance/services.py::consolidate_informal_cleans_payment
     for why that's safe - it excludes already-bundled Memos from ever being candidates again).
+    Real scenario-3 owners' Memos (finance/services.py::owner_ids_with_no_separate_cleans_payment)
+    are excluded from all three views entirely - their management fee is already netted into
+    owner_balance at payout time, so those Memos never represent an expected payment and had no
+    mark-paid mechanism that could ever clear them off this list (found 2026-09-10: 711 had piled
+    up with no way to resolve).
 
     Three views via ?view=unpaid|recent|historic (default unpaid): Unpaid sorts oldest-first
     (chase the longest-outstanding first); Recent (paid within the last RECENT_CUTOFF_DAYS) and
@@ -4382,6 +4414,8 @@ class StaffFinanceExpectedPaymentsView(View):
         invoices = OwnerInvoice.objects.select_related('owner')
         memos = Memo.objects.filter(
             sent_at__isnull=False, owner_invoices__isnull=True,
+        ).exclude(
+            property__owner_id__in=owner_ids_with_no_separate_cleans_payment(),
         ).select_related('property', 'property__owner')
         if owner:
             invoices = invoices.filter(owner=owner)
@@ -4485,7 +4519,7 @@ class StaffFinanceOwnerInvoiceMarkPaidView(View):
     Memo detail page shows the same paid status.
 
     One-way, same convention as StaffFinancePayoutMarkPaidView - no unmark. Reachable both from
-    the month-end Payouts-tab cards (StaffFinancePayoutsView) and from the Expected Payments tab
+    the Settlements tab's rows (StaffFinanceSettlementsView) and from the Expected Payments tab
     itself, since both surface the same underlying invoice rows."""
 
     def post(self, request, pk, *args, **kwargs):
@@ -4509,9 +4543,9 @@ class StaffFinanceOwnerInvoiceMarkPaidView(View):
         return self._redirect(request)
 
     def _redirect(self, request):
-        redirect_date = request.POST.get('date', '').strip()
-        if redirect_date:
-            return redirect(f"{reverse('staff:finance_payouts')}?date={redirect_date}")
+        redirect_month = request.POST.get('month', '').strip()
+        if redirect_month:
+            return redirect(f"{reverse('staff:finance_settlements')}?month={redirect_month}")
         return redirect('staff:finance_expected_payments')
 
 

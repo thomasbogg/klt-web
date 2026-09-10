@@ -45,6 +45,14 @@
             </label>
         </form>
 
+        <p class="staff-finance-statement-note">
+            {% if view == 'unpaid' %}
+            Owners appear here only when a payment is genuinely still outstanding: commission or combined monthly invoices (Sage), rental commission per payout, cleans/meet-greet invoiced monthly (Sage + Revolut), or cleans/meet-greet tracked informally for owners never formally invoiced for it. Owners whose management fee is already netted structurally into their own month-end payout never show up here &ndash; there's nothing separate left to chase.
+            {% else %}
+            The same kinds of payment as the Unpaid view, now already settled: commission or combined monthly invoices (Sage), rental commission per payout, cleans/meet-greet invoiced monthly (Sage + Revolut), or cleans/meet-greet tracked informally for owners never formally invoiced for it &ndash; each shown with when it was paid. Owners whose management fee is already netted structurally into their own month-end payout never show up here, {% if view == 'recent' %}since there was never anything separate to pay{% else %}for the same reason{% endif %}.
+            {% endif %}
+        </p>
+
         {% if consolidatable_owners %}
         <details class="staff-panel staff-finance-consolidate-panel">
             <summary class="staff-panel-title staff-finance-consolidate-summary">Consolidate unpaid cleans/meet-greet ({{ consolidatable_owners|length }})</summary>
@@ -147,7 +155,7 @@
                         </td>
                         <td class="staff-finance-actions-cell">
                             <div class="staff-finance-actions-inner">
-                                <a href="{% url 'staff:finance_memo_detail' pk=memo.pk %}" class="staff-button staff-button-small">View</a>
+                                <a href="{% url 'staff:finance_memo_detail' pk=memo.pk %}?next={{ request.get_full_path|urlencode }}" class="staff-button staff-button-small">View</a>
                                 {% if not memo.management_fee_paid_at %}
                                 <form method="post" action="{% url 'staff:finance_memo_toggle_management_fee_paid' pk=memo.pk %}">
                                     {% csrf_token %}
