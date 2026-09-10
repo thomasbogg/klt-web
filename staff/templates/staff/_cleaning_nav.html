@@ -1,0 +1,6 @@
+<div class="staff-cleaning-subnav">
+    <a href="{% url 'staff:cleaning_rota' %}" class="staff-cleaning-subnav-link{% if active_tab == 'rota' %} staff-cleaning-subnav-link-active{% endif %}">Rota</a>
+    {% if is_superuser %}
+    <a href="{% url 'staff:cleaning_calendar' %}" class="staff-cleaning-subnav-link{% if active_tab == 'scheduler' %} staff-cleaning-subnav-link-active{% endif %}">Scheduler</a>
+    {% endif %}
+</div>

@@ -32,9 +32,9 @@ from finance.models import AdHocService, DepositReturn, Memo, OwnerInvoice, Payo
 from finance.services import (
     backfill_memos_for_company, compute_regular_owner_payout, consolidate_informal_cleans_payment,
     deposits_due_in_range, dispatch_commission_receipt_for_payout, dispatch_owner_invoice_to_sage,
-    generate_non_regular_owner_invoice, needs_informal_cleans_tracking, non_regular_owner_settlements,
+    generate_non_regular_owner_invoice, generate_scenario_1_cleans_invoice, needs_informal_cleans_tracking,
     open_memo_for_property, owner_ids_with_no_separate_cleans_payment, owner_outstanding_balance,
-    payouts_due_in_range, sweep_unattached_ad_hoc_services,
+    owner_settlements, payouts_due_in_range, sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_deposit_waiver, compute_effective_self_check_in, create_booking,
@@ -3216,6 +3216,7 @@ class StaffCleaningRotaView(View):
             'next_date': target_date + timedelta(days=3),
             'days': days,
             'is_superuser': request.user.is_superuser,
+            'active_tab': 'rota',
         }
 
     def _next_bookings_for_turnover_tasks(self, tasks):
@@ -3278,11 +3279,18 @@ class StaffCleaningCalendarView(View):
     checkout, never so late the next confirmed arrival lands on an unclean property - see
     staff/utils.py::cleaning_task_valid_range). Deliberately superuser-only (not gated by a
     StaffRole field like the day-list rota) and deliberately a separate page rather than a
-    replacement for it - the day-list stays the simple view a cleaner checks for their own day."""
+    replacement for it - the day-list stays the simple view a cleaner checks for their own day.
+
+    Reachable via the Rota/Scheduler sub-nav (staff/templates/staff/_cleaning_nav.html, 2026-09-10,
+    per Thomas - same pattern as Finance's own sub-nav) rather than the old ad-hoc "Edit rota"/
+    "Back to rota" link pair each page used to carry independently. The Scheduler tab itself only
+    renders for a superuser, matching this view's own real access gate above - not just cosmetic."""
     template_name = 'staff/cleaning_calendar.html'
 
     def get(self, request, *args, **kwargs):
-        return render(request, self.template_name, {})
+        return render(request, self.template_name, {
+            'is_superuser': request.user.is_superuser, 'active_tab': 'scheduler',
+        })
 
 
 @method_decorator(superuser_required, name='dispatch')
@@ -3865,7 +3873,14 @@ class StaffFinanceMemoManagementFeePaidView(View):
     StaffFinanceDepositReturnMarkReturnedView - this only records a staff belief about an informal
     payment, which may need correcting either way. Stays a per-Memo action even once consolidation
     exists - a Memo already bundled into an OwnerInvoice is excluded from being bundled again, but
-    this view doesn't need to know or care about that, it just toggles the one Memo it's given."""
+    this view doesn't need to know or care about that, it just toggles the one Memo it's given.
+
+    Setting it (not unsetting) is refused server-side, not just hidden, for an owner
+    needs_informal_cleans_tracking flags False (2026-09-10, per Thomas - Nuno Pinto: that owner is
+    formally invoiced, so their Memo never fires a Sage invoice and marking it paid this way would
+    misrepresent a real invoiced amount as informally settled). Unsetting stays allowed regardless
+    of scenario - it's a correction, and this codebase already had one live example of exactly
+    this misapplication (Karen Holtham, scenario 1) before this guard existed."""
 
     def post(self, request, pk, *args, **kwargs):
         memo = Memo.objects.select_related('property__owner').filter(pk=pk).first()
@@ -3878,6 +3893,10 @@ class StaffFinanceMemoManagementFeePaidView(View):
             memo.management_fee_paid_by = None
             messages.success(request, "Management fee marked as unpaid.")
         else:
+            owner = memo.property.owner
+            if not (owner and needs_informal_cleans_tracking(owner)):
+                messages.error(request, "This owner is formally invoiced for cleans/meet-greet - generate their invoice on the Settlements tab instead.")
+                return redirect('staff:finance_memo_detail', pk=memo.pk)
             memo.management_fee_paid_at = timezone.now()
             memo.management_fee_paid_by = request.user
             messages.success(request, "Management fee marked as paid.")
@@ -4142,11 +4161,14 @@ class StaffFinancePayoutMarkPaidView(View):
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinanceOwnerPayoutGenerateView(View):
-    """The Settlements tab's 'Generate & send invoice' button for one non-regularly-paid owner's
-    row (StaffFinanceSettlementsView) - creates and Sage-dispatches that owner's OwnerInvoice for
-    the given month via finance/services.py::generate_non_regular_owner_invoice, the same billing
-    logic generate_monthly_owner_invoices (the CLI/cron path) already uses. Safe to click more
-    than once - the underlying function is idempotent via OwnerInvoice's own unique constraint."""
+    """The Settlements tab's 'Generate & send invoice' button for one owner's row
+    (StaffFinanceSettlementsView) - creates and Sage-dispatches that owner's OwnerInvoice for the
+    given month via finance/services.py::generate_non_regular_owner_invoice (scenarios 2/3) or
+    generate_scenario_1_cleans_invoice (scenario 1 - is_paid_regularly=True, cleans_are_invoiced=
+    True, broadened 2026-09-10 per Thomas: previously CLI-only, with no in-app trigger at all),
+    routed by owner.is_paid_regularly - same billing logic generate_monthly_owner_invoices (the
+    CLI/cron path) already uses either way. Safe to click more than once - both underlying
+    functions are idempotent via OwnerInvoice's own unique constraint."""
 
     def post(self, request, owner_id, *args, **kwargs):
         owner = Owner.objects.filter(pk=owner_id).first()
@@ -4160,7 +4182,10 @@ class StaffFinanceOwnerPayoutGenerateView(View):
             return self._redirect(request)
         period_end = _last_day_of_month(period_start)
 
-        invoice, status = generate_non_regular_owner_invoice(owner, period_start, period_end)
+        if owner.is_paid_regularly:
+            invoice, status = generate_scenario_1_cleans_invoice(owner, period_start, period_end)
+        else:
+            invoice, status = generate_non_regular_owner_invoice(owner, period_start, period_end)
         if status == 'created':
             note = "" if not invoice.sage_invoice_error else f" (Sage error: {invoice.sage_invoice_error})"
             messages.success(request, f"Invoice generated for {owner}.{note}")
@@ -4190,17 +4215,19 @@ class StaffFinanceSettlementsView(View):
 
     Month-scoped (prev/next calendar month via ?month=YYYY-MM, default the most recently completed
     month - same default generate_monthly_owner_invoices' own --month uses), not a day window -
-    every is_paid_regularly=False owner for that one month is listed outright via finance/
-    services.py::non_regular_owner_settlements, not just owners with a booking-based balance due:
-    a cleans-invoiced owner with zero bookings (all ins, no outs) previously never appeared on the
-    old Payouts tab's month-end cards at all, since those were driven off a booking-based query -
-    the actual gap this split was built to close."""
+    every owner with a genuine monthly Sage settlement (scenarios 1, 2 and 3 - see finance/
+    services.py::owner_settlements for exactly which owners and why) is listed outright for that
+    one month, not just ones with a booking-based balance due: a cleans-invoiced owner with zero
+    bookings (all ins, no outs) previously never appeared on the old Payouts tab's month-end cards
+    at all, since those were driven off a booking-based query, and scenario 1's cleans invoice had
+    no in-app trigger anywhere until this tab was broadened to include it (2026-09-10, per Thomas -
+    Karen Holtham) - both are the actual gaps this tab was built to close."""
     template_name = 'staff/finance_settlements.html'
 
     def get(self, request, *args, **kwargs):
         period_start = _parsed_month(request.GET.get('month')) or previous_month_start(timezone.now().date())
         period_end = _last_day_of_month(period_start)
-        rows = non_regular_owner_settlements(period_start, period_end)
+        rows = owner_settlements(period_start, period_end)
 
         return render(request, self.template_name, {
             'rows': rows,
@@ -4390,11 +4417,19 @@ class StaffFinanceExpectedPaymentsView(View):
     that's never been bundled into one (owner_invoices empty) - a bundled Memo is only ever shown
     via its invoice's row, never both (see finance/services.py::consolidate_informal_cleans_payment
     for why that's safe - it excludes already-bundled Memos from ever being candidates again).
-    Real scenario-3 owners' Memos (finance/services.py::owner_ids_with_no_separate_cleans_payment)
-    are excluded from all three views entirely - their management fee is already netted into
-    owner_balance at payout time, so those Memos never represent an expected payment and had no
-    mark-paid mechanism that could ever clear them off this list (found 2026-09-10: 711 had piled
-    up with no way to resolve).
+    Memo rows are restricted to owners needs_informal_cleans_tracking flags True - the exact
+    population Memo.management_fee_paid_at/consolidate_informal_cleans_payment exist for (2026-09-10,
+    per Thomas - Nuno Pinto: a cleans_are_invoiced owner's not-yet-bundled Memo is real and unpaid,
+    but it isn't an informal per-Memo settlement - it's raw material for that owner's next Sage/
+    Revolut cleans invoice, generated on the Settlements tab, and never fires anything Sage-side
+    itself. It should only ever appear here once actually bundled into that OwnerInvoice - at which
+    point it shows as an invoice row instead, with its own Sage/Revolut life-cycle, not before).
+    Two exclusions cover this: cleans_are_invoiced=True (scenarios 1/2, needs_informal_cleans_tracking
+    always False for them - see that function's own short-circuit) via a plain field filter, and
+    real scenario-3 owners (finance/services.py::owner_ids_with_no_separate_cleans_payment) whose
+    management fee is already netted into owner_balance at payout time and so never represented an
+    expected payment either way (found 2026-09-10: 711 had piled up with no way to resolve, before
+    that exclusion existed).
 
     Three views via ?view=unpaid|recent|historic (default unpaid): Unpaid sorts oldest-first
     (chase the longest-outstanding first); Recent (paid within the last RECENT_CUTOFF_DAYS) and
@@ -4416,6 +4451,8 @@ class StaffFinanceExpectedPaymentsView(View):
             sent_at__isnull=False, owner_invoices__isnull=True,
         ).exclude(
             property__owner_id__in=owner_ids_with_no_separate_cleans_payment(),
+        ).exclude(
+            property__owner__cleans_are_invoiced=True,
         ).select_related('property', 'property__owner')
         if owner:
             invoices = invoices.filter(owner=owner)

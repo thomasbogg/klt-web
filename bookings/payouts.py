@@ -2,8 +2,6 @@ import calendar
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Sum
-
 import env_settings
 from bookings.models import TWO_PLACES, PaymentSettings
 
@@ -91,9 +89,14 @@ def _off_platform_cash(booking):
     that model's own docstring). Deliberately NOT folded into Charge (that model's own scope is
     online direct bookings only, per BookingDateAdjustment's docstring) - but it IS real rental
     income the owner is owed our standard commission on, so it belongs here, added to rental_base
-    before commission/VAT are calculated, the same as everything else in this function."""
-    total = booking.date_adjustments.aggregate(total=Sum('additional_charge'))['total']
-    return total or ZERO
+    before commission/VAT are calculated, the same as everything else in this function.
+
+    Sums in Python over .all() rather than .aggregate() (2026-09-10, real N+1 found live: a bulk
+    caller iterating many platform bookings - finance/services.py::owner_settlements - was issuing
+    one of these per booking regardless of prefetching, since .aggregate() always hits the database
+    directly and never consults Django's prefetch cache the way .all() does). Behaves identically
+    either way - one query if date_adjustments wasn't prefetched, zero if it was."""
+    return sum((adj.additional_charge for adj in booking.date_adjustments.all()), ZERO)
 
 
 def _unavailable(reason):

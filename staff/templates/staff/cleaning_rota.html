@@ -14,13 +14,10 @@
         {% include 'staff/_nav.html' %}
 
         <header class="staff-header">
-            <div class="staff-cleaning-title-row">
-                <h1 class="staff-page-title">Cleaning rota</h1>
-                {% if is_superuser %}
-                <a href="{% url 'staff:cleaning_calendar' %}" class="staff-header-link">Edit rota &rarr;</a>
-                {% endif %}
-            </div>
+            <h1 class="staff-page-title">Cleaning</h1>
         </header>
+
+        {% include 'staff/_cleaning_nav.html' %}
 
         {% if messages %}
         <div class="staff-messages">

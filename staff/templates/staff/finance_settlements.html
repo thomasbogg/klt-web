@@ -29,7 +29,7 @@
         {% endif %}
 
         <p class="staff-finance-statement-note">
-            Every non-regularly-paid owner's monthly commission and/or cleans/meet-greet settlement, one month at a time - including an owner with no bookings at all this month, who can still owe a cleans/meet-greet amount.
+            Every owner with a genuine monthly Sage settlement - commission, cleans/meet-greet, or both - one month at a time, including an owner with no bookings at all this month who can still owe a cleans/meet-greet amount. Owners tracked informally instead (never formally invoiced for cleans/meet-greet) live on Expected Payments, not here.
         </p>
 
         <div class="staff-cleaning-date-nav">
@@ -83,6 +83,9 @@
                                 {% if row.invoice.status == 'paid' %}
                                 <span class="staff-finance-sent-note">Paid{% if row.invoice.paid_at %} {{ row.invoice.paid_at|date:'j M Y' }}{% endif %}</span>
                                 {% else %}
+                                {% if row.invoice.revolut_checkout_url %}
+                                <a href="{{ row.invoice.revolut_checkout_url }}" target="_blank" rel="noopener" class="staff-button staff-button-small">Revolut link ({{ row.invoice.get_status_display }})</a>
+                                {% endif %}
                                 <form method="post" action="{% url 'staff:finance_owner_invoice_mark_paid' pk=row.invoice.pk %}">
                                     {% csrf_token %}
                                     <input type="hidden" name="month" value="{{ period_start|date:'Y-m' }}">
@@ -107,7 +110,7 @@
             </table>
             </div>
             {% else %}
-            <p class="staff-empty">No non-regularly-paid owners.</p>
+            <p class="staff-empty">No owners due a settlement.</p>
             {% endif %}
         </div>
     </div>

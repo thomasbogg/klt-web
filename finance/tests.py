@@ -15,8 +15,8 @@ from finance.models import AdHocService, DepositReturn, Memo, OwnerInvoice, Payo
 from finance.services import (
     compute_regular_owner_payout, consolidate_informal_cleans_payment, deposits_due_in_range,
     dispatch_commission_receipt_for_payout, dispatch_memo_to_sage, generate_non_regular_owner_invoice,
-    needs_informal_cleans_tracking, non_regular_owner_settlements, open_memo_for_property,
-    owner_balance_in_range, owner_outstanding_balance, payouts_due_in_range,
+    generate_scenario_1_cleans_invoice, needs_informal_cleans_tracking, open_memo_for_property,
+    owner_balance_in_range, owner_outstanding_balance, owner_settlements, payouts_due_in_range,
     recompute_unsent_memo_fees_for_settings_change, sweep_unattached_ad_hoc_services,
 )
 from guests.models import Guest
@@ -1139,11 +1139,12 @@ class ExcludeUnconfirmedBookingsFromPayoutsTests(FinanceTestCase):
         self.assertEqual([b.pk for b, _ in rows], [booking.pk])
 
 
-class NonRegularOwnerSettlementsTests(TestCase):
-    """finance/services.py::non_regular_owner_settlements - the Settlements tab's row set
-    (2026-09-10, replaces non_regular_owner_balances_due_in_range). Unlike its predecessor, this
-    lists every is_paid_regularly=False owner outright rather than only ones with a booking-based
-    balance due - see test_owner_with_no_bookings_still_appears_with_zero_total below and
+class OwnerSettlementsTests(TestCase):
+    """finance/services.py::owner_settlements - the Settlements tab's row set (2026-09-10,
+    replaces non_regular_owner_balances_due_in_range, then broadened same day to also cover
+    scenario 1). Unlike its non-regular-only predecessor, this lists every owner with a genuine
+    monthly Sage settlement outright rather than only ones with a booking-based balance due - see
+    test_owner_with_no_bookings_still_appears_with_zero_total below and
     StaffOwnerSettlementViewsTests.test_booking_less_cleans_invoiced_owner_still_appears for the
     cleans-invoiced case this was actually built to fix."""
 
@@ -1185,25 +1186,79 @@ class NonRegularOwnerSettlementsTests(TestCase):
         b1 = self._make_booking(date(2026, 2, 1))
         b2 = self._make_booking(date(2026, 2, 10))
 
-        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        rows = owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
         row = next(row for row in rows if row['owner'] == self.owner)
 
         self.assertEqual(set(b.pk for b in row['bookings']), {b1.pk, b2.pk})
         self.assertGreater(row['commission_amount'], Decimal('0'))
         self.assertEqual(row['kind'], OwnerInvoice.Kind.COMMISSION_MONTHLY)
 
-    def test_excludes_regularly_paid_owners(self):
+    def test_excludes_regular_owner_not_invoiced_for_cleans(self):
+        """A regular owner not invoiced for cleans is scenario 4 - informal-only, tracked via
+        Expected Payments' consolidation, never a Settlements row."""
         self.owner.is_paid_regularly = True
         self.owner.save()
         self._make_booking(date(2026, 2, 1))
 
-        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        rows = owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
         self.assertFalse(any(row['owner'] == self.owner for row in rows))
+
+    def test_scenario_1_owner_shows_cleans_only_never_commission(self):
+        """2026-09-10, per Thomas (Karen Holtham): a regular, cleans-invoiced owner's cleans/
+        meet-greet invoice is a genuine monthly Sage/Revolut process with no in-app trigger before
+        this - now included here. commission_amount and bookings must stay zero/empty regardless
+        of real bookings that period, since that owner's rental commission is settled per-payout,
+        never as part of this monthly mechanism."""
+        self.owner.is_paid_regularly = True
+        self.owner.cleans_are_invoiced = True
+        self.owner.save()
+        booking = self._make_booking(date(2026, 2, 1))
+        memo = Memo.objects.get(cleaning_task__booking=booking)
+        memo.sent_at = timezone.make_aware(datetime(2026, 2, 15))
+        memo.save(update_fields=['sent_at'])
+
+        rows = owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        row = next(row for row in rows if row['owner'] == self.owner)
+        self.assertEqual(row['kind'], OwnerInvoice.Kind.CLEANS_MONTHLY)
+        self.assertEqual(row['commission_amount'], Decimal('0'))
+        self.assertEqual(row['bookings'], [])
+        self.assertGreater(row['cleans_amount'], Decimal('0'))
+
+    def test_already_bundled_memo_never_recounted_under_a_different_period(self):
+        """Real double-billing bug found live 2026-09-10 (Karen Holtham): the pre-launch ledger
+        reset bundled a scenario-1 owner's pre-cutoff Memos into one CLEANS_MONTHLY invoice with
+        period_start=None (a rolling bundle, not tied to any one calendar month - see
+        reset_ledger_before_date's own docstring). A later month-scoped call here must not re-select
+        those same Memos just because no invoice exists for THAT specific period_start - Settlements
+        was showing a real, nonzero 'Generate & send invoice' amount for Memos already settled."""
+        self.owner.is_paid_regularly = True
+        self.owner.cleans_are_invoiced = True
+        self.owner.save()
+        booking = self._make_booking(date(2026, 2, 1))
+        memo = Memo.objects.get(cleaning_task__booking=booking)
+        memo.sent_at = timezone.make_aware(datetime(2026, 2, 15))
+        memo.save(update_fields=['sent_at'])
+
+        rolling_bundle = OwnerInvoice.objects.create(
+            owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_MONTHLY,
+            period_start=None, cleans_amount=memo.total(), status='paid',
+        )
+        rolling_bundle.memos.add(memo)
+
+        rows = owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        row = next(row for row in rows if row['owner'] == self.owner)
+        self.assertEqual(row['cleans_amount'], Decimal('0'))
+        self.assertEqual(row['total'], Decimal('0'))
+
+        invoice, status = generate_scenario_1_cleans_invoice(self.owner, date(2026, 2, 1), date(2026, 2, 28))
+        self.assertIsNone(invoice)
+        self.assertEqual(status, 'nothing_to_bill')
+        self.assertEqual(OwnerInvoice.objects.filter(owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_MONTHLY).count(), 1)
 
     def test_owner_with_no_bookings_still_appears_with_zero_total(self):
         """The core behavioural change from the old function: an owner is listed even with
         nothing due this month, rather than being silently absent."""
-        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        rows = owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
         row = next(row for row in rows if row['owner'] == self.owner)
         self.assertEqual(row['total'], Decimal('0'))
         self.assertEqual(row['bookings'], [])
@@ -1216,14 +1271,14 @@ class NonRegularOwnerSettlementsTests(TestCase):
         self.property.active = False
         self.property.save(update_fields=['active'])
 
-        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        rows = owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
         self.assertFalse(any(row['owner'] == self.owner for row in rows))
 
         no_property_owner = Owner.objects.create(
             name='No Property Owner', email='no-property-owner@example.com', currency=Owner.Currency.EUR,
             is_paid_regularly=False, cleans_are_invoiced=False,
         )
-        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        rows = owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
         self.assertFalse(any(row['owner'] == no_property_owner for row in rows))
 
     def test_true_management_only_owner_excluded(self):
@@ -1241,7 +1296,7 @@ class NonRegularOwnerSettlementsTests(TestCase):
             active=True, standard_cleaning_fee=Decimal('80.00'),
         )
 
-        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        rows = owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
         self.assertFalse(any(row['owner'] == owner for row in rows))
 
 
@@ -1403,11 +1458,33 @@ class StaffOwnerSettlementViewsTests(FinanceTestCase):
         booking.property.booking_company = None
         booking.property.save(update_fields=['booking_company'])
 
-        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        rows = owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
         row = next(row for row in rows if row['owner'] == self.owner)
         self.assertEqual(row['commission_amount'], Decimal('0'))
         self.assertGreater(row['cleans_amount'], Decimal('0'))
         self.assertEqual(row['kind'], OwnerInvoice.Kind.COMBINED_MONTHLY)
+
+    def test_generate_button_routes_scenario_1_owner_to_cleans_invoice(self):
+        """2026-09-10, per Thomas (Karen Holtham): the Generate button must route a regular,
+        cleans-invoiced owner to generate_scenario_1_cleans_invoice (CLEANS_MONTHLY, with a Revolut
+        order), not generate_non_regular_owner_invoice (which would refuse them as not_applicable)."""
+        self.owner.is_paid_regularly = True
+        self.owner.cleans_are_invoiced = True
+        self.owner.save()
+        booking = self._make_booking_on(date(2026, 2, 1))
+        memo = Memo.objects.get(cleaning_task__booking=booking)
+        memo.sent_at = timezone.make_aware(datetime(2026, 2, 15))
+        memo.save(update_fields=['sent_at'])
+
+        response = self.client.post(
+            reverse('staff:finance_owner_payout_generate', kwargs={'owner_id': self.owner.pk}),
+            {'period_start': '2026-02-01', 'month': '2026-02'},
+        )
+        self.assertEqual(response.status_code, 302)
+        invoice = OwnerInvoice.objects.get(owner=self.owner, period_start=date(2026, 2, 1))
+        self.assertEqual(invoice.kind, OwnerInvoice.Kind.CLEANS_MONTHLY)
+        self.assertEqual(invoice.commission_amount, Decimal('0'))
+        self.assertGreater(invoice.cleans_amount, Decimal('0'))
 
     def test_mark_paid_sets_status_and_is_rejected_only_for_commission_payout(self):
         invoice = OwnerInvoice.objects.create(
@@ -1761,6 +1838,54 @@ class StaffFinanceExpectedPaymentsViewTests(FinanceTestCase):
             self.client.get(reverse('staff:finance_expected_payments'), {'view': 'unpaid'}).context['consolidatable_owners'],
             [],
         )
+
+    def test_cleans_invoiced_owner_memo_hidden_until_bundled_into_invoice(self):
+        """2026-09-10, per Thomas (Nuno Pinto): a cleans_are_invoiced owner's Memo is real and
+        unpaid, but it's raw material for that owner's next Settlements-generated Sage/Revolut
+        invoice, not an informal per-Memo settlement - it must not appear here at all until it's
+        actually bundled into that OwnerInvoice, at which point it shows as an invoice row with its
+        own Sage/Revolut life-cycle instead."""
+        self.property.owner.is_paid_regularly = True
+        self.property.owner.cleans_are_invoiced = True
+        self.property.owner.save()
+        memo = self._sent_memo_for(self.property, self.guest, self.today - timedelta(days=5))
+
+        response = self.client.get(reverse('staff:finance_expected_payments'), {'view': 'unpaid'})
+        self.assertEqual(response.context['rows'], [])
+        self.assertEqual(response.context['consolidatable_owners'], [])
+
+        invoice = OwnerInvoice.objects.create(
+            owner=self.property.owner, kind=OwnerInvoice.Kind.CLEANS_MONTHLY,
+            period_start=self.today.replace(day=1), cleans_amount=memo.total(),
+        )
+        invoice.memos.add(memo)
+
+        rows = self.client.get(reverse('staff:finance_expected_payments'), {'view': 'unpaid'}).context['rows']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['type'], 'invoice')
+        self.assertEqual(rows[0]['invoice'].pk, invoice.pk)
+
+    def test_mark_paid_toggle_refuses_to_set_for_non_informal_owner_but_allows_unset(self):
+        """2026-09-10, per Thomas (Nuno Pinto/Karen Holtham): setting management_fee_paid_at is
+        refused server-side (not just hidden) for an owner formally invoiced for cleans/meet-greet
+        - marking it paid this way would misrepresent a real invoiced amount as informally settled.
+        Unsetting stays allowed regardless, since it's a correction of exactly that mistake."""
+        self.property.owner.is_paid_regularly = True
+        self.property.owner.cleans_are_invoiced = True
+        self.property.owner.save()
+        memo = self._sent_memo_for(self.property, self.guest, self.today - timedelta(days=5))
+
+        url = reverse('staff:finance_memo_toggle_management_fee_paid', kwargs={'pk': memo.pk})
+        self.client.post(url)
+        memo.refresh_from_db()
+        self.assertIsNone(memo.management_fee_paid_at)
+
+        memo.management_fee_paid_at = timezone.now()
+        memo.management_fee_paid_by_id = None
+        memo.save(update_fields=['management_fee_paid_at'])
+        self.client.post(url)
+        memo.refresh_from_db()
+        self.assertIsNone(memo.management_fee_paid_at)
 
     def test_management_only_owner_gets_individual_toggle_on_memo_detail(self):
         external_company = ManagementCompany.objects.create(name='External Co', finances_managed_internally=False)

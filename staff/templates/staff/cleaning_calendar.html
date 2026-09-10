@@ -7,6 +7,7 @@
     <title>Cleaning calendar | Staff</title>
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/cleaning_rota.css' %}">
     <link rel="stylesheet" href="{% static 'staff/cleaning_calendar.css' %}">
     <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
     <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
@@ -20,9 +21,10 @@
         {% include 'staff/_nav.html' %}
 
         <header class="staff-header">
-            <h1 class="staff-page-title">Cleaning calendar</h1>
-            <a href="{% url 'staff:cleaning_rota' %}" class="staff-button staff-button-small">&larr; Back to rota</a>
+            <h1 class="staff-page-title">Cleaning</h1>
         </header>
+
+        {% include 'staff/_cleaning_nav.html' %}
 
         <div
             id="cleaning-calendar"

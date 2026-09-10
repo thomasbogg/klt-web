@@ -445,7 +445,7 @@ def _payouts_due_in_range(bookings_queryset, start, end, compute_fn=compute_owne
     )).select_related(
         'property__owner', 'property__booking_company', 'property__cleaning_company', 'property__specs',
         'charges', 'platform_payout', 'departure', 'arrival',
-    ).prefetch_related('owner_payments')
+    ).prefetch_related('owner_payments', 'date_adjustments', 'party')
 
     results = []
     for booking in candidates:
@@ -509,8 +509,19 @@ def _commission_in_range(owner, start, end):
 
 
 def _sent_memos_in_range(owner, start, end):
+    """Real bug found live 2026-09-10 (Karen Holtham): this must exclude memos already bundled
+    into any OwnerInvoice (owner_invoices__isnull=True), not just filter on date. Scenario 2/3's
+    COMBINED_MONTHLY/COMMISSION_MONTHLY invoices are always tied to a real, non-overlapping
+    calendar-month period_start, so a memo's date alone was already enough to keep this exclusive
+    in practice. Scenario 1's CLEANS_MONTHLY breaks that assumption: the pre-launch ledger reset's
+    own rolling bundle for it deliberately used period_start=None (see reset_ledger_before_date's
+    own docstring - "period_start doesn't matter for CLEANS_MONTHLY's own exclusion check, it's
+    per-Memo, not month membership"), so a later month-scoped call here (Settlements' preview, or
+    generate_scenario_1_cleans_invoice itself) would re-select and re-bill the exact same
+    already-settled memos under a different, real period_start - a genuine double-charge risk, not
+    just a display glitch."""
     return list(Memo.objects.filter(
-        property__owner=owner, sent_at__date__range=(start, end),
+        property__owner=owner, sent_at__date__range=(start, end), owner_invoices__isnull=True,
     ).prefetch_related('ad_hoc_services'))
 
 
@@ -557,7 +568,7 @@ def generate_non_regular_owner_invoice(owner, period_start, period_end, dry_run=
     (scenario 2), else COMMISSION_MONTHLY (scenario 3 - commission only; cleans/meet-greet stays
     informational-only via Memo either way, see Memo.management_fee_paid_at). No Revolut order -
     settlement for these two scenarios is structural, already netted out of the owner's month-end
-    payout (see non_regular_owner_settlements), not a live request for payment.
+    payout (see owner_settlements), not a live request for payment.
 
     Shared by finance/management/commands/generate_monthly_owner_invoices.py (the CLI/cron batch
     path) and staff/views.py::StaffFinanceOwnerPayoutGenerateView (the Settlements tab's
@@ -598,24 +609,33 @@ def generate_scenario_1_cleans_invoice(owner, period_start, period_end, dry_run=
     )
 
 
-def non_regular_owner_settlements(period_start, period_end):
-    """Every is_paid_regularly=False owner's month-end settlement for one calendar month - the
+def owner_settlements(period_start, period_end):
+    """Every owner with a genuine month-end Sage settlement for one calendar month - the
     Settlements tab's row set (2026-09-10, split out of the old day-by-day Payouts tab: "Payouts"
     read as misleading for an owner who is only ever billed, never paid a lump sum, and burying
     these cards inside whichever single day of a 3-day payout window happened to be the month's
     last day made them easy to miss on a normal skim of that tab - Thomas, 2026-09-10).
 
+    Originally non-regular owners only (scenarios 2/3); broadened 2026-09-10 to also cover
+    scenario 1 (is_paid_regularly=True, cleans_are_invoiced=True - Karen Holtham) per Thomas: their
+    cleans/meet-greet invoice is exactly as much a monthly Sage/Revolut process as scenario 2/3's,
+    and previously had no in-app trigger at all - generate_scenario_1_cleans_invoice was CLI-only.
+    For these rows commission_amount is always ZERO and bookings always [] - a scenario 1 owner's
+    rental commission is settled per-payout (see dispatch_commission_receipt_for_payout), never
+    part of this monthly mechanism, so it must never be computed or implied here.
+
     Replaces the old non_regular_owner_balances_due_in_range, which only surfaced an owner when
-    they had a booking-based balance due that period. This lists EVERY non-regular owner outright
+    they had a booking-based balance due that period. This lists every eligible owner outright
     instead: a cleans-invoiced owner with zero bookings (all ins, no outs at all) has
     commission_amount == 0 but can still have a real cleans_amount, and would otherwise never
     appear anywhere at all (found 2026-09-10 - see owner_ids_with_no_separate_cleans_payment for
     the mirror-image gap this shares a root cause with, on the Expected Payments tab).
 
-    Uses the exact same math as generate_non_regular_owner_invoice (same _commission_in_range/
-    _sent_memos_in_range calls, same kind selection) so a row's total here always matches what
-    clicking Generate would actually create - see that function for the kind/commission/cleans
-    logic itself, not duplicated here beyond what's needed to preview it.
+    Computes the exact same commission/cleans amounts as generate_non_regular_owner_invoice/
+    generate_scenario_1_cleans_invoice (same underlying booking/Memo filters, same kind selection,
+    just batched across every owner at once rather than calling their single-owner
+    _commission_in_range/_sent_memos_in_range helpers - see "Rewritten 2026-09-10" below) so a
+    row's total here always matches what clicking Generate would actually create.
 
     Excludes an owner with no active property at all (Property.active=False on every one of
     theirs, or none at all) - found 2026-09-10, per Thomas: an owner with nothing active can never
@@ -626,26 +646,81 @@ def non_regular_owner_settlements(period_start, period_end):
 
     Also excludes an owner needs_informal_cleans_tracking flags True (found 2026-09-10 - Ema
     Furtado: an active property, but no booking relationship with KLT at all and cleans not
-    formally invoiced either) - for a non-regular owner that function is equivalent to "can never
-    generate a commission (no internally-managed booking_company) AND isn't cleans-invoiced", i.e.
-    structurally always zero here, forever - not just this month. Their real, only mark-payable
-    home is Expected Payments' informal consolidation (finance/services.py::
-    consolidate_informal_cleans_payment), which is exactly why they were already showing up there
-    too - this was a genuine duplicate, not two different real things to chase."""
+    formally invoiced either; and every real scenario 4 owner) - these owners can never generate a
+    Sage-side commission or cleans invoice at all, i.e. structurally always zero here, forever -
+    not just this month. Their real, only mark-payable home is Expected Payments' informal
+    consolidation (finance/services.py::consolidate_informal_cleans_payment), which is exactly why
+    they were already showing up there too - this was a genuine duplicate, not two different real
+    things to chase.
+
+    Rewritten 2026-09-10 to fix a real live performance bug (per Thomas: Settlements' month-to-
+    month navigation was taking several seconds) - measured at 392 queries / 18s for one page load
+    against this project's remote Postgres, almost entirely _commission_in_range re-running a full
+    bookings query from scratch once per owner (an N+1 pattern - see feedback_klt_web_prefer_bulk_db_ops
+    in memory). Fixed by doing exactly what non_regular_owner_balances_due_in_range and
+    reset_ledger_before_date's own Step 2 already established as this codebase's convention: one
+    bulk bookings query and one bulk memos query across every eligible owner up front, bucketed by
+    owner in Python, rather than looping per-owner/per-property. Down to ~7 queries regardless of
+    owner count. commission/cleans math and kind selection are unchanged from the old per-owner
+    version - only how the underlying rows are fetched changed, not what they mean."""
+    candidate_owners = list(Owner.objects.filter(
+        Q(is_paid_regularly=False) | Q(is_paid_regularly=True, cleans_are_invoiced=True),
+        property__active=True,
+    ).distinct())
+
+    # Within candidate_owners, is_paid_regularly=True only ever occurs paired with
+    # cleans_are_invoiced=True (per the filter above) - needs_informal_cleans_tracking's
+    # is_paid_regularly branch is therefore unreachable here, so "needs informal tracking" reduces
+    # to exactly the complement of this one set (one query, not one per owner).
+    billable_non_regular_ids = set(owner_ids_with_no_separate_cleans_payment())
+    owners = [
+        owner for owner in candidate_owners
+        if owner.cleans_are_invoiced or owner.pk in billable_non_regular_ids
+    ]
+    owners_by_id = {owner.pk: owner for owner in owners}
+
+    non_regular_ids = [owner.pk for owner in owners if not owner.is_paid_regularly]
+    commission_by_owner, bookings_by_owner = {}, {}
+    if non_regular_ids:
+        rows = _payouts_due_in_range(Booking.objects.filter(
+            property__owner_id__in=non_regular_ids, property__booking_company__finances_managed_internally=True,
+        ), period_start, period_end)
+        for booking, payout in rows:
+            owner_id = booking.property.owner_id
+            commission_by_owner[owner_id] = commission_by_owner.get(owner_id, ZERO) + payout['commission']
+            bookings_by_owner.setdefault(owner_id, []).append(booking)
+
+    cleans_invoiced_ids = [owner.pk for owner in owners if owner.cleans_are_invoiced]
+    cleans_by_owner, memos_by_owner = {}, {}
+    if cleans_invoiced_ids:
+        memos = Memo.objects.filter(
+            property__owner_id__in=cleans_invoiced_ids, sent_at__date__range=(period_start, period_end),
+            owner_invoices__isnull=True,
+        ).select_related('property').prefetch_related('ad_hoc_services')
+        for memo in memos:
+            owner_id = memo.property.owner_id
+            cleans_by_owner[owner_id] = cleans_by_owner.get(owner_id, ZERO) + memo.total()
+            memos_by_owner.setdefault(owner_id, []).append(memo)
+
+    invoices_by_owner = {
+        invoice.owner_id: invoice
+        for invoice in OwnerInvoice.objects.filter(
+            owner_id__in=owners_by_id.keys(), period_start=period_start,
+            kind__in=[OwnerInvoice.Kind.CLEANS_MONTHLY, OwnerInvoice.Kind.COMMISSION_MONTHLY, OwnerInvoice.Kind.COMBINED_MONTHLY],
+        )
+    }
+
     rows = []
-    owners = Owner.objects.filter(
-        is_paid_regularly=False, property__active=True,
-    ).distinct().order_by('name')
     for owner in owners:
-        if needs_informal_cleans_tracking(owner):
-            continue
-        commission_amount, bookings = _commission_in_range(owner, period_start, period_end)
-        cleans_amount, memos = ZERO, []
-        kind = OwnerInvoice.Kind.COMMISSION_MONTHLY
-        if owner.cleans_are_invoiced:
-            kind = OwnerInvoice.Kind.COMBINED_MONTHLY
-            memos = _sent_memos_in_range(owner, period_start, period_end)
-            cleans_amount = sum((memo.total() for memo in memos), ZERO)
+        if owner.is_paid_regularly:
+            kind = OwnerInvoice.Kind.CLEANS_MONTHLY
+            commission_amount, bookings = ZERO, []
+        else:
+            commission_amount = commission_by_owner.get(owner.pk, ZERO)
+            bookings = bookings_by_owner.get(owner.pk, [])
+            kind = OwnerInvoice.Kind.COMBINED_MONTHLY if owner.cleans_are_invoiced else OwnerInvoice.Kind.COMMISSION_MONTHLY
+        cleans_amount = cleans_by_owner.get(owner.pk, ZERO) if owner.cleans_are_invoiced else ZERO
+        memos = memos_by_owner.get(owner.pk, []) if owner.cleans_are_invoiced else []
         rows.append({
             'owner': owner,
             'kind': kind,
@@ -654,8 +729,9 @@ def non_regular_owner_settlements(period_start, period_end):
             'total': commission_amount + cleans_amount,
             'bookings': bookings,
             'memos': memos,
-            'invoice': OwnerInvoice.objects.filter(owner=owner, kind=kind, period_start=period_start).first(),
+            'invoice': invoices_by_owner.get(owner.pk),
         })
+    rows.sort(key=lambda row: row['owner'].name)
     return rows
 
 
