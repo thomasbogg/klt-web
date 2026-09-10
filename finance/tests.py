@@ -1208,6 +1208,42 @@ class NonRegularOwnerSettlementsTests(TestCase):
         self.assertEqual(row['total'], Decimal('0'))
         self.assertEqual(row['bookings'], [])
 
+    def test_owner_with_no_active_property_excluded(self):
+        """2026-09-10, per Thomas: an owner whose only property(ies) are inactive (or who has none
+        at all) can never generate a booking or a clean, so they must not appear at all rather than
+        sitting here forever as a permanent, never-resolvable 'Nothing to bill' row - confirmed
+        live for Salil Shah (no properties), Thomas Carey and Patrick Seeber (inactive-only)."""
+        self.property.active = False
+        self.property.save(update_fields=['active'])
+
+        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        self.assertFalse(any(row['owner'] == self.owner for row in rows))
+
+        no_property_owner = Owner.objects.create(
+            name='No Property Owner', email='no-property-owner@example.com', currency=Owner.Currency.EUR,
+            is_paid_regularly=False, cleans_are_invoiced=False,
+        )
+        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        self.assertFalse(any(row['owner'] == no_property_owner for row in rows))
+
+    def test_true_management_only_owner_excluded(self):
+        """2026-09-10, per Thomas (Ema Furtado): an active property but no booking relationship
+        with KLT at all (no booking_company) and cleans not formally invoiced either - structurally
+        can never generate a commission or a Sage cleans invoice, so they'd otherwise sit here
+        forever too, duplicating what Expected Payments' informal consolidation already tracks for
+        them (finance/services.py::needs_informal_cleans_tracking)."""
+        owner = Owner.objects.create(
+            name='Management Only Owner', email='mgmt-only-settlements@example.com', currency=Owner.Currency.EUR,
+            is_paid_regularly=False, cleans_are_invoiced=False,
+        )
+        Property.objects.create(
+            title='Management Only Settlement Property', short_title='MOSPROP', owner=owner,
+            active=True, standard_cleaning_fee=Decimal('80.00'),
+        )
+
+        rows = non_regular_owner_settlements(date(2026, 2, 1), date(2026, 2, 28))
+        self.assertFalse(any(row['owner'] == owner for row in rows))
+
 
 class GenerateNonRegularOwnerInvoiceTests(TestCase):
     """finance/services.py::generate_non_regular_owner_invoice - the shared billing function

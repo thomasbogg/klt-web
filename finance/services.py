@@ -615,9 +615,30 @@ def non_regular_owner_settlements(period_start, period_end):
     Uses the exact same math as generate_non_regular_owner_invoice (same _commission_in_range/
     _sent_memos_in_range calls, same kind selection) so a row's total here always matches what
     clicking Generate would actually create - see that function for the kind/commission/cleans
-    logic itself, not duplicated here beyond what's needed to preview it."""
+    logic itself, not duplicated here beyond what's needed to preview it.
+
+    Excludes an owner with no active property at all (Property.active=False on every one of
+    theirs, or none at all) - found 2026-09-10, per Thomas: an owner with nothing active can never
+    generate a booking or a clean, so they'd otherwise sit here forever as a permanent, never-
+    resolvable "Nothing to bill" row (confirmed live: Salil Shah, Thomas Carey, Patrick Seeber).
+    Same operational-visibility convention Property.active already governs elsewhere (staff Home,
+    calendars, guest-facing search).
+
+    Also excludes an owner needs_informal_cleans_tracking flags True (found 2026-09-10 - Ema
+    Furtado: an active property, but no booking relationship with KLT at all and cleans not
+    formally invoiced either) - for a non-regular owner that function is equivalent to "can never
+    generate a commission (no internally-managed booking_company) AND isn't cleans-invoiced", i.e.
+    structurally always zero here, forever - not just this month. Their real, only mark-payable
+    home is Expected Payments' informal consolidation (finance/services.py::
+    consolidate_informal_cleans_payment), which is exactly why they were already showing up there
+    too - this was a genuine duplicate, not two different real things to chase."""
     rows = []
-    for owner in Owner.objects.filter(is_paid_regularly=False).order_by('name'):
+    owners = Owner.objects.filter(
+        is_paid_regularly=False, property__active=True,
+    ).distinct().order_by('name')
+    for owner in owners:
+        if needs_informal_cleans_tracking(owner):
+            continue
         commission_amount, bookings = _commission_in_range(owner, period_start, period_end)
         cleans_amount, memos = ZERO, []
         kind = OwnerInvoice.Kind.COMMISSION_MONTHLY

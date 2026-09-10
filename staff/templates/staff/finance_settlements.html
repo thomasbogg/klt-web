@@ -58,7 +58,12 @@
                     {% for row in rows %}
                     <tr>
                         <td>{{ row.owner }}</td>
-                        <td>{% if row.kind == 'combined_monthly' %}Commission + cleans (monthly){% else %}Rental commission (monthly){% endif %}</td>
+                        <td>
+                            {% if row.commission_amount > 0 and row.cleans_amount > 0 %}Commission + cleans (monthly)
+                            {% elif row.commission_amount > 0 %}Rental commission (monthly)
+                            {% elif row.cleans_amount > 0 %}Cleans/meet-greet (monthly)
+                            {% else %}<span class="staff-empty">-</span>{% endif %}
+                        </td>
                         <td>{{ row.bookings|length }}</td>
                         <td>&euro;{{ row.commission_amount }}</td>
                         <td>&euro;{{ row.cleans_amount }}</td>
