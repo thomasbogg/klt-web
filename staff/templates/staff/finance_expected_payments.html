@@ -1,0 +1,174 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Expected Payments | Finance | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/finance.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Finance</h1>
+        </header>
+
+        {% include 'staff/_finance_nav.html' %}
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="staff-finance-subnav">
+            <a href="?view=unpaid{% if owner %}&owner_id={{ owner.pk }}{% endif %}" class="staff-finance-subnav-link{% if view == 'unpaid' %} staff-finance-subnav-link-active{% endif %}">Unpaid</a>
+            <a href="?view=recent{% if owner %}&owner_id={{ owner.pk }}{% endif %}" class="staff-finance-subnav-link{% if view == 'recent' %} staff-finance-subnav-link-active{% endif %}">Recently paid</a>
+            <a href="?view=historic{% if owner %}&owner_id={{ owner.pk }}{% endif %}" class="staff-finance-subnav-link{% if view == 'historic' %} staff-finance-subnav-link-active{% endif %}">Historic</a>
+        </div>
+
+        <form method="get" class="staff-finance-owner-filter-form">
+            <input type="hidden" name="view" value="{{ view }}">
+            <label class="staff-field">Owner
+                <select name="owner_id" class="staff-input" onchange="this.form.submit()">
+                    <option value="">All owners&hellip;</option>
+                    {% for o in owners %}
+                    <option value="{{ o.pk }}" {% if owner.pk == o.pk %}selected{% endif %}>{{ o }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+        </form>
+
+        {% if consolidatable_owners %}
+        <details class="staff-panel staff-finance-consolidate-panel">
+            <summary class="staff-panel-title staff-finance-consolidate-summary">Consolidate unpaid cleans/meet-greet ({{ consolidatable_owners|length }})</summary>
+            <p class="staff-finance-statement-note">
+                Bundles each owner's individually-unpaid Memos (this month's and any older) into one markable-paid request.
+            </p>
+            {% for consolidatable_owner in consolidatable_owners %}
+            <form method="post" action="{% url 'staff:finance_consolidate_informal_cleans' owner_id=consolidatable_owner.pk %}" class="staff-finance-consolidate-form">
+                {% csrf_token %}
+                <span>{{ consolidatable_owner }}</span>
+                <button type="submit" class="staff-button staff-button-small">Consolidate</button>
+            </form>
+            {% endfor %}
+        </details>
+        {% endif %}
+
+        <div class="staff-panel">
+            {% if rows %}
+            <div class="staff-table-scroll">
+            <table class="staff-price-table">
+                <thead>
+                    <tr>
+                        <th>Owner</th>
+                        <th>Kind</th>
+                        <th>Period / Payout</th>
+                        <th>Amount</th>
+                        <th>Sage</th>
+                        <th>Payment</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    {% if row.type == 'invoice' %}
+                    {% with invoice=row.invoice %}
+                    <tr>
+                        <td>{{ invoice.owner }}</td>
+                        <td>{{ invoice.get_kind_display }}</td>
+                        <td>
+                            {% if invoice.period_start %}{{ invoice.period_start|date:'F Y' }}
+                            {% elif invoice.payout_record %}payout {{ invoice.payout_record.paid_at|date:'j M Y' }}
+                            {% elif invoice.kind == 'cleans_informal_monthly' %}consolidated {{ invoice.created_at|date:'j M Y' }}
+                            {% endif %}
+                        </td>
+                        <td>&euro;{{ invoice.total }}</td>
+                        <td>
+                            {% if invoice.kind == 'cleans_informal_monthly' %}
+                            N/A (informal)
+                            {% elif invoice.sage_invoice_id %}
+                            Sent (#{{ invoice.sage_invoice_id }})
+                            {% elif invoice.sage_invoice_error %}
+                            <span title="{{ invoice.sage_invoice_error }}">Failed</span>
+                            {% else %}
+                            Not dispatched
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if invoice.status == 'paid' %}
+                            Paid{% if invoice.paid_at %} {{ invoice.paid_at|date:'j M Y' }}{% endif %}
+                            {% elif invoice.revolut_checkout_url %}
+                            <a href="{{ invoice.revolut_checkout_url }}" target="_blank" rel="noopener">Revolut link ({{ invoice.get_status_display }})</a>
+                            {% elif invoice.status %}
+                            {{ invoice.get_status_display }}
+                            {% else %}
+                            <span class="staff-empty">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="staff-finance-actions-cell">
+                            <div class="staff-finance-actions-inner">
+                                {% if invoice.sage_invoice_error %}
+                                <form method="post" action="{% url 'staff:finance_owner_invoice_retry' pk=invoice.pk %}">
+                                    {% csrf_token %}
+                                    <button type="submit" class="staff-button staff-button-small">Retry Sage</button>
+                                </form>
+                                {% endif %}
+                                {% if invoice.kind != 'commission_payout' and invoice.status != 'paid' %}
+                                <form method="post" action="{% url 'staff:finance_owner_invoice_mark_paid' pk=invoice.pk %}">
+                                    {% csrf_token %}
+                                    <button type="submit" class="staff-button staff-button-small">Mark as paid</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endwith %}
+                    {% else %}
+                    {% with memo=row.memo %}
+                    <tr>
+                        <td>{{ memo.property.owner }}</td>
+                        <td>Cleans &amp; meet-greet (individual)</td>
+                        <td>{{ memo.cleaning_task.date|default:memo.created_at|date:'j M Y' }}</td>
+                        <td>&euro;{{ memo.total }}</td>
+                        <td>N/A (informal)</td>
+                        <td>
+                            {% if memo.management_fee_paid_at %}
+                            Paid {{ memo.management_fee_paid_at|date:'j M Y' }}
+                            {% else %}
+                            <span class="staff-empty">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="staff-finance-actions-cell">
+                            <div class="staff-finance-actions-inner">
+                                <a href="{% url 'staff:finance_memo_detail' pk=memo.pk %}" class="staff-button staff-button-small">View</a>
+                                {% if not memo.management_fee_paid_at %}
+                                <form method="post" action="{% url 'staff:finance_memo_toggle_management_fee_paid' pk=memo.pk %}">
+                                    {% csrf_token %}
+                                    <button type="submit" class="staff-button staff-button-small">Mark as paid</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endwith %}
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
+            {% else %}
+            <p class="staff-empty">
+                {% if view == 'unpaid' %}Nothing outstanding.{% else %}No payments here yet.{% endif %}
+            </p>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

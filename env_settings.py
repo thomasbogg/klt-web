@@ -214,6 +214,21 @@ REVOLUT_API_SECRET_KEY = os.getenv('REVOLUT_API_SECRET_KEY')
 REVOLUT_API_VERSION = os.getenv('REVOLUT_API_VERSION')
 REVOLUT_BASE_PAYMENT_LINK = 'https://checkout.revolut.com/payment-link/'
 
+# Revolut Business API (libraries/banking/revolut_business.py) - real owner payouts, entirely
+# separate product/credentials from the merchant checkout client above. Deliberately unset for now
+# (2026-09-10): the Revolut Business account still needs upgrading, and nothing in klt-web calls
+# into this yet - staged ahead of that upgrade, not live. REVOLUT_BUSINESS_API_SIGNING_KEY isn't
+# consumed by revolut_business.py itself - it's for whatever generates the JWT client assertion,
+# which currently has to be produced and rotated outside this app.
+REVOLUT_BUSINESS_API_REFRESH_TOKEN = os.getenv('REVOLUT_BUSINESS_API_REFRESH_TOKEN')
+REVOLUT_BUSINESS_API_CLIENT_ASSERTION = os.getenv('REVOLUT_BUSINESS_API_CLIENT_ASSERTION')
+REVOLUT_BUSINESS_API_SIGNING_KEY = os.getenv('REVOLUT_BUSINESS_API_SIGNING_KEY')
+REVOLUT_BUSINESS_API_VERSION = os.getenv('REVOLUT_BUSINESS_API_VERSION')
+
+# Points libraries/banking/revolut_business.py at Revolut's Business API sandbox instead of
+# production, independent of TEST above - same convention as SAGE_SANDBOX below.
+REVOLUT_BUSINESS_SANDBOX = os.getenv('REVOLUT_BUSINESS_SANDBOX', 'False').lower() == 'true'
+
 # Static Wise business pay page - guest enters the amount and reference themselves, nothing is
 # created per-booking via API. Used for Nov-Mar arrivals - see bookings/utils.py::determine_payment_provider.
 WISE_BASE_PAYMENT_LINK = 'https://wise.com/pay/business/algarvebeachapartments'

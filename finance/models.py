@@ -215,16 +215,31 @@ class OwnerInvoice(models.Model):
     for this kind. CLEANS_MONTHLY (scenario 1) is the one genuine, live request for payment - a
     Revolut order gets created and its fields populated. COMMISSION_MONTHLY/COMBINED_MONTHLY
     (scenarios 2/3) get neither - settlement there is structural, already netted out of the
-    owner's end-of-month payout, same as it is today."""
+    owner's end-of-month payout, same as it is today.
+
+    CLEANS_INFORMAL_MONTHLY (2026-09-10) is a fifth kind, for owners never formally invoiced for
+    cleans/meet-greet at all - not limited to scenario 4, also a true management-only owner with no
+    booking relationship (see finance/services.py::_needs_informal_cleans_tracking). Neither Sage
+    nor Revolut - a manually-consolidated bundle of individually-unpaid Memos
+    (finance/services.py::consolidate_informal_cleans_payment), manually mark-paid on the Expected
+    Payments tab."""
 
     class Kind(models.TextChoices):
         COMMISSION_PAYOUT = 'commission_payout', 'Rental commission (per payout)'
         CLEANS_MONTHLY = 'cleans_monthly', 'Cleans & meet-greet (monthly)'
         COMMISSION_MONTHLY = 'commission_monthly', 'Rental commission (monthly)'
         COMBINED_MONTHLY = 'combined_monthly', 'Commission + cleans (monthly)'
+        # A consolidated bundle of individually-unpaid Memos (finance/services.py::
+        # consolidate_informal_cleans_payment, 2026-09-10) for an owner who isn't formally invoiced
+        # for cleans/meet-greet at all (see _needs_informal_cleans_tracking - not just scenario 4,
+        # also a true management-only owner with no booking relationship). No Sage dispatch, no
+        # Revolut order - purely an internal record, manually mark-paid on the Expected Payments
+        # tab. period_start stays null (like COMMISSION_PAYOUT) - this is a rolling bundle, not one
+        # fixed calendar month.
+        CLEANS_INFORMAL_MONTHLY = 'cleans_informal_monthly', 'Cleans & meet-greet (informal monthly)'
 
     owner = models.ForeignKey('properties.Owner', on_delete=models.PROTECT, related_name='invoices')
-    kind = models.CharField(max_length=20, choices=Kind.choices)
+    kind = models.CharField(max_length=30, choices=Kind.choices)
 
     # COMMISSION_PAYOUT only - the one PayoutRecord this bills for. The OneToOne is the
     # idempotency guard for the per-payout trigger: a second attempt for the same PayoutRecord

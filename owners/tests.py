@@ -1046,8 +1046,16 @@ class OwnerPayoutsMemosTests(TestCase):
     .objects.create() directly, so this exercises the exact same code path staff actually use."""
 
     def setUp(self):
+        # is_paid_regularly=True: staff:finance_payout_mark_paid now only ever creates a
+        # PayoutRecord for a regularly-paid owner (2026-09-10, compute_regular_owner_payout) - a
+        # non-regular owner's real settlement lives on finance.OwnerInvoice instead. The one test
+        # that needs to exercise this view's non-regular branch flips is_paid_regularly back to
+        # False afterwards (display-time only - _payout_detail_url only cares about the flag's
+        # value when OwnerPayoutsMemosView.get() runs, not at PayoutRecord-creation time), mirroring
+        # test_payout_detail_url_scopes_to_the_single_booking_for_a_regularly_paid_owner's own
+        # after-setup flip in the other direction.
         self.owner = Owner.objects.create(
-            name='Payouts Owner', email='payouts-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False, cleans_are_invoiced=False,
+            name='Payouts Owner', email='payouts-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=True, cleans_are_invoiced=False,
         )
         self.owner_user = User.objects.create_user(username='payoutsowner', password='pw')
         self.owner.user = self.owner_user
@@ -1136,6 +1144,8 @@ class OwnerPayoutsMemosTests(TestCase):
         self.assertIn(f"end={self.booking.departure_date.isoformat()}", payout_row['detail_url'])
 
     def test_payout_detail_url_scopes_to_the_arrival_month_for_a_non_regular_owner(self):
+        self.owner.is_paid_regularly = False
+        self.owner.save(update_fields=['is_paid_regularly'])
         self.client.login(username='payoutsowner', password='pw')
         response = self.client.get(reverse('owners:payouts_memos'))
         payout_row = next(row for row in response.context['rows'] if row['type'] == 'Payout')

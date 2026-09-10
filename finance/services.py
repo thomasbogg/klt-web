@@ -9,7 +9,9 @@ from bookings.payouts import (
     ZERO, _commission_percent, _due_date, _is_platform_booking, _off_platform_cash, _round,
     _unavailable, clean_fee, compute_owner_payout, meet_greet_fee,
 )
-from finance.models import AdHocService, Memo, OwnerInvoice, SageSettings
+from bookings.utils import exclude_block_bookings
+from finance.models import AdHocService, Memo, OwnerInvoice, PayoutRecord, SageSettings
+from properties.models import Property
 from staff.models import CleaningTask
 
 
@@ -302,14 +304,16 @@ def compute_regular_owner_payout(booking, payment_settings=None):
     Booking View's number was never meant to double as the real disbursement figure - "don't be
     afraid of building separate functions... to nail down the perfect business flow").
 
-    Differs from compute_owner_payout in exactly one way: management_fee (clean + meet-greet) is
-    NEVER deducted here - a regularly-paid owner's payout only ever nets out commission ("it is
-    only the rental commission that gets automatically deducted", Thomas, 2026-09-10). Commission
-    itself is still deducted exactly as before - see dispatch_commission_receipt_for_payout for
-    why that's fine (a pre-settled invoice+receipt documents the charge, it doesn't ask for money
-    twice). Cleans/meet-greet fees are settled separately - either a real monthly Sage invoice
-    (Owner.cleans_are_invoiced=True) or an informal, optional payment tracked via Memo's own
-    management_fee_paid_at (cleans_are_invoiced=False) - never via this payout either way.
+    Differs from compute_owner_payout in two ways: management_fee (clean + meet-greet) is NEVER
+    deducted here, and neither are ad-hoc owner payments (staff.models.OwnerPayment) - Thomas,
+    2026-09-10: those are themselves management-fee-category charges (cleans/meet-greet), so they
+    fall under the same rule. A regularly-paid owner's payout only ever nets out commission ("it is
+    only the rental commission that gets automatically deducted"). Commission itself is still
+    deducted exactly as before - see dispatch_commission_receipt_for_payout for why that's fine (a
+    pre-settled invoice+receipt documents the charge, it doesn't ask for money twice). Cleans/
+    meet-greet fees (ad-hoc or standard) are settled separately - either a real monthly Sage
+    invoice (Owner.cleans_are_invoiced=True) or an informal, optional payment tracked via Memo's
+    own management_fee_paid_at (cleans_are_invoiced=False) - never via this payout either way.
 
     Reuses bookings/payouts.py's private helpers directly rather than duplicating them - same
     framework-agnostic "import what's needed" convention already used elsewhere in this codebase."""
@@ -347,14 +351,7 @@ def compute_regular_owner_payout(booking, payment_settings=None):
         _round(platform_fee * payment_settings.vat_rate_percent / Decimal('100')) if is_platform else ZERO
     )
 
-    ad_hoc_payments = list(booking.owner_payments.all())
-    ad_hoc_total = sum((p.amount for p in ad_hoc_payments), ZERO)
-    ad_hoc_payment_rows = [
-        {'id': p.pk, 'note': p.note, 'date': p.date, 'amount': abs(p.amount), 'is_credit': p.amount < 0}
-        for p in ad_hoc_payments
-    ]
-
-    owner_balance = rental_base + off_platform_cash - commission - platform_fee_vat - ad_hoc_total
+    owner_balance = rental_base + off_platform_cash - commission - platform_fee_vat
 
     return {
         'available': True,
@@ -365,7 +362,6 @@ def compute_regular_owner_payout(booking, payment_settings=None):
         'commission': commission,
         'platform_fee': platform_fee,
         'platform_fee_vat': platform_fee_vat,
-        'ad_hoc_payments': ad_hoc_payment_rows,
         'owner_balance': owner_balance,
         'due_date': _due_date(payment_settings, owner, booking.arrival_date),
     }
@@ -432,11 +428,20 @@ def _payouts_due_in_range(bookings_queryset, start, end, compute_fn=compute_owne
     everyday-payout figure, not a display one - see that function's own docstring.
 
     Returns a list of (booking, payout_dict) tuples, payout_dict always 'available' (unavailable
-    bookings are silently excluded - nothing to show or pay out)."""
+    bookings are silently excluded - nothing to show or pay out). Also excludes calendar-blocking
+    placeholder bookings (bookings/utils.py::exclude_block_bookings) - these carry no rental
+    income and represent nobody's actual stay, but is_owner=False alone no longer keeps them out
+    (that flag was corrected 2026-09-09 to mean what it actually says - see that function's own
+    docstring); without this they'd otherwise show up here as spurious €0.00 payout rows. And
+    restricts to enquiry_status__in=VALID_BOOKING_STATUSES ('Booking confirmed' only) - same
+    convention staff/reports.py and staff/monthly_reports.py already use for every other
+    financial total, previously missing here entirely, which let a mere 'Open enquiry' (already
+    holding a provisional Charge) show up as a real payout due (found live 2026-09-10)."""
     payment_settings = PaymentSettings.load()
-    candidates = bookings_queryset.filter(
-        is_owner=False, arrival_date__range=(start - timedelta(days=45), end),
-    ).select_related(
+    candidates = exclude_block_bookings(bookings_queryset.filter(
+        is_owner=False, enquiry_status__in=env_settings.VALID_BOOKING_STATUSES,
+        arrival_date__range=(start - timedelta(days=45), end),
+    )).select_related(
         'property__owner', 'property__booking_company', 'property__cleaning_company', 'property__specs',
         'charges', 'platform_payout', 'departure', 'arrival',
     ).prefetch_related('owner_payments')
@@ -483,3 +488,253 @@ def owner_balance_in_range(property, start, end):
     caller before calling this, unlike payouts_due_in_range's own baked-in filter (which is
     specifically for the regular-owner Payouts tab and would wrongly exclude this case)."""
     return _payouts_due_in_range(Booking.objects.filter(property=property), start, end)
+
+
+def _commission_in_range(owner, start, end):
+    """Sums payout['commission'] across every booking due in this period, on every property of
+    this owner whose booking_company has finances_managed_internally=True - same gating
+    StaffFinanceStatementView already applies before calling owner_balance_in_range for the same
+    reason. Shared by generate_non_regular_owner_invoice/generate_scenario_1_cleans_invoice below
+    (moved out of the management command 2026-09-10 so the CLI batch path and the interactive
+    Payouts-tab 'Generate' button use the same math, not two copies of it)."""
+    total = ZERO
+    bookings = []
+    properties = Property.objects.filter(owner=owner, booking_company__finances_managed_internally=True)
+    for property in properties:
+        for booking, payout in owner_balance_in_range(property, start, end):
+            total += payout['commission']
+            bookings.append(booking)
+    return total, bookings
+
+
+def _sent_memos_in_range(owner, start, end):
+    return list(Memo.objects.filter(
+        property__owner=owner, sent_at__date__range=(start, end),
+    ).prefetch_related('ad_hoc_services'))
+
+
+def _create_owner_invoice(
+    owner, kind, period_start, dry_run, revolut,
+    commission_amount=ZERO, cleans_amount=ZERO, bookings=(), memos=(),
+):
+    """Shared creation step for every *_MONTHLY OwnerInvoice kind, called only by
+    generate_non_regular_owner_invoice and generate_scenario_1_cleans_invoice below. Returns
+    (invoice_or_None, status) - status is one of 'created'/'already_invoiced'/'nothing_to_bill'/
+    'dry_run', letting each caller (a CLI print, a Django message) format its own report without
+    re-deriving what happened. Never raises - dispatch_owner_invoice_to_sage records a Sage
+    failure on the invoice itself, same convention as every other dispatch function here."""
+    total = commission_amount + cleans_amount
+    if total == 0:
+        return None, 'nothing_to_bill'
+
+    if OwnerInvoice.objects.filter(owner=owner, kind=kind, period_start=period_start).exists():
+        return None, 'already_invoiced'
+
+    if dry_run:
+        return None, 'dry_run'
+
+    invoice = OwnerInvoice.objects.create(
+        owner=owner, kind=kind, period_start=period_start,
+        commission_amount=commission_amount, cleans_amount=cleans_amount,
+    )
+    if bookings:
+        invoice.bookings.set(bookings)
+    if memos:
+        invoice.memos.set(memos)
+
+    dispatch_owner_invoice_to_sage(invoice, description=f'{owner} - {kind.label} - {period_start:%B %Y}')
+    if revolut:
+        create_revolut_order_for_owner_invoice(invoice)
+
+    return invoice, 'created'
+
+
+def generate_non_regular_owner_invoice(owner, period_start, period_end, dry_run=False):
+    """Creates + dispatches this month's OwnerInvoice for one is_paid_regularly=False owner
+    (scenarios 2 & 3 of the 4-scenario billing matrix - see OwnerInvoice's own docstring). kind is
+    COMBINED_MONTHLY (commission + cleans/meet-greet) when owner.cleans_are_invoiced=True
+    (scenario 2), else COMMISSION_MONTHLY (scenario 3 - commission only; cleans/meet-greet stays
+    informational-only via Memo either way, see Memo.management_fee_paid_at). No Revolut order -
+    settlement for these two scenarios is structural, already netted out of the owner's month-end
+    payout (see non_regular_owner_balances_due_in_range), not a live request for payment.
+
+    Shared by finance/management/commands/generate_monthly_owner_invoices.py (the CLI/cron batch
+    path) and staff/views.py::StaffFinanceOwnerPayoutGenerateView (the interactive month-end
+    Payouts-tab 'Generate' button, 2026-09-10) - one place this billing logic lives. Returns
+    (None, 'not_applicable') for a regularly-paid owner - see generate_scenario_1_cleans_invoice
+    for that case. See _create_owner_invoice for the rest of the return contract."""
+    if owner.is_paid_regularly:
+        return None, 'not_applicable'
+
+    commission_amount, bookings = _commission_in_range(owner, period_start, period_end)
+    cleans_amount = ZERO
+    memos = []
+    if owner.cleans_are_invoiced:
+        kind = OwnerInvoice.Kind.COMBINED_MONTHLY
+        memos = _sent_memos_in_range(owner, period_start, period_end)
+        cleans_amount = sum((memo.total() for memo in memos), ZERO)
+    else:
+        kind = OwnerInvoice.Kind.COMMISSION_MONTHLY
+
+    return _create_owner_invoice(
+        owner, kind, period_start, dry_run, revolut=False,
+        commission_amount=commission_amount, cleans_amount=cleans_amount, bookings=bookings, memos=memos,
+    )
+
+
+def generate_scenario_1_cleans_invoice(owner, period_start, period_end, dry_run=False):
+    """Scenario 1 (is_paid_regularly=True, cleans_are_invoiced=True) only - commission for these
+    owners is already invoiced per-payout (see dispatch_commission_receipt_for_payout), so this
+    only ever bills cleans/meet-greet, and it's the one *_MONTHLY kind that does create a Revolut
+    order (a genuine, live request for payment). CLI/cron-only for now - no interactive UI calls
+    this (2026-09-10); kept alongside generate_non_regular_owner_invoice purely so all monthly
+    billing math lives in one place rather than splitting it between services.py and the command."""
+    memos = _sent_memos_in_range(owner, period_start, period_end)
+    cleans_amount = sum((memo.total() for memo in memos), ZERO)
+    return _create_owner_invoice(
+        owner, OwnerInvoice.Kind.CLEANS_MONTHLY, period_start, dry_run, revolut=True,
+        cleans_amount=cleans_amount, memos=memos,
+    )
+
+
+def non_regular_owner_balances_due_in_range(start, end):
+    """Aggregates compute_owner_payout's owner_balance (the real, final net-payout figure - unlike
+    _commission_in_range's commission-only total, which is what gets documented as charged, not
+    what gets transferred) per owner, across every is_paid_regularly=False owner's bookings whose
+    payout is due within [start, end]. Every such booking's due_date lands on its arrival month's
+    last day (bookings/payouts.py::_due_date), so passing one calendar month here returns exactly
+    that month's owners - the aggregate, owner-level counterpart to payouts_due_in_range's
+    per-booking regular-owner rows. Powers staff/views.py::StaffFinancePayoutsView's month-end
+    owner cards (2026-09-10)."""
+    rows = _payouts_due_in_range(Booking.objects.filter(
+        property__owner__is_paid_regularly=False,
+        property__booking_company__finances_managed_internally=True,
+    ), start, end)
+
+    by_owner = {}
+    for booking, payout in rows:
+        owner = booking.property.owner
+        entry = by_owner.setdefault(owner.pk, {'owner': owner, 'owner_balance': ZERO, 'bookings': []})
+        entry['owner_balance'] += payout['owner_balance']
+        entry['bookings'].append(booking)
+    return sorted(by_owner.values(), key=lambda entry: entry['owner'].name)
+
+
+def owner_outstanding_balance(owner, as_of, property=None):
+    """The real, current outstanding balance for one owner (or, with `property` given, that one
+    property's share of it) - what KLT still owes the owner in payouts that haven't gone out yet,
+    against what the owner still owes KLT for services already covered but not yet reimbursed.
+    Added 2026-09-10 to answer this directly on the Statement tab (StaffFinanceStatementView),
+    replacing the date-range activity snapshot it showed before.
+
+    Looks back up to 730 days before `as_of` - a deliberate, generous-enough bound to keep the
+    underlying query bounded, not a claim nothing could ever be older than that.
+
+    For scenarios 2/3 (owner.is_paid_regularly=False), commission/cleans are already netted out of
+    compute_owner_payout's owner_balance before it's ever paid - there's no independent
+    'owed_by_owner' to track, only whether that month's net payout has itself gone out yet
+    (OwnerInvoice.status == 'paid' - one combined invoice per owner per month covering every one of
+    their properties together, not per-property). owed_by_owner is None for these two scenarios,
+    not zero - callers/templates must treat None as 'not an independent figure', never as 'nothing
+    owed'."""
+    since = as_of - timedelta(days=730)
+    base_queryset = Booking.objects.filter(property__booking_company__finances_managed_internally=True)
+    base_queryset = base_queryset.filter(property=property) if property else base_queryset.filter(property__owner=owner)
+
+    if owner.is_paid_regularly:
+        rows = _payouts_due_in_range(base_queryset, since, as_of, compute_fn=compute_regular_owner_payout)
+        paid_booking_ids = set(PayoutRecord.objects.filter(
+            booking_id__in=[booking.pk for booking, _ in rows],
+        ).values_list('booking_id', flat=True))
+        owed_to_owner_rows = [
+            {'booking': booking, 'payout': payout} for booking, payout in rows if booking.pk not in paid_booking_ids
+        ]
+        owed_to_owner_rows.sort(key=lambda row: row['payout']['due_date'])
+        owed_to_owner = sum((row['payout']['owner_balance'] for row in owed_to_owner_rows), ZERO)
+
+        memos_queryset = Memo.objects.filter(property__owner=owner, sent_at__isnull=False)
+        if property:
+            memos_queryset = memos_queryset.filter(property=property)
+        memos = list(memos_queryset.prefetch_related('ad_hoc_services', 'owner_invoices'))
+        if owner.cleans_are_invoiced:
+            owed_by_owner_rows = [
+                memo for memo in memos if not any(
+                    invoice.kind == OwnerInvoice.Kind.CLEANS_MONTHLY and invoice.status == 'paid'
+                    for invoice in memo.owner_invoices.all()
+                )
+            ]
+        else:
+            owed_by_owner_rows = [memo for memo in memos if memo.management_fee_paid_at is None]
+        owed_by_owner = sum((memo.total() for memo in owed_by_owner_rows), ZERO)
+    else:
+        rows = _payouts_due_in_range(base_queryset, since, as_of)
+        by_month = {}
+        for booking, payout in rows:
+            month_start = payout['due_date'].replace(day=1)
+            entry = by_month.setdefault(month_start, {'month_start': month_start, 'owner_balance': ZERO, 'bookings': []})
+            entry['owner_balance'] += payout['owner_balance']
+            entry['bookings'].append(booking)
+
+        paid_months = set(OwnerInvoice.objects.filter(
+            owner=owner, kind__in=[OwnerInvoice.Kind.COMMISSION_MONTHLY, OwnerInvoice.Kind.COMBINED_MONTHLY],
+            period_start__in=list(by_month.keys()), status='paid',
+        ).values_list('period_start', flat=True))
+
+        owed_to_owner_rows = sorted(
+            (entry for month_start, entry in by_month.items() if month_start not in paid_months),
+            key=lambda entry: entry['month_start'],
+        )
+        owed_to_owner = sum((entry['owner_balance'] for entry in owed_to_owner_rows), ZERO)
+        owed_by_owner = None
+        owed_by_owner_rows = []
+
+    return {
+        'owed_to_owner': owed_to_owner,
+        'owed_to_owner_rows': owed_to_owner_rows,
+        'owed_by_owner': owed_by_owner,
+        'owed_by_owner_rows': owed_by_owner_rows,
+        'net': owed_to_owner - (owed_by_owner or ZERO),
+        'is_regular': owner.is_paid_regularly,
+    }
+
+
+def needs_informal_cleans_tracking(owner):
+    """Whether this owner needs the Expected Payments tab's individual-Memo-toggle-then-consolidate
+    mechanism (2026-09-10) - not just scenario 4. A scenario-3 owner (not regular, not invoiced) has
+    their management fee already netted into compute_owner_payout's owner_balance the moment their
+    payout goes out, so tracking it again separately here would double-count; a true management-only
+    owner (no booking relationship with KLT at all) has nothing netting it anywhere, so needs this
+    same mechanism scenario 4 uses."""
+    if owner.cleans_are_invoiced:
+        return False
+    if owner.is_paid_regularly:
+        return True
+    return not Property.objects.filter(owner=owner, booking_company__finances_managed_internally=True).exists()
+
+
+def consolidate_informal_cleans_payment(owner):
+    """Bundles every currently-unpaid, never-yet-bundled sent Memo for this owner into one
+    OwnerInvoice(kind=CLEANS_INFORMAL_MONTHLY) - Thomas's "one markable-paid line", 2026-09-10.
+    Extends an existing open (status != 'paid') bundle if one exists rather than creating a second
+    one - an owner only ever has at most one open bundle at a time. No Sage/Revolut involvement,
+    matching every other needs_informal_cleans_tracking owner's payment mechanism. Returns the
+    invoice (created or extended), or None if there was nothing eligible to bundle."""
+    if not needs_informal_cleans_tracking(owner):
+        return None
+
+    candidates = list(Memo.objects.filter(
+        property__owner=owner, sent_at__isnull=False, management_fee_paid_at__isnull=True, owner_invoices__isnull=True,
+    ))
+    if not candidates:
+        return None
+
+    invoice = OwnerInvoice.objects.filter(
+        owner=owner, kind=OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY,
+    ).exclude(status='paid').first()
+    if invoice is None:
+        invoice = OwnerInvoice.objects.create(owner=owner, kind=OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY)
+
+    invoice.memos.add(*candidates)
+    invoice.cleans_amount = sum((memo.total() for memo in invoice.memos.all()), ZERO)
+    invoice.save(update_fields=['cleans_amount'])
+    return invoice

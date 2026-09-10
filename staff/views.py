@@ -9,7 +9,7 @@ from django.contrib.auth import views as auth_views
 from django.contrib.auth.models import User
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
-from django.db.models import Count, ProtectedError, Q, Sum
+from django.db.models import Count, ProtectedError, Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.template.loader import render_to_string
@@ -29,9 +29,10 @@ from bookings.models import (
 from bookings.payouts import compute_owner_payout
 from finance.models import AdHocService, DepositReturn, Memo, OwnerInvoice, PayoutRecord, SageSettings
 from finance.services import (
-    backfill_memos_for_company, compute_regular_owner_payout, deposits_due_in_range,
-    dispatch_commission_receipt_for_payout, dispatch_owner_invoice_to_sage, open_memo_for_property,
-    owner_balance_in_range, payouts_due_in_range, sweep_unattached_ad_hoc_services,
+    backfill_memos_for_company, compute_regular_owner_payout, consolidate_informal_cleans_payment,
+    deposits_due_in_range, dispatch_commission_receipt_for_payout, dispatch_owner_invoice_to_sage,
+    generate_non_regular_owner_invoice, needs_informal_cleans_tracking, non_regular_owner_balances_due_in_range,
+    open_memo_for_property, owner_outstanding_balance, payouts_due_in_range, sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_deposit_waiver, compute_effective_self_check_in, create_booking,
@@ -3789,6 +3790,8 @@ class StaffFinanceMemoDetailView(View):
         return render(request, self.template_name, {
             'memo': memo,
             'ad_hoc_services': memo.ad_hoc_services.order_by('date'),
+            'needs_informal_cleans_tracking': memo.property.owner_id and needs_informal_cleans_tracking(memo.property.owner),
+            'consolidated_bundle': memo.owner_invoices.first(),
         })
 
 
@@ -3831,13 +3834,16 @@ class StaffFinanceMemoSendView(View):
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinanceMemoManagementFeePaidView(View):
-    """Toggles finance.Memo.management_fee_paid_at/by on and off - scenario 4 only
-    (Owner.is_paid_regularly=True, cleans_are_invoiced=False, see finance.models.OwnerInvoice's
-    docstring for the full 4-scenario matrix): these owners are never formally invoiced for
-    cleans/meet-greet and it's never deducted from their payout either, but some choose to pay as
-    soon as they receive the Memo. A genuine toggle, not a one-way mark-done action like
-    StaffFinancePayoutMarkPaidView/StaffFinanceDepositReturnMarkReturnedView - this only records a
-    staff belief about an informal payment, which may need correcting either way."""
+    """Toggles finance.Memo.management_fee_paid_at/by on and off - for any owner
+    finance/services.py::needs_informal_cleans_tracking flags (2026-09-10: not just scenario 4
+    any more, also a true management-only owner with no booking relationship at all): these owners
+    are never formally invoiced for cleans/meet-greet, but some pay as soon as they receive the
+    Memo, or via a later consolidated bundle (see consolidate_informal_cleans_payment). A genuine
+    toggle, not a one-way mark-done action like StaffFinancePayoutMarkPaidView/
+    StaffFinanceDepositReturnMarkReturnedView - this only records a staff belief about an informal
+    payment, which may need correcting either way. Stays a per-Memo action even once consolidation
+    exists - a Memo already bundled into an OwnerInvoice is excluded from being bundled again, but
+    this view doesn't need to know or care about that, it just toggles the one Memo it's given."""
 
     def post(self, request, pk, *args, **kwargs):
         memo = Memo.objects.select_related('property__owner').filter(pk=pk).first()
@@ -4032,7 +4038,14 @@ class StaffFinancePayoutsView(View):
     paging shape as StaffFinanceMemosView/StaffCleaningRotaView. Rows that already have a
     PayoutRecord stay visible showing who paid it and when, rather than disappearing - matching
     the cleaning rota's own completed-rows-stay-visible convention, so the list stays a complete
-    record."""
+    record.
+
+    Also surfaces a second, owner-level card set (day['owner_rows']) on whichever day in the
+    window is the last day of its month - that's where every non-regularly-paid owner's (scenarios
+    2 & 3) bookings all land at once (bookings/payouts.py::_due_date puts them there), so their
+    month-end batch payout belongs alongside the regular per-booking cards on that same day, not a
+    separate tab (2026-09-10, per Thomas: the underlying withholding logic is the same, only the
+    timing differs)."""
     template_name = 'staff/finance_payouts.html'
 
     def get(self, request, *args, **kwargs):
@@ -4054,7 +4067,14 @@ class StaffFinancePayoutsView(View):
             })
         for rows in rows_by_date.values():
             rows.sort(key=lambda row: row['booking'].property.title)
-        days = [{'date': day, 'rows': rows_by_date.get(day, [])} for day in window_dates]
+
+        owner_rows_by_date = {
+            day: self._month_end_owner_rows(day) for day in window_dates if day == _last_day_of_month(day)
+        }
+        days = [
+            {'date': day, 'rows': rows_by_date.get(day, []), 'owner_rows': owner_rows_by_date.get(day, [])}
+            for day in window_dates
+        ]
 
         return render(request, self.template_name, {
             'days': days,
@@ -4066,6 +4086,25 @@ class StaffFinancePayoutsView(View):
             'active_tab': 'payouts',
             'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
         })
+
+    def _month_end_owner_rows(self, day):
+        month_start = day.replace(day=1)
+        rows = non_regular_owner_balances_due_in_range(month_start, day)
+        if not rows:
+            return []
+
+        owner_ids = [row['owner'].pk for row in rows]
+        invoices = {
+            invoice.owner_id: invoice
+            for invoice in OwnerInvoice.objects.filter(
+                owner_id__in=owner_ids, period_start=month_start,
+                kind__in=[OwnerInvoice.Kind.COMMISSION_MONTHLY, OwnerInvoice.Kind.COMBINED_MONTHLY],
+            )
+        }
+        for row in rows:
+            row['invoice'] = invoices.get(row['owner'].pk)
+            row['period_start'] = month_start
+        return rows
 
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
@@ -4098,6 +4137,47 @@ class StaffFinancePayoutMarkPaidView(View):
         dispatch_commission_receipt_for_payout(record, payout)
         messages.success(request, "Payout marked as paid.")
 
+        redirect_date = request.POST.get('date', '').strip()
+        redirect_url = reverse('staff:finance_payouts')
+        if redirect_date:
+            redirect_url = f"{redirect_url}?date={redirect_date}"
+        return redirect(redirect_url)
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceOwnerPayoutGenerateView(View):
+    """The month-end Payouts-tab 'Generate & send invoice' button for one non-regularly-paid
+    owner's card (StaffFinancePayoutsView._month_end_owner_rows) - creates and Sage-dispatches
+    that owner's OwnerInvoice for the given month via finance/services.py::
+    generate_non_regular_owner_invoice, the same billing logic generate_monthly_owner_invoices
+    (the CLI/cron path) already uses. Safe to click more than once - the underlying function is
+    idempotent via OwnerInvoice's own unique constraint."""
+
+    def post(self, request, owner_id, *args, **kwargs):
+        owner = Owner.objects.filter(pk=owner_id).first()
+        if owner is None:
+            messages.error(request, "That owner no longer exists.")
+            return self._redirect(request)
+
+        period_start = _parsed_date(request.POST.get('period_start'))
+        if period_start is None:
+            messages.error(request, "Missing or invalid period.")
+            return self._redirect(request)
+        period_end = _last_day_of_month(period_start)
+
+        invoice, status = generate_non_regular_owner_invoice(owner, period_start, period_end)
+        if status == 'created':
+            note = "" if not invoice.sage_invoice_error else f" (Sage error: {invoice.sage_invoice_error})"
+            messages.success(request, f"Invoice generated for {owner}.{note}")
+        elif status == 'already_invoiced':
+            messages.error(request, f"{owner} has already been invoiced for this month.")
+        elif status == 'nothing_to_bill':
+            messages.error(request, f"Nothing to bill {owner} for this month.")
+        else:
+            messages.error(request, f"Couldn't generate an invoice for {owner}.")
+        return self._redirect(request)
+
+    def _redirect(self, request):
         redirect_date = request.POST.get('date', '').strip()
         redirect_url = reverse('staff:finance_payouts')
         if redirect_date:
@@ -4184,28 +4264,24 @@ class StaffFinanceDepositReturnMarkReturnedView(View):
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinanceStatementView(View):
-    """Generates a printable Statement for one Owner or one Property over a date range - the
-    Memo section and the payout section are gated independently per property (confirmed with
-    Thomas): a property's sent Memos show whenever its cleaning_company has
-    finances_managed_internally=True, regardless of its booking_company; its net payout figure
-    shows whenever its booking_company has finances_managed_internally=True AND its owner has
-    is_paid_regularly=False, regardless of its cleaning_company. A property with both shows both
-    sections together - the combined case where bookings/payouts.py::compute_owner_payout's
-    already-net owner_balance (it already deducts clean_fee/meet_greet_fee once) must not be
-    reduced by the Memo's fee lines a second time - only by the AdHocService total, per the plan
-    this was built from."""
+    """The real, current outstanding balance for one Owner or one Property - what KLT still owes
+    the owner in payouts that haven't gone out yet, against what the owner still owes KLT for
+    services already covered but not yet reimbursed (finance/services.py::
+    owner_outstanding_balance, 2026-09-10 - replaces this tab's earlier date-range activity
+    snapshot, per Thomas: "assume anything owed to the owner as a payout not yet been made,
+    anything owed by the owner... has not yet been received").
+
+    Always shows one section per property (even in Owner scope) - a property is included whenever
+    it's relevant to internal finance tracking at all (booking_company OR cleaning_company
+    finances_managed_internally), regardless of whether its current balance happens to be zero -
+    "nothing outstanding" is a real, useful answer here, not the same as "not tracked"."""
     template_name = 'staff/finance_statement.html'
 
     def get(self, request, *args, **kwargs):
-        scope = request.GET.get('scope', '').strip()
-        today = timezone.now().date()
-        start = _parsed_date(request.GET.get('start')) or today.replace(day=1)
-        end = _parsed_date(request.GET.get('end')) or _last_day_of_month(today)
-        owner = None
+        as_of = _parsed_date(request.GET.get('as_of')) or timezone.now().date()
+        owner = Owner.objects.filter(pk=request.GET['owner_id']).first() if request.GET.get('owner_id', '').isdigit() else None
         property = None
-        if scope == 'owner' and request.GET.get('owner_id', '').isdigit():
-            owner = Owner.objects.filter(pk=request.GET['owner_id']).first()
-        elif scope == 'property' and request.GET.get('property_id', '').isdigit():
+        if request.GET.get('property_id', '').isdigit():
             property = Property.objects.select_related(
                 'owner', 'booking_company', 'cleaning_company',
             ).filter(pk=request.GET['property_id']).first()
@@ -4213,20 +4289,18 @@ class StaffFinanceStatementView(View):
         context = {
             'owners': Owner.objects.order_by('name'),
             'properties': Property.objects.order_by('title'),
-            'scope': scope,
             'owner': owner,
             'property': property,
-            'start': start,
-            'end': end,
+            'as_of': as_of,
             'sections': None,
             'active_tab': 'statement',
             'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
         }
-        if (owner or property) and start and end:
-            context['sections'] = self._sections(owner, property, start, end)
+        if owner or property:
+            context['sections'] = self._sections(owner, property, as_of)
         return render(request, self.template_name, context)
 
-    def _sections(self, owner, property, start, end):
+    def _sections(self, owner, property, as_of):
         if property:
             properties = [property]
         else:
@@ -4235,73 +4309,210 @@ class StaffFinanceStatementView(View):
             ))
         sections = []
         for prop in properties:
-            memo_section = None
-            if prop.cleaning_company_id and prop.cleaning_company.finances_managed_internally:
-                memos = list(Memo.objects.filter(
-                    property=prop, sent_at__date__range=(start, end),
-                ).prefetch_related('ad_hoc_services').order_by('sent_at'))
-                memo_section = {
-                    'memos': memos,
-                    'total': sum((memo.total() for memo in memos), Decimal('0')),
-                }
-
-            payout_section = None
-            if (
-                prop.owner_id and not prop.owner.is_paid_regularly
-                and prop.booking_company_id and prop.booking_company.finances_managed_internally
-            ):
-                property_due = owner_balance_in_range(prop, start, end)
-                gross = sum((p['owner_balance'] for _, p in property_due), Decimal('0'))
-                ad_hoc_total = AdHocService.objects.filter(
-                    property=prop, memo__sent_at__date__range=(start, end),
-                ).aggregate(total=Sum('cost'))['total'] or Decimal('0')
-                payout_section = {
-                    'bookings': property_due,
-                    'gross': gross,
-                    'ad_hoc_total': ad_hoc_total,
-                    'net': gross - ad_hoc_total,
-                }
-
-            if memo_section or payout_section:
-                sections.append({'property': prop, 'memo_section': memo_section, 'payout_section': payout_section})
+            if prop.owner_id is None:
+                continue
+            is_relevant = (
+                (prop.booking_company_id and prop.booking_company.finances_managed_internally)
+                or (prop.cleaning_company_id and prop.cleaning_company.finances_managed_internally)
+            )
+            if not is_relevant:
+                continue
+            balance = owner_outstanding_balance(prop.owner, as_of, property=prop)
+            sections.append({
+                'property': prop, 'balance': balance, 'net_abs': abs(balance['net']),
+                'rows': self._combined_rows(balance),
+            })
         return sections
+
+    def _combined_rows(self, balance):
+        """Interleaves owed_to_owner_rows/owed_by_owner_rows into one chronological list for
+        display (2026-09-10, per Thomas: "intersperse credits and debts... in chronological
+        order") - is_credit=True means the owner owes KLT (rendered red), False means KLT owes the
+        owner (black). Kept as a view-layer presentation concern, not part of
+        owner_outstanding_balance's own return contract, which stays useful split by side for
+        callers that actually need the two totals separately (e.g. tests)."""
+        rows = []
+        if balance['is_regular']:
+            for row in balance['owed_to_owner_rows']:
+                rows.append({
+                    'kind': 'booking', 'date': row['payout']['due_date'], 'booking': row['booking'],
+                    'amount': row['payout']['owner_balance'], 'is_credit': False,
+                })
+        else:
+            for row in balance['owed_to_owner_rows']:
+                rows.append({
+                    'kind': 'month', 'date': row['month_start'], 'month_start': row['month_start'],
+                    'bookings': row['bookings'], 'amount': row['owner_balance'], 'is_credit': False,
+                })
+        for memo in balance['owed_by_owner_rows']:
+            rows.append({
+                'kind': 'memo', 'date': memo.cleaning_task.date if memo.cleaning_task else memo.created_at.date(),
+                'memo': memo, 'amount': memo.total(), 'is_credit': True,
+            })
+        rows.sort(key=lambda row: row['date'])
+        return rows
 
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
-class StaffFinanceOwnerInvoicesView(View):
-    """The Owner Invoices tab - every finance.OwnerInvoice row, newest first, with its Sage/Revolut
-    status. Without this tab OwnerInvoice rows are invisible day-to-day - they're created by
-    StaffFinancePayoutMarkPaidView and finance/management/commands/generate_monthly_owner_invoices.py,
-    neither of which has its own UI for reviewing what got billed."""
-    template_name = 'staff/finance_owner_invoices.html'
+class StaffFinanceExpectedPaymentsView(View):
+    """Every payment KLT is expecting to make or receive from an owner, in one place - replaces
+    the old Owner Invoices tab (2026-09-10, per Thomas: consolidate every manual payment-tracking
+    mechanism - the per-Memo toggle, the per-invoice mark-paid, Revolut's own lifecycle - into one
+    tab, rather than scattered across pages). Merges two row sources so nothing needs two
+    different representations: every finance.OwnerInvoice row (any kind), and every sent Memo
+    that's never been bundled into one (owner_invoices empty) - a bundled Memo is only ever shown
+    via its invoice's row, never both (see finance/services.py::consolidate_informal_cleans_payment
+    for why that's safe - it excludes already-bundled Memos from ever being candidates again).
+
+    Three views via ?view=unpaid|recent|historic (default unpaid): Unpaid sorts oldest-first
+    (chase the longest-outstanding first); Recent (paid within the last RECENT_CUTOFF_DAYS) and
+    Historic (older) sort newest-first. Only the Unpaid view computes consolidatable_owners - the
+    owners with at least one eligible unconsolidated Memo (finance/services.py::
+    needs_informal_cleans_tracking), each offered a "Consolidate" action. Optional ?owner_id=
+    narrows both the row list and consolidatable_owners to one owner (2026-09-10)."""
+    template_name = 'staff/finance_expected_payments.html'
+    RECENT_CUTOFF_DAYS = 7
 
     def get(self, request, *args, **kwargs):
-        invoices = OwnerInvoice.objects.select_related('owner').order_by('-created_at')[:100]
+        view = request.GET.get('view', 'unpaid')
+        if view not in ('unpaid', 'recent', 'historic'):
+            view = 'unpaid'
+        owner = Owner.objects.filter(pk=request.GET['owner_id']).first() if request.GET.get('owner_id', '').isdigit() else None
+
+        invoices = OwnerInvoice.objects.select_related('owner')
+        memos = Memo.objects.filter(
+            sent_at__isnull=False, owner_invoices__isnull=True,
+        ).select_related('property', 'property__owner')
+        if owner:
+            invoices = invoices.filter(owner=owner)
+            memos = memos.filter(property__owner=owner)
+
+        if view == 'unpaid':
+            invoices = invoices.exclude(status='paid')
+            memos = memos.filter(management_fee_paid_at__isnull=True)
+        else:
+            cutoff = timezone.now() - timedelta(days=self.RECENT_CUTOFF_DAYS)
+            if view == 'recent':
+                invoices = invoices.filter(status='paid', paid_at__gte=cutoff)
+                memos = memos.filter(management_fee_paid_at__gte=cutoff)
+            else:
+                invoices = invoices.filter(status='paid', paid_at__lt=cutoff)
+                memos = memos.filter(management_fee_paid_at__lt=cutoff)
+
+        rows = self._combined_rows(invoices, memos)
+        rows.sort(key=lambda row: row['date'], reverse=(view != 'unpaid'))
+
+        consolidatable_owners = self._consolidatable_owners(memos) if view == 'unpaid' else []
+
         return render(request, self.template_name, {
-            'invoices': invoices,
-            'active_tab': 'owner_invoices',
+            'rows': rows[:150],
+            'view': view,
+            'owner': owner,
+            'owners': Owner.objects.order_by('name'),
+            'consolidatable_owners': consolidatable_owners,
+            'active_tab': 'expected_payments',
             'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
         })
+
+    def _combined_rows(self, invoices, memos):
+        rows = [
+            {'type': 'invoice', 'invoice': invoice, 'date': invoice.paid_at or invoice.created_at}
+            for invoice in invoices
+        ]
+        rows += [
+            {'type': 'memo', 'memo': memo, 'date': memo.management_fee_paid_at or memo.sent_at}
+            for memo in memos
+        ]
+        return rows
+
+    def _consolidatable_owners(self, unpaid_memos_queryset):
+        owner_ids = sorted(set(unpaid_memos_queryset.values_list('property__owner_id', flat=True)))
+        return [owner for owner in Owner.objects.filter(pk__in=owner_ids) if needs_informal_cleans_tracking(owner)]
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceConsolidateInformalCleansView(View):
+    """The "Consolidate" action on the Expected Payments tab's Unpaid view - bundles one owner's
+    currently-unpaid, never-yet-bundled Memos into one OwnerInvoice(kind=CLEANS_INFORMAL_MONTHLY)
+    via finance/services.py::consolidate_informal_cleans_payment (2026-09-10)."""
+
+    def post(self, request, owner_id, *args, **kwargs):
+        owner = Owner.objects.filter(pk=owner_id).first()
+        if owner is None:
+            messages.error(request, "That owner no longer exists.")
+            return redirect('staff:finance_expected_payments')
+
+        invoice = consolidate_informal_cleans_payment(owner)
+        if invoice is None:
+            messages.error(request, f"Nothing to consolidate for {owner}.")
+        else:
+            messages.success(request, f"Consolidated {owner}'s unpaid cleans/meet-greet into one €{invoice.total()} request.")
+        return redirect('staff:finance_expected_payments')
 
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinanceOwnerInvoiceRetryView(View):
     """Retries the Sage dispatch for one OwnerInvoice that previously failed
-    (sage_invoice_error set) - the only "action" the Owner Invoices tab offers, since everything
-    else about an OwnerInvoice is generated automatically, not staff-editable."""
+    (sage_invoice_error set) - the only "action" the Expected Payments tab offers for Sage itself,
+    since everything else about an OwnerInvoice is generated automatically, not staff-editable."""
 
     def post(self, request, pk, *args, **kwargs):
         invoice = OwnerInvoice.objects.select_related('owner').filter(pk=pk).first()
         if invoice is None:
             messages.error(request, "That invoice no longer exists.")
-            return redirect('staff:finance_owner_invoices')
+            return redirect('staff:finance_expected_payments')
 
         dispatch_owner_invoice_to_sage(invoice, description=f'{invoice.owner} - {invoice.get_kind_display()}')
         if invoice.sage_invoice_error:
             messages.error(request, f"Still failing: {invoice.sage_invoice_error}")
         else:
             messages.success(request, "Sage invoice created.")
-        return redirect('staff:finance_owner_invoices')
+        return redirect('staff:finance_expected_payments')
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceOwnerInvoiceMarkPaidView(View):
+    """Records that money has actually changed hands for this invoice - every kind except
+    COMMISSION_PAYOUT, which is already issued pre-settled at creation. Originally scenarios 2/3
+    only (COMMISSION_MONTHLY/COMBINED_MONTHLY); broadened 2026-09-10 to also cover CLEANS_MONTHLY
+    as a manual fallback - its Revolut webhook lifecycle is still dormant (klt-hooks' callback
+    hard-disabled), so without this there was no way at all to record an owner settling their
+    cleans/meet-greet invoice outside Revolut (bank transfer, cash), which would otherwise show as
+    permanently outstanding on the Statement tab (finance/services.py::owner_outstanding_balance).
+    Also now covers CLEANS_INFORMAL_MONTHLY (same day) - marking one of those bundles paid also
+    propagates management_fee_paid_at/_by onto every Memo it bundled, so the Memo's own field stays
+    the single source of truth owner_outstanding_balance's scenario-4 logic already reads, and the
+    Memo detail page shows the same paid status.
+
+    One-way, same convention as StaffFinancePayoutMarkPaidView - no unmark. Reachable both from
+    the month-end Payouts-tab cards (StaffFinancePayoutsView) and from the Expected Payments tab
+    itself, since both surface the same underlying invoice rows."""
+
+    def post(self, request, pk, *args, **kwargs):
+        invoice = OwnerInvoice.objects.select_related('owner').prefetch_related('memos').filter(pk=pk).first()
+        if invoice is None:
+            messages.error(request, "That invoice no longer exists.")
+            return self._redirect(request)
+        if invoice.kind == OwnerInvoice.Kind.COMMISSION_PAYOUT:
+            messages.error(request, "That invoice isn't manually marked paid.")
+            return self._redirect(request)
+        if invoice.status == 'paid':
+            messages.error(request, "That invoice has already been marked as paid.")
+            return self._redirect(request)
+
+        invoice.status = 'paid'
+        invoice.paid_at = timezone.now()
+        invoice.save(update_fields=['status', 'paid_at'])
+        if invoice.kind == OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY:
+            invoice.memos.update(management_fee_paid_at=invoice.paid_at, management_fee_paid_by=request.user)
+        messages.success(request, f"{invoice.owner}'s payout marked as paid.")
+        return self._redirect(request)
+
+    def _redirect(self, request):
+        redirect_date = request.POST.get('date', '').strip()
+        if redirect_date:
+            return redirect(f"{reverse('staff:finance_payouts')}?date={redirect_date}")
+        return redirect('staff:finance_expected_payments')
 
 
 @method_decorator(staff_page_required('can_view_reports'), name='dispatch')

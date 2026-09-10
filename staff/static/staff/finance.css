@@ -1,3 +1,57 @@
+/* Owner Invoices tab's table (finance_owner_invoices.html) uses staff-price-table/
+   staff-table-scroll but never actually loaded a stylesheet that defines them - the table has
+   been rendering with raw browser-default layout this whole time (confirmed live 2026-09-10: a
+   row's two stacked action buttons rendered detached from the row entirely without
+   border-collapse/box-sizing). Scoped copy of property_detail.css's core rules, same reasoning
+   already used for reports.css's own copy - loading the whole of property_detail.css just for
+   this would pull in a lot of irrelevant property-page CSS. */
+.staff-price-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    margin-bottom: 12px;
+}
+
+.staff-price-table th {
+    box-sizing: border-box;
+    text-align: left;
+    font-family: var(--secondary-font);
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #999;
+    padding: 0 6px 6px;
+    border-bottom: 1px solid #e5e5e5;
+    white-space: nowrap;
+}
+
+.staff-price-table td {
+    box-sizing: border-box;
+    padding: 4px;
+    border-bottom: 1px solid #f2f2f2;
+    color: #444;
+}
+
+.staff-table-scroll {
+    overflow-x: auto;
+}
+
+/* Owner Invoices' actions column can hold two stacked buttons (Retry Sage + Mark as paid) -
+   display:flex directly on the <td> stops it stretching to the row's own height, so the layout
+   goes on an inner div instead, same fix already established for property_detail.css's own
+   .staff-ical-actions-inner (2026-09-09, per Thomas). */
+.staff-finance-actions-cell {
+    vertical-align: middle;
+}
+
+.staff-finance-actions-inner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
 .staff-finance-subnav {
     display: flex;
     gap: 8px;
@@ -165,4 +219,54 @@
     font-size: 0.8rem;
     color: #888;
     font-style: italic;
+}
+
+/* Interleaved outstanding-balance list (2026-09-10): red = owed by the owner to KLT, black
+   (default text color) = owed to the owner by KLT - same red already used for
+   .staff-message-error/booked-status elsewhere in the staff suite. */
+.staff-finance-statement-credit,
+.staff-finance-statement-credit a {
+    color: var(--status-booked-color, #c0392b);
+}
+
+.staff-finance-statement-legend {
+    font-size: 0.8rem;
+    color: #888;
+    margin-top: -4px;
+    margin-bottom: 12px;
+}
+
+/* Expected Payments tab's "Consolidate" panel (2026-09-10) - one row per owner, name + button. */
+.staff-finance-consolidate-form {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+}
+
+/* Memo detail page: the management-fee-payment panel sits directly under the clean-details panel
+   with no wrapping container - .staff-panel itself carries no margin (booking_detail.css), so
+   without this they render back-to-back with no breathing room (2026-09-10). Scoped to this one
+   page's second panel rather than a general .staff-panel + .staff-panel rule, which would also
+   hit finance_statement.html's own .staff-finance-statement-section (already spaced via its own
+   margin-bottom) and double up there. */
+.staff-finance-memo-secondary-panel {
+    margin-top: 20px;
+}
+
+.staff-finance-owner-filter-form {
+    margin-bottom: 20px;
+}
+
+/* Expected Payments tab's consolidate panel (2026-09-10) - collapsible via native <details>, off
+   by default so a long list of owner rows isn't visually imposing before staff even ask for it.
+   margin-bottom gives it breathing room from the table panel below, same reasoning as
+   .staff-finance-memo-secondary-panel above (no wrapping container, .staff-panel itself has no
+   margin). */
+.staff-finance-consolidate-panel {
+    margin-bottom: 20px;
+}
+
+.staff-finance-consolidate-summary {
+    cursor: pointer;
 }

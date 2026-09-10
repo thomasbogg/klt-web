@@ -95,16 +95,31 @@ urlpatterns = [
         'finance/payouts/<str:reference>/mark-paid/',
         views.StaffFinancePayoutMarkPaidView.as_view(), name='finance_payout_mark_paid',
     ),
+    path(
+        'finance/payouts/month-end/<int:owner_id>/generate/',
+        views.StaffFinanceOwnerPayoutGenerateView.as_view(), name='finance_owner_payout_generate',
+    ),
     path('finance/deposits/', views.StaffFinanceDepositsView.as_view(), name='finance_deposits'),
     path(
         'finance/deposits/<str:reference>/mark-returned/',
         views.StaffFinanceDepositReturnMarkReturnedView.as_view(), name='finance_deposit_mark_returned',
     ),
     path('finance/statement/', views.StaffFinanceStatementView.as_view(), name='finance_statement'),
-    path('finance/owner-invoices/', views.StaffFinanceOwnerInvoicesView.as_view(), name='finance_owner_invoices'),
+    path(
+        'finance/expected-payments/',
+        views.StaffFinanceExpectedPaymentsView.as_view(), name='finance_expected_payments',
+    ),
+    path(
+        'finance/expected-payments/<int:owner_id>/consolidate/',
+        views.StaffFinanceConsolidateInformalCleansView.as_view(), name='finance_consolidate_informal_cleans',
+    ),
     path(
         'finance/owner-invoices/<int:pk>/retry/',
         views.StaffFinanceOwnerInvoiceRetryView.as_view(), name='finance_owner_invoice_retry',
+    ),
+    path(
+        'finance/owner-invoices/<int:pk>/mark-paid/',
+        views.StaffFinanceOwnerInvoiceMarkPaidView.as_view(), name='finance_owner_invoice_mark_paid',
     ),
     path('reports/', views.StaffReportsView.as_view(), name='reports'),
     path('reports/monthly/', views.StaffReportsMonthlyView.as_view(), name='reports_monthly'),

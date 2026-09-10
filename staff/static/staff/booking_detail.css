@@ -21,6 +21,7 @@ body {
 
 .staff-nav {
     display: flex;
+    align-items: center;
     gap: 18px;
     padding-bottom: 12px;
     margin-bottom: 20px;

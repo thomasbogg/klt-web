@@ -1,14 +1,10 @@
-import calendar
 from datetime import date, timedelta
-from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
 
-from finance.models import Memo, OwnerInvoice
-from finance.services import (
-    create_revolut_order_for_owner_invoice, dispatch_owner_invoice_to_sage, owner_balance_in_range,
-)
-from properties.models import Owner, Property
+from finance.services import generate_non_regular_owner_invoice, generate_scenario_1_cleans_invoice
+from properties.models import Owner
+from staff.utils import last_day_of_month
 
 
 def _previous_month_start(today):
@@ -17,12 +13,28 @@ def _previous_month_start(today):
     return last_day_of_prev_month.replace(day=1)
 
 
+_STATUS_MESSAGES = {
+    'created': "created €{total} invoice (id={pk}) - {sage_status}",
+    'already_invoiced': "already invoiced, skipping (re-run is safe).",
+    'nothing_to_bill': "nothing to bill, skipping.",
+    'not_applicable': "not applicable for this owner, skipping.",
+    'dry_run': "[dry run] would bill this owner/period.",
+}
+
+
 class Command(BaseCommand):
     """Generates this month's (or a given month's) owner Sage invoices for scenarios 1, 2 and 3 of
     the 4-scenario billing matrix (see finance.models.OwnerInvoice's own docstring for the full
     matrix). Scenario 4 is deliberately skipped entirely - its commission is already invoiced
     per-payout (finance/services.py::dispatch_commission_receipt_for_payout) and its cleans/
     meet-greet fee is never formally invoiced at all (see finance.models.Memo.management_fee_paid_at).
+
+    The actual billing math (finance/services.py::generate_non_regular_owner_invoice for scenarios
+    2/3, generate_scenario_1_cleans_invoice for scenario 1) is shared with
+    staff/views.py::StaffFinanceOwnerPayoutGenerateView - the interactive Payouts-tab 'Generate'
+    button added 2026-09-10 for scenarios 2/3, which this command remains the only way to trigger
+    for scenario 1, and the only way to trigger any of them without opening a browser (e.g. via an
+    external cron, once klt-web is deployed).
 
     Not scheduled in-app (klt-web has no deployed scheduler yet) - run manually or via an external
     cron, same convention as bookings/management/commands/sync_ical_feeds.py and
@@ -53,104 +65,33 @@ class Command(BaseCommand):
                 raise CommandError("--month must be in YYYY-MM format, e.g. 2026-08")
         else:
             period_start = _previous_month_start(date.today())
-        period_end = date(period_start.year, period_start.month, calendar.monthrange(period_start.year, period_start.month)[1])
+        period_end = last_day_of_month(period_start)
         dry_run = options['dry_run']
 
-        owners = Owner.objects.filter(is_paid_regularly=False)
+        non_regular_owners = Owner.objects.filter(is_paid_regularly=False)
         if options['owner_id'] is not None:
-            owners = owners.filter(pk=options['owner_id'])
-        for owner in owners:
-            if owner.cleans_are_invoiced:
-                self._bill_combined(owner, period_start, period_end, dry_run)
-            else:
-                self._bill_commission_only(owner, period_start, period_end, dry_run)
+            non_regular_owners = non_regular_owners.filter(pk=options['owner_id'])
+        for owner in non_regular_owners:
+            invoice, status = generate_non_regular_owner_invoice(owner, period_start, period_end, dry_run=dry_run)
+            self._report(owner, invoice, status, period_start)
 
-        self._bill_scenario_1(options, period_start, period_end, dry_run)
-
-    def _bill_scenario_1(self, options, period_start, period_end, dry_run):
-        owners = Owner.objects.filter(is_paid_regularly=True, cleans_are_invoiced=True)
+        scenario_1_owners = Owner.objects.filter(is_paid_regularly=True, cleans_are_invoiced=True)
         if options['owner_id'] is not None:
-            owners = owners.filter(pk=options['owner_id'])
-        for owner in owners:
-            memos = self._sent_memos(owner, period_start, period_end)
-            cleans_amount = sum((memo.total() for memo in memos), Decimal('0'))
-            self._create_invoice(
-                owner, OwnerInvoice.Kind.CLEANS_MONTHLY, period_start, cleans_amount=cleans_amount,
-                memos=memos, dry_run=dry_run, revolut=True,
-            )
+            scenario_1_owners = scenario_1_owners.filter(pk=options['owner_id'])
+        for owner in scenario_1_owners:
+            invoice, status = generate_scenario_1_cleans_invoice(owner, period_start, period_end, dry_run=dry_run)
+            self._report(owner, invoice, status, period_start)
 
-    def _bill_combined(self, owner, period_start, period_end, dry_run):
-        commission_amount, bookings = self._commission_in_range(owner, period_start, period_end)
-        memos = self._sent_memos(owner, period_start, period_end)
-        cleans_amount = sum((memo.total() for memo in memos), Decimal('0'))
-        self._create_invoice(
-            owner, OwnerInvoice.Kind.COMBINED_MONTHLY, period_start,
-            commission_amount=commission_amount, cleans_amount=cleans_amount,
-            bookings=bookings, memos=memos, dry_run=dry_run, revolut=False,
-        )
-
-    def _bill_commission_only(self, owner, period_start, period_end, dry_run):
-        commission_amount, bookings = self._commission_in_range(owner, period_start, period_end)
-        self._create_invoice(
-            owner, OwnerInvoice.Kind.COMMISSION_MONTHLY, period_start,
-            commission_amount=commission_amount, bookings=bookings, dry_run=dry_run, revolut=False,
-        )
-
-    def _commission_in_range(self, owner, period_start, period_end):
-        """Sums payout['commission'] across every booking due in this period, on every property of
-        this owner whose booking_company has finances_managed_internally=True - same gating
-        staff/views.py::StaffFinanceStatementView already applies before calling
-        owner_balance_in_range for the same reason."""
-        total = Decimal('0')
-        bookings = []
-        properties = Property.objects.filter(owner=owner, booking_company__finances_managed_internally=True)
-        for property in properties:
-            for booking, payout in owner_balance_in_range(property, period_start, period_end):
-                total += payout['commission']
-                bookings.append(booking)
-        return total, bookings
-
-    def _sent_memos(self, owner, period_start, period_end):
-        return list(Memo.objects.filter(
-            property__owner=owner, sent_at__date__range=(period_start, period_end),
-        ).prefetch_related('ad_hoc_services'))
-
-    def _create_invoice(
-        self, owner, kind, period_start, dry_run, revolut,
-        commission_amount=Decimal('0'), cleans_amount=Decimal('0'), bookings=(), memos=(),
-    ):
-        total = commission_amount + cleans_amount
-        if total == 0:
-            self.stdout.write(f"{owner} {kind.label} for {period_start:%B %Y}: nothing to bill, skipping.")
-            return
-
-        if OwnerInvoice.objects.filter(owner=owner, kind=kind, period_start=period_start).exists():
-            self.stdout.write(
-                f"{owner} {kind.label} for {period_start:%B %Y}: already invoiced, skipping (re-run is safe)."
-            )
-            return
-
-        if dry_run:
-            self.stdout.write(self.style.WARNING(
-                f"[dry run] {owner} {kind.label} for {period_start:%B %Y}: would bill €{total} "
-                f"(commission €{commission_amount}, cleans €{cleans_amount})"
+    def _report(self, owner, invoice, status, period_start):
+        prefix = f"{owner} for {period_start:%B %Y}: "
+        if status == 'created':
+            sage_status = "dispatched" if not invoice.sage_invoice_error else f"Sage error: {invoice.sage_invoice_error}"
+            self.stdout.write(self.style.SUCCESS(
+                prefix + _STATUS_MESSAGES['created'].format(total=invoice.total(), pk=invoice.pk, sage_status=sage_status)
             ))
-            return
-
-        invoice = OwnerInvoice.objects.create(
-            owner=owner, kind=kind, period_start=period_start,
-            commission_amount=commission_amount, cleans_amount=cleans_amount,
-        )
-        if bookings:
-            invoice.bookings.set(bookings)
-        if memos:
-            invoice.memos.set(memos)
-
-        dispatch_owner_invoice_to_sage(invoice, description=f'{owner} - {kind.label} - {period_start:%B %Y}')
-        if revolut:
-            create_revolut_order_for_owner_invoice(invoice)
-
-        status = "dispatched" if not invoice.sage_invoice_error else f"Sage error: {invoice.sage_invoice_error}"
-        self.stdout.write(self.style.SUCCESS(
-            f"{owner} {kind.label} for {period_start:%B %Y}: created €{total} invoice (id={invoice.pk}) - {status}"
-        ))
+        elif status == 'dry_run':
+            self.stdout.write(self.style.WARNING(prefix + _STATUS_MESSAGES['dry_run']))
+        elif status == 'not_applicable':
+            pass
+        else:
+            self.stdout.write(prefix + _STATUS_MESSAGES[status])
