@@ -1905,14 +1905,15 @@ class StaffSettingsView(View):
         messages.success(request, "Payment settings updated.")
 
     def _update_sage_settings(self, request):
-        """default_tax_rate_id + commission_tax_rate_id (added 2026-09-10, for OwnerInvoice's
-        commission lines) - access_token/refresh_token/token_expires_at are only ever written by
-        StaffSageCallbackView (the OAuth grant) or finance/services.py::_sage_client (an automatic
-        refresh), never edited by hand here."""
+        """Just default_tax_rate_id - used for every OwnerInvoice kind now, including commission
+        ones (2026-09-10: commission/cleans amounts are VAT-inclusive totals, backed down to a net
+        figure at dispatch time rather than needing a separate exempt rate - see
+        finance/services.py::dispatch_owner_invoice_to_sage). access_token/refresh_token/
+        token_expires_at are only ever written by StaffSageCallbackView (the OAuth grant) or
+        finance/services.py::_sage_client (an automatic refresh), never edited by hand here."""
         settings = SageSettings.load()
         settings.default_tax_rate_id = request.POST.get('default_tax_rate_id', '').strip() or None
-        settings.commission_tax_rate_id = request.POST.get('commission_tax_rate_id', '').strip() or None
-        settings.save(update_fields=['default_tax_rate_id', 'commission_tax_rate_id'])
+        settings.save(update_fields=['default_tax_rate_id'])
         messages.success(request, "Sage settings updated.")
 
     # --- Emails ---
@@ -4295,15 +4296,7 @@ class StaffFinanceOwnerInvoiceRetryView(View):
             messages.error(request, "That invoice no longer exists.")
             return redirect('staff:finance_owner_invoices')
 
-        sage_settings = SageSettings.load()
-        tax_rate_id = (
-            sage_settings.commission_tax_rate_id
-            if invoice.kind in (OwnerInvoice.Kind.COMMISSION_PAYOUT, OwnerInvoice.Kind.COMMISSION_MONTHLY)
-            else sage_settings.default_tax_rate_id
-        )
-        dispatch_owner_invoice_to_sage(
-            invoice, tax_rate_id, description=f'{invoice.owner} - {invoice.get_kind_display()}',
-        )
+        dispatch_owner_invoice_to_sage(invoice, description=f'{invoice.owner} - {invoice.get_kind_display()}')
         if invoice.sage_invoice_error:
             messages.error(request, f"Still failing: {invoice.sage_invoice_error}")
         else:

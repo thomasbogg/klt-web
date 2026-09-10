@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
 
-from finance.models import Memo, OwnerInvoice, SageSettings
+from finance.models import Memo, OwnerInvoice
 from finance.services import (
     create_revolut_order_for_owner_invoice, dispatch_owner_invoice_to_sage, owner_balance_in_range,
 )
@@ -54,23 +54,20 @@ class Command(BaseCommand):
         else:
             period_start = _previous_month_start(date.today())
         period_end = date(period_start.year, period_start.month, calendar.monthrange(period_start.year, period_start.month)[1])
+        dry_run = options['dry_run']
 
         owners = Owner.objects.filter(is_paid_regularly=False)
         if options['owner_id'] is not None:
             owners = owners.filter(pk=options['owner_id'])
-
-        sage_settings = SageSettings.load()
-        dry_run = options['dry_run']
-
         for owner in owners:
             if owner.cleans_are_invoiced:
-                self._bill_combined(owner, period_start, period_end, sage_settings, dry_run)
+                self._bill_combined(owner, period_start, period_end, dry_run)
             else:
-                self._bill_commission_only(owner, period_start, period_end, sage_settings, dry_run)
+                self._bill_commission_only(owner, period_start, period_end, dry_run)
 
-        self._bill_scenario_1(options, period_start, period_end, sage_settings, dry_run)
+        self._bill_scenario_1(options, period_start, period_end, dry_run)
 
-    def _bill_scenario_1(self, options, period_start, period_end, sage_settings, dry_run):
+    def _bill_scenario_1(self, options, period_start, period_end, dry_run):
         owners = Owner.objects.filter(is_paid_regularly=True, cleans_are_invoiced=True)
         if options['owner_id'] is not None:
             owners = owners.filter(pk=options['owner_id'])
@@ -79,25 +76,24 @@ class Command(BaseCommand):
             cleans_amount = sum((memo.total() for memo in memos), Decimal('0'))
             self._create_invoice(
                 owner, OwnerInvoice.Kind.CLEANS_MONTHLY, period_start, cleans_amount=cleans_amount,
-                memos=memos, sage_settings=sage_settings, dry_run=dry_run, revolut=True,
+                memos=memos, dry_run=dry_run, revolut=True,
             )
 
-    def _bill_combined(self, owner, period_start, period_end, sage_settings, dry_run):
+    def _bill_combined(self, owner, period_start, period_end, dry_run):
         commission_amount, bookings = self._commission_in_range(owner, period_start, period_end)
         memos = self._sent_memos(owner, period_start, period_end)
         cleans_amount = sum((memo.total() for memo in memos), Decimal('0'))
         self._create_invoice(
             owner, OwnerInvoice.Kind.COMBINED_MONTHLY, period_start,
             commission_amount=commission_amount, cleans_amount=cleans_amount,
-            bookings=bookings, memos=memos, sage_settings=sage_settings, dry_run=dry_run, revolut=False,
+            bookings=bookings, memos=memos, dry_run=dry_run, revolut=False,
         )
 
-    def _bill_commission_only(self, owner, period_start, period_end, sage_settings, dry_run):
+    def _bill_commission_only(self, owner, period_start, period_end, dry_run):
         commission_amount, bookings = self._commission_in_range(owner, period_start, period_end)
         self._create_invoice(
             owner, OwnerInvoice.Kind.COMMISSION_MONTHLY, period_start,
-            commission_amount=commission_amount, bookings=bookings,
-            sage_settings=sage_settings, dry_run=dry_run, revolut=False,
+            commission_amount=commission_amount, bookings=bookings, dry_run=dry_run, revolut=False,
         )
 
     def _commission_in_range(self, owner, period_start, period_end):
@@ -120,7 +116,7 @@ class Command(BaseCommand):
         ).prefetch_related('ad_hoc_services'))
 
     def _create_invoice(
-        self, owner, kind, period_start, sage_settings, dry_run, revolut,
+        self, owner, kind, period_start, dry_run, revolut,
         commission_amount=Decimal('0'), cleans_amount=Decimal('0'), bookings=(), memos=(),
     ):
         total = commission_amount + cleans_amount
@@ -150,10 +146,7 @@ class Command(BaseCommand):
         if memos:
             invoice.memos.set(memos)
 
-        tax_rate_id = sage_settings.commission_tax_rate_id if kind == OwnerInvoice.Kind.COMMISSION_MONTHLY else sage_settings.default_tax_rate_id
-        dispatch_owner_invoice_to_sage(
-            invoice, tax_rate_id, description=f'{owner} - {kind.label} - {period_start:%B %Y}',
-        )
+        dispatch_owner_invoice_to_sage(invoice, description=f'{owner} - {kind.label} - {period_start:%B %Y}')
         if revolut:
             create_revolut_order_for_owner_invoice(invoice)
 

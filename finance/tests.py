@@ -856,6 +856,38 @@ class DispatchCommissionReceiptForPayoutTests(TestCase):
         self.assertIsNotNone(invoice)
         self.assertIsNotNone(invoice.sage_invoice_error)
 
+    @patch('finance.services.env_settings')
+    @patch('libraries.accounting.sage.requests.post')
+    @patch('libraries.accounting.sage.requests.get')
+    def test_sage_net_amount_is_backed_out_of_vat_inclusive_total(self, mock_get, mock_post, mock_env_settings):
+        """invoice.total() (commission_amount, €30.00) is VAT-INCLUSIVE (2026-09-10, per Thomas) -
+        Sage's own net_amount must be the pre-VAT figure (30 / 1.23 = 24.39 at the default 23%
+        rate), so that Sage adding 23% back on top reconstructs exactly €30.00, matching what the
+        owner was actually charged via the payout deduction - never a different number."""
+        mock_env_settings.SAGE_CLIENT_ID = 'client-id'
+        mock_env_settings.SAGE_CLIENT_SECRET = 'client-secret'
+        mock_env_settings.SAGE_SIGNING_SECRET = 'signing-secret'
+
+        sage_settings = SageSettings.load()
+        sage_settings.refresh_token = 'refresh-token'
+        sage_settings.access_token = 'access-token'
+        sage_settings.token_expires_at = timezone.now() + timedelta(hours=1)
+        sage_settings.default_tax_rate_id = 'tax-rate-1'
+        sage_settings.save()
+
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {'$resources': []}
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.side_effect = [{'id': 'contact-1'}, {'id': 'invoice-1'}]
+
+        invoice = dispatch_commission_receipt_for_payout(self.payout_record, self.payout)
+
+        self.assertIsNone(invoice.sage_invoice_error)
+        self.assertEqual(invoice.sage_invoice_id, 'invoice-1')
+        _args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['data']['sales_invoice[invoice_lines][][net_amount]'], '24.39')
+        self.assertEqual(kwargs['data']['sales_invoice[invoice_lines][][tax_rate_id]'], 'tax-rate-1')
+
 
 class GenerateMonthlyOwnerInvoicesCommandTests(TestCase):
     """finance/management/commands/generate_monthly_owner_invoices.py - scenarios 1, 2, 3 of the

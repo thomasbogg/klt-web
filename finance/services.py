@@ -177,10 +177,12 @@ def dispatch_memo_to_sage(memo):
         return
 
     invoice_date = memo.cleaning_task.date if memo.cleaning_task else timezone.now().date()
+    payment_settings = PaymentSettings.load()
+    net_amount = _round(memo.total() / (1 + payment_settings.vat_rate_percent / Decimal('100')))
     invoice = sage.sales_invoice.create(
         contact_id=contact_id, date=invoice_date,
         description=f'{memo.property} - cleaning & meet-greet',
-        net_amount=memo.total(), tax_rate_id=sage_settings.default_tax_rate_id,
+        net_amount=net_amount, tax_rate_id=sage_settings.default_tax_rate_id,
     )
     if invoice is None:
         memo.sage_invoice_error = 'Failed to create the Sage sales invoice.'
@@ -192,17 +194,31 @@ def dispatch_memo_to_sage(memo):
     memo.save(update_fields=['sage_invoice_id', 'sage_invoice_error'])
 
 
-def dispatch_owner_invoice_to_sage(invoice, tax_rate_id, description):
+def dispatch_owner_invoice_to_sage(invoice, description):
     """Creates the real Sage sales invoice for an already-created OwnerInvoice row, recording
     sage_invoice_id/sage_invoice_error on it exactly like dispatch_memo_to_sage does on a Memo.
-    Deliberately never raises - same reasoning as dispatch_memo_to_sage's own docstring."""
+    Deliberately never raises - same reasoning as dispatch_memo_to_sage's own docstring.
+
+    invoice.total() (commission_amount + cleans_amount) is the real, final VAT-INCLUSIVE amount
+    the owner is actually charged/pays - the same figure create_revolut_order_for_owner_invoice
+    requests via Revolut. Sage's own `net_amount` field is pre-VAT (confirmed 2026-09-10, per
+    Thomas: commission "needs to deduct 23% for VAT anyway" - both commission and cleans/
+    meet-greet are VAT-inclusive totals, backed out to a net figure here, then Sage adds the same
+    23% back on top when it renders the invoice - so the two must always net back to exactly
+    invoice.total(), never a different amount. Uses the one standard tax rate
+    (SageSettings.default_tax_rate_id) for everything now - there's no separate 0%/exempt rate in
+    this Sage account's catalog at all (confirmed 2026-09-10: only STANDARD 23% and STANDARD_OSS
+    cross-border rates exist), and this VAT-inclusive/back-calculated approach makes a separate
+    rate unnecessary anyway."""
     sage = _sage_client()
     if sage is None:
         invoice.sage_invoice_error = 'Sage One is not connected yet.'
         invoice.save(update_fields=['sage_invoice_error'])
         return
-    if not tax_rate_id:
-        invoice.sage_invoice_error = 'No Sage tax rate configured for this invoice kind.'
+
+    sage_settings = SageSettings.load()
+    if not sage_settings.default_tax_rate_id:
+        invoice.sage_invoice_error = 'No default Sage tax rate configured (finance.SageSettings.default_tax_rate_id).'
         invoice.save(update_fields=['sage_invoice_error'])
         return
 
@@ -212,9 +228,11 @@ def dispatch_owner_invoice_to_sage(invoice, tax_rate_id, description):
         invoice.save(update_fields=['sage_invoice_error'])
         return
 
+    payment_settings = PaymentSettings.load()
+    net_amount = _round(invoice.total() / (1 + payment_settings.vat_rate_percent / Decimal('100')))
     sage_invoice = sage.sales_invoice.create(
         contact_id=contact_id, date=invoice.created_at.date(),
-        description=description, net_amount=invoice.total(), tax_rate_id=tax_rate_id,
+        description=description, net_amount=net_amount, tax_rate_id=sage_settings.default_tax_rate_id,
     )
     if sage_invoice is None:
         invoice.sage_invoice_error = 'Failed to create the Sage sales invoice.'
@@ -270,10 +288,8 @@ def dispatch_commission_receipt_for_payout(payout_record, payout):
         commission_amount=payout['commission'], status='paid', paid_at=timezone.now(),
     )
     invoice.bookings.add(payout_record.booking)
-    sage_settings = SageSettings.load()
     dispatch_owner_invoice_to_sage(
-        invoice, sage_settings.commission_tax_rate_id,
-        description=f'{payout_record.booking.property} - rental commission ({payout_record.booking.reference})',
+        invoice, description=f'{payout_record.booking.property} - rental commission ({payout_record.booking.reference})',
     )
     return invoice
 

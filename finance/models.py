@@ -242,6 +242,11 @@ class OwnerInvoice(models.Model):
     bookings = models.ManyToManyField('bookings.Booking', blank=True, related_name='owner_invoices')
     memos = models.ManyToManyField('finance.Memo', blank=True, related_name='owner_invoices')
 
+    # Both VAT-INCLUSIVE totals - the real, final amount the owner is charged/pays (confirmed
+    # 2026-09-10, per Thomas). finance/services.py::dispatch_owner_invoice_to_sage backs a net
+    # (pre-VAT) figure out of total() before the Sage API call, using
+    # PaymentSettings.vat_rate_percent - Sage adds the same rate back on top when it renders the
+    # invoice, so the two must always net back to exactly total(), never a different amount.
     commission_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     cleans_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -291,18 +296,19 @@ class SageSettings(models.Model):
     dispatch_memo_to_sage's own docstring for what that involves.
 
     default_tax_rate_id is separate from the token pair - the Sage-side ID for standard Portuguese
-    VAT, looked up once via GET /accounts/v2/tax_rates and set by Thomas, since finance.Memo's
-    clean_fee/meet_greet_fee don't carry their own VAT breakdown today.
-
-    commission_tax_rate_id (added 2026-09-10) is the same idea for OwnerInvoice's commission lines
-    specifically - a separate, 0%/no-VAT rate, since compute_owner_payout's own docstring already
-    establishes commission VAT is the agency's own absorbed liability, never passed on to the
-    owner, whether as a payout deduction or (now) as an invoiced charge."""
+    VAT (23%), looked up once via GET /accounts/v2/tax_rates and set by Thomas, since finance.Memo's
+    clean_fee/meet_greet_fee don't carry their own VAT breakdown today. Used for EVERY OwnerInvoice
+    kind, including commission ones - a separate 0%/exempt rate was considered (and briefly added
+    as commission_tax_rate_id, 2026-09-10) but dropped the same day once Thomas clarified
+    commission_amount/cleans_amount are both VAT-INCLUSIVE totals: finance/services.py::
+    dispatch_owner_invoice_to_sage backs the pre-VAT net figure out of that total using this same
+    rate, rather than needing a distinct exempt one - which is just as well, since this Sage
+    account's tax_rates catalog has no 0%/exempt entry at all (confirmed 2026-09-10 - only
+    STANDARD 23% and STANDARD_OSS cross-border rates exist)."""
     access_token = models.CharField(max_length=200, blank=True, null=True)
     refresh_token = models.CharField(max_length=200, blank=True, null=True)
     token_expires_at = models.DateTimeField(blank=True, null=True)
     default_tax_rate_id = models.CharField(max_length=50, blank=True, null=True)
-    commission_tax_rate_id = models.CharField(max_length=50, blank=True, null=True)
 
     class Meta:
         db_table = 'finance_sage_settings'
