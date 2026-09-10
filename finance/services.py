@@ -1,6 +1,7 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
+from django.db.models import Q
 from django.utils import timezone
 
 import env_settings
@@ -11,7 +12,7 @@ from bookings.payouts import (
 )
 from bookings.utils import exclude_block_bookings
 from finance.models import AdHocService, Memo, OwnerInvoice, PayoutRecord, SageSettings
-from properties.models import Property
+from properties.models import Owner, Property
 from staff.models import CleaningTask
 
 
@@ -738,3 +739,159 @@ def consolidate_informal_cleans_payment(owner):
     invoice.cleans_amount = sum((memo.total() for memo in invoice.memos.all()), ZERO)
     invoice.save(update_fields=['cleans_amount'])
     return invoice
+
+
+def _memos_before_cutoff(queryset, cutoff):
+    """Effective date for a Memo, for cutoff purposes: its clean's own date when it has one
+    (cleaning_task can be null - see Memo's own docstring for why), else when the Memo itself was
+    created - same fallback the Expected Payments tab already displays
+    (finance_expected_payments.html: `cleaning_task.date|default:created_at`)."""
+    return queryset.filter(
+        Q(cleaning_task__date__lt=cutoff) | Q(cleaning_task__isnull=True, created_at__date__lt=cutoff)
+    )
+
+
+def reset_ledger_before_date(cutoff, dry_run=False):
+    """One-off (and re-runnable) pre-launch ledger reset (2026-09-10, per Thomas): klt-web's
+    owner-payment system is brand new and not live yet, so rather than trying to reconcile years
+    of legacy manual tracking retroactively, everything dated before `cutoff` is presumed already
+    settled - every owner starts the real, live system at EUR0.00. Marks the payment-tracking side
+    of every mechanism this module has as settled; never touches or deletes the underlying
+    Booking/Memo/OwnerInvoice activity rows themselves. `cutoff` is an exclusive upper bound
+    throughout (everything strictly before it is settled; `cutoff` itself and later stays live).
+
+    paid_at/management_fee_paid_at throughout are genuinely `now` (when the reset ran), not a
+    fabricated backdate - these are honest "settled as part of the pre-launch reset" markers, not
+    real historical payment records, and deliberately never touch Sage or Revolut (no real
+    invoice/receipt should go out for a reset that isn't a real charge event).
+
+    Called from finance/management/commands/reset_ledger_before_date.py; kept here (not in the
+    command) so the exact same function can be re-run one more time right before go-live, same
+    "business logic lives in services.py, the command is a thin caller" convention as
+    generate_non_regular_owner_invoice/generate_monthly_owner_invoices.py. Returns a dict of
+    counts (what was/would be settled) for the command to report."""
+    now = timezone.now()
+    counts = {'stale_invoices': 0, 'payout_records': 0, 'monthly_invoices': 0, 'cleans_invoices': 0, 'memos': 0}
+
+    # Step 0: any OwnerInvoice already sitting unpaid (a failed/never-followed-up real dispatch,
+    # or an existing CLEANS_INFORMAL_MONTHLY bundle) whose relevant date is before the cutoff -
+    # period_start when set, else created_at for the null-period_start "rolling bundle" kinds
+    # (COMMISSION_PAYOUT/CLEANS_INFORMAL_MONTHLY - see OwnerInvoice.Kind). COMMISSION_PAYOUT rows
+    # are always already paid at creation, so this never actually touches them in practice.
+    stale_invoices = OwnerInvoice.objects.exclude(status='paid').filter(
+        Q(period_start__lt=cutoff) | Q(period_start__isnull=True, created_at__date__lt=cutoff)
+    )
+    counts['stale_invoices'] = stale_invoices.count()
+    if not dry_run:
+        stale_invoices.update(status='paid', paid_at=now)
+
+    # Step 1: regular owners' individual booking payouts (PayoutRecord) - the same "Mark as paid"
+    # a staff member would click per-booking on the Payouts tab, batched. auto_now_add stamps
+    # paid_at as the moment of this bulk_create, which IS `now` - no separate update needed.
+    payment_settings = PaymentSettings.load()
+    candidate_bookings = exclude_block_bookings(Booking.objects.filter(
+        property__owner__is_paid_regularly=True,
+        is_owner=False, enquiry_status__in=env_settings.VALID_BOOKING_STATUSES,
+        payout_record__isnull=True,
+    )).select_related('property__owner', 'charges', 'platform_payout').prefetch_related('owner_payments')
+    to_create = [
+        PayoutRecord(booking=booking, amount=payout['owner_balance'])
+        for booking, payout in (
+            (booking, compute_regular_owner_payout(booking, payment_settings)) for booking in candidate_bookings
+        )
+        if payout['available'] and payout['due_date'] < cutoff
+    ]
+    counts['payout_records'] = len(to_create)
+    if not dry_run and to_create:
+        PayoutRecord.objects.bulk_create(to_create)
+
+    # Step 2: non-regular owners' monthly commission/combined invoices - one bookings query and
+    # one memos query across the WHOLE range up front (not one per owner per month - this
+    # business's history is small enough for _payouts_due_in_range's own single-query-then-Python
+    # approach, but a query per owner per month on top of that would still be needless, see
+    # feedback_klt_web_prefer_bulk_db_ops), bucketed by (owner, month) in Python, matching
+    # generate_non_regular_owner_invoice's own kind selection and commission math exactly - just
+    # settled immediately with no Sage dispatch, since these are legacy months, not a live request
+    # for payment.
+    non_regular_owners = {owner.pk: owner for owner in Owner.objects.filter(is_paid_regularly=False)}
+    if non_regular_owners:
+        rows = _payouts_due_in_range(Booking.objects.filter(
+            property__owner_id__in=non_regular_owners.keys(),
+            property__booking_company__finances_managed_internally=True,
+        ), date(2000, 1, 1), cutoff - timedelta(days=1))
+
+        commission_by_key, bookings_by_key = {}, {}
+        for booking, payout in rows:
+            key = (booking.property.owner_id, payout['due_date'].replace(day=1))
+            commission_by_key[key] = commission_by_key.get(key, ZERO) + payout['commission']
+            bookings_by_key.setdefault(key, []).append(booking)
+
+        invoiced_owner_ids = [pk for pk, owner in non_regular_owners.items() if owner.cleans_are_invoiced]
+        cleans_by_key, memos_by_key = {}, {}
+        if invoiced_owner_ids:
+            memos = Memo.objects.filter(
+                property__owner_id__in=invoiced_owner_ids, sent_at__isnull=False, sent_at__date__lt=cutoff,
+            ).select_related('property').prefetch_related('ad_hoc_services')
+            for memo in memos:
+                key = (memo.property.owner_id, memo.sent_at.date().replace(day=1))
+                cleans_by_key[key] = cleans_by_key.get(key, ZERO) + memo.total()
+                memos_by_key.setdefault(key, []).append(memo)
+
+        already_invoiced = set(OwnerInvoice.objects.filter(
+            owner_id__in=non_regular_owners.keys(),
+            kind__in=[OwnerInvoice.Kind.COMMISSION_MONTHLY, OwnerInvoice.Kind.COMBINED_MONTHLY],
+            period_start__isnull=False,
+        ).values_list('owner_id', 'kind', 'period_start'))
+
+        for owner_id, month_start in set(commission_by_key) | set(cleans_by_key):
+            owner = non_regular_owners[owner_id]
+            kind = OwnerInvoice.Kind.COMBINED_MONTHLY if owner.cleans_are_invoiced else OwnerInvoice.Kind.COMMISSION_MONTHLY
+            key = (owner_id, month_start)
+            commission_amount = commission_by_key.get(key, ZERO)
+            cleans_amount = cleans_by_key.get(key, ZERO) if owner.cleans_are_invoiced else ZERO
+            if commission_amount + cleans_amount == 0 or (owner_id, kind, month_start) in already_invoiced:
+                continue
+            counts['monthly_invoices'] += 1
+            if dry_run:
+                continue
+            invoice = OwnerInvoice.objects.create(
+                owner=owner, kind=kind, period_start=month_start,
+                commission_amount=commission_amount, cleans_amount=cleans_amount,
+                status='paid', paid_at=now,
+            )
+            invoice.bookings.set(bookings_by_key.get(key, []))
+            invoice.memos.set(memos_by_key.get(key, []))
+
+    # Step 3: regular+invoiced owners' (scenario 1) cleans/meet-greet - any sent Memo before the
+    # cutoff never yet attached to any invoice gets bundled into one lump, already-paid
+    # CLEANS_MONTHLY invoice per owner (period_start=None, same "rolling bundle" convention
+    # CLEANS_INFORMAL_MONTHLY already uses). period_start doesn't matter for CLEANS_MONTHLY's own
+    # exclusion check - owner_outstanding_balance checks per-Memo invoice linkage, not month
+    # membership - so there's no need to split this into separate months the way step 2 must.
+    for owner in Owner.objects.filter(is_paid_regularly=True, cleans_are_invoiced=True):
+        memos = list(_memos_before_cutoff(
+            Memo.objects.filter(property__owner=owner, sent_at__isnull=False, owner_invoices__isnull=True), cutoff,
+        ))
+        if not memos:
+            continue
+        counts['cleans_invoices'] += 1
+        if dry_run:
+            continue
+        invoice = OwnerInvoice.objects.create(
+            owner=owner, kind=OwnerInvoice.Kind.CLEANS_MONTHLY,
+            cleans_amount=sum((memo.total() for memo in memos), ZERO), status='paid', paid_at=now,
+        )
+        invoice.memos.set(memos)
+
+    # Step 4: everyone tracked informally (scenario 4 + a true management-only owner, see
+    # needs_informal_cleans_tracking) - Memo.management_fee_paid_at IS the source of truth here,
+    # no invoice involved either way.
+    informal_owner_ids = [owner.pk for owner in Owner.objects.all() if needs_informal_cleans_tracking(owner)]
+    informal_memos = _memos_before_cutoff(Memo.objects.filter(
+        property__owner_id__in=informal_owner_ids, sent_at__isnull=False, management_fee_paid_at__isnull=True,
+    ), cutoff)
+    counts['memos'] = informal_memos.count()
+    if not dry_run:
+        informal_memos.update(management_fee_paid_at=now)
+
+    return counts

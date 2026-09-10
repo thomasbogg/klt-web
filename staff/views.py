@@ -4400,7 +4400,7 @@ class StaffFinanceExpectedPaymentsView(View):
                 memos = memos.filter(management_fee_paid_at__lt=cutoff)
 
         rows = self._combined_rows(invoices, memos)
-        rows.sort(key=lambda row: row['date'], reverse=(view != 'unpaid'))
+        rows.sort(key=lambda row: row['date'], reverse=True)
 
         consolidatable_owners = self._consolidatable_owners(memos) if view == 'unpaid' else []
 
