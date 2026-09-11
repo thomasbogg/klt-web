@@ -34,7 +34,11 @@
 
 .container.text-boxes.iconic .text-box h2,
 .container.text-boxes.services .text-box h2 {
-    font-weight: 200;
+    /* Same hex as the icon above it (var(--secondary-color), #9f6f00) - font-weight: 200 was
+       thin enough that the identical color read as pale/washed-out next to the icon's bold 2px
+       stroke (2026-09-11, per Thomas: "change the titles... to fit with the changed colour").
+       500 gives it equal visual saturation/presence without going heavy. */
+    font-weight: 500;
     font-size: 1.5em;
     margin: 15px 0 0 0;
 }
