@@ -241,15 +241,21 @@ img {
    location (Balaia Atlantico/Cerro Mar, added straight to the DB) needed a 3rd row: at a fixed
    100vh parent height, tile height:50% only ever carved out exactly two rows' worth of space, so
    the row after that overflowed the container and visually collided with the next section down
-   the page (confirmed via screenshot, 2026-09-08). A lone last tile (odd location count) centres
-   itself in its own row for free, via .container.mosaic's own justify-content: center above -
-   no extra rule needed for that case. */
+   the page (confirmed via screenshot, 2026-09-08).
+
+   A fixed 2-per-row (width: 50%) had its own version of the same problem at a count that isn't a
+   clean multiple of 2 (2026-09-11, per Thomas - 3 locations left the last tile alone, centred in
+   a mostly-empty row rather than sitting flush with its neighbours). auto-fit here instead lets
+   however many tiles exist share one row evenly whenever they fit (3 or 4 today), wrapping only
+   once they genuinely can't - no longer tied to being an even number, so nothing needs revisiting
+   the next time a location is added or removed. */
 .container.mosaic.simple {
     height: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
 .container.mosaic.simple .tile {
-    width: 50%;
     height: 50vh;
     box-sizing: border-box;
     border: 2px solid white;
