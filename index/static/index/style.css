@@ -54,10 +54,13 @@
     height: fit-content;
 }
 
-.container.text-boxes.memorable .text-box.wide h3, 
+.container.text-boxes.memorable .text-box.wide h3,
 .container.text-boxes.not-all .text-box.wide h3 {
     color: var(--primary-color);
-    font-weight: 200;
+    /* Same pale-at-large-size issue the icon titles had (2026-09-11) - 200 read washed out at
+       2em. 400 (vs. the icon titles' 500) keeps more of this section's softer, pull-quote feel
+       while still giving the blue real presence. */
+    font-weight: 400;
     font-size: 2.0em;
     margin: 0;
 
