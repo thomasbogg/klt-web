@@ -31,12 +31,41 @@
     min-width: 200px;
 }
 
+/* The 5 checkboxes used to be direct children of .staff-home-filter-group, so its own flex-wrap
+   let them peel off one at a time as the viewport narrowed - Include Blocks alone on its own line
+   while Direct/Platform/Owner/Exclude Owner stayed put, a ragged wrap that read as broken rather
+   than responsive (2026-09-11, per Thomas: "all checkboxes drop to the next line as soon as the
+   viewport is shrunk enough for at least one to wrap down"). Grouping them into one flex item
+   means the whole group wraps as a single unit once it no longer fits beside Property/Status,
+   never a partial row. Its own flex-wrap is just a fallback for a genuinely narrow phone where
+   even the group alone doesn't fit on one line - wraps within itself rather than overflowing. */
+.staff-home-checkbox-group {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
 /* Booking lookup is functionally separate from the Property/Status/checkbox filters above it (a
    direct jump to one known booking, not a filter on the list) - pushed to the row's far right to
    read as its own group rather than just another filter, while staying in the same wrapping flex
    row (so it drops to its own line on narrow viewports rather than overlapping). */
 .staff-home-search-group {
     margin-left: auto;
+}
+
+/* Wrapping onto its own line (the flex-wrap fallback above) reads as broken rather than
+   responsive at in-between widths - the lookup box ends up stranded alone under 5 unrelated
+   filter fields (2026-09-11, per Thomas: "hide it as soon as it can't fit on the original row").
+   1400px is the exact measured wrap point (getBoundingClientRect: filter-group and search-group
+   share a top offset down to 1402px, diverge at 1400px) - hiding right at that threshold means a
+   staffer never sees the awkward wrapped state, just Property/Status/checkboxes below it. This is
+   currently the only Search by reference entry point in the staff suite - a staffer on a narrow
+   viewport loses it entirely below 1400px, a real (accepted) trade-off per Thomas rather than a
+   side effect he didn't know about. */
+@media (max-width: 1400px) {
+    .staff-home-search-group {
+        display: none;
+    }
 }
 
 .staff-home-layout {
@@ -234,8 +263,58 @@
     text-decoration: underline;
 }
 
+/* Below the collapse breakpoint, .staff-home-calendars/.staff-home-reservations stack instead of
+   sitting side by side - calendars land first in DOM order (for the wide, side-by-side layout's
+   own sake: the reservations table is the taller, more naturally-scrolling piece, so it reads
+   better second) which meant a narrow viewport always put every property's mini-calendar above
+   the actual booking list (2026-09-11, per Thomas: "probably the wrong priority" - a staffer
+   opening Home on a narrow screen almost always wants the list). A CSS-only radio toggle (same
+   :checked ~ sibling technique as .staff-settings-tab-radio in settings.css) lets a staffer pick
+   either view instead of always scrolling past the calendars first; List is the default (first
+   radio checked). Hidden entirely above the breakpoint, where both already show side by side. */
+.staff-home-narrow-view-radio {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.staff-home-narrow-toggle {
+    display: none;
+}
+
 @media (max-width: 1000px) {
     .staff-home-layout {
         grid-template-columns: 1fr;
+    }
+
+    .staff-home-narrow-toggle {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 4px;
+    }
+
+    .staff-home-narrow-toggle-label {
+        padding: 8px 16px;
+        border-radius: 6px;
+        background: #fff;
+        box-shadow: var(--primary-box-shadow);
+        cursor: pointer;
+        font-family: var(--secondary-font);
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--primary-color);
+    }
+
+    #staff-home-view-list:checked ~ .staff-home-narrow-toggle label[for="staff-home-view-list"],
+    #staff-home-view-calendars:checked ~ .staff-home-narrow-toggle label[for="staff-home-view-calendars"] {
+        background: var(--primary-color);
+        color: #fff;
+    }
+
+    #staff-home-view-list:checked ~ .staff-home-calendars,
+    #staff-home-view-calendars:checked ~ .staff-home-reservations {
+        display: none;
     }
 }

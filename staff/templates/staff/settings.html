@@ -277,6 +277,7 @@
                     <div class="staff-panel">
                         <h2 class="staff-panel-title">FAQ</h2>
                         <p class="staff-settings-hint">Shown to guests, in order, on the Manage Booking hub's FAQ page.</p>
+                        <div class="staff-table-scroll">
                         <table class="staff-price-table staff-extras-aligned-table staff-faq-table">
                             <thead>
                                 <tr><th>Order</th><th>Question</th><th>Answer</th><th>Location</th><th></th></tr>
@@ -326,6 +327,7 @@
                                 </tr>
                             </tbody>
                         </table>
+                        </div>
                         {% for faq in faqs %}
                         <form method="post" id="faq-form-{{ faq.pk }}">
                             {% csrf_token %}
@@ -342,6 +344,7 @@
                     <div class="staff-panel">
                         <h2 class="staff-panel-title">Local Guide</h2>
                         <p class="staff-settings-hint">Shown to guests, grouped by category, on the Manage Booking hub's Local Guide page.</p>
+                        <div class="staff-table-scroll">
                         <table class="staff-price-table staff-extras-aligned-table staff-local-guide-table">
                             <thead>
                                 <tr><th>Category</th><th>Order</th><th>Title</th><th>Tag</th><th>Description</th><th>Map link</th><th>Location</th><th></th></tr>
@@ -409,6 +412,7 @@
                                 </tr>
                             </tbody>
                         </table>
+                        </div>
                         {% for entry in local_guide_entries %}
                         <form method="post" id="lge-form-{{ entry.pk }}">
                             {% csrf_token %}
@@ -522,6 +526,7 @@
 
                     <div class="staff-panel">
                         <h2 class="staff-panel-title">Special requests</h2>
+                        <div class="staff-table-scroll">
                         <table class="staff-price-table staff-extras-aligned-table staff-special-requests-table">
                             <thead>
                                 <tr><th>Name</th><th>Description</th><th>Default price &euro;</th><th>Cutoff (days)</th><th>Last-minute (hrs)</th><th>Active</th><th></th></tr>
@@ -561,6 +566,7 @@
                                 </tr>
                             </tbody>
                         </table>
+                        </div>
                         {% for item in request_types %}
                         <form method="post" id="rt-form-{{ item.pk }}">
                             {% csrf_token %}
@@ -593,12 +599,6 @@
                                 <label class="staff-field">Airport transfers - last-minute (hrs)
                                     <input type="text" name="airport_transfer_last_minute_window_hours" class="staff-input" value="{{ extras_settings.airport_transfer_last_minute_window_hours }}">
                                 </label>
-                                <label class="staff-field">Late checkout - cutoff (days)
-                                    <input type="text" name="late_checkout_cutoff_days_before_arrival" class="staff-input" value="{{ extras_settings.late_checkout_cutoff_days_before_arrival|default_if_none:'' }}">
-                                </label>
-                                <label class="staff-field">Late checkout - last-minute (hrs)
-                                    <input type="text" name="late_checkout_last_minute_window_hours" class="staff-input" value="{{ extras_settings.late_checkout_last_minute_window_hours }}">
-                                </label>
                                 <label class="staff-field">Mid-stay clean - cutoff (days)
                                     <input type="text" name="mid_stay_clean_cutoff_days_before_arrival" class="staff-input" value="{{ extras_settings.mid_stay_clean_cutoff_days_before_arrival|default_if_none:'' }}">
                                 </label>
@@ -613,20 +613,6 @@
                                 </label>
                             </div>
                             <button type="submit" class="staff-button">Save ordering cutoffs</button>
-                        </form>
-                    </div>
-
-                    <div class="staff-panel">
-                        <h2 class="staff-panel-title">Late checkout</h2>
-                        <form method="post" class="staff-form staff-settings-form">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="update_extras_settings">
-                            <div class="staff-settings-field-with-button">
-                                <label class="staff-field">Late checkout price (&euro;)
-                                    <input type="text" name="late_checkout_price" class="staff-input" value="{{ extras_settings.late_checkout_price }}">
-                                </label>
-                                <button type="submit" class="staff-button">Save late checkout price</button>
-                            </div>
                         </form>
                     </div>
 
@@ -646,7 +632,7 @@
                                     <input type="text" name="mid_stay_clean_minimum_nights" class="staff-input" value="{{ extras_settings.mid_stay_clean_minimum_nights }}">
                                 </label>
                             </div>
-                            <button type="submit" class="staff-button">Save mid-stay clean prices</button>
+                            <button type="submit" class="staff-button">Save mid-stay clean settings</button>
                         </form>
                     </div>
 
@@ -757,6 +743,7 @@
 
                     <div class="staff-panel">
                         <h2 class="staff-panel-title">Staff accounts</h2>
+                        <div class="staff-table-scroll">
                         <table class="staff-price-table">
                             <thead>
                                 <tr><th>Username</th><th>Email</th><th>Staff</th><th>Superuser</th><th>Active</th><th>Role</th><th>Language</th><th>Password</th><th></th></tr>
@@ -803,6 +790,7 @@
                                 {% endfor %}
                             </tbody>
                         </table>
+                        </div>
                         {% for staff_user in staff_users %}
                         <form method="post" id="user-form-{{ staff_user.pk }}">
                             {% csrf_token %}
@@ -864,6 +852,7 @@
                                     <th class="staff-owners-phone-col">Phone</th>
                                     <th class="staff-owners-nif-col">NIF</th>
                                     <th class="staff-owners-currency-col">Currency</th>
+                                    <th class="staff-owners-language-col">Language</th>
                                     {% for field, label in owner_boolean_fields %}
                                     <th class="staff-owners-checkbox-col" title="{{ label }}">{{ label }}</th>
                                     {% endfor %}
@@ -884,6 +873,13 @@
                                         <select name="currency" form="owner-form-{{ owner.pk }}" class="staff-input">
                                             {% for value, label in owner_currency_choices %}
                                             <option value="{{ value }}" {% if owner.currency == value %}selected{% endif %}>{{ label }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </td>
+                                    <td class="staff-owners-language-col">
+                                        <select name="preferred_language" form="owner-form-{{ owner.pk }}" class="staff-input">
+                                            {% for value, label in owner_language_choices %}
+                                            <option value="{{ value }}" {% if owner.preferred_language == value %}selected{% endif %}>{{ label }}</option>
                                             {% endfor %}
                                         </select>
                                     </td>
@@ -924,7 +920,7 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="{{ owner_boolean_fields|length|add:9 }}" class="staff-empty">No owners yet.</td></tr>
+                                <tr><td colspan="{{ owner_boolean_fields|length|add:10 }}" class="staff-empty">No owners yet.</td></tr>
                                 {% endfor %}
                                 <tr class="staff-price-row-new">
                                     <td class="staff-owners-name-col"><input type="text" name="name" form="owner-form-new" class="staff-input"></td>
@@ -935,6 +931,13 @@
                                     <td class="staff-owners-currency-col">
                                         <select name="currency" form="owner-form-new" class="staff-input">
                                             {% for value, label in owner_currency_choices %}
+                                            <option value="{{ value }}">{{ label }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </td>
+                                    <td class="staff-owners-language-col">
+                                        <select name="preferred_language" form="owner-form-new" class="staff-input">
+                                            {% for value, label in owner_language_choices %}
                                             <option value="{{ value }}">{{ label }}</option>
                                             {% endfor %}
                                         </select>
@@ -967,6 +970,7 @@
 
                     <div class="staff-panel">
                         <h2 class="staff-panel-title">Accountants</h2>
+                        <div class="staff-table-scroll">
                         <table class="staff-price-table staff-accountants-table{% if not accountants %} staff-price-table-empty{% endif %}">
                             <thead>
                                 <tr><th>Company</th><th>Name</th><th>Email</th><th>Phone</th><th title="Number of properties currently assigned to this accountant">Properties</th><th></th></tr>
@@ -1004,6 +1008,7 @@
                                 </tr>
                             </tbody>
                         </table>
+                        </div>
                         {% for accountant in accountants %}
                         <form method="post" id="accountant-form-{{ accountant.pk }}">
                             {% csrf_token %}
@@ -1020,6 +1025,7 @@
                     <div class="staff-panel">
                         <h2 class="staff-panel-title">Management companies</h2>
                         <p class="staff-settings-hint">The head contact is shown inline - use "More fields" to open the maintenance, liaison, cleaning and finance contacts for that same row. Every contact is optional - fill in only the roles that apply to this company's scope.</p>
+                        <div class="staff-table-scroll">
                         <table class="staff-price-table staff-management-companies-table{% if not management_companies %} staff-price-table-empty{% endif %}">
                             <thead>
                                 <tr><th>Name</th><th>Head name</th><th>Head email</th><th>Head phone</th><th title="Number of properties currently booked or cleaned by this company">Properties</th><th></th></tr>
@@ -1229,6 +1235,7 @@
                                 </tr>
                             </tbody>
                         </table>
+                        </div>
                         {% for company in management_companies %}
                         <form method="post" id="management-company-form-{{ company.pk }}">
                             {% csrf_token %}

@@ -124,6 +124,19 @@
     grid-template-columns: repeat(4, minmax(220px, 1fr));
 }
 
+/* The hard 4-column floor above (4 * 220px + gaps) needs ~930px on its own, before the 220px
+   sidebar and panel padding are even added - past a certain width there's no room left, and
+   with no fallback the grid held its ground and pushed the whole page wider instead of wrapping
+   (2026-09-11, per Thomas: "responsive spillover in the Airport Transfers panel", confirmed via
+   getBoundingClientRect - document.body.scrollWidth genuinely exceeded window.innerWidth below
+   ~1225px). auto-fit with the same 220px floor lets it drop to fewer columns instead of forcing
+   the extra ones to stay put. */
+@media (max-width: 1250px) {
+    #settings-pane-extras .staff-settings-field-grid {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+}
+
 /* Panel presentation rules 3-4 (2026-08-26, refined): a row of 4 fields spans the whole panel; a
    section with only 2-3 fields total (no row of 4 anywhere) also spans the row, dividing it among
    just those fields (see the -3col override below). But when a section DOES have a row of 4, any
@@ -151,7 +164,15 @@
     grid-template-columns: repeat(3, 1fr);
 }
 
-@media (max-width: 900px) {
+/* 900px was too low a breakpoint for the default rule's own real floor: repeat(4, minmax(190px,
+   1fr)) needs 4*190px + 3*16px gaps = 808px for the grid alone, plus the 220px sidebar/gap/panel
+   padding around it - inputs (100% width of their grid cell) were visibly overflowing their cells
+   past that, all the way up to measured 1100px, while CSS Grid's own minmax floor kept the grid
+   container itself from shrinking to match (2026-09-11, per Thomas: "same fix" needed on Cot &
+   high chair/Ordering cutoffs as Airport transfers - confirmed via getBoundingClientRect: overflow
+   free from 1105px, overflowing at 1100px and below). Raised to match measured reality - every
+   panel sharing this class benefits, not just Extras'. */
+@media (max-width: 1105px) {
     .staff-settings-field-grid-compact {
         grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     }
@@ -211,6 +232,20 @@
 .staff-welcome-pack-table th:nth-child(3),
 .staff-welcome-pack-table td:nth-child(3) {
     width: 70px;
+}
+
+/* Name/Description had no explicit width, same "leftover space split evenly" bug already fixed
+   on Local Guide/FAQ (2026-09-11, per Thomas: "probably needs the scrollable breaking point too" -
+   confirmed via screenshot, Description visibly overlapping Default price's header). Same
+   explicit-width treatment, wrapped in .staff-table-scroll (see settings.html) below. */
+.staff-special-requests-table th:nth-child(1),
+.staff-special-requests-table td:nth-child(1) {
+    width: 180px;
+}
+
+.staff-special-requests-table th:nth-child(2),
+.staff-special-requests-table td:nth-child(2) {
+    width: 220px;
 }
 
 .staff-special-requests-table th:nth-child(3),
@@ -284,6 +319,18 @@
 .staff-local-guide-table th:nth-child(2), .staff-local-guide-table td:nth-child(2) { width: 80px; }
 .staff-local-guide-table th:nth-child(3), .staff-local-guide-table td:nth-child(3) { width: 170px; }
 .staff-local-guide-table th:nth-child(4), .staff-local-guide-table td:nth-child(4) { width: 130px; }
+/* Description's own "leftover space" was never actually bounded (2026-09-11, per Thomas: "same
+   responsiveness spillover" as Airport transfers) - table-layout: fixed computes it as the
+   table's own rendered width minus every other column's explicit width, and once the table sits
+   inside a container narrower than the other 6 columns' 780px total (now possible any time this
+   is scrolled horizontally rather than forcing the page wider - see the .staff-table-scroll
+   wrapper in settings.html and its own comment near .staff-owners-table below), that leftover
+   goes to ~0px, and its nowrap header text visibly overlapped Map link's instead of just being
+   narrow (confirmed via getBoundingClientRect - a 0-3px column width at container widths below
+   ~930px). Giving it the same explicit-width treatment as every other column removes the "however
+   much is left" ambiguity entirely; the table's own total (now a fixed ~1150px) simply scrolls
+   within its wrapper below that, same as Owners already does. */
+.staff-local-guide-table th:nth-child(5), .staff-local-guide-table td:nth-child(5) { width: 220px; }
 .staff-local-guide-table th:nth-child(6), .staff-local-guide-table td:nth-child(6) { width: 150px; }
 .staff-local-guide-table th:nth-child(7), .staff-local-guide-table td:nth-child(7) { width: 110px; }
 
@@ -327,6 +374,18 @@
 
 .staff-faq-table th:nth-child(2),
 .staff-faq-table td:nth-child(2) {
+    width: 220px;
+}
+
+/* Answer had no explicit width, same "leftover space" gamble that broke Local Guide's Description
+   column (2026-09-11, per Thomas - same fix requested here once that one was fixed: table-layout:
+   fixed's unspecified column collapses toward 0 once the table's container is narrower than every
+   other column's total, rather than shrinking gracefully - visible overlap with Location's header,
+   not just a narrow column). Same explicit-width treatment, wrapped in .staff-table-scroll (see
+   settings.html) so the table's own now-larger total scrolls within its own box below that,
+   instead of forcing the page wider or squeezing Answer to nothing. */
+.staff-faq-table th:nth-child(3),
+.staff-faq-table td:nth-child(3) {
     width: 220px;
 }
 
@@ -391,6 +450,8 @@
 .staff-owners-currency-col {
     width: 90px;
 }
+
+.staff-owners-table th.staff-owners-language-col, .staff-owners-table td.staff-owners-language-col { width: 110px; }
 
 /* Class, not an nth-child range (2026-09-08 rework, replacing the old th:nth-child(n+5):
    nth-child(-n+11) sized to exactly 7 fields) - mirrors .staff-roles-checkbox-col exactly, and for

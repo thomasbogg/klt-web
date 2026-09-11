@@ -1532,6 +1532,52 @@ class StaffOwnerSettlementViewsTests(FinanceTestCase):
         Departure.objects.create(booking=booking, clean=True)
         return booking
 
+    def _sent_memo_on(self, arrival_date):
+        booking = self._make_booking_on(arrival_date)
+        memo = Memo.objects.get(cleaning_task__booking=booking)
+        memo.sent_at = timezone.now()
+        memo.save(update_fields=['sent_at'])
+        return memo
+
+    def test_consolidatable_owners_appear_and_action_redirects_back_to_same_month(self):
+        """The "Consolidate unpaid cleans/meet-greet" batch action moved here from Expected
+        Payments (2026-09-11, per Thomas: it's a genuine end-of-month task that kept getting
+        missed split across two tabs from the rest of that month-end work) - covers both that it
+        shows up on Settlements and that the redirect preserves whichever month was being viewed
+        (same hidden-field convention as StaffFinanceOwnerInvoiceMarkPaidView)."""
+        self.owner.is_paid_regularly = True
+        self.owner.save()
+        self._sent_memo_on(date(2026, 2, 1))
+
+        response = self.client.get(reverse('staff:finance_settlements'), {'month': '2026-03'})
+        self.assertIn(self.owner, response.context['consolidatable_owners'])
+
+        response = self.client.post(
+            reverse('staff:finance_consolidate_informal_cleans', kwargs={'owner_id': self.owner.pk}),
+            {'month': '2026-03'},
+        )
+        self.assertRedirects(response, f"{reverse('staff:finance_settlements')}?month=2026-03")
+        self.assertTrue(
+            OwnerInvoice.objects.filter(owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY).exists()
+        )
+
+    def test_scenario_3_owner_excluded_from_consolidatable_owners(self):
+        """self.owner (FinanceTestCase.setUp) is already a real scenario-3 owner by default - not
+        regular, not invoiced, on an internally-managed booking company - so their management fee
+        is already netted into owner_balance at payout time and must never appear here (same
+        exclusion the old Expected Payments-hosted version already had)."""
+        self._sent_memo_on(date(2026, 2, 1))
+        response = self.client.get(reverse('staff:finance_settlements'), {'month': '2026-03'})
+        self.assertEqual(response.context['consolidatable_owners'], [])
+
+    def test_cleans_invoiced_owner_excluded_from_consolidatable_owners(self):
+        self.owner.is_paid_regularly = True
+        self.owner.cleans_are_invoiced = True
+        self.owner.save()
+        self._sent_memo_on(date(2026, 2, 1))
+        response = self.client.get(reverse('staff:finance_settlements'), {'month': '2026-03'})
+        self.assertEqual(response.context['consolidatable_owners'], [])
+
 
 class OwnerOutstandingBalanceTests(TestCase):
     """finance/services.py::owner_outstanding_balance - the real current outstanding balance
@@ -1787,7 +1833,10 @@ class StaffFinanceExpectedPaymentsViewTests(FinanceTestCase):
         memo.save(update_fields=['sent_at'])
         return memo
 
-    def test_unpaid_view_shows_standalone_memo_and_consolidate_button(self):
+    def test_unpaid_view_shows_standalone_memo(self):
+        """The "Consolidate" batch action itself moved to Settlements (2026-09-11, per Thomas -
+        see StaffOwnerSettlementViewsTests) - this tab no longer computes consolidatable_owners at
+        all, just the standalone Memo row."""
         self.property.owner.is_paid_regularly = True
         self.property.owner.cleans_are_invoiced = False
         self.property.owner.save()
@@ -1798,7 +1847,7 @@ class StaffFinanceExpectedPaymentsViewTests(FinanceTestCase):
         rows = response.context['rows']
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['type'], 'memo')
-        self.assertIn(self.property.owner, response.context['consolidatable_owners'])
+        self.assertNotIn('consolidatable_owners', response.context)
 
     def test_consolidate_then_mark_paid_moves_memo_to_recent(self):
         self.property.owner.is_paid_regularly = True
@@ -1834,11 +1883,6 @@ class StaffFinanceExpectedPaymentsViewTests(FinanceTestCase):
             rows = self.client.get(reverse('staff:finance_expected_payments'), {'view': view}).context['rows']
             self.assertEqual(rows, [])
 
-        self.assertEqual(
-            self.client.get(reverse('staff:finance_expected_payments'), {'view': 'unpaid'}).context['consolidatable_owners'],
-            [],
-        )
-
     def test_cleans_invoiced_owner_memo_hidden_until_bundled_into_invoice(self):
         """2026-09-10, per Thomas (Nuno Pinto): a cleans_are_invoiced owner's Memo is real and
         unpaid, but it's raw material for that owner's next Settlements-generated Sage/Revolut
@@ -1852,7 +1896,6 @@ class StaffFinanceExpectedPaymentsViewTests(FinanceTestCase):
 
         response = self.client.get(reverse('staff:finance_expected_payments'), {'view': 'unpaid'})
         self.assertEqual(response.context['rows'], [])
-        self.assertEqual(response.context['consolidatable_owners'], [])
 
         invoice = OwnerInvoice.objects.create(
             owner=self.property.owner, kind=OwnerInvoice.Kind.CLEANS_MONTHLY,

@@ -36,6 +36,14 @@ body {
     text-transform: uppercase;
     color: var(--primary-color);
     text-decoration: none;
+    /* .staff-nav has no flex-wrap, so at a narrow-enough viewport every link already just
+       overflows the bar uniformly rather than wrapping - except "Check-ins", whose hyphen is a
+       natural line-break opportunity the others don't have, so it alone distorted into two lines
+       while its neighbours stayed put (2026-09-11, per Thomas: "only the check-ins text that
+       seems to wrap"). nowrap here makes every link behave the same at that width - the bar
+       itself still runs past the viewport at that point (a separate, wider pre-existing floor,
+       not part of this fix), but consistently for every link, not just this one. */
+    white-space: nowrap;
 }
 
 .staff-nav-link:hover {

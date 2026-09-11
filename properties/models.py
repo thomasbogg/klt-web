@@ -319,6 +319,16 @@ class Owner(models.Model):
         GBP = 'GBP', 'Pounds'
         BOTH = 'BOTH', 'Both'
 
+    # Mirrors staff.models.StaffProfile.Language exactly (same two-value choice, same fixed-not-
+    # freeform reasoning - [[feedback_klt_web_fixed_over_freeform_choices]]) but kept as its own
+    # enum rather than a shared import: Owner (properties app) and StaffProfile (staff app) have
+    # no other coupling, and a cross-app import here for one two-value enum isn't worth it.
+    # Added 2026-09-11, per Thomas - owners.utils.send_owner_invite_email was English-only until
+    # now for exactly the reason its own docstring gave: no per-owner language preference existed.
+    class Language(models.TextChoices):
+        ENGLISH = 'en', 'English'
+        PORTUGUESE = 'pt', 'Português'
+
     name = models.CharField(max_length=200, unique=True)
     email = models.EmailField(unique=True)
     # Added 2026-09-09, per Thomas - a real second contact for a household/co-ownership sharing one
@@ -336,6 +346,7 @@ class Owner(models.Model):
     # model-level default, same "a real choice always has to be made" convention as
     # is_paid_regularly below (see OWNER_BOOLEAN_FIELDS' own comment in staff/utils.py).
     currency = models.CharField(max_length=4, choices=Currency.choices)
+    preferred_language = models.CharField(max_length=2, choices=Language.choices, default=Language.ENGLISH)
     is_paid_regularly = models.BooleanField()
     # Restored 2026-09-09, per Thomas - removed the day before (52549ed) as dead weight ("never
     # actually consulted anywhere in the booking-creation flow"), now genuinely needed as the

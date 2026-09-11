@@ -47,27 +47,11 @@
 
         <p class="staff-finance-statement-note">
             {% if view == 'unpaid' %}
-            Owners appear here only when a payment is genuinely still outstanding: commission or combined monthly invoices (Sage), rental commission per payout, cleans/meet-greet invoiced monthly (Sage + Revolut), or cleans/meet-greet tracked informally for owners never formally invoiced for it. Owners whose management fee is already netted structurally into their own month-end payout never show up here &ndash; there's nothing separate left to chase.
+            Owners appear here only when a payment is genuinely still outstanding: commission or combined monthly invoices (Sage), rental commission per payout, cleans/meet-greet invoiced monthly (Sage + Revolut), or cleans/meet-greet tracked informally for owners never formally invoiced for it. Owners whose management fee is already netted structurally into their own month-end payout never show up here &ndash; there's nothing separate left to chase. To batch-consolidate an owner's outstanding informal cleans/meet-greet into one request, use End of Month Settlements.
             {% else %}
             The same kinds of payment as the Unpaid view, now already settled: commission or combined monthly invoices (Sage), rental commission per payout, cleans/meet-greet invoiced monthly (Sage + Revolut), or cleans/meet-greet tracked informally for owners never formally invoiced for it &ndash; each shown with when it was paid. Owners whose management fee is already netted structurally into their own month-end payout never show up here, {% if view == 'recent' %}since there was never anything separate to pay{% else %}for the same reason{% endif %}.
             {% endif %}
         </p>
-
-        {% if consolidatable_owners %}
-        <details class="staff-panel staff-finance-consolidate-panel">
-            <summary class="staff-panel-title staff-finance-consolidate-summary">Consolidate unpaid cleans/meet-greet ({{ consolidatable_owners|length }})</summary>
-            <p class="staff-finance-statement-note">
-                Bundles each owner's individually-unpaid Memos (this month's and any older) into one markable-paid request.
-            </p>
-            {% for consolidatable_owner in consolidatable_owners %}
-            <form method="post" action="{% url 'staff:finance_consolidate_informal_cleans' owner_id=consolidatable_owner.pk %}" class="staff-finance-consolidate-form">
-                {% csrf_token %}
-                <span>{{ consolidatable_owner }}</span>
-                <button type="submit" class="staff-button staff-button-small">Consolidate</button>
-            </form>
-            {% endfor %}
-        </details>
-        {% endif %}
 
         <div class="staff-panel">
             {% if rows %}

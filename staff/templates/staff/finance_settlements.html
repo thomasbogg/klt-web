@@ -29,7 +29,7 @@
         {% endif %}
 
         <p class="staff-finance-statement-note">
-            Every owner with a genuine monthly Sage settlement - commission, cleans/meet-greet, or both - one month at a time, including an owner with no bookings at all this month who can still owe a cleans/meet-greet amount. Owners tracked informally instead (never formally invoiced for cleans/meet-greet) live on Expected Payments, not here.
+            Everything a manager needs to do at month-end, in one place: every owner with a genuine monthly Sage settlement - commission, cleans/meet-greet, or both - one month at a time, including an owner with no bookings at all this month who can still owe a cleans/meet-greet amount, plus the batch action below to consolidate outstanding informally-tracked cleans/meet-greet for owners never formally invoiced for it. Day-to-day payment tracking (mark as paid, retry a failed Sage dispatch, unpaid/recently paid/historic) stays on Expected Payments - once anything generated or consolidated here is created, it shows up there too.
         </p>
 
         <div class="staff-cleaning-date-nav">
@@ -37,6 +37,23 @@
             <span class="staff-cleaning-date-label">{{ period_start|date:'F Y' }}</span>
             <a href="?month={{ next_month|date:'Y-m' }}" class="staff-button staff-button-small">Next month &rarr;</a>
         </div>
+
+        {% if consolidatable_owners %}
+        <details class="staff-panel staff-finance-consolidate-panel">
+            <summary class="staff-panel-title staff-finance-consolidate-summary">Consolidate unpaid cleans/meet-greet ({{ consolidatable_owners|length }})</summary>
+            <p class="staff-finance-statement-note">
+                Bundles each owner's individually-unpaid Memos (not just this month's - any older too) into one markable-paid request. Once created, the bundle shows on Expected Payments like any other invoice.
+            </p>
+            {% for consolidatable_owner in consolidatable_owners %}
+            <form method="post" action="{% url 'staff:finance_consolidate_informal_cleans' owner_id=consolidatable_owner.pk %}" class="staff-finance-consolidate-form">
+                {% csrf_token %}
+                <input type="hidden" name="month" value="{{ period_start|date:'Y-m' }}">
+                <span>{{ consolidatable_owner }}</span>
+                <button type="submit" class="staff-button staff-button-small">Consolidate</button>
+            </form>
+            {% endfor %}
+        </details>
+        {% endif %}
 
         <div class="staff-panel">
             {% if rows %}

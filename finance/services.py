@@ -841,6 +841,28 @@ def owner_ids_with_no_separate_cleans_payment():
     ).values_list('pk', flat=True).distinct()
 
 
+def owners_with_unconsolidated_cleans():
+    """Owners with at least one currently-unpaid, never-yet-bundled sent Memo eligible for
+    consolidate_informal_cleans_payment() - the population behind the Settlements tab's
+    "Consolidate unpaid cleans/meet-greet" action (2026-09-11, per Thomas: moved here from
+    Expected Payments - a batch action a manager needs to remember every month-end kept getting
+    missed split across two tabs from the genuinely month-scoped settlement work. Not itself
+    month-scoped - an owner's bundle can include older unpaid Memos too - so this ignores
+    whatever month Settlements happens to be showing and always covers everything outstanding,
+    same as it did on Expected Payments. Expected Payments keeps the resulting OwnerInvoice(kind=
+    CLEANS_INFORMAL_MONTHLY) visible in its own unpaid/recent/historic tracking once created -
+    only the batch trigger moved, not the record."""
+    memos = Memo.objects.filter(
+        sent_at__isnull=False, owner_invoices__isnull=True, management_fee_paid_at__isnull=True,
+    ).exclude(
+        property__owner_id__in=owner_ids_with_no_separate_cleans_payment(),
+    ).exclude(
+        property__owner__cleans_are_invoiced=True,
+    )
+    owner_ids = sorted(set(memos.values_list('property__owner_id', flat=True)))
+    return [owner for owner in Owner.objects.filter(pk__in=owner_ids) if needs_informal_cleans_tracking(owner)]
+
+
 def consolidate_informal_cleans_payment(owner):
     """Bundles every currently-unpaid, never-yet-bundled sent Memo for this owner into one
     OwnerInvoice(kind=CLEANS_INFORMAL_MONTHLY) - Thomas's "one markable-paid line", 2026-09-10.

@@ -41,7 +41,24 @@ def full_toolbar_context(start_date=None, end_date=None, guests=None):
     }
 
 
-def get_property_calendar(property, months=12, start=None, mine_range=None):
+def calendar_date_range(months, start=None):
+    """The (range_start, range_end) a `months`-wide calendar starting at `start` (default today)
+    covers - the same month-rollover arithmetic get_property_calendar uses internally, exposed so
+    a caller building calendars for many properties at once (see StaffHomeView) can compute it
+    once and bulk-fetch bookings for the whole range itself, instead of get_property_calendar
+    re-querying per property."""
+    start = start or date.today()
+    range_start = date(start.year, start.month, 1)
+
+    end_year, end_month = range_start.year, range_start.month + months
+    while end_month > 12:
+        end_month -= 12
+        end_year += 1
+    range_end = date(end_year, end_month, 1)
+    return range_start, range_end
+
+
+def get_property_calendar(property, months=12, start=None, mine_range=None, booked_ranges=None, provisional_ranges=None):
     """Build a month-by-month availability grid for a property.
 
     Returns a list of dicts, one per month, each with a 'label' and
@@ -53,37 +70,35 @@ def get_property_calendar(property, months=12, start=None, mine_range=None):
     takes priority over booked/provisional - a guest viewing their own stay's dates on
     BookingManageDatesView (see bookings/views.py) should see it called out distinctly from a
     generic 'booked' day, even though it's the exact same underlying Booking row.
+
+    booked_ranges/provisional_ranges, if given, are used as-is instead of querying the DB here -
+    for a caller (StaffHomeView) that already bulk-fetched bookings for several properties at once
+    via calendar_date_range() and is calling this per property just to build the grid.
     """
-    start = start or date.today()
-    range_start = date(start.year, start.month, 1)
+    range_start, range_end = calendar_date_range(months, start)
 
-    end_year, end_month = range_start.year, range_start.month + months
-    while end_month > 12:
-        end_month -= 12
-        end_year += 1
-    range_end = date(end_year, end_month, 1)
-
-    bookings = Booking.objects.holding().filter(
-        property=property,
-        arrival_date__lt=range_end,
-        departure_date__gt=range_start,
-    )
-    booked_ranges = [
-        (booking.arrival_date, booking.departure_date)
-        for booking in bookings if booking.enquiry_status in VALID_BOOKING_STATUSES
-    ]
-    provisional_ranges = [
-        (booking.arrival_date, booking.departure_date)
-        for booking in bookings if booking.enquiry_status in PROVISIONAL_BOOKING_STATUSES
-    ]
-    # A pending date-change's requested new dates hold the calendar the same way a not-yet-paid
-    # new reservation does (see SupplementaryPayment.hold_expires_at's own docstring) - folded into
-    # the same 'provisional' bucket rather than a distinct status, since both mean the same thing
-    # to a browsing guest: not certain yet, but not open either.
-    provisional_ranges += list(
-        SupplementaryPayment.objects.overlapping_dates(property, range_start, range_end)
-        .values_list('new_arrival_date', 'new_departure_date')
-    )
+    if booked_ranges is None and provisional_ranges is None:
+        bookings = Booking.objects.holding().filter(
+            property=property,
+            arrival_date__lt=range_end,
+            departure_date__gt=range_start,
+        )
+        booked_ranges = [
+            (booking.arrival_date, booking.departure_date)
+            for booking in bookings if booking.enquiry_status in VALID_BOOKING_STATUSES
+        ]
+        provisional_ranges = [
+            (booking.arrival_date, booking.departure_date)
+            for booking in bookings if booking.enquiry_status in PROVISIONAL_BOOKING_STATUSES
+        ]
+        # A pending date-change's requested new dates hold the calendar the same way a not-yet-paid
+        # new reservation does (see SupplementaryPayment.hold_expires_at's own docstring) - folded into
+        # the same 'provisional' bucket rather than a distinct status, since both mean the same thing
+        # to a browsing guest: not certain yet, but not open either.
+        provisional_ranges += list(
+            SupplementaryPayment.objects.overlapping_dates(property, range_start, range_end)
+            .values_list('new_arrival_date', 'new_departure_date')
+        )
 
     def status_for(day):
         if mine_range and mine_range[0] <= day < mine_range[1]:

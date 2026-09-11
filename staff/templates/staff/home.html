@@ -46,21 +46,23 @@
                         {% endfor %}
                     </select>
                 </label>
-                <label class="staff-checkbox-label">
-                    <input type="checkbox" name="direct_only" onchange="this.form.submit()" {% if direct_only %}checked{% endif %}> Direct Only
-                </label>
-                <label class="staff-checkbox-label">
-                    <input type="checkbox" name="ical_only" onchange="this.form.submit()" {% if ical_only %}checked{% endif %}> Platform Only
-                </label>
-                <label class="staff-checkbox-label">
-                    <input type="checkbox" name="owner_only" onchange="this.form.submit()" {% if owner_only %}checked{% endif %}> Owner Only
-                </label>
-                <label class="staff-checkbox-label">
-                    <input type="checkbox" name="exclude_owner" onchange="this.form.submit()" {% if exclude_owner %}checked{% endif %}> Exclude Owner
-                </label>
-                <label class="staff-checkbox-label">
-                    <input type="checkbox" name="include_blocks" onchange="this.form.submit()" {% if include_blocks %}checked{% endif %}> Include Blocks
-                </label>
+                <div class="staff-home-checkbox-group">
+                    <label class="staff-checkbox-label">
+                        <input type="checkbox" name="direct_only" onchange="this.form.submit()" {% if direct_only %}checked{% endif %}> Direct Only
+                    </label>
+                    <label class="staff-checkbox-label">
+                        <input type="checkbox" name="ical_only" onchange="this.form.submit()" {% if ical_only %}checked{% endif %}> Platform Only
+                    </label>
+                    <label class="staff-checkbox-label">
+                        <input type="checkbox" name="owner_only" onchange="this.form.submit()" {% if owner_only %}checked{% endif %}> Owner Only
+                    </label>
+                    <label class="staff-checkbox-label">
+                        <input type="checkbox" name="exclude_owner" onchange="this.form.submit()" {% if exclude_owner %}checked{% endif %}> Exclude Owner
+                    </label>
+                    <label class="staff-checkbox-label">
+                        <input type="checkbox" name="include_blocks" onchange="this.form.submit()" {% if include_blocks %}checked{% endif %}> Include Blocks
+                    </label>
+                </div>
                 <noscript><button type="submit" class="staff-button">Apply</button></noscript>
             </form>
             <form method="post" action="{% url 'staff:booking_lookup' %}" class="staff-home-filter-group staff-home-search-group">
@@ -73,6 +75,12 @@
         </div>
 
         <div class="staff-home-layout{% if selected_property %} staff-home-layout-single{% endif %}">
+            <input type="radio" name="staff-home-narrow-view" id="staff-home-view-list" class="staff-home-narrow-view-radio" checked>
+            <input type="radio" name="staff-home-narrow-view" id="staff-home-view-calendars" class="staff-home-narrow-view-radio">
+            <div class="staff-home-narrow-toggle">
+                <label for="staff-home-view-list" class="staff-home-narrow-toggle-label">List</label>
+                <label for="staff-home-view-calendars" class="staff-home-narrow-toggle-label">Calendars</label>
+            </div>
             <div class="staff-home-calendars">
                 <div class="staff-mini-calendar-legend">
                     <span class="staff-mini-calendar-legend-item"><span class="staff-mini-calendar-swatch available"></span>Available</span>

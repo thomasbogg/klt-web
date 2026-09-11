@@ -21,11 +21,11 @@ from django.views import View
 from django_countries import countries as country_choices
 
 import env_settings
-from availability.utils import get_property_calendar
+from availability.utils import calendar_date_range, get_property_calendar
 from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Arrival, Booking, BookingCondition,
     BookingSettings, CheckinSettings, Departure, ExtrasSettings, FAQ, LocalGuideEntry, PaymentSettings,
-    PlatformPayout, RequestType, TravelMethod, WelcomePackItem,
+    PlatformPayout, RequestType, TravelMethod, SupplementaryPayment, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
 from finance.models import AdHocService, DepositReturn, Memo, OwnerInvoice, PayoutRecord, SageSettings
@@ -34,7 +34,7 @@ from finance.services import (
     deposits_due_in_range, dispatch_commission_receipt_for_payout, dispatch_owner_invoice_to_sage,
     generate_non_regular_owner_invoice, generate_scenario_1_cleans_invoice, needs_informal_cleans_tracking,
     open_memo_for_property, owner_ids_with_no_separate_cleans_payment, owner_outstanding_balance,
-    owner_settlements, payouts_due_in_range, sweep_unattached_ad_hoc_services,
+    owner_settlements, owners_with_unconsolidated_cleans, payouts_due_in_range, sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_deposit_waiver, compute_effective_self_check_in, create_booking,
@@ -178,8 +178,40 @@ class StaffHomeView(View):
 
         shown_properties = [selected_property] if selected_property else list(properties)
         months = 12 if selected_property else 3
+        # Bulk-fetch once for the whole "All Properties" range rather than letting
+        # get_property_calendar() run its own 2 queries per property (was ~90 round-trips against
+        # the remote DB for ~45 active properties) - grouped in Python, then handed to
+        # get_property_calendar() per property just to build the grid, no further queries.
+        range_start, range_end = calendar_date_range(months)
+        shown_property_ids = [property.pk for property in shown_properties]
+        booked_ranges_by_property = {property.pk: [] for property in shown_properties}
+        provisional_ranges_by_property = {property.pk: [] for property in shown_properties}
+        holding_bookings = Booking.objects.holding().filter(
+            property_id__in=shown_property_ids,
+            arrival_date__lt=range_end,
+            departure_date__gt=range_start,
+        ).values_list('property_id', 'arrival_date', 'departure_date', 'enquiry_status')
+        for property_id, arrival_date, departure_date, enquiry_status in holding_bookings:
+            if enquiry_status in env_settings.VALID_BOOKING_STATUSES:
+                booked_ranges_by_property[property_id].append((arrival_date, departure_date))
+            elif enquiry_status in env_settings.PROVISIONAL_BOOKING_STATUSES:
+                provisional_ranges_by_property[property_id].append((arrival_date, departure_date))
+        overlapping_date_changes = SupplementaryPayment.objects.holding_dates().filter(
+            booking__property_id__in=shown_property_ids,
+            new_arrival_date__lt=range_end, new_departure_date__gt=range_start,
+        ).values_list('booking__property_id', 'new_arrival_date', 'new_departure_date')
+        for property_id, new_arrival_date, new_departure_date in overlapping_date_changes:
+            provisional_ranges_by_property[property_id].append((new_arrival_date, new_departure_date))
+
         calendars = [
-            {'property': property, 'months': get_property_calendar(property, months=months)}
+            {
+                'property': property,
+                'months': get_property_calendar(
+                    property, months=months,
+                    booked_ranges=booked_ranges_by_property[property.pk],
+                    provisional_ranges=provisional_ranges_by_property[property.pk],
+                ),
+            }
             for property in shown_properties
         ]
 
@@ -1074,9 +1106,14 @@ class StaffSettingsView(View):
             'welcome_pack_categories': WelcomePackItem.Category.choices,
             'request_types': RequestType.objects.all(),
             'platforms': Platform.objects.all(),
+            # is_staff=True only - owner-linked accounts (Owner.user, is_staff always False, see
+            # _invite_owner) get their own "Portal login" column further down this same panel
+            # (owners loop below) instead, so they don't belong in this table too: it exposes a
+            # Role picker and is_staff/is_superuser toggles that mean nothing for an owner account
+            # and risk being misused on one (2026-09-11, per Thomas - was previously unfiltered).
             # select_related across the reverse OneToOne (staff_profile) plus its role avoids an
             # N+1 when the Staff tab's role <select> renders each user's current role.
-            'staff_users': User.objects.select_related('staff_profile__role').order_by('username'),
+            'staff_users': User.objects.filter(is_staff=True).select_related('staff_profile__role').order_by('username'),
             'roles': StaffRole.objects.annotate(user_count=Count('profiles')).order_by('name'),
             'permission_fields': STAFF_PAGE_PERMISSION_FIELDS,
             'language_choices': StaffProfile.Language.choices,
@@ -1094,6 +1131,7 @@ class StaffSettingsView(View):
             'check_in_method_choices': ManagementCompany.CheckInMethod.choices,
             'owner_boolean_fields': OWNER_BOOLEAN_FIELDS,
             'owner_currency_choices': Owner.Currency.choices,
+            'owner_language_choices': Owner.Language.choices,
         }
 
     def _management_companies_with_property_count(self):
@@ -1589,6 +1627,9 @@ class StaffSettingsView(View):
         currency = post.get('currency')
         if currency not in Owner.Currency.values:
             currency = Owner.Currency.EUR
+        preferred_language = post.get('preferred_language')
+        if preferred_language not in Owner.Language.values:
+            preferred_language = Owner.Language.ENGLISH
         owner = Owner(
             name=post.get('name', '').strip(),
             email=post.get('email', '').strip(),
@@ -1596,6 +1637,7 @@ class StaffSettingsView(View):
             phone=post.get('phone', '').strip() or None,
             nif_number=post.get('nif_number', '').strip() or None,
             currency=currency,
+            preferred_language=preferred_language,
             **{field: post.get(field) == 'on' for field, _label in OWNER_BOOLEAN_FIELDS},
         )
         try:
@@ -1619,6 +1661,8 @@ class StaffSettingsView(View):
         owner.nif_number = post.get('nif_number', '').strip() or None
         currency = post.get('currency')
         owner.currency = currency if currency in Owner.Currency.values else Owner.Currency.EUR
+        preferred_language = post.get('preferred_language')
+        owner.preferred_language = preferred_language if preferred_language in Owner.Language.values else Owner.Language.ENGLISH
         for field, _label in OWNER_BOOLEAN_FIELDS:
             setattr(owner, field, post.get(field) == 'on')
         try:
@@ -4213,19 +4257,26 @@ class StaffFinanceSettlementsView(View):
     whichever single day in a 3-day window happened to land on a month's last day made them easy
     to miss on a normal skim of that tab, risking a missed invoice.
 
-    Month-scoped (prev/next calendar month via ?month=YYYY-MM, default the most recently completed
-    month - same default generate_monthly_owner_invoices' own --month uses), not a day window -
-    every owner with a genuine monthly Sage settlement (scenarios 1, 2 and 3 - see finance/
-    services.py::owner_settlements for exactly which owners and why) is listed outright for that
-    one month, not just ones with a booking-based balance due: a cleans-invoiced owner with zero
-    bookings (all ins, no outs) previously never appeared on the old Payouts tab's month-end cards
-    at all, since those were driven off a booking-based query, and scenario 1's cleans invoice had
-    no in-app trigger anywhere until this tab was broadened to include it (2026-09-10, per Thomas -
-    Karen Holtham) - both are the actual gaps this tab was built to close."""
+    Month-scoped (prev/next calendar month via ?month=YYYY-MM), not a day window - every owner
+    with a genuine monthly Sage settlement (scenarios 1, 2 and 3 - see finance/services.py::
+    owner_settlements for exactly which owners and why) is listed outright for that one month,
+    not just ones with a booking-based balance due: a cleans-invoiced owner with zero bookings
+    (all ins, no outs) previously never appeared on the old Payouts tab's month-end cards at all,
+    since those were driven off a booking-based query, and scenario 1's cleans invoice had no
+    in-app trigger anywhere until this tab was broadened to include it (2026-09-10, per Thomas -
+    Karen Holtham) - both are the actual gaps this tab was built to close.
+
+    Defaults to the current calendar month (2026-09-11, per Thomas - this is the tab a manager
+    lands on to do the day's/month's actual work, not to review a month that's already closed
+    out; "Previous month" is one click away for anything still outstanding from last month).
+    Deliberately NOT the same default as generate_monthly_owner_invoices' own --month (that
+    command generates a month's invoices once it's fully over, so it still defaults to the most
+    recently completed month via staff.utils.previous_month_start - unrelated to this tab's own
+    landing behaviour, not something this change touches)."""
     template_name = 'staff/finance_settlements.html'
 
     def get(self, request, *args, **kwargs):
-        period_start = _parsed_month(request.GET.get('month')) or previous_month_start(timezone.now().date())
+        period_start = _parsed_month(request.GET.get('month')) or timezone.now().date().replace(day=1)
         period_end = _last_day_of_month(period_start)
         rows = owner_settlements(period_start, period_end)
 
@@ -4234,6 +4285,7 @@ class StaffFinanceSettlementsView(View):
             'period_start': period_start,
             'prev_month': previous_month_start(period_start),
             'next_month': first_of_next_month(period_start),
+            'consolidatable_owners': owners_with_unconsolidated_cleans(),
             'active_tab': 'settlements',
             'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
         })
@@ -4433,10 +4485,13 @@ class StaffFinanceExpectedPaymentsView(View):
 
     Three views via ?view=unpaid|recent|historic (default unpaid): Unpaid sorts oldest-first
     (chase the longest-outstanding first); Recent (paid within the last RECENT_CUTOFF_DAYS) and
-    Historic (older) sort newest-first. Only the Unpaid view computes consolidatable_owners - the
-    owners with at least one eligible unconsolidated Memo (finance/services.py::
-    needs_informal_cleans_tracking), each offered a "Consolidate" action. Optional ?owner_id=
-    narrows both the row list and consolidatable_owners to one owner (2026-09-10)."""
+    Historic (older) sort newest-first. Optional ?owner_id= narrows the row list to one owner
+    (2026-09-10). The "Consolidate unpaid cleans/meet-greet" batch action (and the
+    consolidatable_owners it depends on) moved to the Settlements tab (2026-09-11, per Thomas -
+    it's a genuine end-of-month task that kept getting missed split across two tabs from the rest
+    of that month-end work); this tab still shows the resulting OwnerInvoice(kind=
+    CLEANS_INFORMAL_MONTHLY) once created, same as any other invoice row, and still tracks each
+    bundled Memo's paid status - only the batch trigger moved, not the ongoing tracking."""
     template_name = 'staff/finance_expected_payments.html'
     RECENT_CUTOFF_DAYS = 7
 
@@ -4473,14 +4528,11 @@ class StaffFinanceExpectedPaymentsView(View):
         rows = self._combined_rows(invoices, memos)
         rows.sort(key=lambda row: row['date'], reverse=True)
 
-        consolidatable_owners = self._consolidatable_owners(memos) if view == 'unpaid' else []
-
         return render(request, self.template_name, {
             'rows': rows[:150],
             'view': view,
             'owner': owner,
             'owners': Owner.objects.order_by('name'),
-            'consolidatable_owners': consolidatable_owners,
             'active_tab': 'expected_payments',
             'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
         })
@@ -4496,29 +4548,35 @@ class StaffFinanceExpectedPaymentsView(View):
         ]
         return rows
 
-    def _consolidatable_owners(self, unpaid_memos_queryset):
-        owner_ids = sorted(set(unpaid_memos_queryset.values_list('property__owner_id', flat=True)))
-        return [owner for owner in Owner.objects.filter(pk__in=owner_ids) if needs_informal_cleans_tracking(owner)]
-
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinanceConsolidateInformalCleansView(View):
-    """The "Consolidate" action on the Expected Payments tab's Unpaid view - bundles one owner's
-    currently-unpaid, never-yet-bundled Memos into one OwnerInvoice(kind=CLEANS_INFORMAL_MONTHLY)
-    via finance/services.py::consolidate_informal_cleans_payment (2026-09-10)."""
+    """The "Consolidate" action on the Settlements tab's own panel (moved there from Expected
+    Payments 2026-09-11, per Thomas - see StaffFinanceSettlementsView/finance/services.py::
+    owners_with_unconsolidated_cleans) - bundles one owner's currently-unpaid, never-yet-bundled
+    Memos into one OwnerInvoice(kind=CLEANS_INFORMAL_MONTHLY) via finance/services.py::
+    consolidate_informal_cleans_payment (2026-09-10). Redirects back to whichever month of
+    Settlements the staffer was viewing, same hidden-field convention as
+    StaffFinanceOwnerInvoiceMarkPaidView._redirect."""
 
     def post(self, request, owner_id, *args, **kwargs):
         owner = Owner.objects.filter(pk=owner_id).first()
         if owner is None:
             messages.error(request, "That owner no longer exists.")
-            return redirect('staff:finance_expected_payments')
+            return self._redirect(request)
 
         invoice = consolidate_informal_cleans_payment(owner)
         if invoice is None:
             messages.error(request, f"Nothing to consolidate for {owner}.")
         else:
             messages.success(request, f"Consolidated {owner}'s unpaid cleans/meet-greet into one €{invoice.total()} request.")
-        return redirect('staff:finance_expected_payments')
+        return self._redirect(request)
+
+    def _redirect(self, request):
+        redirect_month = request.POST.get('month', '').strip()
+        if redirect_month:
+            return redirect(f"{reverse('staff:finance_settlements')}?month={redirect_month}")
+        return redirect('staff:finance_settlements')
 
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
