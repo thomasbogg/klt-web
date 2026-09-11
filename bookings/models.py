@@ -1534,6 +1534,17 @@ class PaymentSettings(models.Model):
                   "defaults on for consistency, but kept togglable separately from the direct "
                   "case."
     )
+    # Added 2026-09-11, per Thomas - an informal Wise payment link to give an owner alongside
+    # their outstanding balance (e.g. a consolidated cleans/meet-greet request). Storage only for
+    # now: no email currently sends an owner a statement at all (confirmed this session - Consolidate
+    # just bundles Memos into an OwnerInvoice, no dispatch), so nothing reads this field yet -
+    # wiring it into an actual owner-facing email is a separate, not-yet-scoped follow-up.
+    wise_payment_link = models.URLField(
+        blank=True, null=True,
+        help_text="Informal Wise payment link to share with an owner alongside their outstanding "
+                  "balance. Not yet referenced by any automated email - for staff to copy/paste "
+                  "manually until that's built."
+    )
 
     class Meta:
         db_table = 'payment_settings'

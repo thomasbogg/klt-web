@@ -1314,6 +1314,10 @@
                                 Charge VAT on commission for a low-season platform booking
                             </label>
                             <p class="staff-settings-hint">High-season commission always carries VAT, regardless of origin.</p>
+                            <label class="staff-field">Informal Wise payment link
+                                <input type="url" name="wise_payment_link" class="staff-input" placeholder="https://wise.com/pay/..." value="{{ payment_settings.wise_payment_link|default:'' }}">
+                            </label>
+                            <p class="staff-settings-hint">Not yet included in any automated email - for staff to copy/paste manually into a message to an owner until that's built.</p>
                             <button type="submit" class="staff-button">Save payment settings</button>
                         </form>
                     </div>

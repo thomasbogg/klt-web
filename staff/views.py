@@ -1945,6 +1945,7 @@ class StaffSettingsView(View):
                 setattr(settings, field, value)
         for field in ('charge_vat_on_low_season_direct_commission', 'charge_vat_on_low_season_platform_commission'):
             setattr(settings, field, post.get(field) == 'on')
+        settings.wise_payment_link = post.get('wise_payment_link', '').strip() or None
         try:
             settings.full_clean()
         except ValidationError as error:
