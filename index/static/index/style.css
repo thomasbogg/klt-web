@@ -90,7 +90,13 @@
     display: block;
     height: auto;
     box-sizing: border-box;
-    padding: 40px 20px 0;
+    /* No top padding - every .container already carries a 60px bottom margin (see
+       --primary-margin-bottom) as the standard inter-section gap; adding 40px here on top of
+       that gave this one section a 100px gap instead of the usual 60px (2026-09-11, per Thomas -
+       spotted it looked bigger than the gap above it). Horizontal padding stays, for the heading/
+       cards' own breathing room at narrow viewports where .container.center's max-width isn't
+       actually constraining anything. */
+    padding: 0 20px;
 }
 
 .container.reviews h2 {
