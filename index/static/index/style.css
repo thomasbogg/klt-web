@@ -74,3 +74,100 @@
 .container.text-boxes.memorable .text-box.wide p {
     line-height: 1.7;
 }
+
+/* Reviews (2026-09-11, per Thomas) - real, verified Google reviews from the business's own
+   Google Business Profile (https://share.google/XqNo5hNeTk9uLXnMk), pasted in and trimmed for
+   length where noted, never invented - see the "See all reviews on Google" link at the bottom,
+   which lets a visitor verify these against the live listing directly.
+
+   Block-level override of .container's own flex/100vh base (same reasoning as
+   .container.mosaic.simple above) - a heading followed by a card grid doesn't fit that shape.
+   The card grid itself uses the same repeat(auto-fit, minmax(...)) technique as
+   .container.mosaic.simple's tiles, for the same reason: 5 reviews is again not a clean multiple
+   of any fixed column count, and auto-fit tiles them evenly at whatever count exists (3, 5, or a
+   future 4/6) without ever needing a redesign. */
+.container.reviews {
+    display: block;
+    height: auto;
+    box-sizing: border-box;
+    padding: 40px 20px 0;
+}
+
+.container.reviews h2 {
+    margin-bottom: 30px;
+}
+
+/* auto-fit alone reproduces the exact problem it solved for the location tiles: 5 reviews at
+   min 260px only fits 4 per row inside this section's 1200px max-width (.container.center), so
+   the 5th sat alone on its own row - the same stranded-tile look, just with an extra step
+   (2026-09-11, confirmed via screenshot at 1400px viewport before adding the fixed-5 rule below).
+   auto-fit still drives the default (narrow-viewport) case, where wrapping to fewer per row as
+   the viewport shrinks is normal reflow, not a leftover - only above 1240px (where the 1200px
+   container has room for 5 real columns without cramming them under ~220px each) does a fixed
+   5-column row take over, matching the exact review count today. */
+.reviews-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 20px;
+}
+
+@media (min-width: 1240px) {
+    .reviews-grid {
+        grid-template-columns: repeat(5, 1fr);
+    }
+}
+
+.review-card {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: var(--primary-box-shadow);
+    padding: 24px;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+}
+
+.review-stars {
+    color: var(--secondary-color);
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+}
+
+.review-quote {
+    color: #555;
+    line-height: 1.6;
+    flex-grow: 1;
+    margin: 0 0 16px 0;
+}
+
+.review-quote::before {
+    content: "\201C";
+}
+
+.review-quote::after {
+    content: "\201D";
+}
+
+.review-author {
+    font-family: var(--secondary-font);
+    font-weight: 600;
+    color: var(--primary-color);
+    margin: 0;
+}
+
+.review-source {
+    font-weight: 400;
+    color: #888;
+}
+
+.reviews-see-all {
+    display: inline-block;
+    margin: 30px 0 10px;
+    color: var(--primary-color);
+    font-family: var(--secondary-font);
+    text-decoration: none;
+}
+
+.reviews-see-all:hover {
+    text-decoration: underline;
+}
