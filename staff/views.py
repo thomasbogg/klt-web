@@ -1684,12 +1684,18 @@ class StaffSettingsView(View):
                 owner, OwnerBankAccount.Currency.EUR,
                 holder_name=post.get('eur_account_holder_name', '').strip(),
                 iban=post.get('bank_iban', '').strip().upper() or None,
+                address_street=post.get('eur_address_street', '').strip() or None,
+                address_city=post.get('eur_address_city', '').strip() or None,
+                address_postcode=post.get('eur_address_postcode', '').strip() or None,
             )
             OwnerBankAccount.upsert(
                 owner, OwnerBankAccount.Currency.GBP,
                 holder_name=post.get('gbp_account_holder_name', '').strip(),
                 sort_code=post.get('bank_sort_code', '').strip() or None,
                 account_number=post.get('bank_account_number', '').strip() or None,
+                address_street=post.get('gbp_address_street', '').strip() or None,
+                address_city=post.get('gbp_address_city', '').strip() or None,
+                address_postcode=post.get('gbp_address_postcode', '').strip() or None,
             )
         except ValidationError as error:
             _flash_validation_error(request, error)

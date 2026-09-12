@@ -927,12 +927,18 @@
                                                 <h4 class="staff-manager-contact-title">Bank details - Euros (Revolut payouts)</h4>
                                                 <label class="staff-field">IBAN<input type="text" name="bank_iban" form="owner-form-{{ owner.pk }}" value="{{ owner.eur_account.iban|default:'' }}" class="staff-input"></label>
                                                 <label class="staff-field">Account holder name<input type="text" name="eur_account_holder_name" form="owner-form-{{ owner.pk }}" value="{{ owner.eur_account.account_holder_name|default:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Street address<input type="text" name="eur_address_street" form="owner-form-{{ owner.pk }}" value="{{ owner.eur_account.address_street|default:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">City<input type="text" name="eur_address_city" form="owner-form-{{ owner.pk }}" value="{{ owner.eur_account.address_city|default:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Postcode<input type="text" name="eur_address_postcode" form="owner-form-{{ owner.pk }}" value="{{ owner.eur_account.address_postcode|default:'' }}" class="staff-input"></label>
                                             </div>
                                             <div class="staff-manager-contact-group">
                                                 <h4 class="staff-manager-contact-title">Bank details - Pounds</h4>
                                                 <label class="staff-field">Sort code<input type="text" name="bank_sort_code" form="owner-form-{{ owner.pk }}" value="{{ owner.gbp_account.sort_code|default:'' }}" class="staff-input"></label>
                                                 <label class="staff-field">Account number<input type="text" name="bank_account_number" form="owner-form-{{ owner.pk }}" value="{{ owner.gbp_account.account_number|default:'' }}" class="staff-input"></label>
                                                 <label class="staff-field">Account holder name<input type="text" name="gbp_account_holder_name" form="owner-form-{{ owner.pk }}" value="{{ owner.gbp_account.account_holder_name|default:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Street address<input type="text" name="gbp_address_street" form="owner-form-{{ owner.pk }}" value="{{ owner.gbp_account.address_street|default:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">City<input type="text" name="gbp_address_city" form="owner-form-{{ owner.pk }}" value="{{ owner.gbp_account.address_city|default:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Postcode<input type="text" name="gbp_address_postcode" form="owner-form-{{ owner.pk }}" value="{{ owner.gbp_account.address_postcode|default:'' }}" class="staff-input"></label>
                                             </div>
                                         </div>
                                     </td>

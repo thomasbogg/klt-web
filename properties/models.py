@@ -418,6 +418,16 @@ class OwnerBankAccount(models.Model):
     iban = models.CharField(max_length=34, blank=True, null=True)
     sort_code = models.CharField(max_length=10, blank=True, null=True)
     account_number = models.CharField(max_length=20, blank=True, null=True)
+    # The account holder's postal address - required by Revolut Business API to create a
+    # counterparty at all (confirmed live, 2026-09-12: rejects with no address.country, then
+    # separately rejects with no postcode - street/city aren't enforced server-side, but Revolut's
+    # own docs say a fuller address "significantly reduces the risk of disruption" to a real
+    # transfer, so all three are collected and required here rather than only the bare minimum).
+    # `country` isn't a separate field - finance/payouts_revolut.py derives it from the IBAN prefix
+    # (EUR) or defaults to 'GB' (GBP), the same country used for the account itself.
+    address_street = models.CharField(max_length=200, blank=True, null=True)
+    address_city = models.CharField(max_length=100, blank=True, null=True)
+    address_postcode = models.CharField(max_length=20, blank=True, null=True)
     # Revolut Business API counterparty id for this specific account, set lazily on first live
     # payout attempt (finance/payouts_revolut.py::send_owner_payout_via_revolut) - same "lazily set
     # on first dispatch" precedent as Owner.sage_contact_id, not eagerly created for every account.
@@ -440,6 +450,8 @@ class OwnerBankAccount(models.Model):
             raise ValidationError("A Euros bank account needs an IBAN.")
         if self.currency == self.Currency.GBP and not (self.sort_code and self.account_number):
             raise ValidationError("A Pounds bank account needs a sort code and account number.")
+        if not (self.address_street and self.address_city and self.address_postcode):
+            raise ValidationError("A bank account needs a full address (street, city, postcode) for Revolut Business payouts.")
 
     @classmethod
     def upsert(cls, owner, currency, holder_name, **fields):

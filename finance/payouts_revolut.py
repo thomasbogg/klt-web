@@ -116,13 +116,14 @@ def _get_or_create_counterparty(connection, account: OwnerBankAccount):
         counterparty.account.sortCode = account.sort_code
         counterparty.account.accountNo = account.account_number
         counterparty.account.country = 'GB'
-    # Revolut rejects counterparty creation without at least address.country (confirmed live,
-    # 2026-09-12, code 2101 "'address.country' is required") - OwnerBankAccount has no separate
-    # postal-address fields on file, so this reuses the bank account's own country as the best
-    # available answer. Revolut's docs recommend supplying the full address (street/city/postcode)
-    # to reduce payment-disruption risk - worth adding to OwnerBankAccount as a real field if
-    # transfers start bouncing on this in practice, not guessed at here.
+    # Revolut requires a full postal address to create a counterparty at all (confirmed live,
+    # 2026-09-12: rejects with no address.country, then separately rejects with no postcode) -
+    # country isn't a separate OwnerBankAccount field since it's already the same country as the
+    # account itself (IBAN prefix or 'GB' above).
     counterparty.address.country = counterparty.account.country
+    counterparty.address.streetLine1 = account.address_street
+    counterparty.address.city = account.address_city
+    counterparty.address.postcode = account.address_postcode
     counterparty.create()
     if not counterparty.id:
         return None
