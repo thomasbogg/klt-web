@@ -361,21 +361,6 @@ class Owner(models.Model):
     # owners may never actually get a Sage invoice (see cleans_are_invoiced/
     # rental_commissions_are_invoiced above).
     sage_contact_id = models.CharField(max_length=50, blank=True, null=True)
-    # Revolut Business API counterparty id for this owner's bank account, set lazily on first live
-    # payout attempt (finance/payouts_revolut.py::send_owner_payout_via_revolut) - same "lazily set
-    # on first dispatch" precedent as sage_contact_id above, not eagerly created for every owner.
-    revolut_counterparty_id = models.CharField(max_length=50, blank=True, null=True)
-    # Bank details for real Revolut Business payouts (2026-09-12, per Thomas). IBAN/SEPA only for
-    # now - compute_regular_owner_payout (finance/services.py) is EUR-only already (no currency
-    # field in its output, staff/templates/staff/finance_payouts.html hardcodes the € symbol), so
-    # there's no non-EUR payout path yet to need bic/sort_code/account_no/routing_number for. Both
-    # blank/null: an owner with neither set gets the plain manual "Mark as paid" fallback button
-    # rather than "Send payment" - see has_bank_details below.
-    bank_iban = models.CharField(max_length=34, blank=True, null=True)
-    # Separate from `name` above - must match the real bank account holder, which won't always be
-    # identical to this Owner row's display name (e.g. a co-ownership "Smith & Jones" where the
-    # account itself is only in one of their names).
-    bank_account_holder_name = models.CharField(max_length=200, blank=True, null=True)
     # Owner Suite login (owners app) - staff.views.py::StaffSettingsView._invite_owner creates the
     # User (with set_unusable_password()) and links it here in one step; owners/utils.py::
     # send_owner_invite_email then emails the owner a link to owners.views.OwnerAcceptInviteView
@@ -396,11 +381,88 @@ class Owner(models.Model):
         return self.name
 
     @property
-    def has_bank_details(self):
+    def has_eur_bank_account(self):
         """Drives which button the staff Payouts tab shows for this owner's bookings - "Send
-        payment" (live Revolut transfer) if both fields are on file, else the plain manual "Mark as
-        paid" fallback. See finance/payouts_revolut.py::send_owner_payout_via_revolut."""
-        return bool(self.bank_iban and self.bank_account_holder_name)
+        payment" (live Revolut transfer) if a EUR account is on file, else the plain manual "Mark
+        as paid" fallback. Deliberately EUR-specific, not "has any bank account" -ompute_regular_
+        owner_payout (finance/services.py) is EUR-only regardless of this Owner's own `currency`
+        preference, so a GBP-only account (see OwnerBankAccount below) can be stored for a BOTH/GBP
+        owner but isn't yet usable by this specific live-transfer flow. See
+        finance/payouts_revolut.py::send_owner_payout_via_revolut."""
+        return self.bank_accounts.filter(currency=OwnerBankAccount.Currency.EUR).exists()
+
+
+class OwnerBankAccount(models.Model):
+    """A bank account an owner has on file for real Revolut Business payouts (2026-09-12, per
+    Thomas). One owner can hold up to one account per currency (see the unique constraint below) -
+    this is deliberately a separate related model, not flat fields on Owner, because a `currency=
+    BOTH` owner genuinely needs two distinct accounts on file (a EUR/IBAN one and a GBP/sort-code
+    one), which a single pair of fields can't represent. This replaced an earlier same-day design
+    (Owner.bank_iban/bank_account_holder_name, EUR/IBAN-only) before any real owner had one saved -
+    see this model's own git history if that flat-field version needs referencing.
+
+    EUR and GBP need entirely different fields (IBAN vs sort code + account number) - `clean()`
+    enforces exactly the right ones are present for whichever `currency` is chosen. Mirrors
+    RevolutBusiness.Account's own field shape (libraries/banking/revolut_business.py), which
+    already supports both."""
+    class Currency(models.TextChoices):
+        EUR = 'EUR', 'Euros'
+        GBP = 'GBP', 'Pounds'
+
+    owner = models.ForeignKey(Owner, on_delete=models.CASCADE, related_name='bank_accounts')
+    currency = models.CharField(max_length=3, choices=Currency.choices)
+    # Separate from Owner.name - must match the real bank account holder, which won't always be
+    # identical to the Owner row's display name (e.g. a co-ownership "Smith & Jones" where the
+    # account itself is only in one of their names).
+    account_holder_name = models.CharField(max_length=200)
+    iban = models.CharField(max_length=34, blank=True, null=True)
+    sort_code = models.CharField(max_length=10, blank=True, null=True)
+    account_number = models.CharField(max_length=20, blank=True, null=True)
+    # Revolut Business API counterparty id for this specific account, set lazily on first live
+    # payout attempt (finance/payouts_revolut.py::send_owner_payout_via_revolut) - same "lazily set
+    # on first dispatch" precedent as Owner.sage_contact_id, not eagerly created for every account.
+    revolut_counterparty_id = models.CharField(max_length=50, blank=True, null=True)
+
+    class Meta:
+        db_table = 'property_owner_bank_accounts'
+        verbose_name = 'Owner Bank Account'
+        verbose_name_plural = 'Owner Bank Accounts'
+        ordering = ('currency',)
+        constraints = [
+            models.UniqueConstraint(fields=['owner', 'currency'], name='unique_owner_bank_account_currency'),
+        ]
+
+    def __str__(self):
+        return f"{self.owner} ({self.get_currency_display()})"
+
+    def clean(self):
+        if self.currency == self.Currency.EUR and not self.iban:
+            raise ValidationError("A Euros bank account needs an IBAN.")
+        if self.currency == self.Currency.GBP and not (self.sort_code and self.account_number):
+            raise ValidationError("A Pounds bank account needs a sort code and account number.")
+
+    @classmethod
+    def upsert(cls, owner, currency, holder_name, **fields):
+        """Creates/updates the owner's account for one currency, or deletes it if every field was
+        cleared (emptying the form is removing the account, not leaving it half-filled). Shared by
+        both the staff Settings > Owners table and the owner-facing Update Details page - the only
+        two places an OwnerBankAccount is ever written from. Raises ValidationError (from
+        full_clean(), e.g. an IBAN missing for a EUR account) for the caller to flash same as any
+        other field error on that page."""
+        has_any_value = bool(holder_name) or any(fields.values())
+        account = owner.bank_accounts.filter(currency=currency).first()
+        if not has_any_value:
+            if account is not None:
+                account.delete()
+            return None
+        if account is None:
+            account = cls(owner=owner, currency=currency)
+        account.account_holder_name = holder_name
+        for field, value in fields.items():
+            setattr(account, field, value)
+        account.full_clean()
+        account.save()
+        return account
 
 
 class Accountant(models.Model):

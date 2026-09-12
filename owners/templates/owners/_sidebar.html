@@ -18,7 +18,7 @@ guest Manage Booking hub, per Thomas's own framing. Expects `active_section` and
     <a class="manage-hub-nav-link{% if active_section == 'calendar_links' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'owners:calendar_links' %}">Calendar Links</a>
     <a class="manage-hub-nav-link{% if active_section == 'contact_details' %} manage-hub-nav-link-active{% endif %}"
-       href="{% url 'owners:contact_details' %}">Contact Details</a>
+       href="{% url 'owners:contact_details' %}">Update Details</a>
     <form method="post" action="{% url 'owners:logout' %}">
         {% csrf_token %}
         <button type="submit" class="manage-hub-nav-link manage-hub-nav-link-danger">Log out</button>

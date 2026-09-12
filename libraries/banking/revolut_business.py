@@ -18,6 +18,9 @@ Account.get() only returns Object's own base dict rather than calling ACCOUNTS_U
 real account's details needs `next(revolut.accounts)`-style listing instead, or a get() override
 added when this is actually switched on.
 """
+import time
+
+import jwt
 import requests
 from libraries.utils import Object, logerror, generate_request_headers, logwarning
 from typing import Generator, List
@@ -590,12 +593,72 @@ class RevolutBusiness(Object):
         return items
 
 
-def get_access_token_for_revolut_business_api(refresh_token: str, client_assertion: str) -> str | None:
-    """Exchanges a long-lived refresh token + signed JWT client assertion for a short-lived access
-    token (Revolut Business API's OAuth2 flow - not the simple secret-key auth the Merchant API
-    uses). Returns None (rather than raising) whenever either credential is unset, which is the
-    normal state until the Business account upgrade + app registration actually happens."""
-    if not refresh_token or not client_assertion:
+# The domain half of the client-assertion JWT's `iss` claim (Revolut's own docs: "your domain
+# without https://") - just an identifying string Revolut checks against the registered
+# application, never a URL Revolut actually visits, so it's fine that this domain currently still
+# serves the old Wordpress site pending this Django project's own launch (2026-09-12, per Thomas).
+CLIENT_ASSERTION_ISSUER = 'algarvebeachapartments.com'
+
+
+def generate_client_assertion() -> str | None:
+    """Builds and signs a fresh client-assertion JWT (RS256), per Revolut's own docs:
+    https://developer.revolut.com/docs/guides/manage-accounts/get-started/make-your-first-api-request#2-generate-a-client-assertion
+
+    This MUST be freshly generated for every single token request (its `exp` claim is a
+    short-lived JWT expiry, a few minutes out - not a one-time secret) - superseding this file's
+    earlier design (env_settings.REVOLUT_BUSINESS_API_CLIENT_ASSERTION, a static pre-baked value
+    that would have gone stale almost immediately in real use). REVOLUT_BUSINESS_API_SIGNING_KEY
+    (the private key half of the certificate registered in Revolut's dashboard) already existed as
+    an env var slot for exactly this - it just wasn't wired up to anything until now.
+    Returns None if either credential piece is unset."""
+    if not env_settings.REVOLUT_BUSINESS_API_SIGNING_KEY or not env_settings.REVOLUT_BUSINESS_API_CLIENT_ID:
+        return None
+
+    payload = {
+        'iss': CLIENT_ASSERTION_ISSUER,
+        'sub': env_settings.REVOLUT_BUSINESS_API_CLIENT_ID,
+        'aud': 'https://revolut.com',
+        'exp': int(time.time()) + 300,
+    }
+    return jwt.encode(payload, env_settings.REVOLUT_BUSINESS_API_SIGNING_KEY, algorithm='RS256')
+
+
+def exchange_authorization_code_for_tokens(code: str) -> dict | None:
+    """One-time bootstrap step (Revolut's docs, step 4) - exchanges the authorization code from
+    the OAuth consent redirect for the first access_token + a refresh_token (which does NOT expire,
+    per Revolut's own docs, so it's safe to store as a static env var
+    (REVOLUT_BUSINESS_API_REFRESH_TOKEN) rather than needing a DB-backed rotation scheme). Not
+    called from any live flow - run manually, once per environment (sandbox/production are
+    separate), via a management command. No redirect_uri parameter in this request itself (only
+    the initial authorize/consent step needs it to match what was registered)."""
+    client_assertion = generate_client_assertion()
+    if not code or client_assertion is None:
+        return None
+
+    url = f"{BASE_URL}/1.0/auth/token"
+    data = {
+        'grant_type': 'authorization_code',
+        'code': code,
+        'client_assertion_type': 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        'client_assertion': client_assertion,
+    }
+    try:
+        response = requests.post(url, headers=generate_request_headers(), data=data)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logerror(f"Failed to exchange authorization code for Revolut Business API tokens: {e}")
+        return None
+
+
+def get_access_token_for_revolut_business_api(refresh_token: str) -> str | None:
+    """Exchanges a long-lived refresh token + a freshly-signed JWT client assertion for a
+    short-lived access token (Revolut Business API's OAuth2 flow - not the simple secret-key auth
+    the Merchant API uses). Returns None (rather than raising) whenever any credential piece is
+    unset, which is the normal state until the Business account upgrade + app registration
+    actually happens."""
+    client_assertion = generate_client_assertion()
+    if not refresh_token or client_assertion is None:
         return None
 
     url = f"{BASE_URL}/1.0/auth/token"
@@ -616,13 +679,11 @@ def get_access_token_for_revolut_business_api(refresh_token: str, client_asserti
 
 
 def get_revolut_business_connection() -> RevolutBusiness | None:
-    """Entry point for future callers - returns None while the Business API credentials aren't
-    configured yet (env_settings.REVOLUT_BUSINESS_API_REFRESH_TOKEN/_CLIENT_ASSERTION), rather than
-    a connection that would fail on first real call. No call sites yet (2026-09-10) - this is
-    infrastructure staged ahead of the Revolut Business account upgrade, not a live feature."""
+    """Entry point for real callers - returns None while the Business API credentials aren't
+    configured yet (env_settings.REVOLUT_BUSINESS_API_REFRESH_TOKEN/_CLIENT_ID/_SIGNING_KEY),
+    rather than a connection that would fail on first real call."""
     access_token = get_access_token_for_revolut_business_api(
         refresh_token=env_settings.REVOLUT_BUSINESS_API_REFRESH_TOKEN,
-        client_assertion=env_settings.REVOLUT_BUSINESS_API_CLIENT_ASSERTION,
     )
     if access_token is None:
         return None

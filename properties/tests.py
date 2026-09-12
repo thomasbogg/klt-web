@@ -11,8 +11,8 @@ from django.utils import timezone
 from bookings.models import Booking, BookingSettings
 from guests.models import Guest
 from properties.models import (
-    Amenity, Location, ManagementCompany, Owner, Platform, Price, Property, PropertyOwnership,
-    PropertySpec,
+    Amenity, Location, ManagementCompany, Owner, OwnerBankAccount, Platform, Price, Property,
+    PropertyOwnership, PropertySpec,
 )
 from properties.utils import (
     apply_price_bulk_plan, build_price_bulk_plan, gross_up_for_commission, get_stay_total_price,
@@ -936,9 +936,11 @@ class AmenityTests(TestCase):
         self.assertIn('Air conditioning', features)
 
 
-class OwnerHasBankDetailsTests(TestCase):
-    """Owner.has_bank_details - drives which button the staff Payouts tab shows
-    (staff/views.py::StaffFinancePayoutMarkPaidView, "one button, auto-fallback")."""
+class OwnerHasEurBankAccountTests(TestCase):
+    """Owner.has_eur_bank_account - drives which button the staff Payouts tab shows
+    (staff/views.py::StaffFinancePayoutMarkPaidView, "one button, auto-fallback"). Deliberately
+    EUR-specific: compute_regular_owner_payout is EUR-only regardless of Owner.currency, so a
+    GBP-only OwnerBankAccount shouldn't flip this to True."""
 
     def _owner(self, **kwargs):
         defaults = dict(
@@ -948,18 +950,73 @@ class OwnerHasBankDetailsTests(TestCase):
         defaults.update(kwargs)
         return Owner.objects.create(**defaults)
 
-    def test_false_when_neither_field_is_set(self):
+    def test_false_when_no_account_exists(self):
         owner = self._owner()
-        self.assertFalse(owner.has_bank_details)
+        self.assertFalse(owner.has_eur_bank_account)
 
-    def test_false_when_only_iban_is_set(self):
-        owner = self._owner(bank_iban='PT50000201231234567890154')
-        self.assertFalse(owner.has_bank_details)
+    def test_false_when_only_a_gbp_account_exists(self):
+        owner = self._owner(currency=Owner.Currency.GBP)
+        OwnerBankAccount.objects.create(
+            owner=owner, currency=OwnerBankAccount.Currency.GBP,
+            sort_code='12-34-56', account_number='12345678', account_holder_name='Bank Details Owner',
+        )
+        self.assertFalse(owner.has_eur_bank_account)
 
-    def test_false_when_only_holder_name_is_set(self):
-        owner = self._owner(bank_account_holder_name='Bank Details Owner')
-        self.assertFalse(owner.has_bank_details)
+    def test_true_when_a_eur_account_exists(self):
+        owner = self._owner()
+        OwnerBankAccount.objects.create(
+            owner=owner, currency=OwnerBankAccount.Currency.EUR,
+            iban='PT50000201231234567890154', account_holder_name='Bank Details Owner',
+        )
+        self.assertTrue(owner.has_eur_bank_account)
 
-    def test_true_when_both_fields_are_set(self):
-        owner = self._owner(bank_iban='PT50000201231234567890154', bank_account_holder_name='Bank Details Owner')
-        self.assertTrue(owner.has_bank_details)
+
+class OwnerBankAccountTests(TestCase):
+    """properties.models.OwnerBankAccount.clean()/upsert() - EUR needs an IBAN, GBP needs a sort
+    code + account number; upsert() also handles create/update/delete-on-empty in one call, shared
+    by both the staff Settings Owners table and the owner-facing Update Details page."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Bank Account Owner', email='bank-account-owner@example.com',
+            currency=Owner.Currency.BOTH, is_paid_regularly=True, cleans_are_invoiced=False,
+        )
+
+    def test_eur_account_without_iban_fails_validation(self):
+        account = OwnerBankAccount(owner=self.owner, currency=OwnerBankAccount.Currency.EUR, account_holder_name='Bank Account Owner')
+        with self.assertRaises(ValidationError):
+            account.full_clean()
+
+    def test_gbp_account_without_sort_code_or_account_number_fails_validation(self):
+        account = OwnerBankAccount(owner=self.owner, currency=OwnerBankAccount.Currency.GBP, account_holder_name='Bank Account Owner')
+        with self.assertRaises(ValidationError):
+            account.full_clean()
+
+    def test_upsert_creates_a_new_account(self):
+        account = OwnerBankAccount.upsert(
+            self.owner, OwnerBankAccount.Currency.EUR,
+            holder_name='Bank Account Owner', iban='PT50000201231234567890154',
+        )
+        self.assertEqual(account.iban, 'PT50000201231234567890154')
+        self.assertEqual(self.owner.bank_accounts.count(), 1)
+
+    def test_upsert_updates_the_existing_account_for_that_currency(self):
+        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='Old Name', iban='PT50000201231234567890154')
+        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='New Name', iban='PT10000000000000000000000')
+        self.assertEqual(self.owner.bank_accounts.count(), 1)
+        account = self.owner.bank_accounts.get(currency=OwnerBankAccount.Currency.EUR)
+        self.assertEqual(account.account_holder_name, 'New Name')
+        self.assertEqual(account.iban, 'PT10000000000000000000000')
+
+    def test_upsert_deletes_the_account_when_everything_is_cleared(self):
+        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='Bank Account Owner', iban='PT50000201231234567890154')
+        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='', iban=None)
+        self.assertFalse(self.owner.bank_accounts.filter(currency=OwnerBankAccount.Currency.EUR).exists())
+
+    def test_owner_can_hold_one_account_per_currency(self):
+        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='Bank Account Owner', iban='PT50000201231234567890154')
+        OwnerBankAccount.upsert(
+            self.owner, OwnerBankAccount.Currency.GBP,
+            holder_name='Bank Account Owner', sort_code='12-34-56', account_number='12345678',
+        )
+        self.assertEqual(self.owner.bank_accounts.count(), 2)

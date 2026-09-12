@@ -271,3 +271,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+# Private keys/certificates (e.g. Revolut Business API client-assertion signing keys) - never
+# committed, regardless of where they're generated.
+*.key
+*.pem
+*.crt

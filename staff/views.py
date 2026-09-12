@@ -51,8 +51,8 @@ from libraries.utils import logerror
 from owners.utils import send_owner_invite_email
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
-    Owner, Platform, Price, Property, PropertyAccessCode, PropertyImage, PropertyOwnership,
-    PropertyPlatformID, PropertySpec, SEFDetail, WashingMaterial, iCalLink,
+    Owner, OwnerBankAccount, Platform, Price, Property, PropertyAccessCode, PropertyImage,
+    PropertyOwnership, PropertyPlatformID, PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
 from properties.utils import (
     apply_price_bulk_plan, build_price_bulk_plan, get_stay_total_price, gross_up_for_commission,
@@ -1124,9 +1124,7 @@ class StaffSettingsView(View):
             # deleting one of these.
             # select_related('user') avoids an N+1 for the Portal login column's
             # owner.user.has_usable_password check.
-            'owners': Owner.objects.select_related('user').annotate(
-                property_count=Count('property')
-            ).order_by('name'),
+            'owners': self._owners_with_bank_accounts(),
             'accountants': Accountant.objects.annotate(property_count=Count('property')).order_by('company'),
             'management_companies': self._management_companies_with_property_count(),
             'check_in_method_choices': ManagementCompany.CheckInMethod.choices,
@@ -1134,6 +1132,20 @@ class StaffSettingsView(View):
             'owner_currency_choices': Owner.Currency.choices,
             'owner_language_choices': Owner.Language.choices,
         }
+
+    def _owners_with_bank_accounts(self):
+        # select_related('user') avoids an N+1 for the Portal login column's
+        # owner.user.has_usable_password check. prefetch_related('bank_accounts') + the Python
+        # loop below avoids one for the "Bank details" expandable row's EUR/GBP fields - at most
+        # 2 rows per owner (OwnerBankAccount's own unique_together), so picking them apart in
+        # Python is simpler than two separate annotated subqueries.
+        owners = list(Owner.objects.select_related('user').prefetch_related('bank_accounts').annotate(
+            property_count=Count('property')
+        ).order_by('name'))
+        for owner in owners:
+            owner.eur_account = next((a for a in owner.bank_accounts.all() if a.currency == OwnerBankAccount.Currency.EUR), None)
+            owner.gbp_account = next((a for a in owner.bank_accounts.all() if a.currency == OwnerBankAccount.Currency.GBP), None)
+        return owners
 
     def _management_companies_with_property_count(self):
         # A company's booking_properties/cleaning_properties can genuinely overlap (the common
@@ -1639,8 +1651,6 @@ class StaffSettingsView(View):
             nif_number=post.get('nif_number', '').strip() or None,
             currency=currency,
             preferred_language=preferred_language,
-            bank_iban=post.get('bank_iban', '').strip().upper() or None,
-            bank_account_holder_name=post.get('bank_account_holder_name', '').strip() or None,
             **{field: post.get(field) == 'on' for field, _label in OWNER_BOOLEAN_FIELDS},
         )
         try:
@@ -1662,8 +1672,6 @@ class StaffSettingsView(View):
         owner.secondary_email = post.get('secondary_email', '').strip() or None
         owner.phone = post.get('phone', '').strip() or None
         owner.nif_number = post.get('nif_number', '').strip() or None
-        owner.bank_iban = post.get('bank_iban', '').strip().upper() or None
-        owner.bank_account_holder_name = post.get('bank_account_holder_name', '').strip() or None
         currency = post.get('currency')
         owner.currency = currency if currency in Owner.Currency.values else Owner.Currency.EUR
         preferred_language = post.get('preferred_language')
@@ -1672,6 +1680,17 @@ class StaffSettingsView(View):
             setattr(owner, field, post.get(field) == 'on')
         try:
             owner.full_clean()
+            OwnerBankAccount.upsert(
+                owner, OwnerBankAccount.Currency.EUR,
+                holder_name=post.get('eur_account_holder_name', '').strip(),
+                iban=post.get('bank_iban', '').strip().upper() or None,
+            )
+            OwnerBankAccount.upsert(
+                owner, OwnerBankAccount.Currency.GBP,
+                holder_name=post.get('gbp_account_holder_name', '').strip(),
+                sort_code=post.get('bank_sort_code', '').strip() or None,
+                account_number=post.get('bank_account_number', '').strip() or None,
+            )
         except ValidationError as error:
             _flash_validation_error(request, error)
             return
@@ -4154,7 +4173,7 @@ class StaffFinancePayoutsView(View):
                 'booking': booking,
                 'payout': payout,
                 'record': paid_records.get(booking.pk),
-                'has_bank_details': bool(booking.property.owner and booking.property.owner.has_bank_details),
+                'has_eur_bank_account': bool(booking.property.owner and booking.property.owner.has_eur_bank_account),
             })
         for rows in rows_by_date.values():
             rows.sort(key=lambda row: row['booking'].property.title)
@@ -4186,7 +4205,7 @@ class StaffFinancePayoutMarkPaidView(View):
     issued already paid rather than a live request for money.
 
     "One button, auto-fallback" (2026-09-12, per Thomas): an owner with bank details on file
-    (Owner.has_bank_details) gets a real Revolut transfer via
+    (Owner.has_eur_bank_account) gets a real Revolut transfer via
     finance/payouts_revolut.py::send_owner_payout_via_revolut - the PayoutRecord is only created
     once Revolut actually accepts the transfer, so a rejection leaves no record behind and this
     view (and its "already marked" guard above) stays safely re-postable. An owner with no bank
@@ -4212,7 +4231,7 @@ class StaffFinancePayoutMarkPaidView(View):
             redirect_url = f"{redirect_url}?date={redirect_date}"
 
         owner = booking.property.owner
-        if owner is not None and owner.has_bank_details:
+        if owner is not None and owner.has_eur_bank_account:
             result = send_owner_payout_via_revolut(booking, payout, paid_by=request.user)
             if not result.ok:
                 messages.error(request, f"Payment could not be sent: {result.error_message}")

@@ -924,9 +924,15 @@
                                     <td colspan="{{ owner_boolean_fields|length|add:10 }}">
                                         <div class="staff-manager-contacts-grid">
                                             <div class="staff-manager-contact-group">
-                                                <h4 class="staff-manager-contact-title">Bank details (Revolut payouts)</h4>
-                                                <label class="staff-field">IBAN<input type="text" name="bank_iban" form="owner-form-{{ owner.pk }}" value="{{ owner.bank_iban|default:'' }}" class="staff-input"></label>
-                                                <label class="staff-field">Account holder name<input type="text" name="bank_account_holder_name" form="owner-form-{{ owner.pk }}" value="{{ owner.bank_account_holder_name|default:'' }}" class="staff-input"></label>
+                                                <h4 class="staff-manager-contact-title">Bank details - Euros (Revolut payouts)</h4>
+                                                <label class="staff-field">IBAN<input type="text" name="bank_iban" form="owner-form-{{ owner.pk }}" value="{{ owner.eur_account.iban|default:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Account holder name<input type="text" name="eur_account_holder_name" form="owner-form-{{ owner.pk }}" value="{{ owner.eur_account.account_holder_name|default:'' }}" class="staff-input"></label>
+                                            </div>
+                                            <div class="staff-manager-contact-group">
+                                                <h4 class="staff-manager-contact-title">Bank details - Pounds</h4>
+                                                <label class="staff-field">Sort code<input type="text" name="bank_sort_code" form="owner-form-{{ owner.pk }}" value="{{ owner.gbp_account.sort_code|default:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Account number<input type="text" name="bank_account_number" form="owner-form-{{ owner.pk }}" value="{{ owner.gbp_account.account_number|default:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Account holder name<input type="text" name="gbp_account_holder_name" form="owner-form-{{ owner.pk }}" value="{{ owner.gbp_account.account_holder_name|default:'' }}" class="staff-input"></label>
                                             </div>
                                         </div>
                                     </td>

@@ -22,7 +22,7 @@ from finance.services import (
     recompute_unsent_memo_fees_for_settings_change, sweep_unattached_ad_hoc_services,
 )
 from guests.models import Guest
-from properties.models import ManagementCompany, Owner, Property, PropertySpec
+from properties.models import ManagementCompany, Owner, OwnerBankAccount, Property, PropertySpec
 from staff.models import Checkin, CleaningTask
 
 
@@ -313,11 +313,11 @@ class PayoutRecordTests(FinanceTestCase):
 
 class PayoutMarkPaidRevolutBranchTests(FinanceTestCase):
     """"One button, auto-fallback" (2026-09-12) - StaffFinancePayoutMarkPaidView branches on
-    Owner.has_bank_details between a live finance/payouts_revolut.py::send_owner_payout_via_revolut
-    call and the original plain manual PayoutRecord.objects.create(). Mocks
-    staff.views.send_owner_payout_via_revolut (the name imported into that module's namespace,
-    not the function's own module) - see finance/payouts_revolut.py's own tests for coverage of
-    what that function does internally."""
+    Owner.has_eur_bank_account between a live finance/payouts_revolut.py::
+    send_owner_payout_via_revolut call and the original plain manual PayoutRecord.objects.create().
+    Mocks staff.views.send_owner_payout_via_revolut (the name imported into that module's
+    namespace, not the function's own module) - see finance/payouts_revolut.py's own tests for
+    coverage of what that function does internally."""
 
     def setUp(self):
         super().setUp()
@@ -338,9 +338,10 @@ class PayoutMarkPaidRevolutBranchTests(FinanceTestCase):
         self.assertIsNone(record.provider)
 
     def test_bank_details_on_file_calls_revolut_and_saves_returned_record(self):
-        self.owner.bank_iban = 'PT50000201231234567890154'
-        self.owner.bank_account_holder_name = 'Finance Owner'
-        self.owner.save()
+        OwnerBankAccount.objects.create(
+            owner=self.owner, currency=OwnerBankAccount.Currency.EUR,
+            iban='PT50000201231234567890154', account_holder_name='Finance Owner',
+        )
 
         def fake_send(booking, payout, paid_by):
             record = PayoutRecord.objects.create(
@@ -361,9 +362,10 @@ class PayoutMarkPaidRevolutBranchTests(FinanceTestCase):
         self.assertTrue(any('Payment sent.' in str(m) for m in messages))
 
     def test_revolut_rejection_creates_no_record_and_stays_retryable(self):
-        self.owner.bank_iban = 'PT50000201231234567890154'
-        self.owner.bank_account_holder_name = 'Finance Owner'
-        self.owner.save()
+        OwnerBankAccount.objects.create(
+            owner=self.owner, currency=OwnerBankAccount.Currency.EUR,
+            iban='PT50000201231234567890154', account_holder_name='Finance Owner',
+        )
         with patch('staff.views.send_owner_payout_via_revolut') as mock_send:
             mock_send.return_value = PayoutResult(ok=False, record=None, error_message="Revolut rejected the transfer.")
             response = self.client.post(self.url)
@@ -2032,23 +2034,28 @@ class SendOwnerPayoutViaRevolutTests(FinanceTestCase):
         self.owner.save()
         self.booking = self._make_booking(1, 5)
         self.payout = compute_regular_owner_payout(self.booking)
-        self.owner.bank_iban = 'PT50000201231234567890154'
-        self.owner.bank_account_holder_name = 'Finance Owner'
-        self.owner.save()
+        self.eur_account = OwnerBankAccount.objects.create(
+            owner=self.owner, currency=OwnerBankAccount.Currency.EUR,
+            iban='PT50000201231234567890154', account_holder_name='Finance Owner',
+        )
 
     @patch('libraries.banking.revolut_business.get_revolut_business_connection')
     def test_no_bank_details_rejected_without_connecting(self, mock_get_connection):
-        self.owner.bank_iban = None
-        self.owner.save()
+        self.eur_account.delete()
         result = send_owner_payout_via_revolut(self.booking, self.payout, paid_by=None)
         self.assertFalse(result.ok)
         self.assertIsNone(result.record)
         mock_get_connection.assert_not_called()
 
     @patch('libraries.banking.revolut_business.get_revolut_business_connection')
-    def test_non_eur_owner_rejected_without_connecting(self, mock_get_connection):
+    def test_gbp_only_owner_with_no_eur_account_is_rejected_without_connecting(self, mock_get_connection):
+        self.eur_account.delete()
         self.owner.currency = Owner.Currency.GBP
         self.owner.save()
+        OwnerBankAccount.objects.create(
+            owner=self.owner, currency=OwnerBankAccount.Currency.GBP,
+            sort_code='12-34-56', account_number='12345678', account_holder_name='Finance Owner',
+        )
         result = send_owner_payout_via_revolut(self.booking, self.payout, paid_by=None)
         self.assertFalse(result.ok)
         self.assertIn('EUR', result.error_message)
@@ -2102,8 +2109,8 @@ class SendOwnerPayoutViaRevolutTests(FinanceTestCase):
 
     @patch('libraries.banking.revolut_business.get_revolut_business_connection')
     def test_cached_counterparty_id_is_reused_without_creating_a_new_one(self, mock_get_connection):
-        self.owner.revolut_counterparty_id = 'existing-cp-999'
-        self.owner.save()
+        self.eur_account.revolut_counterparty_id = 'existing-cp-999'
+        self.eur_account.save()
         mock_connection = MagicMock()
         mock_connection.transfer.id = 'transfer-789'
         mock_connection.transfer.state = 'pending'
@@ -2112,11 +2119,11 @@ class SendOwnerPayoutViaRevolutTests(FinanceTestCase):
         result = send_owner_payout_via_revolut(self.booking, self.payout, paid_by=None)
         self.assertTrue(result.ok)
         mock_connection.counterparty.create.assert_not_called()
-        self.owner.refresh_from_db()
-        self.assertEqual(self.owner.revolut_counterparty_id, 'existing-cp-999')
+        self.eur_account.refresh_from_db()
+        self.assertEqual(self.eur_account.revolut_counterparty_id, 'existing-cp-999')
 
     @patch('libraries.banking.revolut_business.get_revolut_business_connection')
-    def test_new_counterparty_id_is_cached_on_owner(self, mock_get_connection):
+    def test_new_counterparty_id_is_cached_on_the_bank_account(self, mock_get_connection):
         mock_connection = MagicMock()
         mock_connection.counterparty.id = 'brand-new-cp'
         mock_connection.transfer.id = 'transfer-999'
@@ -2125,5 +2132,5 @@ class SendOwnerPayoutViaRevolutTests(FinanceTestCase):
 
         send_owner_payout_via_revolut(self.booking, self.payout, paid_by=None)
         mock_connection.counterparty.create.assert_called_once()
-        self.owner.refresh_from_db()
-        self.assertEqual(self.owner.revolut_counterparty_id, 'brand-new-cp')
+        self.eur_account.refresh_from_db()
+        self.assertEqual(self.eur_account.revolut_counterparty_id, 'brand-new-cp')

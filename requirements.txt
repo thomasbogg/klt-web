@@ -9,6 +9,7 @@ deepl
 google-api-python-client
 google_auth_oauthlib
 openpyxl
+PyJWT[crypto]
 regex
 requests
 selenium

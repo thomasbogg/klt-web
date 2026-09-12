@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Contact Details | Owner Suite | Algarve Beach Apartments</title>
+    <title>Update Details | Owner Suite | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
@@ -22,7 +22,7 @@
         </aside>
 
         <div class="manage-hub-content">
-            <h1>Contact Details</h1>
+            <h1>Update Details</h1>
             <p class="owner-welcome">Keep your phone number, email and NIF number up to date - we use these for correspondence, payouts and invoicing.</p>
 
             {% if messages %}
@@ -36,11 +36,12 @@
             <div class="owner-filter-panel">
                 <form method="post" class="owner-filter-form owner-contact-details-form">
                     {% csrf_token %}
-                    <label>Email
+                    <h2 class="owner-panel-title">Contact Details</h2>
+                    <label class="owner-field-grow">Email
                         <input type="email" name="email" class="owner-input-wide" value="{{ owner.email|default:'' }}" required>
                     </label>
                     <div class="staff-field-row">
-                        <label>Country code
+                        <label class="owner-field-fixed">Country code
                             <select name="phone_country_code" class="owner-input-tiny">
                                 <option value="">-</option>
                                 {% for code, label in phone_country_choices %}
@@ -48,13 +49,42 @@
                                 {% endfor %}
                             </select>
                         </label>
-                        <label>Phone
+                        <label class="owner-field-grow">Phone
                             <input type="tel" name="phone" class="owner-input-narrow" value="{{ phone_local|default:'' }}">
                         </label>
                     </div>
-                    <label>NIF number
+
+                    <h2 class="owner-panel-title owner-panel-title-spaced">NIF Number</h2>
+                    <label class="owner-field-grow">NIF number
                         <input type="text" name="nif_number" class="owner-input-narrow" value="{{ owner.nif_number|default:'' }}">
                     </label>
+
+                    {% if owner.currency == 'EUR' or owner.currency == 'BOTH' %}
+                    <h2 class="owner-panel-title owner-panel-title-spaced">Bank Details (Euros)</h2>
+                    <p class="owner-welcome">Add your Euro bank account to receive payouts directly by bank transfer - both fields below are needed before we can send a payment this way.</p>
+                    <label class="owner-field-grow">IBAN
+                        <input type="text" name="bank_iban" class="owner-input-wide" value="{{ eur_account.iban|default:'' }}">
+                    </label>
+                    <label class="owner-field-grow">Account holder name
+                        <input type="text" name="eur_account_holder_name" class="owner-input-wide" value="{{ eur_account.account_holder_name|default:'' }}">
+                    </label>
+                    {% endif %}
+
+                    {% if owner.currency == 'GBP' or owner.currency == 'BOTH' %}
+                    <h2 class="owner-panel-title owner-panel-title-spaced">Bank Details (Pounds)</h2>
+                    <p class="owner-welcome">Add your UK bank account to receive payouts directly by bank transfer - all three fields below are needed before we can send a payment this way.</p>
+                    <label class="owner-field-grow">Sort code
+                        <input type="text" name="bank_sort_code" class="owner-input-narrow" value="{{ gbp_account.sort_code|default:'' }}">
+                    </label>
+                    <label class="owner-field-grow">Account number
+                        <input type="text" name="bank_account_number" class="owner-input-narrow" value="{{ gbp_account.account_number|default:'' }}">
+                    </label>
+                    <label class="owner-field-grow">Account holder name
+                        <input type="text" name="gbp_account_holder_name" class="owner-input-wide" value="{{ gbp_account.account_holder_name|default:'' }}">
+                    </label>
+                    {% endif %}
+
+                    <div class="owner-filter-form-break"></div>
                     <button type="submit" class="owner-button">Save changes</button>
                 </form>
             </div>

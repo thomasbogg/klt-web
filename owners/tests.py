@@ -17,7 +17,7 @@ from bookings.utils import create_owner_booking, guest_for_owner
 from finance.models import Memo, PayoutRecord
 from guests.models import Guest
 from libraries.phone_country_codes import join_phone, split_phone
-from properties.models import Location, ManagementCompany, Owner, Platform, Property, PropertySpec, iCalLink
+from properties.models import Location, ManagementCompany, Owner, OwnerBankAccount, Platform, Property, PropertySpec, iCalLink
 from staff.models import CleaningTask, LateCheckoutGrant
 from staff.utils import grant_late_checkout
 
@@ -289,7 +289,31 @@ class OwnerContactDetailsTests(TestCase):
         self.assertEqual(self.owner.email, 'updated-owner@example.com')
         self.assertEqual(self.owner.phone, '+44 7911123456')
         self.assertEqual(self.owner.nif_number, '999999999')
-        self.assertContains(response, 'Contact details updated.')
+        self.assertContains(response, 'Details updated.')
+
+    def test_post_updates_bank_details(self):
+        response = self.client.post(reverse('owners:contact_details'), {
+            'email': self.owner.email, 'phone_country_code': '+351', 'phone': '900000001',
+            'nif_number': self.owner.nif_number,
+            'bank_iban': 'pt50000201231234567890154', 'eur_account_holder_name': 'Contact Details Owner',
+        }, follow=True)
+        self.assertEqual(response.status_code, 200)
+        account = self.owner.bank_accounts.get(currency=OwnerBankAccount.Currency.EUR)
+        self.assertEqual(account.iban, 'PT50000201231234567890154')
+        self.assertEqual(account.account_holder_name, 'Contact Details Owner')
+        self.assertContains(response, 'Details updated.')
+
+    def test_post_allows_clearing_bank_details(self):
+        OwnerBankAccount.objects.create(
+            owner=self.owner, currency=OwnerBankAccount.Currency.EUR,
+            iban='PT50000201231234567890154', account_holder_name='Contact Details Owner',
+        )
+        response = self.client.post(reverse('owners:contact_details'), {
+            'email': self.owner.email, 'phone_country_code': '+351', 'phone': '900000001',
+            'nif_number': self.owner.nif_number, 'bank_iban': '', 'eur_account_holder_name': '',
+        }, follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(self.owner.bank_accounts.filter(currency=OwnerBankAccount.Currency.EUR).exists())
 
     def test_post_allows_clearing_phone_and_nif(self):
         """phone/nif_number are blank=True, null=True - clearing the input should null them out,

@@ -258,6 +258,72 @@
     margin-top: 32px;
 }
 
+/* .owner-filter-form is display:flex/flex-wrap:wrap (fields flow left-to-right, wrapping only
+   when a line runs out of room) - a bare heading/paragraph dropped into it has no special layout
+   role by default, so whether it actually starts a new line depended on its own text happening to
+   be wide enough to force a wrap (fragile, viewport-dependent). flex: 1 0 100% makes every section
+   heading/intro inside one of these forms deliberately span the full line, reliably separating
+   e.g. Contact Details' Bank Details section from the fields above it (2026-09-12, per Thomas -
+   Update Details page). */
+.owner-filter-form .owner-panel-title,
+.owner-filter-form .owner-welcome {
+    flex: 1 0 100%;
+    /* Both already carry their own margin-bottom (14px/24px respectively) for use elsewhere on
+       this page (e.g. the page's own top intro paragraph) - inside this flex-gap'd form that adds
+       ON TOP of the container's own 20px gap rather than collapsing with it (margins never
+       collapse against flex gap), doubling the visual space below a header/blurb versus every
+       other gap on the page (2026-09-12, per Thomas: "close the gaps between the headers and
+       their respective blurbs/fields"). Zeroed here so the container's gap is the only spacing -
+       .owner-panel-title-spaced's own margin-TOP (separating one section from the last) is a
+       different property and deliberately left alone. */
+    margin-bottom: 0;
+}
+
+/* A blurb directly under its own section heading (e.g. Bank Details' intro paragraph) should read
+   as tied to that heading, closer than the container's own 20px gap between unrelated
+   rows/sections (2026-09-12, per Thomas: "move the blurby parts of bank details closer to their
+   headers") - negative margin-top pulls it up against the heading without touching the 20px gap
+   used everywhere else on this page. */
+.owner-filter-form .owner-panel-title + .owner-welcome {
+    margin-top: -14px;
+}
+
+/* Update Details' Email/Phone/NIF/IBAN/Account holder name fields originally sized to their own
+   fixed .owner-input-wide/-narrow widths (100-260px) and left the remaining row empty - fine for
+   the original 3-field single-row layout they were sized for, but not once this page grew to
+   include Bank Details' two full-width-feeling fields alongside them (2026-09-12, per Thomas:
+   "ensure the three contact fields span the width of the panel" / "IBAN and Account holder name
+   span the width of the panel"). flex-grow lets each labeled field claim an equal share of
+   whatever width the row actually has, same mechanism as .owner-ical-url-label above just applied
+   to more than one field per row - .owner-input-wide/-narrow's own widths become a min-width
+   floor rather than a hard cap. */
+.owner-field-grow {
+    flex: 1 1 0;
+    min-width: 140px;
+}
+
+.owner-field-grow input {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Country code is the one field on this page that should NOT grow - a 4-character dropdown
+   filling a third of the row would look absurd - so it opts out via its own class rather than
+   inheriting .owner-field-grow. */
+.owner-field-fixed {
+    flex: 0 0 auto;
+}
+
+/* Invisible line-break for .owner-filter-form's flex-wrap layout, for splitting field groups
+   that have no heading of their own to force the wrap (e.g. NIF number sitting apart from
+   Email/Phone above it, and the shared Save button sitting apart from every field group above
+   it) - the container's own `gap` still applies across the forced break, so no extra spacing
+   needed here. */
+.owner-filter-form-break {
+    flex-basis: 100%;
+    height: 0;
+}
+
 .owner-messages {
     margin-bottom: 20px;
 }

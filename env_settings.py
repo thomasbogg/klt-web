@@ -216,10 +216,12 @@ REVOLUT_BASE_PAYMENT_LINK = 'https://checkout.revolut.com/payment-link/'
 
 # Revolut Business API (libraries/banking/revolut_business.py) - real owner payouts, entirely
 # separate product/credentials from the merchant checkout client above. REVOLUT_BUSINESS_API_SIGNING_KEY
-# isn't consumed by revolut_business.py itself - it's for whatever generates the JWT client
-# assertion, which currently has to be produced and rotated outside this app.
+# is the private key half of the certificate registered in Revolut's dashboard - used to freshly
+# sign a client-assertion JWT on every token request (revolut_business.py::
+# generate_client_assertion), NOT a one-time value. CLIENT_ID is the "ClientID" shown against that
+# same certificate (the JWT's `sub` claim).
 REVOLUT_BUSINESS_API_REFRESH_TOKEN = os.getenv('REVOLUT_BUSINESS_API_REFRESH_TOKEN')
-REVOLUT_BUSINESS_API_CLIENT_ASSERTION = os.getenv('REVOLUT_BUSINESS_API_CLIENT_ASSERTION')
+REVOLUT_BUSINESS_API_CLIENT_ID = os.getenv('REVOLUT_BUSINESS_API_CLIENT_ID')
 REVOLUT_BUSINESS_API_SIGNING_KEY = os.getenv('REVOLUT_BUSINESS_API_SIGNING_KEY')
 REVOLUT_BUSINESS_API_VERSION = os.getenv('REVOLUT_BUSINESS_API_VERSION')
 
@@ -237,9 +239,9 @@ REVOLUT_BUSINESS_TRANSFER_WEBHOOK_SIGNING_KEY = os.getenv('REVOLUT_BUSINESS_TRAN
 
 # Points libraries/banking/revolut_business.py at Revolut's Business API sandbox instead of
 # production, independent of TEST above - same convention as SAGE_SANDBOX below. IMPORTANT: the
-# moment real REVOLUT_BUSINESS_API_REFRESH_TOKEN/_CLIENT_ASSERTION are set, calls go to PRODUCTION
-# by default (see revolut_business.py's own BASE_URL selection) - this must be explicitly True
-# until the sandbox flow has been exercised end-to-end.
+# moment real REVOLUT_BUSINESS_API_REFRESH_TOKEN/_CLIENT_ID/_SIGNING_KEY are set, calls go to
+# PRODUCTION by default (see revolut_business.py's own BASE_URL selection) - this must be
+# explicitly True until the sandbox flow has been exercised end-to-end.
 REVOLUT_BUSINESS_SANDBOX = os.getenv('REVOLUT_BUSINESS_SANDBOX', 'False').lower() == 'true'
 
 # Static Wise business pay page - guest enters the amount and reference themselves, nothing is

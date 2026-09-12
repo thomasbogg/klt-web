@@ -23,7 +23,7 @@ from bookings.views import BookingFormMixin
 from finance.models import Memo, PayoutRecord
 from owners.permissions import owner_login_required
 from libraries.phone_country_codes import join_phone, phone_country_choices, split_phone
-from properties.models import Property, iCalLink
+from properties.models import Owner, OwnerBankAccount, Property, iCalLink
 from staff.models import TaskHistoryEntry
 from staff.reports import OWNER_SAFE_REPORT_COLUMNS, booking_report_rows, report_totals
 from staff.utils import CLOSED_STATUSES, last_day_of_month, parsed_date
@@ -99,10 +99,11 @@ class OwnerHomeView(View):
 
 @method_decorator(owner_login_required, name='dispatch')
 class OwnerContactDetailsView(View):
-    """Self-service edit for phone/email/NIF number - per Thomas 2026-09-07, so an owner can keep
-    their own contact details current without emailing staff. All three fields already existed on
-    properties.models.Owner (used for staff-side records/statements); this just exposes them for
-    the owner themselves to edit. Reuses staff.views._flash_validation_error for the same
+    """Self-service edit for phone/email/NIF number, plus bank details for live Revolut payouts
+    (OwnerBankAccount, added 2026-09-12) - per Thomas 2026-09-07, so an owner can keep their own
+    details current without emailing staff. Contact fields already existed on
+    properties.models.Owner (used for staff-side records/statements/payouts); this just exposes
+    them for the owner themselves to edit. Reuses staff.views._flash_validation_error for the same
     unique-constraint-message deduplication the staff-side Owner edit form already relies on
     (email/phone/nif_number are all `unique=True` on the model).
 
@@ -112,17 +113,31 @@ class OwnerContactDetailsView(View):
     local number) to prefill the two form controls, join_phone() puts them back together on save.
     See libraries/phone_country_codes.py for why the dropdown is deduplicated by calling code
     rather than listing one option per country - also shared 2026-09-08 by the guest-facing
-    reservation form and Manage Booking Contact Details (bookings.forms)."""
+    reservation form and Manage Booking Contact Details (bookings.forms).
+
+    Which bank account section(s) the template shows is driven by Owner.currency (EUR/GBP/BOTH) -
+    a EUR account needs an IBAN, a GBP one needs a sort code + account number (OwnerBankAccount.
+    clean() enforces this), so the two are entirely separate fields, not one generic pair. Bank
+    details here take effect immediately (Owner.has_eur_bank_account, staff/views.py::
+    StaffFinancePayoutMarkPaidView's "Send payment" button - EUR only, since payouts themselves are
+    still EUR-only regardless of what currency accounts an owner has on file) with no separate
+    staff review step - matches this page's existing self-service trust level for other
+    payout-relevant fields (NIF/email already feed payouts/invoicing unreviewed too)."""
     template_name = 'owners/contact_details.html'
 
-    def get(self, request, *args, **kwargs):
-        owner = request.user.owner_profile
-        phone_code, phone_local = split_phone(owner.phone)
-        return render(request, self.template_name, {
+    def _context(self, owner, post=None):
+        phone_code, phone_local = split_phone(owner.phone) if post is None else (post.get('phone_country_code', ''), post.get('phone', '').strip())
+        return {
             'owner': owner, 'active_section': 'contact_details',
             'phone_country_choices': phone_country_choices(),
             'phone_code': phone_code, 'phone_local': phone_local,
-        })
+            'eur_account': owner.bank_accounts.filter(currency=OwnerBankAccount.Currency.EUR).first(),
+            'gbp_account': owner.bank_accounts.filter(currency=OwnerBankAccount.Currency.GBP).first(),
+        }
+
+    def get(self, request, *args, **kwargs):
+        owner = request.user.owner_profile
+        return render(request, self.template_name, self._context(owner))
 
     def post(self, request, *args, **kwargs):
         owner = request.user.owner_profile
@@ -132,15 +147,24 @@ class OwnerContactDetailsView(View):
         owner.nif_number = post.get('nif_number', '').strip() or None
         try:
             owner.full_clean()
+            if owner.currency in (Owner.Currency.EUR, Owner.Currency.BOTH):
+                OwnerBankAccount.upsert(
+                    owner, OwnerBankAccount.Currency.EUR,
+                    holder_name=post.get('eur_account_holder_name', '').strip(),
+                    iban=post.get('bank_iban', '').strip().upper() or None,
+                )
+            if owner.currency in (Owner.Currency.GBP, Owner.Currency.BOTH):
+                OwnerBankAccount.upsert(
+                    owner, OwnerBankAccount.Currency.GBP,
+                    holder_name=post.get('gbp_account_holder_name', '').strip(),
+                    sort_code=post.get('bank_sort_code', '').strip() or None,
+                    account_number=post.get('bank_account_number', '').strip() or None,
+                )
         except ValidationError as error:
             _flash_validation_error(request, error)
-            return render(request, self.template_name, {
-                'owner': owner, 'active_section': 'contact_details',
-                'phone_country_choices': phone_country_choices(),
-                'phone_code': post.get('phone_country_code', ''), 'phone_local': post.get('phone', '').strip(),
-            })
+            return render(request, self.template_name, self._context(owner, post=post))
         owner.save(update_fields=['email', 'phone', 'nif_number'])
-        messages.success(request, "Contact details updated.")
+        messages.success(request, "Details updated.")
         return redirect('owners:contact_details')
 
 
