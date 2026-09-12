@@ -124,3 +124,29 @@
     margin-top: 16px;
     flex-shrink: 0;
 }
+
+/* Colour: location legend (2026-09-13, per Thomas) - a key for the location_color-driven event
+   tile colours below, built in cleaning_calendar.js::renderCalendarLegend from the
+   #calendar-locations json_script blob. */
+.staff-calendar-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 20px;
+    margin: 0 0 16px;
+    font-size: 0.85rem;
+    color: #444;
+}
+
+.staff-calendar-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.staff-calendar-legend-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}

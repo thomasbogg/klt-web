@@ -15,7 +15,31 @@
         window.alert(message);
     }
 
+    // Same colour rule as the event tiles below (curated Location.color, else the fallback
+    // palette by location id) so the legend swatch always matches what's actually on the
+    // calendar - built from the #calendar-locations json_script blob, not a separate fetch
+    // (2026-09-13, per Thomas).
+    function renderCalendarLegend() {
+        var legendEl = document.getElementById('calendar-legend');
+        var dataEl = document.getElementById('calendar-locations');
+        if (!legendEl || !dataEl) return;
+        var locations = JSON.parse(dataEl.textContent);
+        locations.forEach(function (location) {
+            var color = location.color || LOCATION_COLOR_FALLBACK[location.id % LOCATION_COLOR_FALLBACK.length];
+            var item = document.createElement('span');
+            item.className = 'staff-calendar-legend-item';
+            var swatch = document.createElement('span');
+            swatch.className = 'staff-calendar-legend-swatch';
+            swatch.style.backgroundColor = color;
+            item.appendChild(swatch);
+            item.appendChild(document.createTextNode(location.title));
+            legendEl.appendChild(item);
+        });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
+        renderCalendarLegend();
+
         var el = document.getElementById('cleaning-calendar');
         if (!el) return;
 

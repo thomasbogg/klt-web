@@ -21,6 +21,9 @@
             <h1 class="staff-page-title">Check-ins calendar</h1>
         </header>
 
+        <div id="calendar-legend" class="staff-calendar-legend"></div>
+
+        {{ locations|json_script:"calendar-locations" }}
         <div
             id="checkins-calendar"
             data-events-url="{% url 'staff:checkins_calendar_events' %}"

@@ -3365,6 +3365,7 @@ class StaffCleaningCalendarView(View):
     def get(self, request, *args, **kwargs):
         return render(request, self.template_name, {
             'is_superuser': request.user.is_superuser, 'active_tab': 'scheduler',
+            'locations': _calendar_location_legend(),
         })
 
 
@@ -3602,6 +3603,19 @@ class StaffCleaningTaskDismissView(View):
         return JsonResponse({'ok': True})
 
 
+def _calendar_location_legend():
+    """Locations with at least one property, id/title/color only - fed to checkins_calendar.js/
+    cleaning_calendar.js as JSON so the on-page legend's colours are guaranteed to match the event
+    tiles exactly (both build a swatch the same way: location.color if curated, else
+    LOCATION_COLOR_FALLBACK[location_id % len(...)] - see either JS file's own comment). A location
+    with no properties would never actually appear on either calendar, so it's excluded here too
+    rather than cluttering the legend with an entry nothing ever uses (2026-09-13, per Thomas)."""
+    return list(
+        Location.objects.filter(property__isnull=False).distinct()
+        .order_by('title').values('id', 'title', 'color')
+    )
+
+
 @method_decorator(staff_page_required('can_view_checkins_calendar'), name='dispatch')
 class StaffCheckinCalendarView(View):
     """The check-ins calendar's own page shell - gated by the can_view_checkins_calendar StaffRole
@@ -3610,7 +3624,7 @@ class StaffCheckinCalendarView(View):
     template_name = 'staff/checkins_calendar.html'
 
     def get(self, request, *args, **kwargs):
-        return render(request, self.template_name, {})
+        return render(request, self.template_name, {'locations': _calendar_location_legend()})
 
 
 @method_decorator(staff_page_required('can_view_checkins_calendar'), name='dispatch')

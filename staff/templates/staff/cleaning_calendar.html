@@ -26,6 +26,9 @@
 
         {% include 'staff/_cleaning_nav.html' %}
 
+        <div id="calendar-legend" class="staff-calendar-legend"></div>
+
+        {{ locations|json_script:"calendar-locations" }}
         <div
             id="cleaning-calendar"
             data-events-url="{% url 'staff:cleaning_calendar_events' %}"
