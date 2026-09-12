@@ -73,7 +73,10 @@ class RevolutBusiness(Object):
                 'events': self._get('events'),
             }
             response = requests.post(WEBHOOKS_URL, headers=headers, json=payload)
-            if response.status_code == 200:
+            # POST-create returns 201 (Created), not 200 - the webhook really was created (with a
+            # real id + signing_secret in the body) even though this previously fell into the else
+            # branch and logged it as a failure, confirmed 2026-09-12 against a real sandbox call.
+            if response.status_code == 201:
                 self._values.update(response.json())
             else:
                 logerror(f"Failed to create webhook: {response.status_code} - {response.text}")
@@ -593,11 +596,13 @@ class RevolutBusiness(Object):
         return items
 
 
-# The domain half of the client-assertion JWT's `iss` claim (Revolut's own docs: "your domain
-# without https://") - just an identifying string Revolut checks against the registered
-# application, never a URL Revolut actually visits, so it's fine that this domain currently still
-# serves the old Wordpress site pending this Django project's own launch (2026-09-12, per Thomas).
-CLIENT_ASSERTION_ISSUER = 'algarvebeachapartments.com'
+# The domain half of the client-assertion JWT's `iss` claim - Revolut validates this against the
+# domain of the app's registered OAuth redirect_uri specifically (NOT just "your company's domain"
+# as the docs text alone suggests - confirmed 2026-09-12 after a real "Client assertion invalid"
+# 401, code 9001), so this must track whatever host the OAuth redirect URI for
+# exchange_revolut_business_auth_code's consent step points at - currently klt-hooks (klt-web has
+# no deployed URL of its own, see CLAUDE.md).
+CLIENT_ASSERTION_ISSUER = 'klt-hooks.up.railway.app'
 
 
 def generate_client_assertion() -> str | None:
@@ -643,11 +648,16 @@ def exchange_authorization_code_for_tokens(code: str) -> dict | None:
         'client_assertion': client_assertion,
     }
     try:
-        response = requests.post(url, headers=generate_request_headers(), data=data)
+        # No Authorization header - there's no access token yet, that's what this call is for.
+        # Leaving Content-Type unset lets requests set application/x-www-form-urlencoded for the
+        # dict passed as `data`, matching Revolut's OAuth2 token endpoint (generate_request_headers()
+        # defaults to a bogus 'Authorization: Bearer None' plus application/json, which 401s here).
+        response = requests.post(url, data=data)
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
-        logerror(f"Failed to exchange authorization code for Revolut Business API tokens: {e}")
+        body = e.response.text if e.response is not None else ''
+        logerror(f"Failed to exchange authorization code for Revolut Business API tokens: {e} - {body}")
         return None
 
 
@@ -662,7 +672,6 @@ def get_access_token_for_revolut_business_api(refresh_token: str) -> str | None:
         return None
 
     url = f"{BASE_URL}/1.0/auth/token"
-    headers = generate_request_headers()
     data = {
         'grant_type': 'refresh_token',
         'refresh_token': refresh_token,
@@ -670,11 +679,13 @@ def get_access_token_for_revolut_business_api(refresh_token: str) -> str | None:
         'client_assertion': client_assertion,
     }
     try:
-        response = requests.post(url, headers=headers, data=data)
+        # See exchange_authorization_code_for_tokens above - same reasoning for omitting headers.
+        response = requests.post(url, data=data)
         response.raise_for_status()
         return response.json().get('access_token')
     except requests.RequestException as e:
-        logerror(f"Failed to obtain access token for Revolut Business API: {e}")
+        body = e.response.text if e.response is not None else ''
+        logerror(f"Failed to obtain access token for Revolut Business API: {e} - {body}")
         return None
 
 

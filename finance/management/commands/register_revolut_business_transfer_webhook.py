@@ -3,7 +3,11 @@ from django.core.management.base import BaseCommand
 from libraries.banking.revolut_business import get_revolut_business_connection
 
 WEBHOOK_URL = 'https://klt-hooks.up.railway.app/revolut/business-transfer-callback'
-EVENTS = ['TransferStateChanged']  # confirm exact event name against Revolut Business API docs
+# 'TransferStateChanged' (the guessed name this originally shipped with) doesn't exist - Revolut's
+# webhook API only offers TransactionCreated/TransactionStateChanged/PayoutLinkCreated/
+# PayoutLinkStateChanged (confirmed 2026-09-12 via a real 400 from the create call, code 2101).
+# A payout sent via POST /pay surfaces here as a Transaction, not a "Transfer" event.
+EVENTS = ['TransactionStateChanged']
 
 
 class Command(BaseCommand):

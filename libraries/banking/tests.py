@@ -124,7 +124,7 @@ class ClientAssertionJwtTests(SimpleTestCase):
         token = generate_client_assertion()
         claims = jwt.decode(token, self.public_key, algorithms=['RS256'], audience='https://revolut.com')
 
-        self.assertEqual(claims['iss'], 'algarvebeachapartments.com')
+        self.assertEqual(claims['iss'], 'klt-hooks.up.railway.app')
         self.assertEqual(claims['sub'], 'client-123')
         self.assertEqual(claims['aud'], 'https://revolut.com')
         self.assertIsInstance(claims['exp'], int)
