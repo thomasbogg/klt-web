@@ -561,12 +561,18 @@
     justify-content: flex-start;
 }
 
-/* table-layout: fixed makes the 4 free-text columns (Company/Name/Email/Phone) actually absorb
-   the remaining width evenly instead of collapsing to their empty-input intrinsic size, same
-   reasoning as .staff-owners-table above - on auto layout, an empty width:100% input contributes
-   nothing to the column's preferred-width calculation, so the browser had no signal to expand
-   these columns even though the table itself was genuinely 100% wide. */
-.staff-accountants-table {
+/* table-layout: fixed makes the 4 free-text columns (Company/Name/Email/Phone, or Name/Head name/
+   Head email/Head phone below) actually hold the explicit widths given to them below instead of
+   collapsing to their empty-input intrinsic size, same reasoning as .staff-owners-table above - on
+   auto layout, an empty width:100% input contributes nothing to the column's preferred-width
+   calculation, so the browser had no signal to expand these columns even though the table itself
+   was genuinely 100% wide. Management companies' table was missing this rule entirely (2026-09-12
+   fix) - confirmed via getComputedStyle that it was still rendering as table-layout: auto, so its
+   4 new explicit column widths below were being silently ignored and the table never grew past its
+   container to trigger .staff-table-scroll, unlike Accountants right next to it which already had
+   this rule. */
+.staff-accountants-table,
+.staff-management-companies-table {
     table-layout: fixed;
 }
 
@@ -662,6 +668,62 @@
 .staff-roles-table .staff-price-row-actions {
     justify-content: flex-end;
 }
+
+/* Staff accounts: fixed columns, not just wrapped in .staff-table-scroll (2026-09-12, per Thomas -
+   Role in particular was rendering as little more than a bare dropdown arrow). Auto layout (the
+   previous default, this table had no dedicated class at all) let the two free-text columns
+   (Username/Email) claim whatever width they wanted and squeezed every <select>/checkbox column
+   down toward its own near-zero intrinsic minimum instead - confirmed via screenshot, Role and
+   Language both cut to a sliver. Same fix as Owners/Roles above: explicit widths on every column,
+   generous enough to actually show a role name or "Resend invite" in full, with the resulting
+   total (comfortably wider than the panel on anything but a very wide screen) scrolling inside
+   .staff-table-scroll rather than the columns collapsing to fit. nth-child, not per-field classes
+   - unlike Roles/Owners this table's column set is hardcoded in settings.html, not built from a
+   variable-length {% for field in ... %} loop, so there's no field-count-drift risk to guard
+   against here. */
+.staff-accounts-table {
+    table-layout: fixed;
+}
+
+.staff-accounts-table th:nth-child(1), .staff-accounts-table td:nth-child(1) { width: 140px; }
+/* 260px, not the original 200px (2026-09-12, per Thomas) - long real addresses like
+   thomas@algarvebeachapartments.com were still clipping against the column's own edge even
+   after the table stopped squeezing every column to fit. */
+.staff-accounts-table th:nth-child(2), .staff-accounts-table td:nth-child(2) { width: 260px; }
+
+.staff-accounts-table th:nth-child(3), .staff-accounts-table td:nth-child(3) { width: 70px; }
+.staff-accounts-table th:nth-child(4), .staff-accounts-table td:nth-child(4) { width: 100px; }
+.staff-accounts-table th:nth-child(5), .staff-accounts-table td:nth-child(5) { width: 70px; }
+
+.staff-accounts-table th:nth-child(3), .staff-accounts-table td:nth-child(3),
+.staff-accounts-table th:nth-child(4), .staff-accounts-table td:nth-child(4),
+.staff-accounts-table th:nth-child(5), .staff-accounts-table td:nth-child(5) {
+    text-align: center;
+}
+
+.staff-accounts-table th:nth-child(6), .staff-accounts-table td:nth-child(6) { width: 180px; }
+.staff-accounts-table th:nth-child(7), .staff-accounts-table td:nth-child(7) { width: 130px; }
+.staff-accounts-table th:nth-child(8), .staff-accounts-table td:nth-child(8) { width: 140px; }
+
+.staff-accounts-table th:last-child, .staff-accounts-table td:last-child { width: 100px; }
+
+/* Accountants/Management companies already had table-layout: fixed and explicit widths on their
+   Properties/Actions columns (below), but their remaining free-text columns (Company/Name/Email/
+   Phone, Head name/Head email/Head phone) were left unsized - under fixed layout that doesn't let
+   them claim extra space the way auto layout would, it just splits the panel's own width evenly
+   between them, which is what was actually clipping company/contact names in the screenshots
+   (2026-09-12, per Thomas), not a scrolling gap. Same explicit-width treatment as Owners/Staff
+   accounts above, wide enough that the true total now exceeds the panel and scrolls inside
+   .staff-table-scroll instead. */
+.staff-accountants-table th:nth-child(1), .staff-accountants-table td:nth-child(1) { width: 200px; }
+.staff-accountants-table th:nth-child(2), .staff-accountants-table td:nth-child(2) { width: 160px; }
+.staff-accountants-table th:nth-child(3), .staff-accountants-table td:nth-child(3) { width: 200px; }
+.staff-accountants-table th:nth-child(4), .staff-accountants-table td:nth-child(4) { width: 160px; }
+
+.staff-management-companies-table th:nth-child(1), .staff-management-companies-table td:nth-child(1) { width: 180px; }
+.staff-management-companies-table th:nth-child(2), .staff-management-companies-table td:nth-child(2) { width: 160px; }
+.staff-management-companies-table th:nth-child(3), .staff-management-companies-table td:nth-child(3) { width: 200px; }
+.staff-management-companies-table th:nth-child(4), .staff-management-companies-table td:nth-child(4) { width: 160px; }
 
 /* The "More fields" toggle reveals staff-management-company-details-row (a full-width <tr> holding
    the maintenance/liaison/cleaning/finance contacts) directly below a company's summary row - a
