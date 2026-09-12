@@ -105,6 +105,13 @@
     width: 260px;
 }
 
+/* Street address (Bank Details, EUR/GBP) - a little roomier than .owner-input-wide, since a
+   street line runs longer than an IBAN/holder-name field and is meant to visually lead its row
+   (2026-09-12, per Thomas). */
+.owner-input-wider {
+    width: 340px;
+}
+
 .owner-input-narrow {
     width: 110px;
 }

@@ -69,16 +69,15 @@
                         <input type="text" name="eur_account_holder_name" class="owner-input-wide" value="{{ eur_account.account_holder_name|default:'' }}">
                     </label>
                     <label class="owner-field-grow">Street address
-                        <input type="text" name="eur_address_street" class="owner-input-wide" value="{{ eur_account.address_street|default:'' }}">
+                        <input type="text" name="eur_address_street" class="owner-input-wider" value="{{ eur_account.address_street|default:'' }}">
                     </label>
-                    <div class="staff-field-row">
-                        <label class="owner-field-grow">City
-                            <input type="text" name="eur_address_city" class="owner-input-narrow" value="{{ eur_account.address_city|default:'' }}">
-                        </label>
-                        <label class="owner-field-grow">Postcode
-                            <input type="text" name="eur_address_postcode" class="owner-input-narrow" value="{{ eur_account.address_postcode|default:'' }}">
-                        </label>
-                    </div>
+                    <div class="owner-filter-form-break"></div>
+                    <label class="owner-field-grow">City
+                        <input type="text" name="eur_address_city" class="owner-input-narrow" value="{{ eur_account.address_city|default:'' }}">
+                    </label>
+                    <label class="owner-field-grow">Postcode
+                        <input type="text" name="eur_address_postcode" class="owner-input-narrow" value="{{ eur_account.address_postcode|default:'' }}">
+                    </label>
                     {% endif %}
 
                     {% if owner.currency == 'GBP' or owner.currency == 'BOTH' %}
@@ -93,17 +92,16 @@
                     <label class="owner-field-grow">Account holder name
                         <input type="text" name="gbp_account_holder_name" class="owner-input-wide" value="{{ gbp_account.account_holder_name|default:'' }}">
                     </label>
+                    <div class="owner-filter-form-break"></div>
                     <label class="owner-field-grow">Street address
-                        <input type="text" name="gbp_address_street" class="owner-input-wide" value="{{ gbp_account.address_street|default:'' }}">
+                        <input type="text" name="gbp_address_street" class="owner-input-wider" value="{{ gbp_account.address_street|default:'' }}">
                     </label>
-                    <div class="staff-field-row">
-                        <label class="owner-field-grow">City
-                            <input type="text" name="gbp_address_city" class="owner-input-narrow" value="{{ gbp_account.address_city|default:'' }}">
-                        </label>
-                        <label class="owner-field-grow">Postcode
-                            <input type="text" name="gbp_address_postcode" class="owner-input-narrow" value="{{ gbp_account.address_postcode|default:'' }}">
-                        </label>
-                    </div>
+                    <label class="owner-field-grow">City
+                        <input type="text" name="gbp_address_city" class="owner-input-narrow" value="{{ gbp_account.address_city|default:'' }}">
+                    </label>
+                    <label class="owner-field-grow">Postcode
+                        <input type="text" name="gbp_address_postcode" class="owner-input-narrow" value="{{ gbp_account.address_postcode|default:'' }}">
+                    </label>
                     {% endif %}
 
                     <div class="owner-filter-form-break"></div>
