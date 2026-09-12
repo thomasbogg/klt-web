@@ -61,7 +61,12 @@ def send_owner_payout_via_revolut(booking, payout, paid_by) -> PayoutResult:
         transfer.requestId = f"payout-{booking.reference}"
         transfer.account.id = env_settings.REVOLUT_BUSINESS_PAYOUT_ACCOUNT_ID
         transfer.counterparty = counterparty
-        transfer.amount = int(payout['owner_balance'] * 100)
+        # NOT minor units (cents) - confirmed live, 2026-09-12: sending 100 here moved a real
+        # €100.00 in the sandbox, not €1.00. POST /1.0/pay takes whole-currency amounts, unlike the
+        # unrelated Merchant/checkout API (revolut.py) this project also uses, which IS cents-based
+        # - the two products don't share a convention. A previous `int(x * 100)` here would have
+        # sent every real owner payout at 100x the intended amount.
+        transfer.amount = float(payout['owner_balance'])
         transfer.currency = account.currency
         transfer.reference = f"Rental payout {booking.reference}"
         transfer.create()
@@ -111,6 +116,13 @@ def _get_or_create_counterparty(connection, account: OwnerBankAccount):
         counterparty.account.sortCode = account.sort_code
         counterparty.account.accountNo = account.account_number
         counterparty.account.country = 'GB'
+    # Revolut rejects counterparty creation without at least address.country (confirmed live,
+    # 2026-09-12, code 2101 "'address.country' is required") - OwnerBankAccount has no separate
+    # postal-address fields on file, so this reuses the bank account's own country as the best
+    # available answer. Revolut's docs recommend supplying the full address (street/city/postcode)
+    # to reduce payment-disruption risk - worth adding to OwnerBankAccount as a real field if
+    # transfers start bouncing on this in practice, not guessed at here.
+    counterparty.address.country = counterparty.account.country
     counterparty.create()
     if not counterparty.id:
         return None

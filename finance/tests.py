@@ -2134,3 +2134,18 @@ class SendOwnerPayoutViaRevolutTests(FinanceTestCase):
         mock_connection.counterparty.create.assert_called_once()
         self.eur_account.refresh_from_db()
         self.assertEqual(self.eur_account.revolut_counterparty_id, 'brand-new-cp')
+
+    @patch('libraries.banking.revolut_business.get_revolut_business_connection')
+    def test_transfer_amount_is_sent_in_major_units_not_cents(self, mock_get_connection):
+        """Regression test for a real bug caught live against the sandbox 2026-09-12: POST
+        /1.0/pay takes whole-currency amounts (a test transfer of `100` moved a real €100.00, not
+        €1.00) - unlike the unrelated Merchant/checkout API this project also uses, which IS
+        cents-based. `transfer.amount` must equal the payout amount itself, never `* 100`."""
+        mock_connection = MagicMock()
+        mock_connection.counterparty.id = 'cp-123'
+        mock_connection.transfer.id = 'transfer-amount-check'
+        mock_connection.transfer.state = 'pending'
+        mock_get_connection.return_value = mock_connection
+
+        send_owner_payout_via_revolut(self.booking, self.payout, paid_by=None)
+        self.assertEqual(mock_connection.transfer.amount, float(self.payout['owner_balance']))

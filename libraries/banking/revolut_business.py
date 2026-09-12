@@ -31,7 +31,9 @@ PROD_BASE_URL = "https://b2b.revolut.com/api"
 SANDBOX_BASE_URL = "https://sandbox-b2b.revolut.com/api"
 BASE_URL = SANDBOX_BASE_URL if (env_settings.TEST or env_settings.REVOLUT_BUSINESS_SANDBOX) else PROD_BASE_URL
 ACCOUNTS_URL = f"{BASE_URL}/1.0/accounts"
-COUNTERPARTIES_URL = f"{BASE_URL}/1.0/counterparties"
+# Singular in Revolut's own API despite ACCOUNTS_URL/WEBHOOKS_URL both being plural - confirmed via
+# a real 404 (code 3006, "endpoint does not exist") against the plural form, 2026-09-12.
+COUNTERPARTIES_URL = f"{BASE_URL}/1.0/counterparty"
 TRANSFERS_URL = f"{BASE_URL}/1.0/pay"
 WEBHOOKS_URL = f"{BASE_URL}/2.0/webhooks"
 
