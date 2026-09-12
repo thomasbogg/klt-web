@@ -1,4 +1,5 @@
 {% load static %}
+{% load bookings_extras %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -91,8 +92,8 @@
                     {% if rules %}
                     <li><strong>Pool hours:</strong> {{ rules.pool_hours_start|time:"H:i" }} – {{ rules.pool_hours_end|time:"H:i" }}</li>
                     <li><strong>Quiet hours:</strong> {{ rules.quiet_hours_start|time:"H:i" }} – {{ rules.quiet_hours_end|time:"H:i" }}</li>
-                    {% if rules.condominium_rules %}<li>{{ rules.condominium_rules }}</li>{% endif %}
-                    {% if rules.pool_rules %}<li>{{ rules.pool_rules }}</li>{% endif %}
+                    {% for line in rules.pool_rules|split_lines %}<li>{{ line|linkify }}</li>{% endfor %}
+                    {% for line in rules.condominium_rules|split_lines %}<li>{{ line|linkify }}</li>{% endfor %}
                     {% endif %}
                 </ul>
             </div>
