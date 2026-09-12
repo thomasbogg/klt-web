@@ -49,12 +49,17 @@
                     <p class="staff-finance-total">Owner balance &euro;{{ row.payout.owner_balance }}</p>
 
                     {% if row.record %}
-                    <p class="staff-finance-sent-note">Paid {{ row.record.paid_at|date:'j M Y H:i' }}{% if row.record.paid_by %} by {{ row.record.paid_by }}{% endif %} (&euro;{{ row.record.amount }})</p>
+                    <p class="staff-finance-sent-note">
+                        {% if row.record.provider == 'revolut' %}
+                            {% if row.record.status == 'failed' %}Payment failed{% elif row.record.status == 'in_progress' %}Sent{% else %}Paid{% endif %}
+                        {% else %}Paid{% endif %}
+                        {{ row.record.paid_at|date:'j M Y H:i' }}{% if row.record.paid_by %} by {{ row.record.paid_by }}{% endif %} (&euro;{{ row.record.amount }})
+                    </p>
                     {% else %}
                     <form method="post" action="{% url 'staff:finance_payout_mark_paid' reference=row.booking.reference %}">
                         {% csrf_token %}
                         <input type="hidden" name="date" value="{{ target_date|date:'Y-m-d' }}">
-                        <button type="submit" class="staff-button staff-button-small">Mark as paid</button>
+                        <button type="submit" class="staff-button staff-button-small">{% if row.has_bank_details %}Send payment{% else %}Mark as paid{% endif %}</button>
                     </form>
                     {% endif %}
                 </div>

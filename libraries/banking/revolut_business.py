@@ -4,11 +4,13 @@ module, separate from revolut.py's Revolut/Payment (the merchant checkout-link c
 for guest/owner collections) - different Revolut product, different base host, different OAuth2
 (refresh-token + JWT client-assertion) auth entirely.
 
-DORMANT ON PURPOSE: nothing in klt-web calls into this module yet. The Revolut Business account
-itself still needs upgrading before real credentials exist - env_settings.REVOLUT_BUSINESS_API_*
-are unset, so get_access_token_for_revolut_business_api() will fail closed (returns None) rather
-than silently doing anything. Do not wire a call site into any live flow (e.g. Mark-as-paid) until
-that upgrade has happened and this has been exercised against the sandbox first.
+Real call site: finance/payouts_revolut.py::send_owner_payout_via_revolut(), wired into the staff
+Payouts tab's "Send payment" button (2026-09-12) - only reached for an owner with bank details on
+file, and only actually connects once env_settings.REVOLUT_BUSINESS_API_* are configured (fails
+closed to None otherwise, see get_access_token_for_revolut_business_api()). Keep
+REVOLUT_BUSINESS_SANDBOX=True until the sandbox flow has been exercised end-to-end - see that
+setting's own comment in env_settings.py for why the default the moment credentials exist is
+PRODUCTION, not sandbox.
 
 Known gap carried over from the source, not fixed here since fixing it is real feature work, not
 plumbing: Account has no create/get/delete of its own (unlike Webhook/Counterparty/Transfer), so
@@ -31,18 +33,30 @@ TRANSFERS_URL = f"{BASE_URL}/1.0/pay"
 WEBHOOKS_URL = f"{BASE_URL}/2.0/webhooks"
 
 
+def _headers(access_token: str | None) -> dict:
+    """generate_request_headers() (libraries/utils.py) is shared with revolut.py's unrelated
+    Merchant API client, so the Business API's own Revolut-Api-Version header - required by
+    Revolut, previously defined in env_settings but never actually sent (2026-09-12 bugfix) - is
+    added here rather than in the shared helper."""
+    kwargs = {'Revolut-Api-Version': env_settings.REVOLUT_BUSINESS_API_VERSION} if env_settings.REVOLUT_BUSINESS_API_VERSION else {}
+    return generate_request_headers(access_token, **kwargs)
+
+
 class RevolutBusiness(Object):
 
     class Webhook(Object):
         def __init__(self, accessToken: str | None = None, **kwargs):
             super().__init__({'accessToken': accessToken, **kwargs})
 
+        def _get(self, key):
+            return self._values.get(key)
+
         def get(self):
             if not self._get('id'):
                 logerror("Webhook ID is not set. Cannot retrieve webhook details.")
                 return None
 
-            headers = generate_request_headers(self._get('accessToken'))
+            headers = _headers(self._get('accessToken'))
             response = requests.get(f"{WEBHOOKS_URL}/{self._get('id')}", headers=headers)
             if response.status_code == 200:
                 self._values.update(response.json())
@@ -50,7 +64,7 @@ class RevolutBusiness(Object):
                 logerror(f"Failed to retrieve webhook: {response.status_code} - {response.text}")
 
         def create(self):
-            headers = generate_request_headers(self._get('accessToken'))
+            headers = _headers(self._get('accessToken'))
             payload = {
                 'url': self._get('url'),
                 'events': self._get('events'),
@@ -66,7 +80,7 @@ class RevolutBusiness(Object):
                 logerror("Webhook ID is not set. Cannot delete webhook.")
                 return False
 
-            headers = generate_request_headers(self._get('accessToken'))
+            headers = _headers(self._get('accessToken'))
             headers.pop('Content-Type', None)
             headers.pop('Accept', None)
             response = requests.request('DELETE', f"{WEBHOOKS_URL}/{self._get('id')}", headers=headers, data={})
@@ -81,7 +95,7 @@ class RevolutBusiness(Object):
                 logerror("Webhook ID is not set. Cannot update webhook.")
                 return None
 
-            headers = generate_request_headers(self._get('accessToken'))
+            headers = _headers(self._get('accessToken'))
             payload = {
                 'url': self._get('url'),
                 'events': self._get('events'),
@@ -122,8 +136,11 @@ class RevolutBusiness(Object):
         def __init__(self, accessToken: str | None = None, **kwargs):
             super().__init__({'accessToken': accessToken, **kwargs})
 
+        def _get(self, key):
+            return self._values.get(key)
+
         def create(self):
-            headers = generate_request_headers(self._get('accessToken'))
+            headers = _headers(self._get('accessToken'))
             payload = {
                 'request_id': self._get('request_id'),
                 'account_id': self.account.id,
@@ -279,13 +296,18 @@ class RevolutBusiness(Object):
         def __init__(self, accessToken: str | None = None, **kwargs):
             super().__init__({'accessToken': accessToken, **kwargs})
 
+        def _get(self, key):
+            return self._values.get(key)
+
         def create(self):
-            headers = generate_request_headers(self._get('accessToken'))
+            headers = _headers(self._get('accessToken'))
             payload = {
                 'revtag': self._values.get('revtag', None),
                 'name': self._values.get('name', None),
                 'company_name': self._values.get('company', None),
-                'individual_name': self._values.get('company', None),
+                # Was self._values.get('company', None) - a copy-paste of company_name above that
+                # ignored the individualName setter's own dict entirely (2026-09-12 bugfix).
+                'individual_name': self._get('individual_name'),
                 'bank_country': self.account.country,
                 'currency': self.account.currency,
                 'account_no': self.account.accountNo,
@@ -296,7 +318,11 @@ class RevolutBusiness(Object):
                 'clabe': self.account.clabe,
                 'ifsc': self.account.ifsc,
                 'aub': self.account.aub,
-                'address': self._get('address').get(),
+                # self.address (the lazy property), not self._get('address') - a fresh
+                # Counterparty() that never had .address accessed would otherwise KeyError here
+                # even post-bugfix, since 'address' would never have been written into _values at
+                # all (2026-09-12 bugfix).
+                'address': self.address.get(),
             }
             response = requests.post(COUNTERPARTIES_URL, headers=headers, json=payload)
             if response.status_code == 200:
@@ -309,7 +335,7 @@ class RevolutBusiness(Object):
                 logerror("Counterparty ID is not set. Cannot retrieve counterparty details.")
                 return None
 
-            headers = generate_request_headers(self._get('accessToken'))
+            headers = _headers(self._get('accessToken'))
             response = requests.get(f"{COUNTERPARTIES_URL}/{self._get('id')}", headers=headers)
             if response.status_code == 200:
                 self._values.update(response.json())
@@ -321,7 +347,7 @@ class RevolutBusiness(Object):
                 logerror("Counterparty ID is not set. Cannot delete counterparty.")
                 return False
 
-            headers = generate_request_headers(self._get('accessToken'))
+            headers = _headers(self._get('accessToken'))
             headers.pop('Content-Type', None)
             headers.pop('Accept', None)
             response = requests.request(
@@ -552,7 +578,7 @@ class RevolutBusiness(Object):
         yield from self._list(WEBHOOKS_URL, self.Webhook)
 
     def _list(self, url, item_class) -> List:
-        headers = generate_request_headers(self._get('accessToken'))
+        headers = _headers(self._get('accessToken'))
         response = requests.get(url, headers=headers)
         items = []
         if response.status_code == 200:

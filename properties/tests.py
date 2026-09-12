@@ -934,3 +934,32 @@ class AmenityTests(TestCase):
         )
         features = amenities.full_feature_list()
         self.assertIn('Air conditioning', features)
+
+
+class OwnerHasBankDetailsTests(TestCase):
+    """Owner.has_bank_details - drives which button the staff Payouts tab shows
+    (staff/views.py::StaffFinancePayoutMarkPaidView, "one button, auto-fallback")."""
+
+    def _owner(self, **kwargs):
+        defaults = dict(
+            name='Bank Details Owner', email='bank-details-owner@example.com',
+            currency=Owner.Currency.EUR, is_paid_regularly=True, cleans_are_invoiced=False,
+        )
+        defaults.update(kwargs)
+        return Owner.objects.create(**defaults)
+
+    def test_false_when_neither_field_is_set(self):
+        owner = self._owner()
+        self.assertFalse(owner.has_bank_details)
+
+    def test_false_when_only_iban_is_set(self):
+        owner = self._owner(bank_iban='PT50000201231234567890154')
+        self.assertFalse(owner.has_bank_details)
+
+    def test_false_when_only_holder_name_is_set(self):
+        owner = self._owner(bank_account_holder_name='Bank Details Owner')
+        self.assertFalse(owner.has_bank_details)
+
+    def test_true_when_both_fields_are_set(self):
+        owner = self._owner(bank_iban='PT50000201231234567890154', bank_account_holder_name='Bank Details Owner')
+        self.assertTrue(owner.has_bank_details)

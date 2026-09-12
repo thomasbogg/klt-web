@@ -29,6 +29,7 @@ from bookings.models import (
 )
 from bookings.payouts import compute_owner_payout
 from finance.models import AdHocService, DepositReturn, Memo, OwnerInvoice, PayoutRecord, SageSettings
+from finance.payouts_revolut import send_owner_payout_via_revolut
 from finance.services import (
     backfill_memos_for_company, compute_regular_owner_payout, consolidate_informal_cleans_payment,
     deposits_due_in_range, dispatch_commission_receipt_for_payout, dispatch_owner_invoice_to_sage,
@@ -1638,6 +1639,8 @@ class StaffSettingsView(View):
             nif_number=post.get('nif_number', '').strip() or None,
             currency=currency,
             preferred_language=preferred_language,
+            bank_iban=post.get('bank_iban', '').strip().upper() or None,
+            bank_account_holder_name=post.get('bank_account_holder_name', '').strip() or None,
             **{field: post.get(field) == 'on' for field, _label in OWNER_BOOLEAN_FIELDS},
         )
         try:
@@ -1659,6 +1662,8 @@ class StaffSettingsView(View):
         owner.secondary_email = post.get('secondary_email', '').strip() or None
         owner.phone = post.get('phone', '').strip() or None
         owner.nif_number = post.get('nif_number', '').strip() or None
+        owner.bank_iban = post.get('bank_iban', '').strip().upper() or None
+        owner.bank_account_holder_name = post.get('bank_account_holder_name', '').strip() or None
         currency = post.get('currency')
         owner.currency = currency if currency in Owner.Currency.values else Owner.Currency.EUR
         preferred_language = post.get('preferred_language')
@@ -4149,6 +4154,7 @@ class StaffFinancePayoutsView(View):
                 'booking': booking,
                 'payout': payout,
                 'record': paid_records.get(booking.pk),
+                'has_bank_details': bool(booking.property.owner and booking.property.owner.has_bank_details),
             })
         for rows in rows_by_date.values():
             rows.sort(key=lambda row: row['booking'].property.title)
@@ -4177,7 +4183,14 @@ class StaffFinancePayoutMarkPaidView(View):
     calculation (2026-09-10, per Thomas - see compute_regular_owner_payout's own docstring). Also
     dispatches a pre-settled Sage commission invoice/receipt (finance/services.py::
     dispatch_commission_receipt_for_payout) - see that function's own docstring for why it's
-    issued already paid rather than a live request for money."""
+    issued already paid rather than a live request for money.
+
+    "One button, auto-fallback" (2026-09-12, per Thomas): an owner with bank details on file
+    (Owner.has_bank_details) gets a real Revolut transfer via
+    finance/payouts_revolut.py::send_owner_payout_via_revolut - the PayoutRecord is only created
+    once Revolut actually accepts the transfer, so a rejection leaves no record behind and this
+    view (and its "already marked" guard above) stays safely re-postable. An owner with no bank
+    details on file keeps the original plain manual attestation, unchanged."""
 
     def post(self, request, reference, *args, **kwargs):
         booking = Booking.objects.filter(reference=reference).first()
@@ -4193,14 +4206,24 @@ class StaffFinancePayoutMarkPaidView(View):
             messages.error(request, "That booking's payout can't be computed right now.")
             return redirect('staff:finance_payouts')
 
-        record = PayoutRecord.objects.create(booking=booking, amount=payout['owner_balance'], paid_by=request.user)
-        dispatch_commission_receipt_for_payout(record, payout)
-        messages.success(request, "Payout marked as paid.")
-
         redirect_date = request.POST.get('date', '').strip()
         redirect_url = reverse('staff:finance_payouts')
         if redirect_date:
             redirect_url = f"{redirect_url}?date={redirect_date}"
+
+        owner = booking.property.owner
+        if owner is not None and owner.has_bank_details:
+            result = send_owner_payout_via_revolut(booking, payout, paid_by=request.user)
+            if not result.ok:
+                messages.error(request, f"Payment could not be sent: {result.error_message}")
+                return redirect(redirect_url)
+            record = result.record
+        else:
+            record = PayoutRecord.objects.create(booking=booking, amount=payout['owner_balance'], paid_by=request.user)
+
+        dispatch_commission_receipt_for_payout(record, payout)
+        messages.success(request, "Payment sent." if record.provider == 'revolut' else "Payout marked as paid.")
+
         return redirect(redirect_url)
 
 

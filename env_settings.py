@@ -215,18 +215,31 @@ REVOLUT_API_VERSION = os.getenv('REVOLUT_API_VERSION')
 REVOLUT_BASE_PAYMENT_LINK = 'https://checkout.revolut.com/payment-link/'
 
 # Revolut Business API (libraries/banking/revolut_business.py) - real owner payouts, entirely
-# separate product/credentials from the merchant checkout client above. Deliberately unset for now
-# (2026-09-10): the Revolut Business account still needs upgrading, and nothing in klt-web calls
-# into this yet - staged ahead of that upgrade, not live. REVOLUT_BUSINESS_API_SIGNING_KEY isn't
-# consumed by revolut_business.py itself - it's for whatever generates the JWT client assertion,
-# which currently has to be produced and rotated outside this app.
+# separate product/credentials from the merchant checkout client above. REVOLUT_BUSINESS_API_SIGNING_KEY
+# isn't consumed by revolut_business.py itself - it's for whatever generates the JWT client
+# assertion, which currently has to be produced and rotated outside this app.
 REVOLUT_BUSINESS_API_REFRESH_TOKEN = os.getenv('REVOLUT_BUSINESS_API_REFRESH_TOKEN')
 REVOLUT_BUSINESS_API_CLIENT_ASSERTION = os.getenv('REVOLUT_BUSINESS_API_CLIENT_ASSERTION')
 REVOLUT_BUSINESS_API_SIGNING_KEY = os.getenv('REVOLUT_BUSINESS_API_SIGNING_KEY')
 REVOLUT_BUSINESS_API_VERSION = os.getenv('REVOLUT_BUSINESS_API_VERSION')
 
+# The one Revolut Business account payouts are sent FROM (there's exactly one paying-out account
+# for this business, not one per owner) - look up via `next(connection.accounts)` once against
+# whichever environment (sandbox/production) is active, see finance/payouts_revolut.py.
+REVOLUT_BUSINESS_PAYOUT_ACCOUNT_ID = os.getenv('REVOLUT_BUSINESS_PAYOUT_ACCOUNT_ID')
+
+# Signing secret for the Business API's transfer-state-change webhook (received by klt-hooks, not
+# klt-web itself - klt-web isn't deployed anywhere), registered via klt-web's
+# finance/management/commands/register_revolut_business_transfer_webhook.py. Only consulted here at
+# registration time - NOT the same key as REVOLUT_BUSINESS_API_SIGNING_KEY above, which signs the
+# OAuth JWT client assertion, not webhook payloads.
+REVOLUT_BUSINESS_TRANSFER_WEBHOOK_SIGNING_KEY = os.getenv('REVOLUT_BUSINESS_TRANSFER_WEBHOOK_SIGNING_KEY')
+
 # Points libraries/banking/revolut_business.py at Revolut's Business API sandbox instead of
-# production, independent of TEST above - same convention as SAGE_SANDBOX below.
+# production, independent of TEST above - same convention as SAGE_SANDBOX below. IMPORTANT: the
+# moment real REVOLUT_BUSINESS_API_REFRESH_TOKEN/_CLIENT_ASSERTION are set, calls go to PRODUCTION
+# by default (see revolut_business.py's own BASE_URL selection) - this must be explicitly True
+# until the sandbox flow has been exercised end-to-end.
 REVOLUT_BUSINESS_SANDBOX = os.getenv('REVOLUT_BUSINESS_SANDBOX', 'False').lower() == 'true'
 
 # Static Wise business pay page - guest enters the amount and reference themselves, nothing is

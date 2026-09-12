@@ -143,13 +143,28 @@ class PayoutRecord(models.Model):
     that could still be corrected afterwards - what was actually sent must stay fixed for audit/
     Statement purposes even if the live recomputation would now differ. booking is CASCADE,
     matching every other booking-scoped row in this codebase (Deduction, OwnerPayment,
-    CleaningTask, Checkin) - a payout record with no booking to belong to is meaningless."""
+    CleaningTask, Checkin) - a payout record with no booking to belong to is meaningless.
+
+    paid_at (auto_now_add) means "when staff actioned this payout", NOT "when funds were confirmed
+    settled" - unchanged even now that a row can represent a live Revolut transfer
+    (finance/payouts_revolut.py::send_owner_payout_via_revolut) rather than only a manual
+    attestation. Real settlement state lives in status/last_event_type below instead, mirroring how
+    bookings.models.Payment already separates created_at from in_progress_at/paid_at/failed_at.
+    status defaults to 'paid' (not 'pending') so every pre-existing creation call site - the manual
+    fallback branch in StaffFinancePayoutMarkPaidView, and finance/services.py::
+    reset_ledger_before_date's bulk_create - keeps meaning "done" with no changes needed there."""
     booking = models.OneToOneField('bookings.Booking', on_delete=models.CASCADE, related_name='payout_record')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     paid_at = models.DateTimeField(auto_now_add=True)
     paid_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
     )
+    provider = models.CharField(max_length=10, choices=PROVIDER_CHOICES, blank=True, null=True)
+    status = models.CharField(max_length=15, choices=PAYMENT_STATUS_CHOICES, default='paid')
+    revolut_transfer_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    last_event_type = models.CharField(max_length=100, blank=True, null=True)
+    in_progress_at = models.DateTimeField(blank=True, null=True)
+    failed_at = models.DateTimeField(blank=True, null=True)
 
     class Meta:
         db_table = 'finance_payout_records'

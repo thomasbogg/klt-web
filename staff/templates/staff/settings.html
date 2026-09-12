@@ -910,6 +910,7 @@
                                         {% endif %}
                                     </td>
                                     <td class="staff-price-row-actions">
+                                        <button type="button" class="staff-button staff-button-small staff-row-expand-toggle" data-target="owner-bank-details-{{ owner.pk }}">Bank details</button>
                                         <button type="submit" form="owner-form-{{ owner.pk }}" class="staff-button staff-button-small">Save</button>
                                         <form method="post" class="staff-inline-delete staff-confirm-delete" data-property-count="{{ owner.property_count }}" data-entity-label="{{ owner }}" data-role-label="owner">
                                             {% csrf_token %}
@@ -917,6 +918,17 @@
                                             <input type="hidden" name="owner_id" value="{{ owner.pk }}">
                                             <button type="submit" class="staff-button staff-button-small staff-button-danger">Delete</button>
                                         </form>
+                                    </td>
+                                </tr>
+                                <tr class="staff-management-company-details-row" id="owner-bank-details-{{ owner.pk }}" hidden>
+                                    <td colspan="{{ owner_boolean_fields|length|add:10 }}">
+                                        <div class="staff-manager-contacts-grid">
+                                            <div class="staff-manager-contact-group">
+                                                <h4 class="staff-manager-contact-title">Bank details (Revolut payouts)</h4>
+                                                <label class="staff-field">IBAN<input type="text" name="bank_iban" form="owner-form-{{ owner.pk }}" value="{{ owner.bank_iban|default:'' }}" class="staff-input"></label>
+                                                <label class="staff-field">Account holder name<input type="text" name="bank_account_holder_name" form="owner-form-{{ owner.pk }}" value="{{ owner.bank_account_holder_name|default:'' }}" class="staff-input"></label>
+                                            </div>
+                                        </div>
                                     </td>
                                 </tr>
                                 {% empty %}
@@ -966,6 +978,7 @@
                             <input type="hidden" name="action" value="add_owner">
                         </form>
                         <p class="staff-settings-hint">"Invite" sends the owner a link to set their own Owner Suite password using the email address above as their username - no staff member ever chooses or sees it. Use "Resend invite" if their link expired or the email never arrived.</p>
+                        <p class="staff-settings-hint">"Bank details" holds the IBAN/account holder name used for real Revolut payouts on the Payouts tab - an owner with both fields set gets a "Send payment" button there instead of the plain manual "Mark as paid" one.</p>
                     </div>
 
                     <div class="staff-panel">

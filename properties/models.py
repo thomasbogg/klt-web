@@ -361,6 +361,21 @@ class Owner(models.Model):
     # owners may never actually get a Sage invoice (see cleans_are_invoiced/
     # rental_commissions_are_invoiced above).
     sage_contact_id = models.CharField(max_length=50, blank=True, null=True)
+    # Revolut Business API counterparty id for this owner's bank account, set lazily on first live
+    # payout attempt (finance/payouts_revolut.py::send_owner_payout_via_revolut) - same "lazily set
+    # on first dispatch" precedent as sage_contact_id above, not eagerly created for every owner.
+    revolut_counterparty_id = models.CharField(max_length=50, blank=True, null=True)
+    # Bank details for real Revolut Business payouts (2026-09-12, per Thomas). IBAN/SEPA only for
+    # now - compute_regular_owner_payout (finance/services.py) is EUR-only already (no currency
+    # field in its output, staff/templates/staff/finance_payouts.html hardcodes the € symbol), so
+    # there's no non-EUR payout path yet to need bic/sort_code/account_no/routing_number for. Both
+    # blank/null: an owner with neither set gets the plain manual "Mark as paid" fallback button
+    # rather than "Send payment" - see has_bank_details below.
+    bank_iban = models.CharField(max_length=34, blank=True, null=True)
+    # Separate from `name` above - must match the real bank account holder, which won't always be
+    # identical to this Owner row's display name (e.g. a co-ownership "Smith & Jones" where the
+    # account itself is only in one of their names).
+    bank_account_holder_name = models.CharField(max_length=200, blank=True, null=True)
     # Owner Suite login (owners app) - staff.views.py::StaffSettingsView._invite_owner creates the
     # User (with set_unusable_password()) and links it here in one step; owners/utils.py::
     # send_owner_invite_email then emails the owner a link to owners.views.OwnerAcceptInviteView
@@ -379,6 +394,13 @@ class Owner(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def has_bank_details(self):
+        """Drives which button the staff Payouts tab shows for this owner's bookings - "Send
+        payment" (live Revolut transfer) if both fields are on file, else the plain manual "Mark as
+        paid" fallback. See finance/payouts_revolut.py::send_owner_payout_via_revolut."""
+        return bool(self.bank_iban and self.bank_account_holder_name)
 
 
 class Accountant(models.Model):
