@@ -160,6 +160,30 @@ a.reserve-form-submit {
     color: var(--secondary-color);
 }
 
+/* The Terms and Conditions checkbox reads as a sentence, not a field label - overrides the
+   uppercase/bold styling above, which only suits a short field name like "Email" or "Phone". */
+.reserve-form-checkbox-row label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--primary-font);
+    font-size: 0.9rem;
+    font-weight: 400;
+    letter-spacing: normal;
+    text-transform: none;
+    color: rgb(80, 80, 80);
+}
+
+.reserve-form-checkbox-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.reserve-form-checkbox-row a {
+    color: var(--primary-color);
+}
+
 /* Country code + Phone side by side within one .reserve-form-row, same split as the Owner Suite
    Contact Details page (owners/static/owners/owners.css) - the code select only ever needs to
    fit its own collapsed display ("+351", see static/main/phone_country_select.js), so it stays

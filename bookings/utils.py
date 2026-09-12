@@ -124,7 +124,8 @@ def compute_initial_hold_expiry(arrival_date, booking_settings, now=None):
 
 
 def create_booking(property, guest_data, start_date, end_date, guests, currency='EUR',
-                    enquiry_source='Website', manual_discount_percent=None, manual_discount_reason=''):
+                    enquiry_source='Website', manual_discount_percent=None, manual_discount_reason='',
+                    terms_accepted_at=None):
     """Create the Guest (if new), Booking, and locked-in Charge for a reservation, all-or-nothing.
 
     guest_data: dict with first_name, last_name, email, phone, country.
@@ -139,7 +140,8 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
     basic_total staff apply on top of the normal Price-row-driven discount (weekly/monthly/last-
     minute) - folded straight into the Charge's discount_total (with manual_discount_reason stored
     alongside purely for display/audit) so Charge.total_rental and everything that reads it need
-    no special-casing.
+    no special-casing. terms_accepted_at similarly stays None for a staff-created booking - only
+    ReserveView (the guest actually ticking the Terms and Conditions checkbox) passes it.
 
     Raises django.core.exceptions.ValidationError (from Booking.full_clean()) if the dates are no
     longer available. Returns the created Booking.
@@ -192,6 +194,7 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
             babies=guests.get('infants', 0),
             last_updated=timezone.now(),
             hold_expires_at=hold_expires_at,
+            terms_accepted_at=terms_accepted_at,
         )
         booking.full_clean()
         booking.save()

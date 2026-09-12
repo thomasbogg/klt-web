@@ -50,6 +50,14 @@ class ReservationForm(forms.Form):
         choices=[('', 'Select a country…')] + list(countries),
         widget=forms.Select(attrs={'class': 'reserve-input'}),
     )
+    # Required on every reservation (2026-09-13, per Thomas) - the actual moment a guest signs the
+    # Booking Contract, per the Terms and Conditions document itself. Timestamped onto
+    # Booking.terms_accepted_at at creation time (see properties/views.py::ReserveView.post) rather
+    # than just trusted from this field alone, since the form data itself isn't kept.
+    terms_accepted = forms.BooleanField(
+        required=True,
+        error_messages={'required': "You must agree to the Terms and Conditions to book."},
+    )
     start = forms.CharField(widget=forms.HiddenInput)
     end = forms.CharField(widget=forms.HiddenInput)
     guests = forms.CharField(widget=forms.HiddenInput)

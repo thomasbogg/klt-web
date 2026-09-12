@@ -3,6 +3,7 @@ from icalendar import Calendar, Event
 from django.core.exceptions import ValidationError
 from django.http import HttpResponse, Http404
 from django.shortcuts import get_object_or_404, redirect
+from django.utils import timezone
 from django.views import View, generic
 
 import env_settings
@@ -178,6 +179,7 @@ class ReserveView(generic.DetailView):
                     form.cleaned_data['end'],
                     form.cleaned_data['guests'],
                     currency=form.cleaned_data['currency'],
+                    terms_accepted_at=timezone.now(),
                 )
                 request.session['pending_booking_reference'] = booking.reference
                 return redirect('bookings:details', reference=booking.reference)

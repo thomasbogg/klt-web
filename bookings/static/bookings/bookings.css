@@ -353,6 +353,22 @@
     margin-bottom: 16px;
 }
 
+/* Full legal Terms and Conditions page - shares .conditions-page's container/h1, adds its own
+   section headings/paragraphs since that page is a short bullet list, not prose (2026-09-13). */
+.terms-page h2 {
+    font-family: var(--secondary-font);
+    font-size: 1.25rem;
+    margin: 40px 0 12px;
+}
+
+.terms-page p {
+    line-height: 1.7;
+    font-family: var(--primary-font);
+    font-size: 1rem;
+    color: rgb(80, 80, 80);
+    margin: 0 0 16px;
+}
+
 .reserve-back-link {
     display: inline-block;
     color: var(--primary-color);

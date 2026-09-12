@@ -776,7 +776,7 @@ class ReservationFormPhoneCountryCodeTests(TestCase):
         end = start + timedelta(days=7)
         data = {
             'first_name': 'Test', 'last_name': 'Guest', 'email': 'form-test@example.com',
-            'phone_country_code': '', 'phone': '', 'country': 'GB',
+            'phone_country_code': '', 'phone': '', 'country': 'GB', 'terms_accepted': True,
             'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y'),
             'guests': '2 adults,0 children,0 infants', 'currency': 'EUR',
         }
@@ -809,7 +809,7 @@ class ReservationFormSecurityDepositGatingTests(TestCase):
         end = start + timedelta(days=7)
         data = {
             'first_name': 'Test', 'last_name': 'Guest', 'email': 'form-test@example.com',
-            'phone_country_code': '', 'phone': '', 'country': '',
+            'phone_country_code': '', 'phone': '', 'country': '', 'terms_accepted': True,
             'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y'),
             'guests': '2 adults,0 children,0 infants', 'currency': 'EUR',
         }

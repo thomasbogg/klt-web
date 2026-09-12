@@ -395,6 +395,13 @@ class Booking(models.Model):
     # can't answer that. A null here just means "not a last-minute booking", which is correct for
     # every historical row: they're all long past any cutoff anyway.
     created_at = models.DateTimeField(auto_now_add=True, null=True)
+    # When the guest ticked "I have read and agree to the Terms and Conditions" at reservation
+    # time (properties/views.py::ReserveView, via ReservationForm) - the actual contract-signing
+    # moment the Terms and Conditions document itself describes (2026-09-13, per Thomas, alongside
+    # first publishing that page at all). Null for every booking made before this field existed,
+    # and for staff-created bookings/offers (StaffGuestOfferCreateView) - staff aren't the guest,
+    # so ticking a consent box on their behalf isn't meaningful.
+    terms_accepted_at = models.DateTimeField(blank=True, null=True)
 
     objects = BookingQuerySet.as_manager()
 

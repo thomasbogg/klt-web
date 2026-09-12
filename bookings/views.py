@@ -1189,6 +1189,20 @@ class BookingConditionsView(View):
         return render(request, self.template_name, {'conditions': BookingCondition.objects.all()})
 
 
+class TermsAndConditionsView(View):
+    """The full legal Terms and Conditions document (the actual Booking Contract text a guest
+    agrees to at reservation time - see properties/views.py::ReserveView and
+    ReservationForm.terms_accepted), distinct from BookingConditionsView above - that page is a
+    short plain-language summary, this is the real contract. Static template, not an
+    admin/staff-editable model like BookingCondition - a legal document should go through a
+    deliberate edit-and-review pass, not get retyped from a Settings form (2026-09-13, per
+    Thomas)."""
+    template_name = 'bookings/terms.html'
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name)
+
+
 class ManageBookingView(View):
     """Reference + email lookup for a guest returning later without their confirmation link. Once
     the lookup succeeds, hands off to BookingManageHubView (bearer-readable by reference alone,

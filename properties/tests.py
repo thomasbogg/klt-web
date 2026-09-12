@@ -60,7 +60,7 @@ class ReserveOwnPendingBookingTests(TestCase):
         return self.client.post(self.reserve_url, {
             **self.query, 'currency': currency,
             'first_name': 'Test', 'last_name': 'Guest', 'email': 'retrytest@example.com', 'phone': '',
-            'country': 'GB',
+            'country': 'GB', 'terms_accepted': 'on',
         })
 
     def test_full_wrong_currency_recovery_flow(self):
@@ -178,7 +178,7 @@ class ReserveCountryOfResidenceDepositGatingTests(TestCase):
         response = self.client.post(self.reserve_url, {
             **self.query, 'currency': 'EUR',
             'first_name': 'No', 'last_name': 'Country', 'email': 'no-country@example.com', 'phone': '',
-            'country': '',
+            'country': '', 'terms_accepted': 'on',
         })
         self.assertEqual(response.status_code, 302)
 
@@ -992,31 +992,35 @@ class OwnerBankAccountTests(TestCase):
         with self.assertRaises(ValidationError):
             account.full_clean()
 
+    ADDRESS_KWARGS = {
+        'address_street': 'Test Street', 'address_city': 'Test City', 'address_postcode': '0000-000',
+    }
+
     def test_upsert_creates_a_new_account(self):
         account = OwnerBankAccount.upsert(
             self.owner, OwnerBankAccount.Currency.EUR,
-            holder_name='Bank Account Owner', iban='PT50000201231234567890154',
+            holder_name='Bank Account Owner', iban='PT50000201231234567890154', **self.ADDRESS_KWARGS,
         )
         self.assertEqual(account.iban, 'PT50000201231234567890154')
         self.assertEqual(self.owner.bank_accounts.count(), 1)
 
     def test_upsert_updates_the_existing_account_for_that_currency(self):
-        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='Old Name', iban='PT50000201231234567890154')
-        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='New Name', iban='PT10000000000000000000000')
+        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='Old Name', iban='PT50000201231234567890154', **self.ADDRESS_KWARGS)
+        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='New Name', iban='PT10000000000000000000000', **self.ADDRESS_KWARGS)
         self.assertEqual(self.owner.bank_accounts.count(), 1)
         account = self.owner.bank_accounts.get(currency=OwnerBankAccount.Currency.EUR)
         self.assertEqual(account.account_holder_name, 'New Name')
         self.assertEqual(account.iban, 'PT10000000000000000000000')
 
     def test_upsert_deletes_the_account_when_everything_is_cleared(self):
-        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='Bank Account Owner', iban='PT50000201231234567890154')
+        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='Bank Account Owner', iban='PT50000201231234567890154', **self.ADDRESS_KWARGS)
         OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='', iban=None)
         self.assertFalse(self.owner.bank_accounts.filter(currency=OwnerBankAccount.Currency.EUR).exists())
 
     def test_owner_can_hold_one_account_per_currency(self):
-        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='Bank Account Owner', iban='PT50000201231234567890154')
+        OwnerBankAccount.upsert(self.owner, OwnerBankAccount.Currency.EUR, holder_name='Bank Account Owner', iban='PT50000201231234567890154', **self.ADDRESS_KWARGS)
         OwnerBankAccount.upsert(
             self.owner, OwnerBankAccount.Currency.GBP,
-            holder_name='Bank Account Owner', sort_code='12-34-56', account_number='12345678',
+            holder_name='Bank Account Owner', sort_code='12-34-56', account_number='12345678', **self.ADDRESS_KWARGS,
         )
         self.assertEqual(self.owner.bank_accounts.count(), 2)

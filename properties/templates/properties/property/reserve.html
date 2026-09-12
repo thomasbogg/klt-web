@@ -149,6 +149,14 @@
             </div>
             {% endif %}
 
+            <div class="reserve-form-row reserve-form-checkbox-row">
+                <label for="{{ form.terms_accepted.id_for_label }}">
+                    {{ form.terms_accepted }}
+                    I have read and agree to the <a href="{% url 'bookings:terms' %}" target="_blank" rel="noopener">Terms and Conditions</a>
+                </label>
+                {% for error in form.terms_accepted.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
+
             <button type="submit" class="reserve-form-submit">Proceed to Reservation</button>
         </form>
         <a class="reserve-form-cancel" href="{% url 'availability:search' %}?start={{ start_query|urlencode }}&end={{ end_query|urlencode }}&guests={{ guests_query|urlencode }}">Return to Search</a>
