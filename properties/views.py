@@ -49,7 +49,11 @@ class LocationView(generic.DetailView):
         context = super().get_context_data(**kwargs)
         context.update(full_toolbar_context())
         location = self.get_object()
-        properties = Property.objects.filter(location_id__exact=location.id, active=True)
+        # bookable_on_website() (not a raw active=True filter) - this page had drifted out of sync
+        # with search results and the homepage's own location-tile gate, both of which already
+        # exclude a property whose booking_company doesn't sell through the site at all (2026-09-13,
+        # per Thomas: a KLT-doesn't-book property was showing up here regardless).
+        properties = Property.objects.filter(location_id__exact=location.id).bookable_on_website()
         context['properties'] = properties
         return context
 

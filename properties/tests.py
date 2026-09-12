@@ -223,6 +223,46 @@ class InactivePropertyVisibilityTests(TestCase):
         self.assertNotIn(self.property, response.context['properties'])
 
 
+class LocationPageBookableOnWebsiteGatingTests(TestCase):
+    """LocationView used a raw active=True filter, not bookable_on_website() - a property whose
+    booking_company doesn't sell through the site (or has none at all) still showed up on its own
+    location's public page tile grid, out of sync with search results and the homepage's own
+    location-tile gate (both already used bookable_on_website()). Found live, 2026-09-13, per
+    Thomas: a KLT-doesn't-book property was appearing here regardless."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Gating Test Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.url = reverse('properties:location/page', kwargs={'title': self.location.slug})
+
+    def test_property_with_no_booking_company_is_excluded(self):
+        property = Property.objects.create(
+            title=f'{self.location} - NOCOMPANY', short_title='NOCOMPANY', location=self.location,
+        )
+        response = self.client.get(self.url)
+        self.assertNotIn(property, response.context['properties'])
+
+    def test_property_of_a_non_bookable_on_website_company_is_excluded(self):
+        other_company = ManagementCompany.objects.create(name='External Agency Loc', bookable_on_website=False)
+        property = Property.objects.create(
+            title=f'{self.location} - EXTERNAL', short_title='EXTERNALLOC',
+            location=self.location, booking_company=other_company,
+        )
+        response = self.client.get(self.url)
+        self.assertNotIn(property, response.context['properties'])
+
+    def test_property_with_a_bookable_company_is_included(self):
+        bookable_company = ManagementCompany.objects.create(name='Bookable Agency Loc')
+        property = Property.objects.create(
+            title=f'{self.location} - BOOKABLELOC', short_title='BOOKABLELOC',
+            location=self.location, booking_company=bookable_company,
+        )
+        response = self.client.get(self.url)
+        self.assertIn(property, response.context['properties'])
+
+
 class PropertyBookableOnWebsiteQuerySetTests(TestCase):
     """Property.objects.bookable_on_website() - the canonical "does this belong on the public
     site at all" gate, extracted 2026-09-08 (per Thomas) from availability/views.py's own inline
