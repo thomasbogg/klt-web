@@ -63,35 +63,39 @@
             <input type="hidden" name="end" value="{{ end_query }}">
             <input type="hidden" name="guests" value="{{ guests_query }}">
 
-            <div class="multi-reserve-split-columns">
-                <div class="multi-reserve-split-column">
+            <div class="multi-reserve-split-rows">
+                <div class="multi-reserve-split-row">
                     <h3>{{ properties.0 }}</h3>
-                    <div class="reserve-form-row">
-                        <label for="{{ form.adults_0.id_for_label }}">Adults</label>
-                        {{ form.adults_0 }}
-                    </div>
-                    <div class="reserve-form-row">
-                        <label for="{{ form.children_0.id_for_label }}">Children</label>
-                        {{ form.children_0 }}
-                    </div>
-                    <div class="reserve-form-row">
-                        <label for="{{ form.infants_0.id_for_label }}">Infants</label>
-                        {{ form.infants_0 }}
+                    <div class="multi-reserve-split-fields">
+                        <div class="multi-reserve-split-field">
+                            <label for="{{ form.adults_0.id_for_label }}">Adults</label>
+                            {{ form.adults_0 }}
+                        </div>
+                        <div class="multi-reserve-split-field">
+                            <label for="{{ form.children_0.id_for_label }}">Children</label>
+                            {{ form.children_0 }}
+                        </div>
+                        <div class="multi-reserve-split-field">
+                            <label for="{{ form.infants_0.id_for_label }}">Infants</label>
+                            {{ form.infants_0 }}
+                        </div>
                     </div>
                 </div>
-                <div class="multi-reserve-split-column">
+                <div class="multi-reserve-split-row">
                     <h3>{{ properties.1 }}</h3>
-                    <div class="reserve-form-row">
-                        <label for="{{ form.adults_1.id_for_label }}">Adults</label>
-                        {{ form.adults_1 }}
-                    </div>
-                    <div class="reserve-form-row">
-                        <label for="{{ form.children_1.id_for_label }}">Children</label>
-                        {{ form.children_1 }}
-                    </div>
-                    <div class="reserve-form-row">
-                        <label for="{{ form.infants_1.id_for_label }}">Infants</label>
-                        {{ form.infants_1 }}
+                    <div class="multi-reserve-split-fields">
+                        <div class="multi-reserve-split-field">
+                            <label for="{{ form.adults_1.id_for_label }}">Adults</label>
+                            {{ form.adults_1 }}
+                        </div>
+                        <div class="multi-reserve-split-field">
+                            <label for="{{ form.children_1.id_for_label }}">Children</label>
+                            {{ form.children_1 }}
+                        </div>
+                        <div class="multi-reserve-split-field">
+                            <label for="{{ form.infants_1.id_for_label }}">Infants</label>
+                            {{ form.infants_1 }}
+                        </div>
                     </div>
                 </div>
             </div>
