@@ -106,7 +106,7 @@
         {% if breakdown %}
         <div class="multi-reserve-breakdown">
             {% for leg in breakdown.legs %}
-            <div class="reserve-breakdown multi-reserve-breakdown-leg">
+            <div class="multi-reserve-breakdown-leg">
                 <h3>{{ leg.property }}</h3>
                 <div class="reserve-breakdown-row">
                     <span>Party</span>
@@ -123,7 +123,7 @@
             </div>
             {% endfor %}
 
-            <div class="reserve-breakdown multi-reserve-breakdown-combined">
+            <div class="multi-reserve-breakdown-combined">
                 <div class="reserve-breakdown-row reserve-breakdown-total">
                     <span>Combined total</span>
                     <span>&euro;{{ breakdown.combined_total|floatformat:2 }}</span>
@@ -133,11 +133,74 @@
                     <span>&euro;{{ breakdown.combined_due_now|floatformat:2 }}</span>
                 </div>
             </div>
-
-            <p class="reserve-message multi-reserve-coming-soon">
-                Booking two apartments together in one go is coming very soon &ndash; this preview confirms your split and pricing, but there's no "Confirm &amp; Continue" step here yet.
-            </p>
         </div>
+
+        {% if contact_form %}
+        <form class="reserve-form multi-reserve-confirm-form" method="post" action=".">
+            {% csrf_token %}
+            <input type="hidden" name="adults_0" value="{{ form.adults_0.value }}">
+            <input type="hidden" name="children_0" value="{{ form.children_0.value }}">
+            <input type="hidden" name="infants_0" value="{{ form.infants_0.value }}">
+            <input type="hidden" name="adults_1" value="{{ form.adults_1.value }}">
+            <input type="hidden" name="children_1" value="{{ form.children_1.value }}">
+            <input type="hidden" name="infants_1" value="{{ form.infants_1.value }}">
+
+            {{ contact_form.start }}
+            {{ contact_form.end }}
+            {{ contact_form.guests }}
+            {{ contact_form.currency }}
+
+            {% if contact_form.non_field_errors %}
+            <div class="reserve-form-errors">
+                {% for error in contact_form.non_field_errors %}
+                <p>{{ error }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <div class="reserve-form-row">
+                <label for="{{ contact_form.first_name.id_for_label }}">First name</label>
+                {{ contact_form.first_name }}
+            </div>
+            <div class="reserve-form-row">
+                <label for="{{ contact_form.last_name.id_for_label }}">Last name</label>
+                {{ contact_form.last_name }}
+                {% for error in contact_form.last_name.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
+            <div class="reserve-form-row">
+                <label for="{{ contact_form.email.id_for_label }}">Email</label>
+                {{ contact_form.email }}
+                {% for error in contact_form.email.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
+            <div class="reserve-form-row reserve-phone-row">
+                <div class="reserve-phone-code">
+                    <label for="{{ contact_form.phone_country_code.id_for_label }}">Country code</label>
+                    {{ contact_form.phone_country_code }}
+                </div>
+                <div class="reserve-phone-number">
+                    <label for="{{ contact_form.phone.id_for_label }}">Phone</label>
+                    {{ contact_form.phone }}
+                </div>
+            </div>
+            {% if booking_settings.security_deposits_enabled %}
+            <div class="reserve-form-row">
+                <label for="{{ contact_form.country.id_for_label }}">Country of residence</label>
+                {{ contact_form.country }}
+                {% for error in contact_form.country.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
+            {% endif %}
+
+            <div class="reserve-form-row reserve-form-checkbox-row">
+                <label for="{{ contact_form.terms_accepted.id_for_label }}">
+                    {{ contact_form.terms_accepted }}
+                    I have read and agree to the <a href="{% url 'bookings:terms' %}" target="_blank" rel="noopener">Terms and Conditions</a>
+                </label>
+                {% for error in contact_form.terms_accepted.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
+
+            <button type="submit" class="reserve-form-submit">Confirm &amp; Book Both Apartments</button>
+        </form>
+        {% endif %}
         {% endif %}
 
         <a class="reserve-back-link" href="{% url 'availability:search' %}?start={{ start_query|urlencode }}&end={{ end_query|urlencode }}&guests={{ guests_query|urlencode }}">&larr; Back to search</a>

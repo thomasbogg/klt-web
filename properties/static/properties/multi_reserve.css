@@ -53,8 +53,20 @@
 }
 
 .multi-reserve-breakdown {
-    margin-top: 32px;
+    max-width: 420px;
+    margin: 32px auto 0;
     text-align: left;
+    border-top: 1px solid #ebebeb;
+    padding-top: 16px;
+}
+
+.multi-reserve-breakdown-leg {
+    padding-bottom: 12px;
+}
+
+.multi-reserve-breakdown-leg:not(:last-child) {
+    border-bottom: 1px solid #ebebeb;
+    margin-bottom: 12px;
 }
 
 .multi-reserve-breakdown-leg h3 {
@@ -64,10 +76,11 @@
 }
 
 .multi-reserve-breakdown-combined {
-    margin-top: 8px;
+    border-top: 1px solid #ebebeb;
+    margin-top: 4px;
+    padding-top: 12px;
 }
 
-.multi-reserve-coming-soon {
-    margin-top: 24px;
-    font-style: italic;
+.multi-reserve-confirm-form {
+    margin-top: 32px;
 }

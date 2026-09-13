@@ -206,6 +206,96 @@ class MultiPropertyReserveViewTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
 
+class MultiPropertyReserveConfirmTests(TestCase):
+    """Stage 3 of multi-property booking (see bookings/models.py::ReservationGroup) - confirming a
+    validated split creates both linked Bookings in one go and sends the guest into the first
+    leg's own normal single-booking payment flow unmodified (see bookings/tests.py::
+    MultiPropertyPaymentSequencingTests for what happens from there)."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Multi Confirm Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.management_company = ManagementCompany.objects.create(name='Multi Confirm Management Co')
+        self.property_a = Property.objects.create(
+            title=f'{self.location} - MCA', short_title='MCA', location=self.location,
+            booking_company=self.management_company,
+        )
+        self.property_b = Property.objects.create(
+            title=f'{self.location} - MCB', short_title='MCB', location=self.location,
+            booking_company=self.management_company,
+        )
+        for property in (self.property_a, self.property_b):
+            PropertySpec.objects.create(property=property, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        self.start = date.today() + timedelta(days=330)
+        self.end = self.start + timedelta(days=5)
+        for property in (self.property_a, self.property_b):
+            Price.objects.create(
+                property=property, start_date=date.today(), end_date=self.end + timedelta(days=30), rate=100,
+            )
+        self.url = f'/properties/{self.location.slug}/multi-reserve/'
+        self.query = {
+            'properties': 'mca,mcb',
+            'start': self.start.strftime('%d/%m/%Y'),
+            'end': self.end.strftime('%d/%m/%Y'),
+            'guests': '6 adults,0 children,0 infants',
+        }
+
+    def _post_data(self, **overrides):
+        data = {
+            'adults_0': 3, 'children_0': 0, 'infants_0': 0,
+            'adults_1': 3, 'children_1': 0, 'infants_1': 0,
+            'start': self.query['start'], 'end': self.query['end'], 'guests': self.query['guests'],
+            'currency': 'EUR',
+            'first_name': 'Multi', 'last_name': 'Guest', 'email': 'multi-confirm@example.com',
+            'phone': '', 'country': 'GB', 'terms_accepted': 'on',
+        }
+        data.update(overrides)
+        return data
+
+    def test_valid_confirm_creates_two_linked_bookings_and_redirects_to_first_legs_details(self):
+        response = self.client.post(f'{self.url}?{self._querystring()}', self._post_data())
+        bookings = list(Booking.objects.filter(guest__email='multi-confirm@example.com').order_by('property__short_title'))
+        self.assertEqual(len(bookings), 2)
+        booking_a, booking_b = bookings
+        self.assertIsNotNone(booking_a.reservation_group_id)
+        self.assertEqual(booking_a.reservation_group_id, booking_b.reservation_group_id)
+        self.assertEqual(booking_a.adults, 3)
+        self.assertEqual(booking_b.adults, 3)
+        self.assertTrue(hasattr(booking_a, 'charges'))
+        self.assertTrue(hasattr(booking_a, 'payment'))
+        self.assertRedirects(
+            response, f'/bookings/{booking_a.reference}/details/', fetch_redirect_response=False,
+        )
+        self.assertEqual(self.client.session['pending_booking_reference'], booking_a.reference)
+
+    def test_missing_terms_acceptance_creates_no_bookings(self):
+        response = self.client.post(f'{self.url}?{self._querystring()}', self._post_data(terms_accepted=''))
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Booking.objects.filter(guest__email='multi-confirm@example.com').exists())
+
+    def test_invalid_split_creates_no_bookings(self):
+        response = self.client.post(f'{self.url}?{self._querystring()}', self._post_data(adults_0=5, adults_1=5))
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Booking.objects.filter(guest__email='multi-confirm@example.com').exists())
+
+    def test_now_unavailable_property_creates_no_bookings(self):
+        guest = Guest.objects.create(last_name='Blocker')
+        Booking.objects.create(
+            property=self.property_a, guest=guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.post(f'{self.url}?{self._querystring()}', self._post_data())
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Booking.objects.filter(guest__email='multi-confirm@example.com').exists())
+
+    def _querystring(self):
+        from urllib.parse import urlencode
+        return urlencode(self.query)
+
+
 class ReserveCountryOfResidenceDepositGatingTests(TestCase):
     """Country of Residence exists only to drive compute_deposit_waiver()'s UK/EU check - per
     Thomas 2026-09-08, the reserve page hides the field entirely (and stops requiring it) while

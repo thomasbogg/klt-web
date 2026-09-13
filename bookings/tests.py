@@ -16,6 +16,7 @@ from bookings.models import (
     SupplementaryPayment, TouristTax, TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
+from bookings.views import next_unpaid_sibling_reference
 from staff.models import LateCheckoutGrant, OwnerPayment
 from bookings.utils import (
     add_business_days, apply_supplementary_payment, compute_deposit_waiver,
@@ -205,6 +206,114 @@ class PropertyGuestSplitFormTests(TestCase):
             properties=self.properties, total_guests=self.total_guests,
         )
         self.assertFalse(form.is_valid())
+
+
+class MultiPropertyPaymentSequencingTests(TestCase):
+    """Stage 3 of multi-property booking (2026-09-13, see ReservationGroup and
+    MultiPropertyReserveView) - once one leg of a linked reservation is paid, the guest should be
+    walked straight into paying for the other leg via its own completely unmodified
+    BookingDetailsView/BookingPaymentView, and only reach the normal confirmation once every leg
+    is paid. A booking with no reservation_group at all (every booking before this feature, and
+    every single-property booking after it) must behave exactly as before - see the plain
+    next_unpaid_sibling_reference() tests below for that guarantee."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Sequencing Test Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.property_a = Property.objects.create(
+            title=f'{self.location} - SEQA', short_title='SEQA', location=self.location,
+        )
+        self.property_b = Property.objects.create(
+            title=f'{self.location} - SEQB', short_title='SEQB', location=self.location,
+        )
+        self.guest = Guest.objects.create(first_name='Group', last_name='Guest', email='group-guest@example.com')
+        self.start = date.today() + timedelta(days=90)
+        self.end = self.start + timedelta(days=7)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a)
+        self.leg_b = self._make_booking(self.property_b)
+
+    def _make_booking(self, property, reservation_group=None):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Awaiting payment', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+            reservation_group=reservation_group if reservation_group is not None else self.group,
+        )
+        Charge.objects.create(
+            booking=booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        Payment.objects.create(booking=booking, provider='revolut', status='pending')
+        return booking
+
+    def test_no_sibling_reference_for_a_solo_booking(self):
+        solo = Booking.objects.create(
+            property=self.property_a, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Awaiting payment', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.assertIsNone(next_unpaid_sibling_reference(solo))
+
+    def test_no_sibling_reference_once_the_other_leg_is_also_paid(self):
+        self.leg_b.payment.status = 'paid'
+        self.leg_b.payment.save()
+        self.assertIsNone(next_unpaid_sibling_reference(self.leg_a))
+
+    def test_sibling_reference_while_the_other_leg_is_still_unpaid(self):
+        self.assertEqual(next_unpaid_sibling_reference(self.leg_a), self.leg_b.reference)
+
+    def test_paying_first_leg_redirects_into_second_legs_details(self):
+        self.leg_a.payment.status = 'paid'
+        self.leg_a.payment.save()
+        session = self.client.session
+        session['pending_booking_reference'] = self.leg_a.reference
+        session.save()
+
+        response = self.client.get(reverse('bookings:pay', kwargs={'reference': self.leg_a.reference}))
+        self.assertRedirects(
+            response, reverse('bookings:details', kwargs={'reference': self.leg_b.reference}),
+            fetch_redirect_response=False,
+        )
+        self.assertEqual(self.client.session['pending_booking_reference'], self.leg_b.reference)
+
+    def test_details_view_also_redirects_to_the_unpaid_sibling(self):
+        self.leg_a.payment.status = 'paid'
+        self.leg_a.payment.save()
+        response = self.client.get(reverse('bookings:details', kwargs={'reference': self.leg_a.reference}))
+        self.assertRedirects(
+            response, reverse('bookings:details', kwargs={'reference': self.leg_b.reference}),
+            fetch_redirect_response=False,
+        )
+
+    def test_confirmation_redirects_to_unpaid_sibling_before_both_are_paid(self):
+        self.leg_a.payment.status = 'paid'
+        self.leg_a.payment.save()
+        response = self.client.get(reverse('bookings:confirmation', kwargs={'reference': self.leg_a.reference}))
+        self.assertRedirects(
+            response, reverse('bookings:details', kwargs={'reference': self.leg_b.reference}),
+            fetch_redirect_response=False,
+        )
+
+    def test_confirmation_renders_with_cross_link_once_both_are_paid(self):
+        self.leg_a.payment.status = 'paid'
+        self.leg_a.payment.save()
+        self.leg_b.payment.status = 'paid'
+        self.leg_b.payment.save()
+
+        response_a = self.client.get(reverse('bookings:confirmation', kwargs={'reference': self.leg_a.reference}))
+        self.assertEqual(response_a.status_code, 200)
+        self.assertContains(response_a, 'also booked')
+        self.assertContains(response_a, str(self.property_b))
+
+        response_b = self.client.get(reverse('bookings:confirmation', kwargs={'reference': self.leg_b.reference}))
+        self.assertEqual(response_b.status_code, 200)
+        self.assertContains(response_b, 'also booked')
+        self.assertContains(response_b, str(self.property_a))
 
 
 class ExpireStaleHoldsTests(TestCase):

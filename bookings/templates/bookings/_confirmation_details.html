@@ -19,6 +19,13 @@
     </div>
 </div>
 
+{% if reservation_group_sibling %}
+<p class="confirmation-group-note">
+    Part of a two-apartment reservation &ndash; you've also booked
+    <a href="{% url 'bookings:confirmation' reference=reservation_group_sibling.reference %}">{{ reservation_group_sibling.property }}</a>.
+</p>
+{% endif %}
+
 <div class="confirmation-summary confirmation-summary-dates">
     <div class="confirmation-chip">
         <span class="confirmation-chip-label">Check-in</span>

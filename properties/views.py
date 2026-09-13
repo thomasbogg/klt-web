@@ -1,6 +1,7 @@
 from icalendar import Calendar, Event
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.http import HttpResponse, Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -17,7 +18,7 @@ from availability.utils import (
     guests_string_to_dict,
 )
 from bookings.forms import PropertyGuestSplitForm, ReservationForm
-from bookings.models import Booking, BookingSettings
+from bookings.models import Booking, BookingSettings, ReservationGroup
 from bookings.utils import create_booking
 
 # Create your views here.
@@ -212,15 +213,21 @@ def _even_split_initial(properties, guests):
 
 
 class MultiPropertyReserveView(View):
-    """Stage 2 of multi-property booking (see bookings/models.py::ReservationGroup) - lets a guest
-    split their party across the two properties suggested by a SearchView combo_suggestions card
-    and preview the combined price, before any Booking row exists for either one.
+    """Stages 2 and 3 of multi-property booking (see bookings/models.py::ReservationGroup) - lets
+    a guest split their party across the two properties suggested by a SearchView combo_suggestions
+    card, preview the combined price, then (once that split is valid) fill in the same guest
+    contact/terms details ReserveView collects and confirm both Bookings at once.
 
-    Deliberately preview-only for now (2026-09-13, per the plan this was built from): actually
-    creating the linked Bookings raises real questions - one combined payment vs two, and how the
-    session hold (properties/views.py::ReserveView._own_pending_booking, today scoped to a single
-    'pending_booking_reference') needs to cover both apartments atomically - that's its own later
-    stage, not bolted on here just because the split form validates."""
+    Both legs are created together in one transaction, sharing one new ReservationGroup, then the
+    guest is sent into the very first leg's normal single-booking flow (BookingDetailsView ->
+    BookingPaymentView) completely unmodified - see bookings/views.py::
+    next_unpaid_sibling_reference() for how that flow, once it detects the first leg is fully
+    paid, hands the guest on to the second leg's same flow instead of the normal confirmation, and
+    only shows the real confirmation once both are paid. Deliberately NOT one combined payment
+    (2026-09-13, per the plan this was built from): each leg still gets its own independent
+    Payment/Charge/Revolut order exactly as today, so the entire proven payment/webhook pipeline
+    needs zero changes - the guest just pays for two apartments back to back in one sitting rather
+    than in a single transaction."""
     template_name = 'properties/property/multi_reserve.html'
 
     def _resolve_properties(self, request, location_slug):
@@ -261,7 +268,7 @@ class MultiPropertyReserveView(View):
             combined_total += costs['subtotal']
         return {'legs': legs, 'combined_due_now': combined_due_now, 'combined_total': combined_total}
 
-    def _context(self, request, properties, start_date, end_date, guests, form):
+    def _context(self, request, properties, start_date, end_date, guests, form, contact_form=None):
         unavailable = [
             property for property in properties
             if Booking.objects.overlapping(property, start_date, end_date).exists()
@@ -281,6 +288,17 @@ class MultiPropertyReserveView(View):
         }
         if not unavailable and form.is_bound and form.is_valid():
             context['breakdown'] = self._price_breakdown(properties, start_date, end_date, form.cleaned_data['splits'])
+            if context['breakdown'] is not None:
+                booking_settings = BookingSettings.load()
+                context['booking_settings'] = booking_settings
+                context['contact_form'] = contact_form or ReservationForm(
+                    initial={
+                        'start': context['start_query'],
+                        'end': context['end_query'],
+                        'guests': context['guests_query'],
+                    },
+                    security_deposits_enabled=booking_settings.security_deposits_enabled,
+                )
         return context
 
     def get(self, request, location, *args, **kwargs):
@@ -301,6 +319,56 @@ class MultiPropertyReserveView(View):
             )
         context = self._context(request, properties, start_date, end_date, guests, form)
         return render(request, self.template_name, context)
+
+    def post(self, request, location, *args, **kwargs):
+        # The confirm form (properties/property/multi_reserve.html) posts here with the already-
+        # previewed split carried as hidden fields (see the template) plus the guest's contact/
+        # terms details - properties/start/end/guests still ride the URL's own querystring
+        # (request.GET), exactly as the GET-preview reload uses, since this form's action is "."
+        properties = self._resolve_properties(request, location)
+        start_date, end_date, guests = self._parse_search_params(request)
+        split_form = PropertyGuestSplitForm(request.POST, properties=properties, total_guests=guests)
+        contact_form = ReservationForm(
+            request.POST, security_deposits_enabled=BookingSettings.load().security_deposits_enabled,
+        )
+        context = self._context(request, properties, start_date, end_date, guests, split_form, contact_form)
+        if context['unavailable_properties'] or not split_form.is_valid() or not contact_form.is_valid():
+            return render(request, self.template_name, context)
+
+        try:
+            with transaction.atomic():
+                group = ReservationGroup.objects.create()
+                bookings = [
+                    create_booking(
+                        property,
+                        {
+                            'first_name': contact_form.cleaned_data['first_name'],
+                            'last_name': contact_form.cleaned_data['last_name'],
+                            'email': contact_form.cleaned_data['email'],
+                            'phone': contact_form.cleaned_data['phone'],
+                            'country': contact_form.cleaned_data['country'],
+                        },
+                        start_date, end_date, split_guests,
+                        currency=contact_form.cleaned_data['currency'],
+                        terms_accepted_at=timezone.now(),
+                        reservation_group=group,
+                    )
+                    for property, split_guests in zip(properties, split_form.cleaned_data['splits'])
+                ]
+        except ValidationError as error:
+            messages = dict.fromkeys(error.messages) if hasattr(error, 'messages') else [str(error)]
+            contact_form.add_error(None, '; '.join(messages))
+            context = self._context(request, properties, start_date, end_date, guests, split_form, contact_form)
+            return render(request, self.template_name, context)
+
+        # Same session key ReserveView.post() sets for a normal single-property booking -
+        # BookingDetailsView.post()'s own gate, ReserveView._own_pending_booking(), and
+        # BookingPaymentCancelView all key off this one reference, so pointing it at the first leg
+        # here (and bookings/views.py::next_unpaid_sibling_reference() updating it again once that
+        # leg is paid) is what lets the guest be walked through both legs' completely unmodified
+        # single-booking flows in sequence, one after the other.
+        request.session['pending_booking_reference'] = bookings[0].reference
+        return redirect('bookings:details', reference=bookings[0].reference)
 
 
 class PropertyCalendarExportView(View):

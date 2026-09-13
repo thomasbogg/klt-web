@@ -73,6 +73,23 @@
     margin-bottom: 32px;
 }
 
+.confirmation-group-note {
+    text-align: center;
+    color: rgb(100, 100, 100);
+    font-size: 0.9rem;
+    margin: -4px 0 24px;
+}
+
+.confirmation-group-note a {
+    color: var(--primary-color);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.confirmation-group-note a:hover {
+    text-decoration: underline;
+}
+
 .confirmation-page .currency-toggle {
     margin-bottom: 20px;
 }

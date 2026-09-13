@@ -44,6 +44,36 @@ def is_paid(booking):
     return payment is None or payment.status == 'paid'
 
 
+def next_unpaid_sibling_reference(booking):
+    """If `booking` belongs to a ReservationGroup (see bookings/models.py - a multi-property
+    reservation, 2026-09-13) and a sibling Booking in the same group hasn't been paid yet, that
+    sibling's own reference - used once `booking` itself is confirmed paid, to route the guest
+    straight into paying for their other apartment next instead of the normal single-booking
+    confirmation page. None if there's no group, or every sibling is already paid (time for the
+    normal confirmation) - so this is a safe no-op for every booking that predates grouping."""
+    if not booking.reservation_group_id:
+        return None
+    sibling = booking.reservation_group.bookings.exclude(pk=booking.pk).first()
+    if sibling is None or is_paid(sibling):
+        return None
+    return sibling.reference
+
+
+def redirect_to_next_step_after_payment(request, booking):
+    """Where the guest goes once `booking` itself is confirmed paid - the sibling leg's own
+    BookingDetailsView (updating the session's pending_booking_reference to match, the same way
+    properties/views.py::ReserveView.post()/MultiPropertyReserveView.post() first set it, so that
+    view's own gate and BookingPaymentCancelView keep working completely unmodified against
+    whichever leg is currently active) if one's still unpaid, otherwise the normal confirmation.
+    Used by BookingDetailsView.get() and BookingPaymentView.get(); BookingConfirmationView.get()
+    has its own near-identical check since its else-branch renders in place rather than redirecting."""
+    next_reference = next_unpaid_sibling_reference(booking)
+    if next_reference:
+        request.session['pending_booking_reference'] = next_reference
+        return redirect('bookings:details', reference=next_reference)
+    return redirect('bookings:confirmation', reference=booking.reference)
+
+
 def is_balance_paid(booking):
     """A booking with no BalancePayment row at all is either collapsed (paid in full at deposit
     time - see BookingSettings.compute_costs()) or predates this feature - either way there's
@@ -104,6 +134,13 @@ class BookingConfirmationView(View):
             raise Http404("No booking found for this reference.")
         if not is_paid(booking):
             return redirect('bookings:pay', reference=reference)
+        # Own near-identical check to redirect_to_next_step_after_payment() rather than reusing it
+        # directly - that helper always redirects, which would loop this view back onto itself
+        # once every leg is paid (next_reference None); here that case renders in place instead.
+        next_reference = next_unpaid_sibling_reference(booking)
+        if next_reference:
+            request.session['pending_booking_reference'] = next_reference
+            return redirect('bookings:details', reference=next_reference)
         return render(request, self.template_name, booking_confirmation_context(booking))
 
 
@@ -680,7 +717,7 @@ class BookingDetailsView(BookingFormMixin, View):
         if booking is None:
             raise Http404("No booking found for this reference.")
         if is_paid(booking):
-            return redirect('bookings:confirmation', reference=reference)
+            return redirect_to_next_step_after_payment(request, booking)
 
         is_two_stage = hasattr(booking, 'balance_payment')
         payment = booking.payment
@@ -974,7 +1011,7 @@ class BookingPaymentView(View):
         if booking is None:
             raise Http404("No booking found for this reference.")
         if is_paid(booking):
-            return redirect('bookings:confirmation', reference=reference)
+            return redirect_to_next_step_after_payment(request, booking)
 
         payment = booking.payment
         charge = booking.charges

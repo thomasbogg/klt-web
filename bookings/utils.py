@@ -137,7 +137,7 @@ def compute_initial_hold_expiry(arrival_date, booking_settings, now=None):
 
 def create_booking(property, guest_data, start_date, end_date, guests, currency='EUR',
                     enquiry_source='Website', manual_discount_percent=None, manual_discount_reason='',
-                    terms_accepted_at=None):
+                    terms_accepted_at=None, reservation_group=None):
     """Create the Guest (if new), Booking, and locked-in Charge for a reservation, all-or-nothing.
 
     guest_data: dict with first_name, last_name, email, phone, country.
@@ -154,6 +154,11 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
     alongside purely for display/audit) so Charge.total_rental and everything that reads it need
     no special-casing. terms_accepted_at similarly stays None for a staff-created booking - only
     ReserveView (the guest actually ticking the Terms and Conditions checkbox) passes it.
+
+    reservation_group (2026-09-13, Stage 3 of multi-property booking - see bookings/models.py::
+    ReservationGroup): set only by MultiPropertyReserveView, which calls this once per leg with
+    the same group - each leg still gets its own independent Guest/Booking/Charge/Payment exactly
+    as a normal single-property booking would, this just tags which group it belongs to.
 
     Raises django.core.exceptions.ValidationError (from Booking.full_clean()) if the dates are no
     longer available. Returns the created Booking.
@@ -207,6 +212,7 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
             last_updated=timezone.now(),
             hold_expires_at=hold_expires_at,
             terms_accepted_at=terms_accepted_at,
+            reservation_group=reservation_group,
         )
         booking.full_clean()
         booking.save()
@@ -895,6 +901,15 @@ def booking_confirmation_context(booking):
         # bookings/models.py) - not recomputed here, just read directly.
         'deposit_due': deposit_due,
         'platform_reference': platform_reference,
+        # The other apartment in a multi-property reservation (2026-09-13, see bookings/models.py::
+        # ReservationGroup), if any - shared by the confirmation page and the Manage Booking hub
+        # landing section (both call this function), so a guest who booked two apartments together
+        # sees a link to the other one from either page, rather than each Booking reading as a
+        # completely separate, unrelated reservation.
+        'reservation_group_sibling': (
+            booking.reservation_group.bookings.exclude(pk=booking.pk).first()
+            if booking.reservation_group_id else None
+        ),
     }
 
 
