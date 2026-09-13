@@ -543,6 +543,18 @@
     text-align: center;
 }
 
+/* Accountants' own Portal login column (added when the Accountants Suite got real logins) -
+   same class-not-nth-child reasoning and same 130px/centered treatment as
+   .staff-owner-portal-col above. */
+.staff-accountant-portal-col {
+    width: 130px;
+}
+
+.staff-accountants-table th.staff-accountant-portal-col,
+.staff-accountants-table td.staff-accountant-portal-col {
+    text-align: center;
+}
+
 /* Shared by Owners/Management companies/Accountants - the read-only property-assignment count
    column. */
 .staff-property-count-cell {

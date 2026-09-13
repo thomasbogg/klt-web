@@ -48,6 +48,7 @@ from communications.registry import PLACEHOLDER_KEYS
 from communications.services.sending import send_scheduled_email
 from guests.models import Guest
 from libraries.utils import logerror
+from accountants.utils import send_accountant_invite_email
 from owners.utils import send_owner_invite_email
 from properties.models import (
     Accountant, Amenity, Location, LocationImage, LocationRules, LocationSpec, ManagementCompany,
@@ -1073,6 +1074,8 @@ class StaffSettingsView(View):
             'add_accountant': self._add_accountant,
             'update_accountant': self._update_accountant,
             'delete_accountant': self._delete_accountant,
+            'invite_accountant': self._invite_accountant,
+            'resend_accountant_invite': self._resend_accountant_invite,
             'add_management_company': self._add_management_company,
             'update_management_company': self._update_management_company,
             'delete_management_company': self._delete_management_company,
@@ -1125,7 +1128,11 @@ class StaffSettingsView(View):
             # select_related('user') avoids an N+1 for the Portal login column's
             # owner.user.has_usable_password check.
             'owners': self._owners_with_bank_accounts(),
-            'accountants': Accountant.objects.annotate(property_count=Count('property')).order_by('company'),
+            # select_related('user') avoids an N+1 for the Portal login column's
+            # accountant.user.has_usable_password check, same as owners above.
+            'accountants': Accountant.objects.select_related('user').annotate(
+                property_count=Count('property')
+            ).order_by('company'),
             'management_companies': self._management_companies_with_property_count(),
             'check_in_method_choices': ManagementCompany.CheckInMethod.choices,
             'owner_boolean_fields': OWNER_BOOLEAN_FIELDS,
@@ -1809,6 +1816,56 @@ class StaffSettingsView(View):
     def _delete_accountant(self, request):
         Accountant.objects.filter(pk=request.POST.get('accountant_id')).delete()
         messages.success(request, "Accountant deleted.")
+
+    def _invite_accountant(self, request):
+        # Mirrors _invite_owner exactly - see that method's own docstring for why there's no
+        # password field anywhere here (2026-09-08, per Thomas: no staff member should ever set
+        # or know an account's password, for staff, owner, or accountant accounts alike).
+        accountant = Accountant.objects.filter(pk=request.POST.get('accountant_id')).first()
+        if accountant is None:
+            messages.error(request, "That accountant no longer exists.")
+            return
+        if accountant.user_id is not None:
+            messages.error(request, f'"{accountant.company}" already has a portal account.')
+            return
+        if not accountant.email:
+            messages.error(request, f'"{accountant.company}" has no email address on file - add one first.')
+            return
+        if User.objects.filter(username=accountant.email).exists():
+            messages.error(
+                request,
+                f'An account already uses "{accountant.email}" as its username - resolve this in Django admin first.',
+            )
+            return
+        user = User(username=accountant.email, email=accountant.email)
+        user.set_unusable_password()
+        user.save()
+        accountant.user = user
+        accountant.save(update_fields=['user'])
+        if send_accountant_invite_email(request, user):
+            messages.success(request, f'Invited "{accountant.company}" to the Accountants Suite - an email was sent to {accountant.email}.')
+        else:
+            messages.warning(
+                request,
+                f'Portal account created for "{accountant.company}", but the invite email could not be sent - '
+                f'use "Resend invite" once the issue is fixed.',
+            )
+
+    def _resend_accountant_invite(self, request):
+        accountant = Accountant.objects.filter(pk=request.POST.get('accountant_id')).select_related('user').first()
+        if accountant is None or accountant.user_id is None:
+            messages.error(request, "That accountant has no portal account yet.")
+            return
+        if accountant.user.has_usable_password():
+            messages.error(request, f'"{accountant.company}" has already set a password.')
+            return
+        if not accountant.user.email:
+            messages.error(request, f'"{accountant.company}" has no email address on file - add one first.')
+            return
+        if send_accountant_invite_email(request, accountant.user):
+            messages.success(request, f'Invite resent to {accountant.user.email}.')
+        else:
+            messages.error(request, "Could not send the invite email - check the logs.")
 
     # Every one of the 5 contact roles (each name/email/phone) is genuinely optional - a company
     # acting on a narrow scope (e.g. cleaning only) may only ever fill in one. The Settings table

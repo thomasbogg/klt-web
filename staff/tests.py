@@ -3690,6 +3690,77 @@ class StaffInviteOwnerTests(TestCase):
         self.assertFalse(mock_send.called)
 
 
+class StaffInviteAccountantTests(TestCase):
+    """_invite_accountant/_resend_accountant_invite (staff/views.py) - the Accountants Suite
+    equivalent of StaffInviteOwnerTests above, same "no staff member ever sets or knows a
+    password" convention, not superuser-only."""
+
+    def setUp(self):
+        User.objects.create_user(username='invite_settings_user2', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='invite_settings_user2', password='pw')
+        self.url = reverse('staff:settings')
+        self.accountant = make_accountant(company='Invitable Co', name='Invitable Accountant', email='invitable-accountant@example.com')
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_invite_accountant_creates_account_with_unusable_password_and_links_it(self, mock_send):
+        self.client.post(self.url, {'action': 'invite_accountant', 'accountant_id': self.accountant.pk})
+        self.accountant.refresh_from_db()
+        self.assertIsNotNone(self.accountant.user_id)
+        self.assertFalse(self.accountant.user.has_usable_password())
+        self.assertEqual(self.accountant.user.username, 'invitable-accountant@example.com')
+        self.assertEqual(self.accountant.user.email, 'invitable-accountant@example.com')
+        self.assertTrue(mock_send.called)
+        self.assertEqual(mock_send.call_args.kwargs['to_email'], 'invitable-accountant@example.com')
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_invite_accountant_greets_by_accountant_name_not_username(self, mock_send):
+        self.client.post(self.url, {'action': 'invite_accountant', 'accountant_id': self.accountant.pk})
+        self.assertEqual(mock_send.call_args.kwargs['greeting_name'], 'Invitable Accountant')
+
+    def test_invite_accountant_rejects_an_accountant_that_already_has_a_portal_account(self):
+        existing_user = User.objects.create_user(username='already_has_one2', password='pw')
+        self.accountant.user = existing_user
+        self.accountant.save(update_fields=['user'])
+        with patch('communications.services.sending.send_plain_email') as mock_send:
+            self.client.post(self.url, {'action': 'invite_accountant', 'accountant_id': self.accountant.pk})
+        self.assertFalse(mock_send.called)
+        self.accountant.refresh_from_db()
+        self.assertEqual(self.accountant.user_id, existing_user.pk)
+
+    def test_invite_accountant_rejects_a_username_collision(self):
+        User.objects.create_user(username='invitable-accountant@example.com', password='pw')
+        before = User.objects.count()
+        with patch('communications.services.sending.send_plain_email') as mock_send:
+            self.client.post(self.url, {'action': 'invite_accountant', 'accountant_id': self.accountant.pk})
+        self.assertEqual(User.objects.count(), before)
+        self.assertFalse(mock_send.called)
+        self.accountant.refresh_from_db()
+        self.assertIsNone(self.accountant.user_id)
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_resend_accountant_invite_for_account_without_a_password_yet(self, mock_send):
+        user = User.objects.create_user(username='pending_accountant', email='pending_accountant@example.com')
+        user.set_unusable_password()
+        user.save()
+        self.accountant.user = user
+        self.accountant.save(update_fields=['user'])
+        self.client.post(self.url, {'action': 'resend_accountant_invite', 'accountant_id': self.accountant.pk})
+        self.assertTrue(mock_send.called)
+
+    def test_resend_accountant_invite_rejects_accountant_with_a_password_already_set(self):
+        user = User.objects.create_user(username='accountant_set_pw', password='pw', email='accountant_set@example.com')
+        self.accountant.user = user
+        self.accountant.save(update_fields=['user'])
+        with patch('communications.services.sending.send_plain_email') as mock_send:
+            self.client.post(self.url, {'action': 'resend_accountant_invite', 'accountant_id': self.accountant.pk})
+        self.assertFalse(mock_send.called)
+
+    def test_resend_accountant_invite_rejects_accountant_with_no_portal_account_yet(self):
+        with patch('communications.services.sending.send_plain_email') as mock_send:
+            self.client.post(self.url, {'action': 'resend_accountant_invite', 'accountant_id': self.accountant.pk})
+        self.assertFalse(mock_send.called)
+
+
 class StaffAcceptInviteViewTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='invitee2', email='invitee2@example.com', is_staff=True)

@@ -484,6 +484,17 @@ class Accountant(models.Model):
     email = models.EmailField(unique=True)
     phone = models.CharField(max_length=50, unique=True)
 
+    # Accountants Suite login (accountants app) - staff.views.py::StaffSettingsView.
+    # _invite_accountant creates the User (with set_unusable_password()) and links it here in one
+    # step; accountants/utils.py::send_accountant_invite_email then emails the firm a link to
+    # accountants.views.AccountantAcceptInviteView to choose their own password - mirrors
+    # properties.models.Owner.user exactly (same no-staff-set-password convention, same invite
+    # machinery). NULL means this accountant has no portal access yet.
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='accountant_profile',
+    )
+
     class Meta:
         db_table = 'property_accountants'
         verbose_name = 'Property Accountant'

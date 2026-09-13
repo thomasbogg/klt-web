@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
     <link rel="stylesheet" href="{% static 'staff/property_detail.css' %}?v=12">
-    <link rel="stylesheet" href="{% static 'staff/settings.css' %}?v=16">
+    <link rel="stylesheet" href="{% static 'staff/settings.css' %}?v=17">
     <script src="{% static 'staff/settings.js' %}" defer></script>
 </head>
 <body>
@@ -998,7 +998,12 @@
                         <div class="staff-table-scroll">
                         <table class="staff-price-table staff-accountants-table{% if not accountants %} staff-price-table-empty{% endif %}">
                             <thead>
-                                <tr><th>Company</th><th>Name</th><th>Email</th><th>Phone</th><th title="Number of properties currently assigned to this accountant">Properties</th><th></th></tr>
+                                <tr>
+                                    <th>Company</th><th>Name</th><th>Email</th><th>Phone</th>
+                                    <th title="Number of properties currently assigned to this accountant">Properties</th>
+                                    <th class="staff-accountant-portal-col" title="Accountants Suite login - accountants set their own password via an emailed invite, never a staff member">Portal login</th>
+                                    <th></th>
+                                </tr>
                             </thead>
                             <tbody>
                                 {% for accountant in accountants %}
@@ -1008,6 +1013,28 @@
                                     <td><input type="email" name="email" form="accountant-form-{{ accountant.pk }}" value="{{ accountant.email }}" class="staff-input"></td>
                                     <td><input type="text" name="phone" form="accountant-form-{{ accountant.pk }}" value="{{ accountant.phone }}" class="staff-input"></td>
                                     <td class="staff-property-count-cell">{{ accountant.property_count }}</td>
+                                    <td class="staff-accountant-portal-col">
+                                        {% if accountant.user_id %}
+                                            {% if accountant.user.has_usable_password %}
+                                            Active
+                                            {% else %}
+                                            Invite sent
+                                            <form method="post" class="staff-inline-delete">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="action" value="resend_accountant_invite">
+                                                <input type="hidden" name="accountant_id" value="{{ accountant.pk }}">
+                                                <button type="submit" class="staff-button staff-button-small">Resend invite</button>
+                                            </form>
+                                            {% endif %}
+                                        {% else %}
+                                        <form method="post" class="staff-inline-delete">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="invite_accountant">
+                                            <input type="hidden" name="accountant_id" value="{{ accountant.pk }}">
+                                            <button type="submit" class="staff-button staff-button-small staff-button-success">Invite</button>
+                                        </form>
+                                        {% endif %}
+                                    </td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="accountant-form-{{ accountant.pk }}" class="staff-button staff-button-small">Save</button>
                                         <form method="post" class="staff-inline-delete staff-confirm-delete" data-property-count="{{ accountant.property_count }}" data-entity-label="{{ accountant }}" data-role-label="accountant">
@@ -1019,7 +1046,7 @@
                                     </td>
                                 </tr>
                                 {% empty %}
-                                <tr><td colspan="6" class="staff-empty">No accountants yet.</td></tr>
+                                <tr><td colspan="7" class="staff-empty">No accountants yet.</td></tr>
                                 {% endfor %}
                                 <tr class="staff-price-row-new">
                                     <td><input type="text" name="company" form="accountant-form-new" class="staff-input"></td>
@@ -1027,6 +1054,7 @@
                                     <td><input type="email" name="email" form="accountant-form-new" class="staff-input"></td>
                                     <td><input type="text" name="phone" form="accountant-form-new" class="staff-input"></td>
                                     <td></td>
+                                    <td class="staff-accountant-portal-col"></td>
                                     <td class="staff-price-row-actions">
                                         <button type="submit" form="accountant-form-new" class="staff-button staff-button-small">Add</button>
                                     </td>
@@ -1045,6 +1073,7 @@
                             {% csrf_token %}
                             <input type="hidden" name="action" value="add_accountant">
                         </form>
+                        <p class="staff-settings-hint">"Invite" sends the accountant a link to set their own Accountants Suite password using the email address above as their username - no staff member ever chooses or sees it. Use "Resend invite" if their link expired or the email never arrived. Accountants see reports and payouts/memos for every property assigned to them via that property's own "Accountant" field.</p>
                     </div>
 
                     <div class="staff-panel">

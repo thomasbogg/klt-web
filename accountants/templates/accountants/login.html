@@ -1,0 +1,44 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accountant Sign In | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'main/auth.css' %}">
+</head>
+<body>
+    <div class="auth-page">
+        <div class="auth-card">
+            <a href="/" class="auth-back-link">&larr; Back to website</a>
+            <img src="{% static 'index/images/logo/icon.png' %}" alt="Algarve Beach Apartments" class="auth-icon">
+            <hr class="auth-accent">
+            <h1 class="auth-heading">Accountant Sign In</h1>
+            <p class="auth-subheading">Algarve Beach Apartments</p>
+
+            {% if form.errors %}
+            {% comment %}
+            Same deliberately generic message as owners/login.html - not distinguishing account
+            existence at all is the more secure default.
+            {% endcomment %}
+            <ul class="auth-errors">
+                <li>Incorrect username or password.</li>
+            </ul>
+            {% endif %}
+
+            <form method="post" class="auth-form">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ next }}">
+                <label class="auth-field">Username
+                    <input type="text" name="username" autocomplete="username" required autofocus>
+                </label>
+                <label class="auth-field">Password
+                    <input type="password" name="password" autocomplete="current-password" required>
+                </label>
+                <button type="submit" class="auth-submit">Sign in</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'staff.apps.StaffConfig',
     'finance.apps.FinanceConfig',
     'owners.apps.OwnersConfig',
+    'accountants.apps.AccountantsConfig',
     'communications.apps.CommunicationsConfig',
     'django.contrib.admin',
     'django.contrib.auth',

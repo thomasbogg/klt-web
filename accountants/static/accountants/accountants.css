@@ -1,0 +1,186 @@
+/* Accountants Suite - mirrors owners/static/owners/owners.css 1:1 under an .accountant- prefix
+   instead of .owner-, kept as its own file rather than shared so the two apps stay independently
+   stylable (same reasoning owners.css and staff.css are already separate despite both building on
+   bookings.css's shared manage-hub-* shell). Only the subset of rules this app's pages actually
+   use is included here - see owners.css for the full original set + its own history/comments if a
+   future accountant page needs one of the rules left out (Contact Details/Extras/Calendar Links
+   etc. have no accountant-facing equivalent). */
+
+.accountant-button {
+    display: inline-block;
+    align-self: flex-start;
+    padding: 10px 20px;
+    background: var(--primary-color);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-family: var(--secondary-font);
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.accountant-button:hover {
+    background: var(--primary-color-dark);
+}
+
+.accountant-welcome {
+    color: #666;
+    margin-bottom: 24px;
+}
+
+/* .manage-hub-content (bookings.css) sets text-align:center for the guest hub's own centered
+   prose - stopped here, same as owners.css. */
+.accountant-filter-panel, .accountant-table, .accountant-welcome, .accountant-panel-title,
+.accountant-page-header {
+    text-align: left;
+}
+
+.accountant-filter-panel {
+    background: #fff;
+    border: 1px solid rgba(44, 121, 185, 0.14);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+}
+
+.accountant-filter-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 20px;
+}
+
+.accountant-filter-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: var(--secondary-font);
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.accountant-filter-form input, .accountant-filter-form select, .accountant-filter-form textarea {
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.9rem;
+}
+
+/* Wraps just the From/To pair so date_range_pair.js can find them via .closest('.staff-field-row')
+   - same mechanism as owners.css. */
+.accountant-filter-form .staff-field-row {
+    display: contents;
+}
+
+.accountant-filter-form .accountant-button, .accountant-page-header .accountant-button {
+    align-self: flex-end;
+}
+
+.accountant-filter-columns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    flex-basis: 100%;
+    font-size: 0.85rem;
+    color: #444;
+}
+
+.accountant-filter-columns label {
+    display: flex;
+    flex: 1 1 160px;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    font-family: inherit;
+}
+
+.accountant-table-scroll {
+    overflow-x: auto;
+}
+
+.accountant-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin-bottom: 24px;
+}
+
+.accountant-table th {
+    text-align: left;
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #999;
+    padding: 0 8px 8px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.accountant-table td {
+    padding: 8px;
+    border-bottom: 1px solid #f2f2f2;
+    color: #444;
+}
+
+.accountant-table tfoot td {
+    padding: 8px;
+    border-top: 2px solid #ccc;
+    font-weight: 700;
+    color: #222;
+}
+
+.accountant-table-totals-label {
+    text-align: left;
+}
+
+/* Same deduction-vs-income distinction as owners.css's own .owner-table-deduction - needs
+   .accountant-table in the selector for the same specificity reason (a class+element beats a
+   single class against .accountant-table td's own class+element color rule). */
+.accountant-table td.accountant-table-deduction {
+    color: #963c33;
+}
+
+.accountant-empty {
+    color: #999;
+    font-style: italic;
+    padding: 12px 0;
+}
+
+.accountant-payouts-memos-note {
+    text-align: left;
+    color: rgb(110, 110, 110);
+    font-size: 0.88rem;
+    line-height: 1.6;
+    margin: 20px 0 28px;
+}
+
+.accountant-page-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 40px;
+}
+
+.accountant-page-header h1 {
+    margin: 0;
+    line-height: 1;
+}
+
+.accountant-panel-title {
+    font-family: var(--secondary-font);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--primary-color);
+    margin: 0 0 14px;
+}
+
+.accountant-panel-title-spaced {
+    margin-top: 32px;
+}
