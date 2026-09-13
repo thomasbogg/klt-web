@@ -33,7 +33,12 @@ class ReservationForm(forms.Form):
     # schema itself never gained a second column for this).
     phone_country_code = forms.ChoiceField(
         choices=[('', '-')] + phone_country_choices(), required=False,
-        widget=forms.Select(attrs={'class': 'reserve-input'}),
+        # autocomplete="off" - without it, Chrome's address-autofill heuristics (matching on the
+        # field's name/id containing "country") silently pre-select the browser profile's saved
+        # country as soon as the page loads, even though the blank option is what the server
+        # actually rendered as selected - found 2026-09-13 on the multi-reserve page, but the same
+        # underlying field, so fixed here for every form that uses it.
+        widget=forms.Select(attrs={'class': 'reserve-input', 'autocomplete': 'off'}),
     )
     phone = forms.CharField(
         max_length=50, required=False,
@@ -174,7 +179,12 @@ class GuestContactDetailsForm(forms.Form):
     )
     phone_country_code = forms.ChoiceField(
         choices=[('', '-')] + phone_country_choices(), required=False,
-        widget=forms.Select(attrs={'class': 'reserve-input'}),
+        # autocomplete="off" - without it, Chrome's address-autofill heuristics (matching on the
+        # field's name/id containing "country") silently pre-select the browser profile's saved
+        # country as soon as the page loads, even though the blank option is what the server
+        # actually rendered as selected - found 2026-09-13 on the multi-reserve page, but the same
+        # underlying field, so fixed here for every form that uses it.
+        widget=forms.Select(attrs={'class': 'reserve-input', 'autocomplete': 'off'}),
     )
     phone = forms.CharField(
         max_length=50, required=False,

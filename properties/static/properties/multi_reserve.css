@@ -56,8 +56,6 @@
     max-width: 420px;
     margin: 32px auto 0;
     text-align: left;
-    border-top: 1px solid #ebebeb;
-    padding-top: 16px;
 }
 
 .multi-reserve-breakdown-leg {
@@ -65,7 +63,6 @@
 }
 
 .multi-reserve-breakdown-leg:not(:last-child) {
-    border-bottom: 1px solid #ebebeb;
     margin-bottom: 12px;
 }
 
