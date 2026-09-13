@@ -12,8 +12,8 @@ from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge,
     CheckinSettings, Departure, DepositBankDetails, Extra, ExtrasSettings, FAQ, GuestListAdjustment,
-    GuestRegistration, Payment, PaymentSettings, PlatformPayout, RequestType, SupplementaryPayment,
-    TouristTax, TravelMethod, WelcomePackItem,
+    GuestRegistration, Payment, PaymentSettings, PlatformPayout, RequestType, ReservationGroup,
+    SupplementaryPayment, TouristTax, TravelMethod, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
 from staff.models import LateCheckoutGrant, OwnerPayment
@@ -101,6 +101,57 @@ class BookingOverlappingTests(TestCase):
         self.assertTrue(
             Booking.objects.overlapping(self.property, self.start, self.end).exists()
         )
+
+
+class ReservationGroupTests(TestCase):
+    """A ReservationGroup ties together the sibling Bookings of one multi-property reservation
+    (2026-09-13) - these tests cover just the reference-generation guarantee this stage's own
+    docstring promises: a group's reference is never blank, and a group's reference and an
+    individual Booking's reference are drawn from the same space but can never collide with each
+    other, since the guest-facing lookup form (ManageBookingView) needs to check both without
+    ambiguity."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property', short_title='TESTPROP')
+        self.guest = Guest.objects.create(last_name='Guest')
+        self.start = date.today() + timedelta(days=30)
+        self.end = self.start + timedelta(days=7)
+
+    def make_booking(self, reservation_group=None):
+        return Booking.objects.create(
+            property=self.property,
+            guest=self.guest,
+            arrival_date=self.start,
+            departure_date=self.end,
+            is_owner=False,
+            enquiry_status='Awaiting payment',
+            enquiry_source='Website',
+            adults=2, children=0, babies=0,
+            last_updated=timezone.now(),
+            reservation_group=reservation_group,
+        )
+
+    def test_group_gets_a_reference_on_save(self):
+        group = ReservationGroup.objects.create()
+        self.assertTrue(group.reference)
+
+    def test_bookings_can_share_a_group(self):
+        group = ReservationGroup.objects.create()
+        first = self.make_booking(reservation_group=group)
+        second = self.make_booking(reservation_group=group)
+        self.assertEqual(list(group.bookings.order_by('pk')), [first, second])
+
+    def test_group_reference_never_collides_with_a_booking_reference(self):
+        booking = self.make_booking()
+        with patch('bookings.utils.generate_reference_candidate', side_effect=[booking.reference, 'FRESH-REF1']):
+            group = ReservationGroup.objects.create()
+        self.assertEqual(group.reference, 'FRESH-REF1')
+
+    def test_booking_reference_never_collides_with_a_group_reference(self):
+        group = ReservationGroup.objects.create()
+        with patch('bookings.utils.generate_reference_candidate', side_effect=[group.reference, 'FRESH-REF2']):
+            booking = self.make_booking()
+        self.assertEqual(booking.reference, 'FRESH-REF2')
 
 
 class ExpireStaleHoldsTests(TestCase):

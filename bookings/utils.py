@@ -59,6 +59,18 @@ def generate_reference_candidate():
     return '-'.join(groups)
 
 
+def generate_unique_reference(*querysets, attempts=5):
+    """A generate_reference_candidate() string confirmed absent from every queryset given - e.g.
+    Booking.objects.all() and ReservationGroup.objects.all(), so a multi-property reservation's own
+    shared party reference (2026-09-13, see ReservationGroup) can never collide with an individual
+    Booking.reference and be typed into the wrong lookup form by a guest, and vice versa."""
+    for _ in range(attempts):
+        candidate = generate_reference_candidate()
+        if not any(queryset.filter(reference=candidate).exists() for queryset in querysets):
+            return candidate
+    raise RuntimeError("Could not generate a unique reference.")
+
+
 def _apply_manual_discount(basic_total, discount_total, manual_discount_percent):
     """discount_total with a staff-granted manual_discount_percent (if any) folded in as a % of
     basic_total. Shared by create_booking() and both recalculate_*_for_party() below, so a manual

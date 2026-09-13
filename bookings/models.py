@@ -9,7 +9,9 @@ from django.db import models
 from django.utils import timezone
 from django_countries.fields import CountryField
 
-from bookings.utils import BLOCK_LATE_CHECK_OUT_LAST_NAME, BLOCK_UNBOOKABLE_LAST_NAME, generate_reference_candidate
+from bookings.utils import (
+    BLOCK_LATE_CHECK_OUT_LAST_NAME, BLOCK_UNBOOKABLE_LAST_NAME, generate_unique_reference,
+)
 from env_settings import VALID_BOOKING_STATUSES, PROVISIONAL_BOOKING_STATUSES
 from properties.models import Location, Property
 from guests.models import Guest
@@ -343,10 +345,49 @@ class BookingQuerySet(models.QuerySet):
         return dict(by_property)
 
 
+class ReservationGroup(models.Model):
+    """Ties together the sibling Booking rows of a single multi-property reservation - a party
+    booking two (or more) apartments at once for the same stay, each apartment still its own
+    Booking (own dates already match by construction, own adults/children/babies split, own
+    Payment/Charge/owner-payout chain - see bookings/payouts.py, which already resolves those per
+    Booking.property regardless of grouping) but sharing one guest-facing reference (2026-09-13,
+    per Thomas: a shared reference is friendlier than making a guest juggle two, at the cost of the
+    lookup/hub views needing to know about groups at all - see ManageBookingView).
+
+    This reference, not any individual Booking.reference, is what confirmation emails and the
+    reference+email lookup form give the guest going forward - each Booking keeps generating its
+    own reference too (still needed internally: staff search, payment-gateway correlation, the
+    .ics export, etc.), it's just never surfaced to the guest once it belongs to a group.
+    ManageBookingView is the one place that has to check both this model and Booking before
+    concluding "not found"."""
+    reference = models.CharField(max_length=20, unique=True, blank=True, null=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'reservation_groups'
+        verbose_name = 'Reservation group'
+        verbose_name_plural = 'Reservation groups'
+
+    def __str__(self):
+        return self.reference or f"Reservation group ({self.pk})"
+
+    def save(self, *args, **kwargs):
+        if not self.pk and not self.reference:
+            self.reference = generate_unique_reference(Booking.objects.all(), ReservationGroup.objects.all())
+        super().save(*args, **kwargs)
+
+
 class Booking(models.Model):
     """Main booking model."""
     property = models.ForeignKey(Property, on_delete=models.PROTECT)
     guest = models.ForeignKey(Guest, on_delete=models.PROTECT)
+    # Null for the overwhelming majority of bookings (a normal single-property reservation) - only
+    # set for one leg of a multi-property reservation (see ReservationGroup's own docstring).
+    # PROTECT, not CASCADE (this project's default - see CLAUDE.md): a group should never vanish
+    # out from under a still-live sibling Booking just because one leg got deleted first.
+    reservation_group = models.ForeignKey(
+        ReservationGroup, on_delete=models.PROTECT, null=True, blank=True, related_name='bookings',
+    )
 
     # Booking identifiers
     reference = models.CharField(max_length=20, unique=True, blank=True, null=True, db_index=True)
@@ -478,13 +519,9 @@ class Booking(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.pk and not self.reference:
-            for _ in range(REFERENCE_GENERATION_ATTEMPTS):
-                candidate = generate_reference_candidate()
-                if not Booking.objects.filter(reference=candidate).exists():
-                    self.reference = candidate
-                    break
-            else:
-                raise RuntimeError("Could not generate a unique booking reference.")
+            self.reference = generate_unique_reference(
+                Booking.objects.all(), ReservationGroup.objects.all(), attempts=REFERENCE_GENERATION_ATTEMPTS,
+            )
         super().save(*args, **kwargs)
 
 
