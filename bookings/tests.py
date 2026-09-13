@@ -315,6 +315,17 @@ class MultiPropertyPaymentSequencingTests(TestCase):
         self.assertContains(response_b, 'also booked')
         self.assertContains(response_b, str(self.property_a))
 
+    def test_confirmation_shows_the_shared_party_reference(self):
+        self.leg_a.payment.status = 'paid'
+        self.leg_a.payment.save()
+        self.leg_b.payment.status = 'paid'
+        self.leg_b.payment.save()
+
+        response = self.client.get(reverse('bookings:confirmation', kwargs={'reference': self.leg_a.reference}))
+        self.assertContains(response, 'Party Reference')
+        self.assertContains(response, self.group.reference)
+        self.assertNotContains(response, 'Booking Reference')
+
 
 class ExpireStaleHoldsTests(TestCase):
     def setUp(self):
@@ -2793,6 +2804,74 @@ class ManageBookingViewTests(TestCase):
         response = self._post(self.booking.reference, self.guest.email)
         self.assertRedirects(
             response, reverse('bookings:manage_hub', kwargs={'reference': self.booking.reference}),
+            fetch_redirect_response=False,
+        )
+
+
+class ManageBookingViewGroupReferenceLookupTests(TestCase):
+    """A multi-property reservation's shared ReservationGroup.reference (2026-09-13, see
+    booking_for_reference_and_email()) must work in the same reference+email lookup form as an
+    individual Booking.reference - that's the whole point of it being the reference the
+    confirmation page actually tells the guest to keep."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Group Lookup Property A', short_title='GLPA')
+        self.property_b = Property.objects.create(title='Group Lookup Property B', short_title='GLPB')
+        self.guest = Guest.objects.create(first_name='Rita', last_name='Nunes', email='rita-group@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a)
+        self.leg_b = self._make_booking(self.property_b)
+        self.url = reverse('bookings:manage')
+
+    def _make_booking(self, property):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Awaiting payment', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        Payment.objects.create(booking=booking, provider='revolut', status='pending')
+        return booking
+
+    def _post(self, reference, email):
+        return self.client.post(self.url, {'reference': reference, 'email': email})
+
+    def test_group_reference_with_both_legs_unpaid_goes_to_first_legs_payment(self):
+        response = self._post(self.group.reference, self.guest.email)
+        self.assertRedirects(
+            response, reverse('bookings:pay', kwargs={'reference': self.leg_a.reference}),
+            fetch_redirect_response=False,
+        )
+
+    def test_group_reference_skips_the_already_paid_leg(self):
+        self.leg_a.payment.status = 'paid'
+        self.leg_a.payment.save()
+        response = self._post(self.group.reference, self.guest.email)
+        self.assertRedirects(
+            response, reverse('bookings:pay', kwargs={'reference': self.leg_b.reference}),
+            fetch_redirect_response=False,
+        )
+
+    def test_group_reference_with_both_paid_goes_to_first_legs_hub(self):
+        self.leg_a.payment.status = 'paid'
+        self.leg_a.payment.save()
+        self.leg_b.payment.status = 'paid'
+        self.leg_b.payment.save()
+        response = self._post(self.group.reference, self.guest.email)
+        self.assertRedirects(
+            response, reverse('bookings:manage_hub', kwargs={'reference': self.leg_a.reference}),
+            fetch_redirect_response=False,
+        )
+
+    def test_group_reference_with_wrong_email_is_not_found(self):
+        response = self._post(self.group.reference, 'someone-else@example.com')
+        self.assertTrue(response.context['not_found'])
+
+    def test_individual_leg_reference_still_works_directly(self):
+        response = self._post(self.leg_b.reference, self.guest.email)
+        self.assertRedirects(
+            response, reverse('bookings:pay', kwargs={'reference': self.leg_b.reference}),
             fetch_redirect_response=False,
         )
 

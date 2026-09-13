@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Your Booking {{ booking.reference }} | Algarve Beach Apartments</title>
+    <title>Manage Your Booking {% if reservation_group_sibling %}{{ booking.reservation_group.reference }}{% else %}{{ booking.reference }}{% endif %} | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">

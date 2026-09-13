@@ -1,9 +1,16 @@
 {% load static %}
 <div class="confirmation-references">
+    {% if reservation_group_sibling %}
+    <div class="confirmation-reference">
+        <span class="confirmation-reference-label">Party Reference</span>
+        <span class="confirmation-reference-value">{{ booking.reservation_group.reference }}</span>
+    </div>
+    {% else %}
     <div class="confirmation-reference">
         <span class="confirmation-reference-label">Booking Reference</span>
         <span class="confirmation-reference-value">{{ booking.reference }}</span>
     </div>
+    {% endif %}
     {% if platform_reference %}
     <div class="confirmation-reference">
         <span class="confirmation-reference-label">Platform Reference</span>
@@ -23,6 +30,7 @@
 <p class="confirmation-group-note">
     Part of a two-apartment reservation &ndash; you've also booked
     <a href="{% url 'bookings:confirmation' reference=reservation_group_sibling.reference %}">{{ reservation_group_sibling.property }}</a>.
+    Use the Party Reference above (with your email) to look up either apartment.
 </p>
 {% endif %}
 

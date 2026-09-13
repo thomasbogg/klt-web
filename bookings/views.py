@@ -18,7 +18,7 @@ from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingCondition, BookingGuest, BookingRequestedExtra, BookingSettings, DepositBankDetails,
     Departure, Extra, ExtrasSettings, FAQ, GuestListAdjustment, GuestRegistration, LocalGuideEntry, RequestType,
-    SupplementaryPayment, TouristTax, TravelMethod, WelcomePackDrinksChoice, WelcomePackFoodChoice,
+    ReservationGroup, SupplementaryPayment, TouristTax, TravelMethod, WelcomePackDrinksChoice, WelcomePackFoodChoice,
     WelcomePackItem,
 )
 from bookings.utils import (
@@ -72,6 +72,30 @@ def redirect_to_next_step_after_payment(request, booking):
         request.session['pending_booking_reference'] = next_reference
         return redirect('bookings:details', reference=next_reference)
     return redirect('bookings:confirmation', reference=booking.reference)
+
+
+def booking_for_reference_and_email(reference, email):
+    """The Booking a guest's reference+email lookup (ManageBookingView) should resolve to -
+    2026-09-13, wiring up the shared reference a multi-property reservation's ReservationGroup
+    generates (see that model's own docstring: a guest is meant to use this ONE reference for
+    either apartment, not have to remember two individual Booking.reference values).
+
+    `reference` matches an individual Booking directly in the normal case. Failing that, it might
+    be a ReservationGroup's own reference instead - in which case this returns the first still-
+    unpaid Booking in the group for that guest, or (once every leg is paid) simply the first one by
+    pk. Never the first Booking regardless of paid status - a guest who still owes for one
+    apartment must never be routed straight to a fully-paid-looking hub for the other and left
+    thinking their whole reservation is done. Returns None if nothing matches either way."""
+    booking = Booking.objects.filter(reference=reference, guest__email__iexact=email).first()
+    if booking is not None:
+        return booking
+    group = ReservationGroup.objects.filter(reference=reference).first()
+    if group is None:
+        return None
+    bookings = list(group.bookings.filter(guest__email__iexact=email).order_by('pk'))
+    if not bookings:
+        return None
+    return next((candidate for candidate in bookings if not is_paid(candidate)), bookings[0])
 
 
 def is_balance_paid(booking):
@@ -1244,7 +1268,11 @@ class ManageBookingView(View):
     """Reference + email lookup for a guest returning later without their confirmation link. Once
     the lookup succeeds, hands off to BookingManageHubView (bearer-readable by reference alone,
     like every other post-deposit view here) rather than rendering the booking in place - so a
-    guest who bookmarks/reloads the hub URL doesn't need to re-prove their email every time."""
+    guest who bookmarks/reloads the hub URL doesn't need to re-prove their email every time.
+
+    Also accepts a ReservationGroup's own shared reference (2026-09-13, see
+    booking_for_reference_and_email()) - the reference a multi-property reservation's confirmation
+    page actually tells the guest to keep, rather than either individual apartment's own."""
     template_name = 'bookings/manage.html'
 
     def get(self, request, *args, **kwargs):
@@ -1254,10 +1282,9 @@ class ManageBookingView(View):
         form = BookingLookupForm(request.POST)
         context = {'form': form}
         if form.is_valid():
-            booking = Booking.objects.filter(
-                reference=form.cleaned_data['reference'],
-                guest__email__iexact=form.cleaned_data['email'],
-            ).first()
+            booking = booking_for_reference_and_email(
+                form.cleaned_data['reference'], form.cleaned_data['email'],
+            )
             if booking is not None and not is_paid(booking):
                 return redirect('bookings:pay', reference=booking.reference)
             elif booking is not None:
