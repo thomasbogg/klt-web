@@ -7,7 +7,7 @@
 .property-back-to-search {
     display: block;
     max-width: 1200px;
-    margin: 12px auto 0;
+    margin: 24px auto 0;
     padding: 0 20px;
     color: var(--primary-color);
     font-family: var(--secondary-font);
