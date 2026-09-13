@@ -102,6 +102,68 @@ class ReservationForm(forms.Form):
         return cleaned_data
 
 
+class PropertyGuestSplitForm(forms.Form):
+    """How a guest party splits across two properties booked together (see bookings/models.py::
+    ReservationGroup and availability/utils.py::find_property_combo_suggestions) - 2026-09-13,
+    Stage 2 of multi-property booking, per Thomas: "we would also need the guest to be explicit at
+    booking time about how many of their party are going into each of the properties they are
+    booking." Fields are named '<category>_<property index>' (adults_0, children_0, infants_0,
+    adults_1, ...) since the set of properties is only known at construction time, not fixed like
+    ReservationForm's single-property guest count.
+
+    Only pairs for now, matching find_property_combo_suggestions - properties must be a 2-item
+    list. clean() is the one place that both re-derives each property's own party size (checked
+    against its own specs.max_guests - the same cap Booking.clean() enforces server-side, just
+    surfaced here as a friendly form error instead of a 500 at booking-creation time) and confirms
+    nobody's silently lost or gained from the original search's total party size."""
+    CATEGORIES = ('adults', 'children', 'infants')
+
+    def __init__(self, *args, properties, total_guests, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.properties = properties
+        self.total_guests = total_guests
+        for index in range(len(properties)):
+            for category in self.CATEGORIES:
+                self.fields[f'{category}_{index}'] = forms.IntegerField(
+                    min_value=0, required=False, initial=0,
+                    widget=forms.NumberInput(attrs={'class': 'reserve-input', 'min': '0'}),
+                )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        splits = [
+            {category: cleaned_data.get(f'{category}_{index}') or 0 for category in self.CATEGORIES}
+            for index in range(len(self.properties))
+        ]
+        for category in self.CATEGORIES:
+            expected = self.total_guests.get(category, 0)
+            actual = sum(split[category] for split in splits)
+            if actual != expected:
+                raise forms.ValidationError(
+                    f"{category.capitalize()} across both apartments must add up to {expected} "
+                    f"(currently {actual}) - the same total you searched with."
+                )
+        for property, split in zip(self.properties, splits):
+            total = sum(split.values())
+            specs = getattr(property, 'specs', None)
+            if total < 1:
+                raise forms.ValidationError(f"{property} needs at least one guest.")
+            if specs and total > specs.max_guests:
+                raise forms.ValidationError(
+                    f"{property} allows a maximum of {specs.max_guests} guests (currently {total})."
+                )
+            # max_adults is a separate, tighter cap than max_guests - see Booking.clean()'s own
+            # comment (2026-09-13, found via a real example where two properties' max_guests
+            # summed to enough for a party that was actually too many adults for either specific
+            # split of the two).
+            if specs and split['adults'] > specs.max_adults:
+                raise forms.ValidationError(
+                    f"{property} allows a maximum of {specs.max_adults} adults (currently {split['adults']})."
+                )
+        cleaned_data['splits'] = splits
+        return cleaned_data
+
+
 class GuestContactDetailsForm(forms.Form):
     """Self-service edit of the lead guest's own email/phone from the Manage Booking hub's
     Contact Details section - mirrors owners.views.OwnerContactDetailsView (added 2026-09-07) for

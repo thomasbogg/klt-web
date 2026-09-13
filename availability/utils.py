@@ -18,6 +18,70 @@ def guests_string_to_dict(guests_string):
     return guests
 
 
+def even_split_guests(properties, guests):
+    """`guests` divided as evenly as possible across len(properties) legs - each category
+    floor-divided, with any remainder given to the earliest properties. A reasonable starting
+    point/estimate, not a real allocation the guest has chosen yet - shared by SearchView's
+    combo_suggestions estimated price and MultiPropertyReserveView's own split form default, so
+    both start from the same arithmetic instead of two independent implementations."""
+    count = len(properties)
+    splits = [{} for _ in range(count)]
+    for category in ('adults', 'children', 'infants'):
+        total = guests.get(category, 0)
+        share, remainder = divmod(total, count)
+        for index in range(count):
+            splits[index][category] = share + (1 if index < remainder else 0)
+    return splits
+
+
+def find_property_combo_suggestions(start_date, end_date, guests):
+    """When no single property can seat this whole party, suggest pairs of properties at the same
+    location that, booked together, can - e.g. two adjacent Clube do Monaco apartments for a group
+    of 8 (2026-09-13, Stage 2 of multi-property booking - see bookings/models.py::
+    ReservationGroup for what this feeds into). Only called by SearchView when its own normal
+    single-property search comes back empty - a party that already fits one property has no reason
+    to be offered two.
+
+    Returns one best-fit suggestion per location (the pair with the smallest combined max_guests
+    that still fits, not just any fitting pair - the guest should see the closest match, not an
+    arbitrarily large one), as a list of {'location', 'properties': [a, b], 'combined_max_guests'}
+    dicts, sorted smallest-combined-capacity first. Only pairs, not larger groups, for now - a
+    third+ leg is a straightforward extension of this same function later, not a design change.
+    Each property is confirmed individually available for these exact dates - a location listing
+    three units doesn't mean any two of them are actually free right now.
+
+    Checks combined max_adults as well as combined max_guests (2026-09-13, found via a real
+    example - Clube do Monaco 4 + AE sum to 8 max_guests but only 6 max_adults, so an 8-adult
+    party doesn't actually fit either one despite the max_guests total suggesting it does; see
+    Booking.clean()'s own comment on the same distinction). This is a necessary check for whether a
+    split is even possible, not a guarantee any specific split works - PropertyGuestSplitForm still
+    validates the guest's actual chosen split against each leg's own caps."""
+    party_size = guests.get('adults', 0) + guests.get('children', 0) + guests.get('infants', 0)
+    adults = guests.get('adults', 0)
+    suggestions = []
+    for location in Location.objects.all():
+        candidates = [
+            property for property in Property.objects.bookable_on_website()
+            .filter(location=location).select_related('specs')
+            if getattr(property, 'specs', None)
+            and not Booking.objects.overlapping(property, start_date, end_date).exists()
+        ]
+        best = None
+        for i in range(len(candidates)):
+            for j in range(i + 1, len(candidates)):
+                a, b = candidates[i], candidates[j]
+                combined_max_guests = a.specs.max_guests + b.specs.max_guests
+                combined_max_adults = a.specs.max_adults + b.specs.max_adults
+                if combined_max_guests < party_size or combined_max_adults < adults:
+                    continue
+                if best is None or combined_max_guests < best['combined_max_guests']:
+                    best = {'location': location, 'properties': [a, b], 'combined_max_guests': combined_max_guests}
+        if best is not None:
+            suggestions.append(best)
+    suggestions.sort(key=lambda suggestion: (suggestion['combined_max_guests'], suggestion['location'].title))
+    return suggestions
+
+
 def full_toolbar_context(start_date=None, end_date=None, guests=None):
     guests = guests or {}
     booking_settings = BookingSettings.load()

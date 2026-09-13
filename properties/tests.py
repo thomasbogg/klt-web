@@ -129,6 +129,83 @@ class ReserveOwnPendingBookingTests(TestCase):
         self.assertEqual(booking.enquiry_status, 'Awaiting payment')
 
 
+class MultiPropertyReserveViewTests(TestCase):
+    """Stage 2 of multi-property booking (see bookings/models.py::ReservationGroup) - a guest
+    reaching this page from a SearchView combo suggestion should be able to split their party
+    across the two properties and see a combined price preview, with no Booking row created yet."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Multi Reserve Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.management_company = ManagementCompany.objects.create(name='Multi Reserve Management Co')
+        self.property_a = Property.objects.create(
+            title=f'{self.location} - MRA', short_title='MRA', location=self.location,
+            booking_company=self.management_company,
+        )
+        self.property_b = Property.objects.create(
+            title=f'{self.location} - MRB', short_title='MRB', location=self.location,
+            booking_company=self.management_company,
+        )
+        for property in (self.property_a, self.property_b):
+            PropertySpec.objects.create(property=property, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        self.start = date.today() + timedelta(days=330)
+        self.end = self.start + timedelta(days=5)
+        for property in (self.property_a, self.property_b):
+            Price.objects.create(
+                property=property, start_date=date.today(), end_date=self.end + timedelta(days=30), rate=100,
+            )
+        self.url = f'/properties/{self.location.slug}/multi-reserve/'
+        self.query = {
+            'properties': 'mra,mrb',
+            'start': self.start.strftime('%d/%m/%Y'),
+            'end': self.end.strftime('%d/%m/%Y'),
+            'guests': '6 adults,0 children,0 infants',
+        }
+
+    def test_get_shows_the_split_form(self):
+        response = self.client.get(self.url, self.query)
+        self.assertContains(response, 'MRA')
+        self.assertContains(response, 'MRB')
+        self.assertContains(response, 'Preview split')
+
+    def test_valid_split_shows_a_combined_price_breakdown(self):
+        response = self.client.get(self.url, {
+            **self.query, 'adults_0': 3, 'children_0': 0, 'infants_0': 0,
+            'adults_1': 3, 'children_1': 0, 'infants_1': 0,
+        })
+        self.assertIn('breakdown', response.context)
+        self.assertEqual(len(response.context['breakdown']['legs']), 2)
+        self.assertContains(response, 'Combined total')
+
+    def test_no_booking_is_created_by_a_valid_split(self):
+        self.client.get(self.url, {
+            **self.query, 'adults_0': 3, 'children_0': 0, 'infants_0': 0,
+            'adults_1': 3, 'children_1': 0, 'infants_1': 0,
+        })
+        self.assertFalse(Booking.objects.exists())
+
+    def test_unavailable_property_shows_message_not_split_form(self):
+        guest = Guest.objects.create(last_name='Blocker')
+        Booking.objects.create(
+            property=self.property_a, guest=guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url, self.query)
+        self.assertContains(response, 'no longer available')
+        self.assertNotContains(response, 'Preview split')
+
+    def test_404_for_a_single_property(self):
+        response = self.client.get(self.url, {**self.query, 'properties': 'mra'})
+        self.assertEqual(response.status_code, 404)
+
+    def test_404_for_an_unknown_property_slug(self):
+        response = self.client.get(self.url, {**self.query, 'properties': 'mra,nosuchproperty'})
+        self.assertEqual(response.status_code, 404)
+
+
 class ReserveCountryOfResidenceDepositGatingTests(TestCase):
     """Country of Residence exists only to drive compute_deposit_waiver()'s UK/EU check - per
     Thomas 2026-09-08, the reserve page hides the field entirely (and stops requiring it) while

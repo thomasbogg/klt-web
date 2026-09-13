@@ -381,3 +381,91 @@
     background: #fff;
     color: var(--primary-color, #2c79b9);
 }
+
+.availability-search-results .combo-suggestions {
+    width: 100%;
+    max-width: 700px;
+    margin: 0 auto;
+    text-align: center;
+}
+
+.availability-search-results .combo-suggestions h2 {
+    font-size: 1.2rem;
+    margin-bottom: 20px;
+}
+
+.availability-search-results .combo-suggestion-card {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    border: 1px solid #ebebeb;
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+    text-align: left;
+}
+
+.availability-search-results .combo-suggestion-photos {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.availability-search-results .combo-suggestion-photo {
+    width: 72px;
+    height: 72px;
+    border-radius: 8px;
+    object-fit: cover;
+}
+
+.availability-search-results .combo-suggestion-plus {
+    color: rgb(160, 160, 160);
+    font-size: 1.1rem;
+}
+
+.availability-search-results .combo-suggestion-details {
+    flex: 1;
+    min-width: 0;
+}
+
+.availability-search-results .combo-suggestion-price {
+    color: var(--primary-color);
+    font-weight: 600;
+    margin: 0 0 12px;
+}
+
+.availability-search-results .combo-suggestion-location {
+    font-family: var(--secondary-font);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+    margin: 0 0 4px;
+}
+
+.availability-search-results .combo-suggestion-properties {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--primary-color);
+    margin: 0 0 4px;
+}
+
+.availability-search-results .combo-suggestion-capacity {
+    color: rgb(100, 100, 100);
+    margin: 0 0 12px;
+}
+
+.availability-search-results .combo-suggestion-link {
+    color: var(--primary-color);
+    font-family: var(--secondary-font);
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-decoration: none;
+}
+
+.availability-search-results .combo-suggestion-link:hover {
+    text-decoration: underline;
+}

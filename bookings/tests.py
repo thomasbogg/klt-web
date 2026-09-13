@@ -7,7 +7,7 @@ from django.test import RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from bookings.forms import ReservationForm
+from bookings.forms import PropertyGuestSplitForm, ReservationForm
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment,
     Booking, BookingDateAdjustment, BookingGuest, BookingRequestedExtra, BookingSettings, Charge,
@@ -152,6 +152,59 @@ class ReservationGroupTests(TestCase):
         with patch('bookings.utils.generate_reference_candidate', side_effect=[group.reference, 'FRESH-REF2']):
             booking = self.make_booking()
         self.assertEqual(booking.reference, 'FRESH-REF2')
+
+
+class PropertyGuestSplitFormTests(TestCase):
+    """How a guest party splits across two properties booked together (2026-09-13, Stage 2 of
+    multi-property booking - see MultiPropertyReserveView)."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Split Form Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.property_a = Property.objects.create(
+            title=f'{self.location} - SPLITA', short_title='SPLITA', location=self.location,
+        )
+        self.property_b = Property.objects.create(
+            title=f'{self.location} - SPLITB', short_title='SPLITB', location=self.location,
+        )
+        PropertySpec.objects.create(property=self.property_a, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        PropertySpec.objects.create(property=self.property_b, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        self.properties = [self.property_a, self.property_b]
+        self.total_guests = {'adults': 6, 'children': 0, 'infants': 0}
+
+    def test_valid_split_adding_up_to_the_total(self):
+        form = PropertyGuestSplitForm(
+            {'adults_0': 3, 'children_0': 0, 'infants_0': 0, 'adults_1': 3, 'children_1': 0, 'infants_1': 0},
+            properties=self.properties, total_guests=self.total_guests,
+        )
+        self.assertTrue(form.is_valid())
+        self.assertEqual(
+            form.cleaned_data['splits'],
+            [{'adults': 3, 'children': 0, 'infants': 0}, {'adults': 3, 'children': 0, 'infants': 0}],
+        )
+
+    def test_rejects_a_split_that_does_not_add_up_to_the_searched_total(self):
+        form = PropertyGuestSplitForm(
+            {'adults_0': 2, 'children_0': 0, 'infants_0': 0, 'adults_1': 3, 'children_1': 0, 'infants_1': 0},
+            properties=self.properties, total_guests=self.total_guests,
+        )
+        self.assertFalse(form.is_valid())
+
+    def test_rejects_a_property_over_its_own_max_guests(self):
+        form = PropertyGuestSplitForm(
+            {'adults_0': 5, 'children_0': 0, 'infants_0': 0, 'adults_1': 1, 'children_1': 0, 'infants_1': 0},
+            properties=self.properties, total_guests=self.total_guests,
+        )
+        self.assertFalse(form.is_valid())
+
+    def test_rejects_a_property_with_zero_guests(self):
+        form = PropertyGuestSplitForm(
+            {'adults_0': 6, 'children_0': 0, 'infants_0': 0, 'adults_1': 0, 'children_1': 0, 'infants_1': 0},
+            properties=self.properties, total_guests=self.total_guests,
+        )
+        self.assertFalse(form.is_valid())
 
 
 class ExpireStaleHoldsTests(TestCase):

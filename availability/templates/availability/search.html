@@ -75,9 +75,42 @@
             {% for property in available_properties %}
             {% include 'properties/property/tile.html' with property=property %}
             {% empty %}
+            {% if not combo_suggestions %}
             <p class="no-results">No properties available for the selected dates and guest count. Try adjusting your search.</p>
+            {% endif %}
             {% endfor %}
         </div>
+
+        {% if not available_properties and combo_suggestions %}
+        <div class="combo-suggestions">
+            <h2>No single apartment fits your group? Book two together</h2>
+            {% for suggestion in combo_suggestions %}
+            <div class="combo-suggestion-card">
+                <div class="combo-suggestion-photos">
+                    {% with photo=suggestion.properties.0.images.first %}
+                    {% if photo %}<img src="{{ photo.image.url }}" alt="{{ suggestion.properties.0 }}" class="combo-suggestion-photo">{% endif %}
+                    {% endwith %}
+                    <span class="combo-suggestion-plus">+</span>
+                    {% with photo=suggestion.properties.1.images.first %}
+                    {% if photo %}<img src="{{ photo.image.url }}" alt="{{ suggestion.properties.1 }}" class="combo-suggestion-photo">{% endif %}
+                    {% endwith %}
+                </div>
+                <div class="combo-suggestion-details">
+                    <p class="combo-suggestion-location">{{ suggestion.location.title }}</p>
+                    <p class="combo-suggestion-properties">{{ suggestion.properties.0 }} + {{ suggestion.properties.1 }}</p>
+                    <p class="combo-suggestion-capacity">Sleeps up to {{ suggestion.combined_max_guests }} together</p>
+                    {% if suggestion.estimated_total is not None %}
+                    <p class="combo-suggestion-price">
+                        Estimated total (split evenly):
+                        <span class="price-value" data-eur="{{ suggestion.estimated_total|floatformat:0 }}" data-gbp="{{ suggestion.estimated_total_gbp|floatformat:0 }}">&euro;{{ suggestion.estimated_total|floatformat:0 }}</span>
+                    </p>
+                    {% endif %}
+                    <a class="combo-suggestion-link" href="{% url 'properties:property/multi_reserve' location=suggestion.location.slug %}?properties={{ suggestion.properties.0.short_title|slugify }},{{ suggestion.properties.1.short_title|slugify }}&start={{ start_query|urlencode }}&end={{ end_query|urlencode }}&guests={{ guests_query|urlencode }}">Split my party &amp; continue &rarr;</a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
 
         {% else %}
         <div class="search-empty-state">

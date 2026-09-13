@@ -2,7 +2,7 @@ from icalendar import Calendar, Event
 
 from django.core.exceptions import ValidationError
 from django.http import HttpResponse, Http404
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views import View, generic
 
@@ -11,11 +11,12 @@ from .models import Property, Location, Platform, Price
 from .utils import get_stay_total_price
 from availability.utils import (
     date_string_to_date,
+    even_split_guests,
     full_toolbar_context,
     get_property_calendar,
     guests_string_to_dict,
 )
-from bookings.forms import ReservationForm
+from bookings.forms import PropertyGuestSplitForm, ReservationForm
 from bookings.models import Booking, BookingSettings
 from bookings.utils import create_booking
 
@@ -195,6 +196,111 @@ class ReserveView(generic.DetailView):
                 form.add_error(None, '; '.join(messages))
         context = self.get_context_data(form=form)
         return self.render_to_response(context)
+
+
+def _even_split_initial(properties, guests):
+    """PropertyGuestSplitForm's fields, defaulted to availability.utils.even_split_guests()'s
+    reasonable starting point - so the form never opens already invalid (adding up to less than
+    the searched-for total) even before the guest has touched anything. Same arithmetic
+    SearchView's own combo_suggestions estimated price uses, just reshaped into this form's
+    '<category>_<index>' field names."""
+    splits = even_split_guests(properties, guests)
+    return {
+        f'{category}_{index}': splits[index][category]
+        for index in range(len(properties)) for category in PropertyGuestSplitForm.CATEGORIES
+    }
+
+
+class MultiPropertyReserveView(View):
+    """Stage 2 of multi-property booking (see bookings/models.py::ReservationGroup) - lets a guest
+    split their party across the two properties suggested by a SearchView combo_suggestions card
+    and preview the combined price, before any Booking row exists for either one.
+
+    Deliberately preview-only for now (2026-09-13, per the plan this was built from): actually
+    creating the linked Bookings raises real questions - one combined payment vs two, and how the
+    session hold (properties/views.py::ReserveView._own_pending_booking, today scoped to a single
+    'pending_booking_reference') needs to cover both apartments atomically - that's its own later
+    stage, not bolted on here just because the split form validates."""
+    template_name = 'properties/property/multi_reserve.html'
+
+    def _resolve_properties(self, request, location_slug):
+        # Both slugs are resolved against the one location segment in the URL (see
+        # get_property_from_slugs), so there's no way to represent two different locations here at
+        # all - an unknown short_title 404s the normal way, same as ReserveView/PropertyView.
+        slugs = [slug for slug in request.GET.get('properties', '').split(',') if slug]
+        if len(slugs) != 2:
+            raise Http404("Choose exactly two properties to book together.")
+        return [get_property_from_slugs(location_slug, slug) for slug in slugs]
+
+    def _parse_search_params(self, request):
+        try:
+            start_date = date_string_to_date(request.GET.get('start', ''))
+            end_date = date_string_to_date(request.GET.get('end', ''))
+            guests = guests_string_to_dict(request.GET.get('guests', ''))
+        except (ValueError, TypeError):
+            raise Http404("Invalid search dates.")
+        if end_date <= start_date:
+            raise Http404("Invalid search dates.")
+        return start_date, end_date, guests
+
+    def _price_breakdown(self, properties, start_date, end_date, splits):
+        booking_settings = BookingSettings.load()
+        legs = []
+        combined_due_now = combined_total = 0
+        for property, split_guests in zip(properties, splits):
+            pricing = get_stay_total_price(
+                property, start_date, end_date, split_guests,
+                monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
+            )
+            if pricing is None:
+                return None
+            rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
+            costs = booking_settings.compute_costs(rental_total, arrival_date=start_date)
+            legs.append({'property': property, 'guests': split_guests, 'costs': costs})
+            combined_due_now += costs['due_at_booking']
+            combined_total += costs['subtotal']
+        return {'legs': legs, 'combined_due_now': combined_due_now, 'combined_total': combined_total}
+
+    def _context(self, request, properties, start_date, end_date, guests, form):
+        unavailable = [
+            property for property in properties
+            if Booking.objects.overlapping(property, start_date, end_date).exists()
+        ]
+        context = {
+            'location': properties[0].location,
+            'properties': properties,
+            'start_date': start_date,
+            'end_date': end_date,
+            'nights': (end_date - start_date).days,
+            'guests': guests,
+            'unavailable_properties': unavailable,
+            'form': form,
+            'start_query': request.GET.get('start', ''),
+            'end_query': request.GET.get('end', ''),
+            'guests_query': request.GET.get('guests', ''),
+        }
+        if not unavailable and form.is_bound and form.is_valid():
+            context['breakdown'] = self._price_breakdown(properties, start_date, end_date, form.cleaned_data['splits'])
+        return context
+
+    def get(self, request, location, *args, **kwargs):
+        properties = self._resolve_properties(request, location)
+        start_date, end_date, guests = self._parse_search_params(request)
+        # The split form submits via GET (action=".", see the template) rather than POST - nothing
+        # here has a side effect yet (see this view's own docstring), so a plain, bookmarkable/
+        # shareable/back-button-friendly GET reload suits it better than a POST would, the same
+        # way SearchView's own toolbar form already works. split_submitted distinguishes a fresh
+        # visit (no split fields at all - show the even-split default, unbound) from a resubmission
+        # of the same page (bind to what's actually in the querystring, valid or not).
+        split_submitted = any(f'adults_{i}' in request.GET for i in range(len(properties)))
+        if split_submitted:
+            form = PropertyGuestSplitForm(request.GET, properties=properties, total_guests=guests)
+        else:
+            form = PropertyGuestSplitForm(
+                properties=properties, total_guests=guests, initial=_even_split_initial(properties, guests),
+            )
+        context = self._context(request, properties, start_date, end_date, guests, form)
+        return render(request, self.template_name, context)
 
 
 class PropertyCalendarExportView(View):

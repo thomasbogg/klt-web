@@ -516,6 +516,14 @@ class Booking(models.Model):
             if total_guests > specs.max_guests:
                 message = f"This property allows a maximum of {specs.max_guests} guests (currently {total_guests})."
                 raise ValidationError({'adults': message})
+            # max_adults is a separate, tighter cap than max_guests (e.g. a one-bedroom sleeping 3
+            # total but only 2 of those as adults, the third being a child-only spot) - found
+            # 2026-09-13 to have never actually been enforced anywhere despite existing on every
+            # PropertySpec and being staff-editable (staff/views.py::_update_specification): a
+            # guest-facing search/reservation, and this same clean(), only ever checked max_guests.
+            if self.adults > specs.max_adults:
+                message = f"This property allows a maximum of {specs.max_adults} adults (currently {self.adults})."
+                raise ValidationError({'adults': message})
 
     def save(self, *args, **kwargs):
         if not self.pk and not self.reference:

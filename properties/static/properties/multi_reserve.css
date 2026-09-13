@@ -1,0 +1,43 @@
+.multi-reserve-page {
+    max-width: 800px;
+}
+
+.multi-reserve-split-columns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 32px;
+    justify-content: center;
+    margin-bottom: 24px;
+    text-align: left;
+}
+
+.multi-reserve-split-column {
+    flex: 1 1 260px;
+    max-width: 300px;
+}
+
+.multi-reserve-split-column h3 {
+    margin-bottom: 12px;
+    font-size: 1rem;
+    color: var(--primary-color);
+}
+
+.multi-reserve-breakdown {
+    margin-top: 32px;
+    text-align: left;
+}
+
+.multi-reserve-breakdown-leg h3 {
+    margin: 0 0 8px;
+    font-size: 0.95rem;
+    color: var(--primary-color);
+}
+
+.multi-reserve-breakdown-combined {
+    margin-top: 8px;
+}
+
+.multi-reserve-coming-soon {
+    margin-top: 24px;
+    font-style: italic;
+}
