@@ -82,6 +82,9 @@ class PropertyView(generic.DetailView):
         context['toolbar_compact'] = bool(start_date and end_date)
         context['location'] = self.object.location
         context['calendar_months'] = get_property_calendar(self.object)
+        context['start_query'] = self.request.GET.get('start', '')
+        context['end_query'] = self.request.GET.get('end', '')
+        context['guests_query'] = self.request.GET.get('guests', '')
         return context
 
 

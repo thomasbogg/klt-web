@@ -40,6 +40,10 @@
         {% include 'availability/toolbar_sticky.html' %}
     </div>
 
+    {% if toolbar_compact %}
+    <a class="property-back-to-search" href="{% url 'availability:search' %}?start={{ start_query|urlencode }}&end={{ end_query|urlencode }}&guests={{ guests_query|urlencode }}">&larr; Back to search results</a>
+    {% endif %}
+
     <div class="property-page">
         <h1>{{ property }}</h1>
         {% if property.specs %}

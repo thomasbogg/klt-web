@@ -4,6 +4,23 @@
     padding: 40px 20px var(--primary-margin-bottom);
 }
 
+.property-back-to-search {
+    display: block;
+    max-width: 1200px;
+    margin: 12px auto 0;
+    padding: 0 20px;
+    color: var(--primary-color);
+    font-family: var(--secondary-font);
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-decoration: none;
+}
+
+.property-back-to-search:hover {
+    text-decoration: underline;
+}
+
 .property-page h1 {
     margin-bottom: 48px;
 }
