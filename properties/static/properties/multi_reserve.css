@@ -4,12 +4,21 @@
 
 .multi-reserve-split-rows {
     max-width: 560px;
-    margin: 0 auto 16px;
+    margin: 0 auto 32px;
     text-align: left;
 }
 
 .multi-reserve-split-row {
-    margin-bottom: 16px;
+    margin-bottom: 28px;
+}
+
+.multi-reserve-split-row:last-child {
+    margin-bottom: 0;
+}
+
+.multi-reserve-page .reserve-back-link {
+    display: block;
+    margin-top: 28px;
 }
 
 .multi-reserve-split-row h3 {
