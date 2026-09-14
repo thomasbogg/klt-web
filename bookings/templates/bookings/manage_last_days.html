@@ -26,9 +26,113 @@
             <h1>Last Days &amp; Check-out</h1>
 
             {% if legs %}
+            {% if checkout_shared %}
+            <div class="details-section">
+                <h2 class="details-section-title">Check-out</h2>
+                {% if late_checkout_unlimited %}
+                <p class="details-note details-note-left">You've been granted a flexible late checkout on {{ booking.departure_date|date:"j F Y" }} - no fixed time, so check out whenever suits you. When you're ready to leave for the final time, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% elif checkout_time %}
+                {% if late_checkout %}
+                <p class="details-note details-note-left">You've booked a late checkout for <strong>{{ checkout_time|time:"H:i" }}</strong> on {{ booking.departure_date|date:"j F Y" }}. When you're ready to leave for the final time, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% else %}
+                <p class="details-note details-note-left">Check-out is at <strong>{{ checkout_time|time:"H:i" }}</strong> on {{ booking.departure_date|date:"j F Y" }} unless a different time has previously been agreed. When departing, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% endif %}
+                {% else %}
+                <p class="details-note details-note-left">When departing, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% endif %}
+            </div>
+            {% else %}
             {% for leg in legs %}
-            {% include 'bookings/_manage_last_days_leg.html' with leg=leg %}
+            <div class="details-section">
+                <h2 class="details-section-title">Check-out &mdash; {{ leg.booking.property }}</h2>
+                {% if leg.late_checkout_unlimited %}
+                <p class="details-note details-note-left">You've been granted a flexible late checkout on {{ leg.booking.departure_date|date:"j F Y" }} - no fixed time, so check out whenever suits you. When you're ready to leave for the final time, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% elif leg.checkout_time %}
+                {% if leg.late_checkout %}
+                <p class="details-note details-note-left">You've booked a late checkout for <strong>{{ leg.checkout_time|time:"H:i" }}</strong> on {{ leg.booking.departure_date|date:"j F Y" }}. When you're ready to leave for the final time, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% else %}
+                <p class="details-note details-note-left">Check-out is at <strong>{{ leg.checkout_time|time:"H:i" }}</strong> on {{ leg.booking.departure_date|date:"j F Y" }} unless a different time has previously been agreed. When departing, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% endif %}
+                {% else %}
+                <p class="details-note details-note-left">When departing, simply leave the keys and fobs on the dining table and close the door behind you.</p>
+                {% endif %}
+            </div>
             {% endfor %}
+            {% endif %}
+
+            {% if transfer_shared %}
+            {% if outbound_transfer %}
+            <div class="details-section">
+                <h2 class="details-section-title">Getting to the airport</h2>
+                <p class="details-note details-note-left">As you've booked our airport transfer, your driver will be waiting for you outside the main entrance at <strong>{{ outbound_pickup_time|time:"H:i" }}</strong> - 2 hours 45 minutes before your scheduled take-off time - unless a different time has previously been discussed.</p>
+            </div>
+            {% endif %}
+            {% else %}
+            {% for leg in legs %}
+            {% if leg.outbound_transfer %}
+            <div class="details-section">
+                <h2 class="details-section-title">Getting to the airport &mdash; {{ leg.booking.property }}</h2>
+                <p class="details-note details-note-left">As you've booked our airport transfer, your driver will be waiting for you outside the main entrance at <strong>{{ leg.outbound_pickup_time|time:"H:i" }}</strong> - 2 hours 45 minutes before your scheduled take-off time - unless a different time has previously been discussed.</p>
+            </div>
+            {% endif %}
+            {% endfor %}
+            {% endif %}
+
+            {% if before_you_go_shared %}
+            <div class="details-section">
+                <h2 class="details-section-title">Before you go</h2>
+                <ul class="details-list">
+                    <li>Please make sure all used crockery and cutlery has been cleaned and stored away.</li>
+                    <li>Kitchen appliances, particularly the oven and microwave, should be left as clean as you found them.</li>
+                    <li>Please try to avoid leaving food in tupperware or opened bottles of soft drink in the fridge.</li>
+                    {% if has_bbq %}
+                    <li>If you've used the BBQ, please make sure it's cleaned and left in a satisfactory condition - a &euro;50.00 charge applies otherwise.</li>
+                    {% endif %}
+                    {% if nearest_bins %}
+                    <li><strong>Rubbish:</strong> {{ nearest_bins|linkify }}</li>
+                    {% endif %}
+                </ul>
+            </div>
+            {% else %}
+            {% for leg in legs %}
+            <div class="details-section">
+                <h2 class="details-section-title">Before you go &mdash; {{ leg.booking.property }}</h2>
+                <ul class="details-list">
+                    <li>Please make sure all used crockery and cutlery has been cleaned and stored away.</li>
+                    <li>Kitchen appliances, particularly the oven and microwave, should be left as clean as you found them.</li>
+                    <li>Please try to avoid leaving food in tupperware or opened bottles of soft drink in the fridge.</li>
+                    {% if leg.has_bbq %}
+                    <li>If you've used the BBQ, please make sure it's cleaned and left in a satisfactory condition - a &euro;50.00 charge applies otherwise.</li>
+                    {% endif %}
+                    {% if leg.nearest_bins %}
+                    <li><strong>Rubbish:</strong> {{ leg.nearest_bins|linkify }}</li>
+                    {% endif %}
+                </ul>
+            </div>
+            {% endfor %}
+            {% endif %}
+
+            {% if after_checkout_shared %}
+            {% if after_checkout_paragraphs %}
+            <div class="details-section">
+                <h2 class="details-section-title">Staying on-site after check-out</h2>
+                {% for paragraph in after_checkout_paragraphs %}
+                <p class="details-note details-note-left">{{ paragraph|linkify }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% else %}
+            {% for leg in legs %}
+            {% if leg.after_checkout_paragraphs %}
+            <div class="details-section">
+                <h2 class="details-section-title">Staying on-site after check-out &mdash; {{ leg.booking.property }}</h2>
+                {% for paragraph in leg.after_checkout_paragraphs %}
+                <p class="details-note details-note-left">{{ paragraph|linkify }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% endfor %}
+            {% endif %}
             {% else %}
             <div class="details-section">
                 <h2 class="details-section-title">Check-out</h2>

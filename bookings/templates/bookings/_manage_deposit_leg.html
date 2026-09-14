@@ -11,9 +11,9 @@ leg-scoped (suffixed with the booking pk) since two copies of this form share on
 cross-form collision at the HTTP level regardless of matching names).
 {% endcomment %}
 <div class="stay-leg-section">
-    <h2 class="stay-leg-section-title">{{ leg.booking.property }}</h2>
+    <h2 class="details-section-title">Security deposit &mdash; {{ leg.booking.property }}</h2>
     <p class="details-note details-note-left">
-        &euro;{{ leg.security_deposit_amount }} security deposit, taken in cash at check-in and returned by bank transfer after checkout.
+        &euro;{{ leg.security_deposit_amount }}, taken in cash at check-in and returned by bank transfer after checkout.
     </p>
 
     <form method="post" class="details-form">

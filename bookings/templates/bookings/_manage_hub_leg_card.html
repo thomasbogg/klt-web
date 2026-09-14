@@ -2,10 +2,10 @@
 One apartment's compact status card on the merged multi-property Manage Booking hub landing page
 (manage_hub.html, looped once per entry in `legs` - see bookings/views.py::_manage_hub_context()).
 Deliberately NOT a re-use of _confirmation_details.html's full breakdown - that partial is a
-receipt for ONE booking; this is an at-a-glance summary so both apartments fit on the page
-together, with a link through to that apartment's own full hub (still per-leg for Contact
-Details/Extras/Guest Registrations/etc - see project memory on staged merge, later stages fold
-those sections in here too).
+receipt for ONE booking; this is an at-a-glance summary. No link out to that apartment's own
+individual hub (2026-09-14, per Thomas - every section is reached via the sidebar on this SAME
+merged page now; a drill-through link here would misdirect the guest back into the old per-leg
+flow this whole merge exists to move away from).
 {% endcomment %}
 <div class="stay-leg-card">
     <div class="stay-leg-card-header">
@@ -25,5 +25,4 @@ those sections in here too).
             Confirmed
         {% endif %}
     </div>
-    <a class="stay-leg-card-link" href="{% url 'bookings:manage_hub' reference=leg.booking.reference %}">Manage this apartment &rarr;</a>
 </div>

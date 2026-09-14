@@ -7,19 +7,21 @@ field. BookingGuest primary keys are globally unique, so the guest_{pk}_... fiel
 collide between this form and the other apartment's - no extra prefixing needed. The "form.
 guest-registrations-form" class is what guest_registrations.js scopes its NIF show/hide logic to,
 so each apartment's guests only ever react to that SAME apartment's own NIF answer.
+
+No separate property-name banner (2026-09-14, per Thomas) - each guest is already its own
+apartment, so "Guest N - Property" on that guest's own section heading carries the distinction
+without a redundant extra header above the whole group.
 {% endcomment %}
 <div class="stay-leg-section">
-    <h2 class="stay-leg-section-title">{{ leg.booking.property }}</h2>
-
     {% if not leg.rows %}
-    <p class="details-note details-note-left">No guests are on this apartment's Guest List yet - <a href="{% url 'bookings:manage_guests' reference=leg.booking.reference %}">add your party</a> to get started.</p>
+    <p class="details-note details-note-left">No guests are on the {{ leg.booking.property }} Guest List yet - <a href="{% url 'bookings:manage_guests' reference=leg.booking.reference %}">add your party</a> to get started.</p>
     {% else %}
     <form method="post" class="details-form guest-registrations-form">
         {% csrf_token %}
         <input type="hidden" name="leg_reference" value="{{ leg.booking.reference }}">
         {% for row in leg.rows %}
         <section class="details-section guest-registration-section{% if not forloop.first %} details-section-hidden{% endif %}">
-            <h3 class="details-section-title">Guest {{ forloop.counter }}</h3>
+            <h3 class="details-section-title">Guest {{ forloop.counter }} &mdash; {{ leg.booking.property }}</h3>
             <div class="guest-registration-grid guest-registration-grid-names">
                 <div class="transfer-field">
                     <label>First name</label>

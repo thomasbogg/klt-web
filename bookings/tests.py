@@ -3118,12 +3118,11 @@ class ManageHubLocationMultiPropertyTests(TestCase):
         self.assertIn('Property A: use the blue door.', content)
         self.assertIn('Property B: use the red door.', content)
         # Cross-contamination check: leg A's card should not carry leg B's code, and vice versa -
-        # verified structurally, not just "both codes appear somewhere on the page".
-        leg_a_index = content.index('Location Merge Property A')
-        leg_b_index = content.index('Location Merge Property B')
-        self.assertLess(leg_a_index, leg_b_index)
-        leg_a_block = content[leg_a_index:leg_b_index]
-        leg_b_block = content[leg_b_index:]
+        # verified structurally, not just "both codes appear somewhere on the page". Split on the
+        # wrapper div itself (exactly one per leg, always first) rather than the property name,
+        # which now appears inside every section heading for that leg, not just once.
+        chunks = content.split('<div class="stay-leg-section">')
+        leg_a_block, leg_b_block = chunks[1], chunks[2]
         self.assertIn('1111', leg_a_block)
         self.assertNotIn('2222', leg_a_block)
         self.assertIn('2222', leg_b_block)
@@ -3140,10 +3139,11 @@ class ManageHubLocationMultiPropertyTests(TestCase):
         self.leg_b.arrival.save(update_fields=['self_check_in'])
         response = self.client.get(self.url)
         content = response.content.decode()
-        leg_a_index = content.index('Location Merge Property A')
-        leg_b_index = content.index('Location Merge Property B')
-        leg_a_block = content[leg_a_index:leg_b_index]
-        leg_b_block = content[leg_b_index:]
+        # Each leg's own property name now appears inside every one of its section headings
+        # (e.g. "Self check-in - Location Merge Property A"), not just once in a leading banner -
+        # split on the wrapper div itself (exactly one per leg, always first) instead.
+        chunks = content.split('<div class="stay-leg-section">')
+        leg_a_block, leg_b_block = chunks[1], chunks[2]
         self.assertIn('Self check-in', leg_a_block)
         self.assertIn('1111', leg_a_block)
         self.assertNotIn('Self check-in', leg_b_block)

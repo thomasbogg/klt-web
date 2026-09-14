@@ -5,15 +5,14 @@ _tourist_tax_context()). Read-only summary, not a form - Pay Tourist Tax stays a
 checkout redirect per apartment, same as Pay Balance.
 {% endcomment %}
 <div class="stay-leg-section">
-    <h2 class="stay-leg-section-title">{{ leg.booking.property }}</h2>
-
     {% if leg.no_party %}
     <p class="details-note details-note-left">
         Please add your party to the <a href="{% url 'bookings:manage_guests' reference=leg.booking.reference %}">Guest List</a>
-        first - tourist tax is calculated from each guest's age.
+        first - tourist tax is calculated from each guest's age for {{ leg.booking.property }}.
     </p>
     {% else %}
     <div class="details-section">
+        <h2 class="details-section-title">Breakdown &mdash; {{ leg.booking.property }}</h2>
         <ul class="details-list">
             <li><strong>Guests liable for tourist tax:</strong> {{ leg.qualifying_guests }}</li>
             <li><strong>Nights charged:</strong> {{ leg.nights }}</li>

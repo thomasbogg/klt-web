@@ -278,18 +278,68 @@
 }
 
 /* Multi-property Manage Booking hub - Holiday Info sections (Amenities, Last Days & Check-out,
-   Location & Check-in), one .stay-leg-section per apartment inside a details-page. Divider style
-   matches .details-section + .details-section (details.css) - the property heading itself takes
-   the place of the first .details-section's own top margin, so this rule doesn't add a second
-   double-height gap above it. */
+   Location & Check-in), one .stay-leg-section per apartment inside a details-page. A purely
+   structural wrapper (margin: 0, no padding/border of its own) - ALL visible spacing comes from
+   its .details-section children's own `margin: 40px 0` (details.css), the same as anywhere else
+   on this page, so two adjacent .details-section blocks always end up 40px(collapsed margin) +
+   1px(border) + 40px(padding) apart regardless of whether a .stay-leg-section wrapper happens to
+   sit between them.
+
+   Real bug found live (2026-09-14, per Thomas - "it looks off"): giving the wrapper its OWN
+   `margin: 40px 0` (an earlier version of this rule) double-counted spacing at every apartment
+   boundary - the wrapper's own margin doesn't collapse through once it also carries a divider's
+   border+padding, so its first child's own 40px top margin became a genuinely separate, additional
+   gap on top of the wrapper's own 40px+border+40px - visibly more space at apartment boundaries
+   than at plain within-apartment ones. Zeroing the wrapper's own margin, and zeroing whichever
+   child/element starts a divider-bearing boundary's OWN top margin (the `> :first-child` / bare
+   `.details-section` rules below), makes every boundary's math identical again.
+
+   The cross-class rules (.details-section + .stay-leg-section / .stay-leg-section + .details-section)
+   are a SEPARATE real bug also found live: manage_location.html mixes bare .details-section blocks
+   (Directions, Good to know, House rules - shared, not per-leg) with .stay-leg-section-wrapped
+   per-apartment blocks in the same flat sibling sequence, and a plain CSS adjacent-sibling selector
+   only ever matches same-class siblings - so the boundary from "Directions" into the first
+   apartment, and from the last apartment into "Good to know", both silently had NO divider at all
+   until these were added. */
 .stay-leg-section {
     text-align: left;
     margin: 40px 0;
 }
 
-.stay-leg-section + .stay-leg-section {
+/* margin-top: 0 on both rules below - the wrapper's own baseline top margin (needed for a
+   standalone/first .stay-leg-section, e.g. Guest Registrations' very first apartment right after
+   the page's own intro paragraph) is redundant once a divider already exists here, and left
+   in would have doubled up with the divider's own padding-top. */
+.stay-leg-section + .stay-leg-section,
+.details-section + .stay-leg-section {
     border-top: 1px solid #ebebeb;
     padding-top: 40px;
+    margin-top: 0;
+}
+
+/* Same redundant-margin problem one level deeper - once the wrapper above has its own border,
+   margin no longer collapses through it, so the wrapper's first child would otherwise contribute
+   an extra, unwanted 40px of its own on top of the wrapper's already-correct divider spacing. */
+.stay-leg-section + .stay-leg-section > :first-child,
+.details-section + .stay-leg-section > :first-child {
+    margin-top: 0;
+}
+
+/* One level deeper again - measured live (2026-09-14): with the .details-section above at
+   margin/border/padding: 0 (the :first-child case), .details-section-title's own margin-top
+   (13.6px, details.css doesn't reset it - every other heading on the page relies on it staying
+   INSIDE its own box as normal breathing room above the text) had nothing left to collapse
+   against, so it leaked upward and added itself on top of the divider's own 40px padding -
+   apartment-boundary gaps measured 94.6px against every other boundary's clean 40.0px. */
+.stay-leg-section + .stay-leg-section > :first-child > .details-section-title,
+.details-section + .stay-leg-section > :first-child > .details-section-title {
+    margin-top: 0;
+}
+
+.stay-leg-section + .details-section {
+    border-top: 1px solid #ebebeb;
+    padding-top: 40px;
+    margin-top: 0;
 }
 
 .stay-leg-section-title {

@@ -105,6 +105,19 @@ def _first_unpaid_leg(bookings):
     return next((booking for booking in bookings if not is_paid(booking)), None)
 
 
+def _all_equal(values):
+    """True if every value is equal to the first (an empty/single-item iterable trivially counts
+    as equal). Used to decide whether a subsection genuinely differs between a multi-property
+    stay's legs - if not, it renders once with no per-apartment label at all rather than
+    repeating identical content under each property's own heading (2026-09-14, per Thomas: two
+    apartments in the same building are often furnished/managed identically, and duplicating
+    identical content per apartment reads as noise, not useful distinction). Callers pass a
+    generator of hashable/comparable keys (tuples of plain values, not model instances or
+    querysets directly - see each call site for how it builds one)."""
+    values = list(values)
+    return all(value == values[0] for value in values)
+
+
 def bookings_for_stay_reference(reference):
     """Every Booking making up "the stay" `reference` points at - a list of one for a normal
     single-property reference (unchanged, the overwhelming majority), or every sibling leg (query-
@@ -2693,8 +2706,12 @@ class BookingManageAmenitiesView(View):
 
     2026-09-14: genuinely per-property content (unlike Local Rules/FAQ/Local Guide below, which a
     multi-property stay's two legs always share by construction - see MultiPropertyReserveView),
-    so a multi-property stay's Amenities page shows one _amenities_context() per leg
-    (`_manage_amenities_leg.html`, looped) rather than reusing the single-booking markup twice."""
+    so a multi-property stay's Amenities page shows one _amenities_context() per leg. Per
+    subsection, not the whole page as a unit (2026-09-14, per Thomas - two apartments in the same
+    building are often furnished identically even when e.g. towel counts differ): each of "In the
+    apartment"/"Towels and Linen"/"Also included" independently renders once (no property label)
+    when every leg's own content genuinely matches, or once per leg labeled "Header - Property"
+    when it doesn't - see manage_amenities.html and the *_shared context flags below."""
     template_name = 'bookings/manage_amenities.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -2709,7 +2726,21 @@ class BookingManageAmenitiesView(View):
         context = _manage_nav_context(primary, 'amenities', all_bookings=bookings)
         context.update(_amenities_context(primary))
         if len(bookings) > 1:
-            context['legs'] = [_amenities_context(booking) for booking in bookings]
+            legs = [_amenities_context(booking) for booking in bookings]
+            context['legs'] = legs
+            # Per-subsection, not all-or-nothing (2026-09-14, per Thomas) - two apartments in the
+            # same building are often furnished identically even when their towel counts or
+            # washing-materials differ, so each subsection decides independently whether it needs
+            # a per-apartment label at all.
+            context['amenities_shared'] = _all_equal(
+                tuple(leg['amenities'].full_feature_list()) if leg['amenities'] else None for leg in legs
+            )
+            context['towels_shared'] = _all_equal(
+                (tuple(leg['towel_items']), leg['linen_provided']) for leg in legs
+            )
+            context['washing_shared'] = _all_equal(
+                tuple(material.pk for material in leg['washing_materials']) for leg in legs
+            )
         return render(request, self.template_name, context)
 
 
@@ -2990,8 +3021,10 @@ class BookingManageLastDaysView(View):
     flag.
 
     2026-09-14: genuinely per-property content (checkout time, BBQ, after-checkout access), so a
-    multi-property stay's Last Days page shows one _last_days_context() per leg
-    (`_manage_last_days_leg.html`, looped), same pattern as Amenities above."""
+    multi-property stay's Last Days page shows one _last_days_context() per leg. Per subsection,
+    not the whole page as a unit - same *_shared-flag pattern as Amenities above, so e.g. an
+    identical checkout time across both apartments renders once while a differing BBQ note still
+    gets its own "Before you go - Property" label."""
     template_name = 'bookings/manage_last_days.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -3006,7 +3039,20 @@ class BookingManageLastDaysView(View):
         context = _manage_nav_context(primary, 'last_days', all_bookings=bookings)
         context.update(_last_days_context(primary))
         if len(bookings) > 1:
-            context['legs'] = [_last_days_context(booking) for booking in bookings]
+            legs = [_last_days_context(booking) for booking in bookings]
+            context['legs'] = legs
+            context['checkout_shared'] = _all_equal(
+                (leg['checkout_time'], leg['late_checkout'], leg['late_checkout_unlimited']) for leg in legs
+            )
+            context['transfer_shared'] = _all_equal(
+                (bool(leg['outbound_transfer']), leg['outbound_pickup_time']) for leg in legs
+            )
+            context['before_you_go_shared'] = _all_equal(
+                (leg['has_bbq'], leg['nearest_bins']) for leg in legs
+            )
+            context['after_checkout_shared'] = _all_equal(
+                tuple(leg['after_checkout_paragraphs']) for leg in legs
+            )
         return render(request, self.template_name, context)
 
 

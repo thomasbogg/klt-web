@@ -8,13 +8,16 @@ _self_check_in.html plus the "In case of a problem" block from manage_location.h
 (address/map/directions/house rules), which renders once above this loop since it's identical for
 every leg by construction (see the view's own docstring). Built with extra care given these are
 real door-access codes - keep this in lockstep with _self_check_in.html if that one ever changes.
+
+Always shown per-leg, never auto-collapsed even when two legs' content happens to read
+identically (2026-09-14, per Thomas - unlike Amenities/Last Days above, self-check-in/access-code
+content is exactly the case he named as needing distinction, not the case for merging; each
+section's own heading carries a "Header - Property" label instead of a separate banner).
 {% endcomment %}
 <div class="stay-leg-section">
-    <h2 class="stay-leg-section-title">{{ leg.booking.property }}</h2>
-
     {% if leg.in_person %}
     <div class="details-section">
-        <h3 class="details-section-title">Check-in</h3>
+        <h3 class="details-section-title">Check-in &mdash; {{ leg.booking.property }}</h3>
         {% if leg.in_person_liaison and not leg.inbound_transfer %}
         <p class="details-note details-note-left">Please call or WhatsApp {{ leg.in_person_liaison.liaison_name|default:"our check-in team" }} on <strong>{{ leg.in_person_liaison.liaison_phone }}</strong> 40 minutes before your expected arrival time at the property, so they can be ready to meet you.</p>
         {% elif leg.in_person_liaison and leg.inbound_transfer %}
@@ -37,7 +40,7 @@ real door-access codes - keep this in lockstep with _self_check_in.html if that 
     {% endif %}
     {% if leg.self_check_in %}
     <div class="details-section">
-        <h3 class="details-section-title">Self check-in</h3>
+        <h3 class="details-section-title">Self check-in &mdash; {{ leg.booking.property }}</h3>
         {% if leg.self_check_in_late_arrival %}
         <p class="details-note details-note-left">Because you're arriving very late, we've set you up with self check-in instead of a team member meeting you at the door - here's how it works.</p>
         {% endif %}
@@ -85,7 +88,7 @@ real door-access codes - keep this in lockstep with _self_check_in.html if that 
 
     {% if leg.emergency_contact %}
     <div class="details-section">
-        <h3 class="details-section-title">In case of a problem</h3>
+        <h3 class="details-section-title">In case of a problem &mdash; {{ leg.booking.property }}</h3>
         <p class="details-note details-note-left">If anything comes up during your stay - a maintenance issue, a lost key, anything you need help with - phone or message {{ leg.emergency_contact.liaison_name|default:"our team" }} on <strong>{{ leg.emergency_contact.liaison_phone }}</strong>.</p>
     </div>
     {% endif %}
