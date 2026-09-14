@@ -42,7 +42,7 @@ lands. All of "Holiday Info" has moved over as of this comment (Stage B); "Manag
     {% endif %}
     {% if show_security_deposit %}
     <a class="manage-hub-nav-link{% if active_section == 'deposit' %} manage-hub-nav-link-active{% endif %}"
-       href="{% url 'bookings:manage_deposit' reference=booking.reference %}">Security Deposit</a>
+       href="{% url 'bookings:manage_deposit' reference=stay_reference %}">Security Deposit</a>
     {% endif %}
     {% if show_pay_balance %}
     <a class="manage-hub-nav-link manage-hub-nav-link-cta"

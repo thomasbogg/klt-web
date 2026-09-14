@@ -1337,7 +1337,7 @@ class ManageBookingView(View):
         return render(request, self.template_name, context)
 
 
-def _manage_nav_context(booking, active_section):
+def _manage_nav_context(booking, active_section, all_bookings=None):
     """Sidebar context shared by every Manage Booking hub section view, so the nav renders
     identically (and highlights the right item) everywhere. show_pay_balance mirrors
     BookingBalanceDetailsView's own gating - Pay Balance only makes sense to show while there's a
@@ -1350,11 +1350,20 @@ def _manage_nav_context(booking, active_section):
     Also the single place that sweeps any paid-but-unapplied SupplementaryPayment for this booking
     (see that model's own docstring) - called by every hub section view, so a guest who paid for a
     date change/guest addition and closed the tab gets it applied the moment they next load any
-    page here, without needing a dedicated polling endpoint."""
+    page here, without needing a dedicated polling endpoint.
+
+    all_bookings (2026-09-14, Stage D): optional full leg list for a multi-property stay, from
+    whichever bookings_for_stay_reference() call the caller already made. show_security_deposit is
+    the one flag that genuinely needs to know about every leg, not just `booking` (the primary,
+    used for every other flag/the sweep above, unchanged) - each apartment's Charge.security is set
+    independently, so a group where only the SECOND leg owes a deposit must still show the sidebar
+    link, even though the primary (first) leg doesn't need one itself. Defaults to [booking] so
+    every not-yet-multi-leg-aware call site behaves exactly as before."""
     for payment in booking.supplementary_payments.filter(status='paid', applied_at__isnull=True):
         payment.apply(booking=booking)
 
     cancelled = is_cancelled(booking)
+    legs = all_bookings or [booking]
     return {
         'active_section': active_section,
         # The reference every already-merged sidebar link should use (bookings_for_stay_reference()'s
@@ -1363,8 +1372,8 @@ def _manage_nav_context(booking, active_section):
         # function doesn't receive) since it only depends on whether THIS booking belongs to a group,
         # not on which reference the current page happened to be reached through - see the Holiday
         # Info sections (Amenities/Location/Local Rules/Last Days/FAQ/Local Guide) and the "Booking"
-        # link itself, all switched onto this 2026-09-14; a section not yet merged (Contact Details,
-        # Guest List, Extras, etc.) keeps using booking.reference directly in the sidebar for now.
+        # link itself, all switched onto this 2026-09-14; a section not yet merged (Guest List,
+        # Extras, etc.) keeps using booking.reference directly in the sidebar for now.
         'stay_reference': booking.reservation_group.reference if booking.reservation_group_id else booking.reference,
         'show_pay_balance': hasattr(booking, 'balance_payment') and not is_balance_paid(booking) and not cancelled,
         'show_cancel_booking': (
@@ -1374,7 +1383,10 @@ def _manage_nav_context(booking, active_section):
         ),
         # Only shown for a booking that actually has a deposit owed - Charge.security is the
         # actual source of truth (see its own docstring, bookings/models.py), not recomputed here.
-        'show_security_deposit': not cancelled and bool(getattr(booking, 'charges', None) and booking.charges.security),
+        # Any leg, not just the primary - see this function's own docstring.
+        'show_security_deposit': not cancelled and any(
+            getattr(leg, 'charges', None) and leg.charges.security for leg in legs
+        ),
         # Always shown once not cancelled (same style as show_security_deposit) - the page itself
         # handles "no party yet"/"nothing owed"/"already paid", no need to hide the link for those.
         'show_tourist_tax': not cancelled,
@@ -1428,7 +1440,7 @@ def _manage_hub_context(bookings):
             payment.apply(booking=booking)
 
     primary = bookings[0]
-    nav_context = _manage_nav_context(primary, 'booking')
+    nav_context = _manage_nav_context(primary, 'booking', all_bookings=bookings)
     context = booking_confirmation_context(primary)
     context.update(nav_context)
     if len(bookings) > 1:
@@ -1511,7 +1523,7 @@ class BookingManageContactDetailsView(View):
             'email': booking.guest.email, 'phone_country_code': phone_code, 'phone': phone_local,
         })
         context = {'booking': booking, 'form': form}
-        context.update(_manage_nav_context(booking, 'contact_details'))
+        context.update(_manage_nav_context(booking, 'contact_details', all_bookings=bookings))
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
@@ -1533,7 +1545,7 @@ class BookingManageContactDetailsView(View):
             return redirect(f"{url}?saved=1")
 
         context = {'booking': booking, 'form': form}
-        context.update(_manage_nav_context(booking, 'contact_details'))
+        context.update(_manage_nav_context(booking, 'contact_details', all_bookings=bookings))
         return render(request, self.template_name, context)
 
 
@@ -1791,7 +1803,7 @@ class BookingManageArrivalDepartureView(View):
         context.update(_arrival_departure_field_context(
             _arrival_data_from_model(arrival), _departure_data_from_model(departure),
         ))
-        context.update(_manage_nav_context(booking, 'arrival_departure'))
+        context.update(_manage_nav_context(booking, 'arrival_departure', all_bookings=bookings))
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
@@ -1810,7 +1822,7 @@ class BookingManageArrivalDepartureView(View):
         if errors:
             context = {'booking': booking}
             context.update(_arrival_departure_field_context(arrival_data, departure_data))
-            context.update(_manage_nav_context(booking, 'arrival_departure'))
+            context.update(_manage_nav_context(booking, 'arrival_departure', all_bookings=bookings))
             context['errors'] = errors
             return render(request, self.template_name, context)
 
@@ -2487,39 +2499,69 @@ class BookingManageDepositView(View):
     (Charge.security - see its own docstring, bookings/models.py) - _manage_nav_context()'s
     show_security_deposit hides the sidebar link too, this is the server-side backstop for
     someone hitting the URL directly. No edit cutoff - a guest can come back and correct these
-    any time before departure, same reasoning as Arrival & Departure/Guest Registrations."""
+    any time before departure, same reasoning as Arrival & Departure/Guest Registrations.
+
+    2026-09-14 (Stage D of the multi-property hub merge - see project memory): each leg's deposit
+    is a genuinely separate DepositBankDetails row (could even be a different bank account per
+    apartment), so a multi-property stay renders one full, independently-submittable form per
+    apartment that actually owes a deposit (`legs`, via `_manage_deposit_leg.html`) rather than one
+    shared form. Each form POSTs back to the STAY's own reference (not the individual leg's), with
+    a hidden `leg_reference` field telling this view which apartment's details to save - so both
+    success and any future validation error land back on the merged page, never bouncing the guest
+    out to a single-leg view. A leg whose Charge.security is falsy (deposits waived/not owed for
+    that specific apartment) simply gets no card - only `applicable` legs are shown, and a group
+    where NEITHER leg owes a deposit redirects away entirely, same as the single-booking gate did."""
     template_name = 'bookings/manage_deposit.html'
 
-    def _get_gated_booking(self, reference):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
-            raise Http404("No booking found for this reference.")
-        charge = getattr(booking, 'charges', None)
-        if not is_paid(booking) or not charge or not charge.security:
-            return booking, redirect('bookings:details', reference=reference)
-        return booking, None
-
-    def _context(self, booking, details):
-        context = _manage_nav_context(booking, 'deposit')
+    def _context(self, booking, details, all_bookings):
+        context = _manage_nav_context(booking, 'deposit', all_bookings=all_bookings)
         context.update({
             'booking': booking, 'details': details,
             'security_deposit_amount': booking.charges.security,
         })
         return context
 
-    def get(self, request, reference, *args, **kwargs):
-        booking, redirect_response = self._get_gated_booking(reference)
-        if redirect_response is not None:
-            return redirect_response
+    def _details_for(self, booking):
         details, _ = DepositBankDetails.objects.get_or_create(booking=booking)
-        return render(request, self.template_name, self._context(booking, details))
+        return details
+
+    def get(self, request, reference, *args, **kwargs):
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
+            raise Http404("No booking found for this reference.")
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
+
+        applicable = [booking for booking in bookings if getattr(booking, 'charges', None) and booking.charges.security]
+        if not applicable:
+            # Single-leg: exactly the original gate's own redirect target, unchanged. Multi-leg:
+            # every leg here is already necessarily paid (the unpaid gate above already returned),
+            # so `details` would just bounce right back out via redirect_to_next_step_after_payment
+            # - the merged hub is the more sensible landing spot for "nothing to do here".
+            return redirect('bookings:details' if len(bookings) == 1 else 'bookings:manage_hub', reference=reference)
+
+        context = self._context(applicable[0], self._details_for(applicable[0]), bookings)
+        if len(applicable) > 1:
+            context['legs'] = [self._context(booking, self._details_for(booking), bookings) for booking in applicable]
+        return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
-        booking, redirect_response = self._get_gated_booking(reference)
-        if redirect_response is not None:
-            return redirect_response
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
+            raise Http404("No booking found for this reference.")
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
-        details, _ = DepositBankDetails.objects.get_or_create(booking=booking)
+        applicable = [booking for booking in bookings if getattr(booking, 'charges', None) and booking.charges.security]
+        if not applicable:
+            return redirect('bookings:details' if len(bookings) == 1 else 'bookings:manage_hub', reference=reference)
+
+        leg_reference = request.POST.get('leg_reference') or applicable[0].reference
+        target = next((booking for booking in applicable if booking.reference == leg_reference), applicable[0])
+
+        details = self._details_for(target)
         post = request.POST
         details.bank_name = post.get('bank_name', '').strip()
         details.account_name = post.get('account_name', '').strip()
@@ -2530,7 +2572,8 @@ class BookingManageDepositView(View):
         details.bank_address = post.get('bank_address', '').strip()
         details.save()
 
-        return redirect(f"{reverse('bookings:manage_deposit', args=[booking.reference])}?saved=1")
+        url = reverse('bookings:manage_deposit', kwargs={'reference': reference})
+        return redirect(f"{url}?saved=1")
 
 
 class BookingCancelView(View):
@@ -2625,7 +2668,7 @@ class BookingManageAmenitiesView(View):
             return redirect('bookings:details', reference=unpaid.reference)
 
         primary = bookings[0]
-        context = _manage_nav_context(primary, 'amenities')
+        context = _manage_nav_context(primary, 'amenities', all_bookings=bookings)
         context.update(_amenities_context(primary))
         if len(bookings) > 1:
             context['legs'] = [_amenities_context(booking) for booking in bookings]
@@ -2709,7 +2752,7 @@ class BookingManageLocationView(View):
             return redirect('bookings:details', reference=unpaid.reference)
 
         primary = bookings[0]
-        context = _manage_nav_context(primary, 'location')
+        context = _manage_nav_context(primary, 'location', all_bookings=bookings)
         context.update(_location_context(primary))
         if len(bookings) > 1:
             context['legs'] = [_location_context(booking) for booking in bookings]
@@ -2833,7 +2876,7 @@ class BookingManageLocalRulesView(View):
 
         booking = bookings[0]
         context = {'booking': booking}
-        context.update(_manage_nav_context(booking, 'local_rules'))
+        context.update(_manage_nav_context(booking, 'local_rules', all_bookings=bookings))
         return render(request, self.template_name, context)
 
 
@@ -2922,7 +2965,7 @@ class BookingManageLastDaysView(View):
             return redirect('bookings:details', reference=unpaid.reference)
 
         primary = bookings[0]
-        context = _manage_nav_context(primary, 'last_days')
+        context = _manage_nav_context(primary, 'last_days', all_bookings=bookings)
         context.update(_last_days_context(primary))
         if len(bookings) > 1:
             context['legs'] = [_last_days_context(booking) for booking in bookings]
@@ -2954,7 +2997,7 @@ class BookingManageFAQView(View):
         booking = bookings[0]
         faqs = FAQ.objects.filter(Q(location__isnull=True) | Q(location=booking.property.location_id))
 
-        context = _manage_nav_context(booking, 'faq')
+        context = _manage_nav_context(booking, 'faq', all_bookings=bookings)
         context.update({'booking': booking, 'faqs': faqs})
         return render(request, self.template_name, context)
 
@@ -2997,6 +3040,6 @@ class BookingManageLocalGuideView(View):
             if entries_by_category[value]
         ]
 
-        context = _manage_nav_context(booking, 'local_guide')
+        context = _manage_nav_context(booking, 'local_guide', all_bookings=bookings)
         context.update({'booking': booking, 'grouped_entries': grouped_entries})
         return render(request, self.template_name, context)

@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Security Deposit {{ booking.reference }} | Algarve Beach Apartments</title>
+    <title>Security Deposit {{ stay_reference }} | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
@@ -25,14 +25,20 @@
             <h1>Security Deposit</h1>
 
             <div class="confirmation-reference">
-                <span class="confirmation-reference-label">Booking Reference</span>
-                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+                <span class="confirmation-reference-label">{% if booking.reservation_group_id %}Party Reference{% else %}Booking Reference{% endif %}</span>
+                <span class="confirmation-reference-value">{{ stay_reference }}</span>
             </div>
 
             {% if request.GET.saved %}
             <p class="details-note">Your bank details have been saved.</p>
             {% endif %}
 
+            {% if legs %}
+            <p class="details-note">Each apartment can use a different account - please provide details for each below.</p>
+            {% for leg in legs %}
+            {% include 'bookings/_manage_deposit_leg.html' with leg=leg %}
+            {% endfor %}
+            {% else %}
             <p class="details-note">
                 Your &euro;{{ security_deposit_amount }} security deposit is taken in cash at check-in and
                 returned by bank transfer after checkout - please provide the account it should be sent to.
@@ -74,6 +80,7 @@
 
                 <button type="submit" class="reserve-form-submit">Save Bank Details</button>
             </form>
+            {% endif %}
         </div>
     </div>
 

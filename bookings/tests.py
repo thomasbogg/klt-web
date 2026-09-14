@@ -4296,6 +4296,94 @@ class BookingManageDepositViewTests(TestCase):
         self.assertContains(response, 'Security Deposit')
 
 
+class ManageHubDepositMultiPropertyTests(TestCase):
+    """Stage D of the multi-property manage-hub merge (2026-09-14, see project memory) - Security
+    Deposit, the first "full duplicate form" section (Thomas's explicit call over a lighter
+    summary-card pattern, given each apartment can have an entirely different bank account). Two
+    independent forms on one page, each posting back to the group's own reference with a hidden
+    leg_reference field so BookingManageDepositView.post() knows which apartment to update -
+    verified below both for correct routing and for the no-leakage case (saving one leg's details
+    must never touch the other's)."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Deposit Merge Property A', short_title='DMPA')
+        self.property_b = Property.objects.create(title='Deposit Merge Property B', short_title='DMPB')
+        self.guest = Guest.objects.create(first_name='Femi', last_name='Adeyemi', email='femi-deposit@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a, security=Decimal('200.00'))
+        self.leg_b = self._make_booking(self.property_b, security=Decimal('150.00'))
+        self.url = reverse('bookings:manage_deposit', kwargs={'reference': self.group.reference})
+
+    def _make_booking(self, property, security):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        Payment.objects.create(booking=booking, provider='revolut', status='paid')
+        Charge.objects.create(
+            booking=booking, basic_rental=Decimal('300.00'), admin=Decimal('16.50'),
+            due_at_booking=Decimal('79.13'), due_at_balance=Decimal('237.37'), currency='EUR',
+            security=security,
+        )
+        return booking
+
+    def test_both_legs_show_independent_forms(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['legs']), 2)
+        self.assertContains(response, 'Deposit Merge Property A')
+        self.assertContains(response, 'Deposit Merge Property B')
+
+    def test_saving_one_legs_details_never_touches_the_other(self):
+        response = self.client.post(self.url, {
+            'leg_reference': self.leg_a.reference,
+            'bank_name': 'Leg A Bank', 'account_name': 'Femi Adeyemi', 'account_number': '',
+            'sort_code': '', 'iban': 'GB29NWBK60161331926819', 'swift_code': '', 'bank_address': '',
+        })
+        self.assertRedirects(response, f"{self.url}?saved=1", fetch_redirect_response=False)
+
+        leg_a_details = DepositBankDetails.objects.get(booking=self.leg_a)
+        self.assertEqual(leg_a_details.bank_name, 'Leg A Bank')
+        leg_b_details = DepositBankDetails.objects.filter(booking=self.leg_b).first()
+        self.assertTrue(leg_b_details is None or leg_b_details.is_blank())
+
+        response = self.client.post(self.url, {
+            'leg_reference': self.leg_b.reference,
+            'bank_name': 'Leg B Bank', 'account_name': 'Femi Adeyemi', 'account_number': '',
+            'sort_code': '', 'iban': 'GB94BARC10201530093459', 'swift_code': '', 'bank_address': '',
+        })
+        self.assertRedirects(response, f"{self.url}?saved=1", fetch_redirect_response=False)
+
+        leg_a_details.refresh_from_db()
+        self.assertEqual(leg_a_details.bank_name, 'Leg A Bank')  # unchanged by the second POST
+        leg_b_details = DepositBankDetails.objects.get(booking=self.leg_b)
+        self.assertEqual(leg_b_details.bank_name, 'Leg B Bank')
+
+    def test_only_one_leg_needing_a_deposit_shows_a_single_card_not_two(self):
+        self.leg_b.charges.security = Decimal('0.00')
+        self.leg_b.charges.save(update_fields=['security'])
+        response = self.client.get(self.url)
+        # Falls back to the original, unchanged single-booking template - which never named the
+        # property at all, only the deposit amount - not the new per-leg card markup.
+        self.assertNotIn('legs', response.context)
+        self.assertEqual(response.context['booking'], self.leg_a)
+        self.assertContains(response, '200.00')
+        self.assertNotContains(response, 'Deposit Merge Property B')
+
+    def test_sidebar_link_shown_when_only_second_leg_needs_a_deposit(self):
+        # Real gap this session found and fixed: show_security_deposit used to be computed off the
+        # primary leg alone - a group where only the SECOND leg owes a deposit must still show the
+        # sidebar link.
+        self.leg_a.charges.security = Decimal('0.00')
+        self.leg_a.charges.save(update_fields=['security'])
+        hub_url = reverse('bookings:manage_hub', kwargs={'reference': self.group.reference})
+        response = self.client.get(hub_url)
+        self.assertContains(response, 'Security Deposit')
+
+
 class GuestListAdjustmentTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Test Property GLA', short_title='TESTGLA')

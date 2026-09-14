@@ -1,0 +1,56 @@
+{% comment %}
+One apartment's Security Deposit bank-details form on the merged multi-property Manage Booking
+hub (manage_deposit.html, looped once per entry in `legs` - see bookings/views.py::
+BookingManageDepositView). A real, independently-submittable form, not a summary - each apartment
+can have entirely different bank details. POSTs back to the STAY's own reference (not this leg's
+individual one) with a hidden leg_reference field, so BookingManageDepositView.post() knows which
+apartment's DepositBankDetails to save and re-renders the merged page either way (success or a
+future validation error), never bouncing the guest out to a single-leg page. Element ids are
+leg-scoped (suffixed with the booking pk) since two copies of this form share one page - unlike
+`name` attributes, which don't need to be unique (each <form> submits independently, so there's no
+cross-form collision at the HTTP level regardless of matching names).
+{% endcomment %}
+<div class="stay-leg-section">
+    <h2 class="stay-leg-section-title">{{ leg.booking.property }}</h2>
+    <p class="details-note details-note-left">
+        &euro;{{ leg.security_deposit_amount }} security deposit, taken in cash at check-in and returned by bank transfer after checkout.
+    </p>
+
+    <form method="post" class="details-form">
+        {% csrf_token %}
+        <input type="hidden" name="leg_reference" value="{{ leg.booking.reference }}">
+
+        <section class="details-section deposit-bank-fields">
+            <div class="transfer-field">
+                <label for="bank_name_{{ leg.booking.pk }}">Bank name</label>
+                <input type="text" name="bank_name" id="bank_name_{{ leg.booking.pk }}" class="reserve-input" value="{{ leg.details.bank_name }}">
+            </div>
+            <div class="transfer-field">
+                <label for="account_name_{{ leg.booking.pk }}">Account name</label>
+                <input type="text" name="account_name" id="account_name_{{ leg.booking.pk }}" class="reserve-input" value="{{ leg.details.account_name }}">
+            </div>
+            <div class="transfer-field">
+                <label for="account_number_{{ leg.booking.pk }}">Account number</label>
+                <input type="text" name="account_number" id="account_number_{{ leg.booking.pk }}" class="reserve-input" value="{{ leg.details.account_number }}">
+            </div>
+            <div class="transfer-field">
+                <label for="sort_code_{{ leg.booking.pk }}">Sort code</label>
+                <input type="text" name="sort_code" id="sort_code_{{ leg.booking.pk }}" class="reserve-input" value="{{ leg.details.sort_code }}">
+            </div>
+            <div class="transfer-field">
+                <label for="iban_{{ leg.booking.pk }}">IBAN</label>
+                <input type="text" name="iban" id="iban_{{ leg.booking.pk }}" class="reserve-input" value="{{ leg.details.iban }}">
+            </div>
+            <div class="transfer-field">
+                <label for="swift_code_{{ leg.booking.pk }}">Swift code</label>
+                <input type="text" name="swift_code" id="swift_code_{{ leg.booking.pk }}" class="reserve-input" value="{{ leg.details.swift_code }}">
+            </div>
+            <div class="transfer-field">
+                <label for="bank_address_{{ leg.booking.pk }}">Bank address</label>
+                <textarea name="bank_address" id="bank_address_{{ leg.booking.pk }}" class="reserve-input" rows="3">{{ leg.details.bank_address }}</textarea>
+            </div>
+        </section>
+
+        <button type="submit" class="reserve-form-submit">Save Bank Details</button>
+    </form>
+</div>
