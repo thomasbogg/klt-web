@@ -52,7 +52,7 @@
             <button type="submit" class="reserve-form-submit">Proceed to Balance Payment</button>
 
             {% if price_changed %}
-            <div class="price-change-overlay" id="price-change-overlay">
+            <div class="price-change-overlay" data-price-change-overlay>
                 <div class="price-change-panel">
                     <p class="price-change-title">The price for the party you entered differs from your current balance</p>
                     <p class="price-change-body">This can happen if a guest's age puts them in a different pricing category, or the party size changed. Your deposit already paid isn't affected - only the balance still due.</p>
@@ -66,7 +66,7 @@
                     </div>
                     <div class="price-change-actions">
                         <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Proceed to payment anyway</button>
-                        <button type="button" class="reserve-form-cancel" id="price-change-edit">Edit details</button>
+                        <button type="button" class="reserve-form-cancel" data-price-change-edit>Edit details</button>
                     </div>
                 </div>
             </div>

@@ -36,7 +36,7 @@ if (cotCheckbox && highChairCheckbox && priceValue) {
 // BookingDetailsView._any_infant_age) - so this has to react live as ages are typed, not just
 // reflect a fixed server-rendered state.
 const section = document.getElementById('cot-high-chair-section');
-const guestRows = document.getElementById('guest-rows');
+const guestRows = document.querySelector('[data-guest-rows]');
 
 function hasInfantAge() {
     if (!config || !guestRows) return false;

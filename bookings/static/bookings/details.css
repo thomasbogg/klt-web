@@ -185,16 +185,17 @@ browser-default underlined blue, which reads as shouting next to a whole paragra
     color: rgb(150, 150, 150);
 }
 
-/* #guest-rows is the id shared by every *editable* guest-list row container (the pre_balance
-   full-list form in _guest_list_form.html, and the fully_paid stage's own "Add a guest" mini-form
-   in manage_guests.html) - there the index sits beside <input class="reserve-input"> siblings,
+/* [data-guest-rows] marks every *editable* guest-list row container (the pre_balance full-list
+   form in _guest_list_form.html, and the fully_paid stage's own "Add a guest" mini-form in
+   manage_guests.html) - there the index sits beside <input class="reserve-input"> siblings,
    which carry their own 10px top padding (see .reserve-input), so the index needs matching
    padding to align with the text inside those boxes rather than the boxes' own top edge. The
-   *read-only* party list in manage_guests.html has no such id (plain <span> siblings, no
+   *read-only* party list in manage_guests.html carries no such marker (plain <span> siblings, no
    padding of their own) and was wrongly picking up this same 10px before, pushing its numbers
    out of line with the guest names beside them - confirmed via getBoundingClientRect, not just
-   eyeballing a screenshot. */
-#guest-rows .guest-row-index {
+   eyeballing a screenshot. Was an id until 2026-09-15; now an attribute so a multi-property
+   stay's merged Guest List can render one container per apartment - see guest_list.js. */
+[data-guest-rows] .guest-row-index {
     padding-top: 10px;
 }
 

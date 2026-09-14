@@ -1,10 +1,13 @@
-const rowsContainer = document.getElementById('guest-rows');
-const rowTemplate = document.getElementById('guest-row-template');
-const addButton = document.getElementById('guest-row-add');
-const priceChangeOverlay = document.getElementById('price-change-overlay');
-const priceChangeEditButton = document.getElementById('price-change-edit');
+// Scoped per enclosing <form>, not per page (2026-09-15): a multi-property stay's merged Guest
+// List renders one of these forms per apartment, so ids would silently bind every leg's
+// "+ Add guest" button, row removal and price-change overlay to the FIRST leg's form. Every page
+// that loads this (details.html, balance_details.html, manage_guests.html) has exactly one
+// editable rows container per form, so scoping this way leaves the single-form pages behaving
+// identically. The *read-only* party table on manage_guests.html deliberately carries no
+// data-guest-rows marker - its own "remove" controls are real server-side POSTs
+// (BookingManageGuestRemoveView), not client-side row deletion.
 
-function renumberRows() {
+function renumberRows(rowsContainer) {
     const rows = rowsContainer.querySelectorAll('.guest-row:not(.guest-row-header)');
     rows.forEach((row, index) => {
         const indexLabel = row.querySelector('.guest-row-index');
@@ -14,18 +17,24 @@ function renumberRows() {
     });
 }
 
-if (addButton && rowTemplate && rowsContainer) {
-    addButton.addEventListener('click', () => {
-        rowsContainer.appendChild(rowTemplate.content.cloneNode(true));
-        renumberRows();
-    });
-}
+document.querySelectorAll('[data-guest-rows]').forEach((rowsContainer) => {
+    const scope = rowsContainer.closest('form') || document;
+    const rowTemplate = scope.querySelector('[data-guest-row-template]');
+    const addButton = scope.querySelector('[data-guest-row-add]');
+    const priceChangeOverlay = scope.querySelector('[data-price-change-overlay]');
+    const priceChangeEditButton = scope.querySelector('[data-price-change-edit]');
 
-if (rowsContainer) {
+    if (addButton && rowTemplate) {
+        addButton.addEventListener('click', () => {
+            rowsContainer.appendChild(rowTemplate.content.cloneNode(true));
+            renumberRows(rowsContainer);
+        });
+    }
+
     rowsContainer.addEventListener('click', (event) => {
         if (event.target.matches('.guest-row-remove')) {
             event.target.closest('.guest-row').remove();
-            renumberRows();
+            renumberRows(rowsContainer);
         }
     });
 
@@ -37,10 +46,10 @@ if (rowsContainer) {
             priceChangeOverlay.classList.add('price-change-stale');
         }
     });
-}
 
-if (priceChangeEditButton && priceChangeOverlay) {
-    priceChangeEditButton.addEventListener('click', () => {
-        priceChangeOverlay.remove();
-    });
-}
+    if (priceChangeEditButton && priceChangeOverlay) {
+        priceChangeEditButton.addEventListener('click', () => {
+            priceChangeOverlay.remove();
+        });
+    }
+});

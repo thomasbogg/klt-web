@@ -85,7 +85,7 @@
                 <form method="post" action="{% url 'bookings:manage_hub_guest_add' reference=booking.reference %}" class="details-form">
                 {% csrf_token %}
 
-                <div class="guest-rows" id="guest-rows">
+                <div class="guest-rows" data-guest-rows>
                     <div class="guest-row guest-row-header">
                         <span></span>
                         <span>First name</span>
@@ -129,7 +129,7 @@
                     {% endif %}
                 </div>
 
-                <template id="guest-row-template">
+                <template data-guest-row-template>
                     <div class="guest-row">
                         <span class="guest-row-index"></span>
                         <div class="guest-row-field">
@@ -145,11 +145,11 @@
                     </div>
                 </template>
 
-                <button type="button" class="guest-row-add" id="guest-row-add">+ Add another guest</button>
+                <button type="button" class="guest-row-add" data-guest-row-add>+ Add another guest</button>
                 <button type="submit" class="reserve-form-submit">Update Guests</button>
 
                 {% if pending_guest_addition %}
-                <div class="price-change-overlay" id="price-change-overlay">
+                <div class="price-change-overlay" data-price-change-overlay>
                     <div class="price-change-panel">
                         <p class="price-change-title">Confirm the added guest(s)</p>
                         <p class="price-change-body">Adding {{ pending_guest_addition.rows|length }} guest{{ pending_guest_addition.rows|length|pluralize }} adds an extra cost, payable online now - your balance is already paid, so there's no cash-in-hand option for this.</p>
@@ -159,7 +159,7 @@
                         </div>
                         <div class="price-change-actions">
                             <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Continue to payment</button>
-                            <button type="button" class="reserve-form-cancel" id="price-change-edit">Cancel</button>
+                            <button type="button" class="reserve-form-cancel" data-price-change-edit>Cancel</button>
                         </div>
                     </div>
                 </div>
@@ -183,7 +183,7 @@
                 <button type="submit" class="reserve-form-submit">Save Guest List</button>
 
                 {% if price_changed %}
-                <div class="price-change-overlay" id="price-change-overlay">
+                <div class="price-change-overlay" data-price-change-overlay>
                     <div class="price-change-panel">
                         <p class="price-change-title">The price for the party you entered differs from your current balance</p>
                         <p class="price-change-body">This can happen if a guest's age puts them in a different pricing category, or the party size changed. Your deposit already paid isn't affected - only the balance still due.</p>
@@ -197,7 +197,7 @@
                         </div>
                         <div class="price-change-actions">
                             <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Save anyway</button>
-                            <button type="button" class="reserve-form-cancel" id="price-change-edit">Edit details</button>
+                            <button type="button" class="reserve-form-cancel" data-price-change-edit>Edit details</button>
                         </div>
                     </div>
                 </div>
