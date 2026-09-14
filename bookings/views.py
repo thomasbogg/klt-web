@@ -2273,16 +2273,18 @@ class BookingManageGuestRegistrationsView(View):
     and that single answer governs the whole party (confirmed with Thomas, matches how this has
     always been handled operationally): a "yes" means nobody registers at all, not even the lead
     guest's own full form; a "no" reveals the lead guest's full form *and* every other guest's own
-    section, each with the same 7 fields, no individual NIF question of their own."""
-    template_name = 'bookings/manage_guest_registrations.html'
+    section, each with the same 7 fields, no individual NIF question of their own.
 
-    def _get_gated_booking(self, reference):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
-            raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return booking, redirect('bookings:details', reference=reference)
-        return booking, None
+    2026-09-14 (Stage D of the multi-property hub merge - see project memory): each apartment's
+    party is entirely separate, so a multi-property stay shows one full, independently-submittable
+    form per leg (`legs`, via `_manage_guest_registrations_leg.html`) - same dual-duplicate-form
+    pattern as Security Deposit. Each form POSTs back to the STAY's own reference with a hidden
+    leg_reference field; BookingGuest primary keys are globally unique (not scoped per booking), so
+    the `guest_{pk}_...` field names this view already used never collide between two forms on one
+    page - no extra name-prefixing needed beyond what already existed. guest_registrations.js was
+    also made form-scoped (previously page-wide querySelectorAll, which would have toggled the
+    SECOND apartment's guest sections based on the FIRST apartment's NIF answer)."""
+    template_name = 'bookings/manage_guest_registrations.html'
 
     def _rows(self, party):
         # One dict per current party member, bundling the guest + its (lazily created)
@@ -2294,26 +2296,51 @@ class BookingManageGuestRegistrationsView(View):
         return [{'guest': guest, 'registration': registration, 'errors': {}}
                 for guest, registration in zip(party, registrations)]
 
-    def _context(self, booking, rows):
-        context = _manage_nav_context(booking, 'guest_registrations')
+    def _context(self, booking, rows, all_bookings):
+        context = _manage_nav_context(booking, 'guest_registrations', all_bookings=all_bookings)
         context.update({
             'booking': booking, 'rows': rows,
             'id_types': GuestRegistration.IDType.choices, 'countries': countries,
         })
         return context
 
-    def get(self, request, reference, *args, **kwargs):
-        booking, redirect_response = self._get_gated_booking(reference)
-        if redirect_response is not None:
-            return redirect_response
+    def _merged_context(self, bookings, target=None, target_rows=None):
+        """get()'s context for either a single leg or a merged multi-leg stay, and post()'s
+        error-path re-render. Every leg's rows come fresh from the DB, EXCEPT `target` (if given),
+        which uses `target_rows` instead - the just-submitted, error-carrying rows from a failed
+        POST, so that guest's own just-typed values and errors survive the re-render rather than
+        being silently overwritten by a fresh read."""
+        def rows_for(booking):
+            if target is not None and booking.pk == target.pk and target_rows is not None:
+                return target_rows
+            return self._rows(list(booking.party.all()))
 
-        party = list(booking.party.all())
-        return render(request, self.template_name, self._context(booking, self._rows(party)))
+        primary = bookings[0]
+        context = self._context(primary, rows_for(primary), bookings)
+        if len(bookings) > 1:
+            context['legs'] = [self._context(booking, rows_for(booking), bookings) for booking in bookings]
+        return context
+
+    def get(self, request, reference, *args, **kwargs):
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
+            raise Http404("No booking found for this reference.")
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
+
+        return render(request, self.template_name, self._merged_context(bookings))
 
     def post(self, request, reference, *args, **kwargs):
-        booking, redirect_response = self._get_gated_booking(reference)
-        if redirect_response is not None:
-            return redirect_response
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
+            raise Http404("No booking found for this reference.")
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
+
+        leg_reference = request.POST.get('leg_reference') or bookings[0].reference
+        booking = next((candidate for candidate in bookings if candidate.reference == leg_reference), bookings[0])
 
         party = list(booking.party.all())
         post = request.POST
@@ -2376,15 +2403,15 @@ class BookingManageGuestRegistrationsView(View):
                     has_errors = True
 
         if has_errors:
-            return render(request, self.template_name, self._context(booking, rows))
+            context = self._merged_context(bookings, target=booking, target_rows=rows)
+            return render(request, self.template_name, context)
 
         with transaction.atomic():
             for row in rows:
                 row['registration'].save()
 
-        return redirect(
-            f"{reverse('bookings:manage_guest_registrations', args=[booking.reference])}?registrations_saved=1"
-        )
+        url = reverse('bookings:manage_guest_registrations', kwargs={'reference': reference})
+        return redirect(f"{url}?registrations_saved=1")
 
 
 def _tourist_tax_context(booking):

@@ -1,0 +1,70 @@
+{% comment %}
+One apartment's Guest Registrations form on the merged multi-property Manage Booking hub
+(manage_guest_registrations.html, looped once per entry in `legs` - see bookings/views.py::
+BookingManageGuestRegistrationsView). A real, independently-submittable form - each apartment's
+party is entirely separate. POSTs back to the STAY's own reference with a hidden leg_reference
+field. BookingGuest primary keys are globally unique, so the guest_{pk}_... field names below never
+collide between this form and the other apartment's - no extra prefixing needed. The "form.
+guest-registrations-form" class is what guest_registrations.js scopes its NIF show/hide logic to,
+so each apartment's guests only ever react to that SAME apartment's own NIF answer.
+{% endcomment %}
+<div class="stay-leg-section">
+    <h2 class="stay-leg-section-title">{{ leg.booking.property }}</h2>
+
+    {% if not leg.rows %}
+    <p class="details-note details-note-left">No guests are on this apartment's Guest List yet - <a href="{% url 'bookings:manage_guests' reference=leg.booking.reference %}">add your party</a> to get started.</p>
+    {% else %}
+    <form method="post" class="details-form guest-registrations-form">
+        {% csrf_token %}
+        <input type="hidden" name="leg_reference" value="{{ leg.booking.reference }}">
+        {% for row in leg.rows %}
+        <section class="details-section guest-registration-section{% if not forloop.first %} details-section-hidden{% endif %}">
+            <h3 class="details-section-title">Guest {{ forloop.counter }}</h3>
+            <div class="guest-registration-grid guest-registration-grid-names">
+                <div class="transfer-field">
+                    <label>First name</label>
+                    <input type="text" class="reserve-input" value="{{ row.guest.first_name }}" readonly>
+                </div>
+                <div class="transfer-field">
+                    <label>Last name</label>
+                    <input type="text" class="reserve-input" value="{{ row.guest.last_name }}" readonly>
+                </div>
+            </div>
+
+            {% if forloop.first %}
+            <p class="details-note details-note-left guest-registration-nif-prompt">Does this guest have a Portuguese NIF (tax ID number)?</p>
+            <div class="guest-registration-nif-question">
+                <label class="details-checkbox-label">
+                    <input type="radio" name="guest_{{ row.guest.pk }}_has_nif" value="yes" class="guest-registration-nif-radio" {% if row.registration.has_nif == True %}checked{% endif %} required>
+                    Yes
+                </label>
+                <label class="details-checkbox-label">
+                    <input type="radio" name="guest_{{ row.guest.pk }}_has_nif" value="no" class="guest-registration-nif-radio" {% if row.registration.has_nif == False %}checked{% endif %} required>
+                    No
+                </label>
+            </div>
+            {% if row.errors.has_nif %}<p class="reserve-form-error">{{ row.errors.has_nif }}</p>{% endif %}
+
+            <div class="guest-registration-grid details-section-hidden" data-nif-answer="yes">
+                <div class="transfer-field">
+                    <label>NIF</label>
+                    <input type="text" name="guest_{{ row.guest.pk }}_nif_number" class="reserve-input" value="{{ row.registration.nif_number }}">
+                    {% if row.errors.nif_number %}<p class="reserve-form-error">{{ row.errors.nif_number }}</p>{% endif %}
+                </div>
+            </div>
+
+            <div class="guest-registration-grid details-section-hidden" data-nif-answer="no">
+                {% include 'bookings/_guest_registration_fields.html' with row=row countries=leg.countries id_types=leg.id_types %}
+            </div>
+            {% else %}
+            <div class="guest-registration-grid">
+                {% include 'bookings/_guest_registration_fields.html' with row=row countries=leg.countries id_types=leg.id_types %}
+            </div>
+            {% endif %}
+        </section>
+        {% endfor %}
+
+        <button type="submit" class="reserve-form-submit">Save Guest Registrations</button>
+    </form>
+    {% endif %}
+</div>

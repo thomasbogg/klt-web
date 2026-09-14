@@ -4013,6 +4013,83 @@ class BookingManageGuestRegistrationsViewTests(TestCase):
         self.assertFalse(rows_by_guest[self.lead.pk]['registration'].has_nif)
 
 
+class ManageHubGuestRegistrationsMultiPropertyTests(TestCase):
+    """Stage D of the multi-property manage-hub merge (2026-09-14, see project memory) - Guest
+    Registrations, the second "full duplicate form" section. BookingGuest primary keys are
+    globally unique, so the guest_{pk}_... field names never collide between the two apartments'
+    forms - verified below alongside the no-leakage and error-preservation cases a dual-form
+    section specifically needs to get right."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Registrations Merge Property A', short_title='RMPA')
+        self.property_b = Property.objects.create(title='Registrations Merge Property B', short_title='RMPB')
+        self.guest = Guest.objects.create(first_name='Zola', last_name='Nkosi', email='zola-reg@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a)
+        self.leg_b = self._make_booking(self.property_b)
+        self.lead_a = BookingGuest.objects.create(booking=self.leg_a, first_name='Zola', last_name='Nkosi', age=30, is_lead=True)
+        self.lead_b = BookingGuest.objects.create(booking=self.leg_b, first_name='Zola', last_name='Nkosi', age=30, is_lead=True)
+        self.url = reverse('bookings:manage_guest_registrations', kwargs={'reference': self.group.reference})
+
+    def _make_booking(self, property):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=1, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        Payment.objects.create(booking=booking, provider='revolut', status='paid')
+        return booking
+
+    def _valid_post_data(self, leg_reference, lead):
+        return {
+            'leg_reference': leg_reference,
+            f'guest_{lead.pk}_has_nif': 'no',
+            f'guest_{lead.pk}_birth_date': '1996-05-14',
+            f'guest_{lead.pk}_place_of_birth': 'PT',
+            f'guest_{lead.pk}_nationality': 'PT',
+            f'guest_{lead.pk}_country_of_residence': 'GB',
+            f'guest_{lead.pk}_id_type': 'passport',
+            f'guest_{lead.pk}_id_number': '552203480',
+            f'guest_{lead.pk}_issued_by': 'PT',
+        }
+
+    def test_both_legs_show_independent_forms_with_no_field_collisions(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        legs = response.context['legs']
+        self.assertEqual(len(legs), 2)
+        content = response.content.decode()
+        self.assertEqual(content.count(f'guest_{self.lead_a.pk}_has_nif'), 2)  # yes + no radios
+        self.assertEqual(content.count(f'guest_{self.lead_b.pk}_has_nif'), 2)
+
+    def test_saving_one_legs_registration_never_touches_the_other(self):
+        response = self.client.post(self.url, self._valid_post_data(self.leg_a.reference, self.lead_a))
+        self.assertRedirects(response, f"{self.url}?registrations_saved=1", fetch_redirect_response=False)
+
+        reg_a = GuestRegistration.objects.get(booking_guest=self.lead_a)
+        self.assertFalse(reg_a.has_nif)
+        self.assertEqual(reg_a.id_number, '552203480')
+        reg_b = GuestRegistration.objects.filter(booking_guest=self.lead_b).first()
+        self.assertTrue(reg_b is None or reg_b.has_nif is None)
+
+    def test_validation_error_on_one_leg_preserves_the_others_state_and_this_legs_typed_values(self):
+        # leg_b already has a saved registration - must survive leg_a's own failed submission
+        # untouched, and leg_a's just-typed (invalid) values must survive the re-render too.
+        GuestRegistration.objects.create(booking_guest=self.lead_b, has_nif=True, nif_number='123456789')
+
+        response = self.client.post(self.url, {'leg_reference': self.leg_a.reference})  # no has_nif answer at all
+        self.assertEqual(response.status_code, 200)
+
+        legs = response.context['legs']
+        leg_a_rows = next(leg for leg in legs if leg['booking'] == self.leg_a)['rows']
+        self.assertEqual(leg_a_rows[0]['errors'].get('has_nif'), "Please tell us whether this guest has a Portuguese NIF.")
+        leg_b_rows = next(leg for leg in legs if leg['booking'] == self.leg_b)['rows']
+        self.assertTrue(leg_b_rows[0]['registration'].has_nif)
+        self.assertFalse(GuestRegistration.objects.filter(booking_guest=self.lead_a).exclude(has_nif=None).exists())
+
+
 class ExtraRequestWindowTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Test Property ERW', short_title='TESTERW')

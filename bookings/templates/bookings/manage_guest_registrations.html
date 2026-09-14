@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Guest Registrations {{ booking.reference }} | Algarve Beach Apartments</title>
+    <title>Guest Registrations {{ stay_reference }} | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
@@ -26,8 +26,8 @@
             <h1>Guest Registrations</h1>
 
             <div class="confirmation-reference">
-                <span class="confirmation-reference-label">Booking Reference</span>
-                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+                <span class="confirmation-reference-label">{% if booking.reservation_group_id %}Party Reference{% else %}Booking Reference{% endif %}</span>
+                <span class="confirmation-reference-value">{{ stay_reference }}</span>
             </div>
 
             {% if request.GET.registrations_saved %}
@@ -35,12 +35,17 @@
             {% endif %}
 
             <p class="details-note details-note-left"><strong>Registering every guest's identity details is a legal requirement under Portuguese border-control (SEF) rules, not optional</strong> - please complete every field below for each guest before your stay. If you have a Número de Identificação Fiscal (NIF), we don't require any other registration details.</p>
-            <p class="details-note details-note-left">Only guests currently on your Guest List have a section below. To register an additional guest, <a href="{% url 'bookings:manage_guests' reference=booking.reference %}">add them to your Guest List</a> first, then come back here.</p>
+            <p class="details-note details-note-left">Only guests currently on {% if legs %}each apartment's{% else %}your{% endif %} Guest List have a section below. To register an additional guest, add them to the Guest List first, then come back here.</p>
 
+            {% if legs %}
+            {% for leg in legs %}
+            {% include 'bookings/_manage_guest_registrations_leg.html' with leg=leg %}
+            {% endfor %}
+            {% else %}
             {% if not rows %}
             <p class="details-note details-note-left">No guests are on your Guest List yet - <a href="{% url 'bookings:manage_guests' reference=booking.reference %}">add your party</a> to get started.</p>
             {% else %}
-            <form method="post" class="details-form">
+            <form method="post" class="details-form guest-registrations-form">
                 {% csrf_token %}
                 {% for row in rows %}
                 <section class="details-section guest-registration-section{% if not forloop.first %} details-section-hidden{% endif %}">
@@ -91,6 +96,7 @@
 
                 <button type="submit" class="reserve-form-submit">Save Guest Registrations</button>
             </form>
+            {% endif %}
             {% endif %}
         </div>
     </div>
