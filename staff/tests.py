@@ -7,6 +7,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
+from django.db.models.signals import post_save
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
@@ -38,10 +39,12 @@ from staff.monthly_reports import (
     stays_trend_rows,
 )
 from staff.reports import booking_report_rows, report_totals
+from staff.signals import _sync_cleaning_tasks_on_booking_save
 from staff.utils import (
     apply_manual_checkin_time, apply_manual_task_date, batch_cleaning_task_valid_ranges,
     booking_stage, checkin_valid_range, cleaning_task_valid_range, compute_arrival_eta,
     grant_late_checkout, late_checkout_eligibility, next_step_hint, revoke_late_checkout, status_bucket,
+    sync_freshen_tasks_for_property,
 )
 
 User = get_user_model()
@@ -1552,6 +1555,41 @@ class FreshenTaskSyncTests(TestCase):
         self.assertIsNone(error)
         far_task.refresh_from_db()
         self.assertTrue(far_task.manually_scheduled)
+
+    def test_freshen_task_created_earlier_in_one_walk_feeds_the_next_bookings_gap(self):
+        """2026-09-14: sync_freshen_tasks_for_property() was rewritten to batch-fetch its "last
+        clean" ingredients once instead of re-querying per booking (a real ~35s/580-query cost
+        found live on a 143-booking property) - this is a regression test of the one thing that
+        rewrite had to get exactly right: a freshen task this SAME walk creates for an earlier
+        booking must still be visible to a LATER booking's own gap calculation within that same
+        walk, not just on some future re-run. Booking creation normally triggers its own signal-
+        driven sweep per booking (so this dependency is usually exercised across separate calls,
+        each seeing the previous call's already-committed task) - disconnecting the Booking signal
+        while creating both bookings here, then calling the sweep once explicitly, is what actually
+        forces both into the SAME walk."""
+        self._seed_last_clean()  # last clean at self.baseline
+
+        post_save.disconnect(_sync_cleaning_tasks_on_booking_save, sender=Booking)
+        try:
+            # Gap from self.baseline to +15 days is 15 days - qualifies (>=10) - own freshen task
+            # dated self.baseline + 14.
+            middle = self._make_booking(self.baseline + timedelta(days=15), self.baseline + timedelta(days=18))
+            # Gap from middle's own new freshen task (dated +14) to +20 is only 6 days - must NOT
+            # qualify, even though the gap from the ORIGINAL baseline (self.baseline, day 0) all
+            # the way to +20 is 20 days, which would wrongly qualify if this walk didn't see
+            # middle's own freshen task created moments earlier in the very same walk.
+            far = self._make_booking(self.baseline + timedelta(days=20), self.baseline + timedelta(days=23))
+        finally:
+            post_save.connect(_sync_cleaning_tasks_on_booking_save, sender=Booking)
+
+        self.assertFalse(CleaningTask.objects.filter(booking__in=[middle, far], task_type='freshen').exists())
+
+        sync_freshen_tasks_for_property(self.property)
+
+        middle_task = CleaningTask.objects.get(booking=middle, task_type='freshen')
+        self.assertEqual(middle_task.status, 'pending')
+        self.assertEqual(middle_task.date, self.baseline + timedelta(days=14))
+        self.assertFalse(CleaningTask.objects.filter(booking=far, task_type='freshen').exists())
 
 
 class StaffCleaningRotaViewTests(TestCase):

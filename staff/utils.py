@@ -457,7 +457,24 @@ def sync_freshen_tasks_for_property(property):
     though (simply by never contributing a CleaningTask of their own to that chain) - a blocked
     period says nothing about whether the property is actually clean, unlike an owner's own
     clean=False departure (see that function's own docstring), so it's correct for a long blocked
-    stretch to still count toward the next real guest's gap, not get treated as covering it."""
+    stretch to still count toward the next real guest's gap, not get treated as covering it.
+
+    2026-09-14: batch-fetches the two ingredients property_last_clean_before() computes (task
+    dates, clean=False departure dates) ONCE up front instead of re-running that function's two
+    aggregate queries per booking - on this project's remote Postgres (real, measured round-trip
+    latency - see project memory on preferring bulk DB ops here), a property with N active bookings
+    was costing 2-3N sequential round trips; one caught live took ~35s and 580+ queries against a
+    143-booking property. last_clean_for() below reproduces property_last_clean_before()'s exact
+    filters/semantics against the in-memory batch instead (still exercised directly by every OTHER
+    caller of that function - this rewrite only touches this one loop). The critical part carried
+    over exactly: `task_rows` is a mutable list, appended to (or pruned from, by task id - never by
+    date, since a booking can have more than one CleaningTask on the same day) whenever this walk
+    itself creates, reinstates, or dismisses a freshen task, so a later booking in the same walk
+    still sees an earlier one's newly-created freshen task the same way the original per-iteration
+    re-query did - this is exactly the self-referential dependency the original docstring called
+    out, preserved deliberately rather than optimized away. See staff/tests.py::
+    FreshenTaskSyncTests.test_freshen_task_created_earlier_in_one_walk_feeds_the_next_bookings_gap
+    for a regression test of specifically this."""
     from bookings.models import Booking
     from staff.models import CleaningTask
 
@@ -466,27 +483,57 @@ def sync_freshen_tasks_for_property(property):
         return
     freshen_after_days = cleaning_company.freshen_after_days
 
-    bookings = Booking.objects.filter(property=property).exclude(
+    bookings = list(Booking.objects.filter(property=property).exclude(
         enquiry_status__in=CLOSED_STATUSES,
     ).exclude(guest__last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME).exclude(
         guest__last_name__iexact=BLOCK_LATE_CHECK_OUT_LAST_NAME,
-    ).order_by('arrival_date')
+    ).order_by('arrival_date'))
+    if not bookings:
+        return
+    booking_ids = [booking.pk for booking in bookings]
+
+    # (task_id, booking_id, date) - same exclude() set property_last_clean_before() itself uses
+    # (CLOSED_STATUSES bookings and dismissed tasks never count), just fetched once instead of once
+    # per booking in the walk below. task_id (not just booking_id+date) is what makes a later
+    # removal-by-id safe even if a booking happens to have two same-dated tasks.
+    task_rows = list(
+        CleaningTask.objects.filter(booking__property=property)
+        .exclude(booking__enquiry_status__in=CLOSED_STATUSES).exclude(status='dismissed')
+        .values_list('id', 'booking_id', 'date')
+    )
+    # (booking_id, departure_date) - a static fact this function never itself changes (it never
+    # touches Departure), so unlike task_rows this needs no updating as the walk progresses.
+    no_clean_departures = list(
+        Booking.objects.filter(property=property, departure__clean=False)
+        .exclude(enquiry_status__in=CLOSED_STATUSES)
+        .values_list('pk', 'departure_date')
+    )
+    existing_freshen_by_booking = {
+        task.booking_id: task
+        for task in CleaningTask.objects.filter(booking_id__in=booking_ids, task_type='freshen')
+    }
+
+    def last_clean_for(booking):
+        dates = [date for _, bid, date in task_rows if bid != booking.pk and date <= booking.arrival_date]
+        dates += [date for bid, date in no_clean_departures if bid != booking.pk and date <= booking.arrival_date]
+        return max(dates) if dates else None
 
     today = timezone.now().date()
     for booking in bookings:
-        last_clean = property_last_clean_before(property, booking)
-        existing = CleaningTask.objects.filter(booking=booking, task_type='freshen').first()
+        last_clean = last_clean_for(booking)
+        existing = existing_freshen_by_booking.get(booking.pk)
         gap_qualifies = last_clean is not None and (booking.arrival_date - last_clean).days >= freshen_after_days
         is_backdated = booking.arrival_date < today
 
         if gap_qualifies:
             if existing is None:
-                CleaningTask.objects.create(
-                    booking=booking, task_type='freshen',
-                    date=booking.arrival_date - timedelta(days=1),
+                new_date = booking.arrival_date - timedelta(days=1)
+                new_task = CleaningTask.objects.create(
+                    booking=booking, task_type='freshen', date=new_date,
                     status='done' if is_backdated else 'pending',
                     completed_at=timezone.now() if is_backdated else None,
                 )
+                task_rows.append((new_task.pk, booking.pk, new_date))
             elif existing.status == 'dismissed' and existing.dismissed_reason == 'gap_closed':
                 existing.status = 'done' if is_backdated else 'pending'
                 existing.dismissed_by = None
@@ -496,10 +543,13 @@ def sync_freshen_tasks_for_property(property):
                 existing.save(update_fields=[
                     'status', 'dismissed_by', 'dismissed_at', 'dismissed_reason', 'completed_at',
                 ])
+                # Was excluded above while dismissed - now counts again for later bookings in the walk.
+                task_rows.append((existing.pk, booking.pk, existing.date))
             elif existing.status == 'pending' and is_backdated:
                 existing.status = 'done'
                 existing.completed_at = timezone.now()
                 existing.save(update_fields=['status', 'completed_at'])
+                # Was already counted (pending, not dismissed) - still counts, nothing to update.
         else:
             if existing is not None and existing.status == 'pending':
                 existing.status = 'dismissed'
@@ -507,6 +557,8 @@ def sync_freshen_tasks_for_property(property):
                 existing.dismissed_at = timezone.now()
                 existing.dismissed_reason = 'gap_closed'
                 existing.save(update_fields=['status', 'dismissed_by', 'dismissed_at', 'dismissed_reason'])
+                # No longer counts for a later booking in this same walk.
+                task_rows[:] = [row for row in task_rows if row[0] != existing.pk]
 
 
 def _create_cleaning_gap_block_booking(booking, block_departure_date):
