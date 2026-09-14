@@ -98,6 +98,22 @@ def booking_for_reference_and_email(reference, email):
     return next((candidate for candidate in bookings if not is_paid(candidate)), bookings[0])
 
 
+def bookings_for_stay_reference(reference):
+    """Every Booking making up "the stay" `reference` points at - a list of one for a normal
+    single-property reference (unchanged, the overwhelming majority), or every sibling leg (query-
+    ordered by pk, stable/deterministic - the same ordering ReservationGroup's own docstring and
+    booking_for_reference_and_email() above already use) for a ReservationGroup's own shared
+    reference. No email check here (unlike booking_for_reference_and_email) - this is for
+    bearer-readable-by-reference views (BookingManageHubView et al), same trust model every other
+    post-deposit view in this file already uses. Empty list, never None, if nothing matches either
+    way - callers 404 on that, same as a plain failed Booking lookup would."""
+    group = ReservationGroup.objects.filter(reference=reference).first()
+    if group is not None:
+        return list(group.bookings.select_related('property', 'guest').order_by('pk'))
+    booking = Booking.objects.filter(reference=reference).first()
+    return [booking] if booking is not None else []
+
+
 def is_balance_paid(booking):
     """A booking with no BalancePayment row at all is either collapsed (paid in full at deposit
     time - see BookingSettings.compute_costs()) or predates this feature - either way there's
@@ -1288,7 +1304,13 @@ class ManageBookingView(View):
             if booking is not None and not is_paid(booking):
                 return redirect('bookings:pay', reference=booking.reference)
             elif booking is not None:
-                return redirect('bookings:manage_hub', reference=booking.reference)
+                # The merged hub's own reference (bookings_for_stay_reference()'s inverse) - the
+                # group's shared reference once every leg is paid, same individual reference as
+                # always for a normal single-property booking.
+                stay_reference = (
+                    booking.reservation_group.reference if booking.reservation_group_id else booking.reference
+                )
+                return redirect('bookings:manage_hub', reference=stay_reference)
             else:
                 context['not_found'] = True
         return render(request, self.template_name, context)
@@ -1353,14 +1375,35 @@ def _manage_nav_context(booking, active_section):
     }
 
 
-def _manage_hub_context(booking):
-    """Context for the hub's landing ("Booking") section - just the booking summary plus nav.
-    _manage_nav_context() runs first (not just merged in after) since its pending-
-    SupplementaryPayment sweep can mutate `booking` in place - booking_confirmation_context()
-    must see that update, not a stale snapshot from before it ran."""
-    nav_context = _manage_nav_context(booking, 'booking')
-    context = booking_confirmation_context(booking)
+def _manage_hub_context(bookings):
+    """Context for the hub's landing ("Booking") section. `bookings` is every leg of the stay
+    (bookings_for_stay_reference()) - one for a normal single-property booking (unchanged output,
+    keyed entirely off that one booking, same as before this function took a list), two-or-more
+    for a multi-property ReservationGroup, which additionally gets a `legs` list (one
+    booking_confirmation_context() per apartment, rendered by manage_hub.html as a card per leg
+    instead of the single-leg confirmation-details block) alongside the primary (first) leg's own
+    flat context - keeps the page <title>, the platform/direct welcome-note section, and every
+    sidebar link (still per-leg for now - Contact Details/Extras/etc aren't merged yet, later
+    stages) working exactly as they did for a single booking, now just anchored on bookings[0]
+    rather than the only booking there is.
+
+    Sweeps pending SupplementaryPayments across every leg, not just the primary one - a guest who
+    paid for a date-change/guest-addition on their SECOND apartment and closed the tab needs that
+    applied the moment they next load this page too, same reasoning _manage_nav_context()'s own
+    sweep already documents for the single-booking case. _manage_nav_context() runs after (it
+    re-sweeps the primary leg, harmlessly idempotent) so booking_confirmation_context() below sees
+    the up-to-date state, not a stale snapshot from before either sweep ran."""
+    for booking in bookings:
+        for payment in booking.supplementary_payments.filter(status='paid', applied_at__isnull=True):
+            payment.apply(booking=booking)
+
+    primary = bookings[0]
+    nav_context = _manage_nav_context(primary, 'booking')
+    context = booking_confirmation_context(primary)
     context.update(nav_context)
+    if len(bookings) > 1:
+        context['legs'] = [booking_confirmation_context(booking) for booking in bookings]
+        context['stay_reference'] = primary.reservation_group.reference
     return context
 
 
@@ -1374,16 +1417,25 @@ class BookingManageHubView(View):
     for why that's a second, parallel entry point to the same edits BookingBalanceDetailsView
     already supports, not a replacement for it. Pay Balance in the sidebar links to
     bookings:balance_details (unchanged) rather than straight to payment, preserving that existing
-    review-before-pay click-through."""
+    review-before-pay click-through.
+
+    2026-09-14 - `reference` can now also be a ReservationGroup's own shared reference (see
+    bookings_for_stay_reference()), landing on one merged page listing every apartment in the
+    party instead of forcing the guest to visit each leg's own hub separately (Stage A of the
+    merge - deeper sections stay per-leg for now, see project memory)."""
     template_name = 'bookings/manage_hub.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
-        return render(request, self.template_name, _manage_hub_context(booking))
+        # Same "not paid yet -> go pay" gate as before, just checked across every leg - the first
+        # still-unpaid one (order matches ReservationGroup's own guest-facing pay sequencing, see
+        # next_unpaid_sibling_reference()) is where the guest actually needs to go next.
+        unpaid = next((booking for booking in bookings if not is_paid(booking)), None)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
+        return render(request, self.template_name, _manage_hub_context(bookings))
 
 
 class BookingManageContactDetailsView(View):

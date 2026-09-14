@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Your Booking {% if reservation_group_sibling %}{{ booking.reservation_group.reference }}{% else %}{{ booking.reference }}{% endif %} | Algarve Beach Apartments</title>
+    <title>Manage Your Booking {% if stay_reference %}{{ stay_reference }}{% elif reservation_group_sibling %}{{ booking.reservation_group.reference }}{% else %}{{ booking.reference }}{% endif %} | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
@@ -31,7 +31,21 @@
             </div>
             {% endif %}
 
+            {% if legs %}
+            <div class="confirmation-references">
+                <div class="confirmation-reference">
+                    <span class="confirmation-reference-label">Party Reference</span>
+                    <span class="confirmation-reference-value">{{ stay_reference }}</span>
+                </div>
+            </div>
+            <div class="stay-legs">
+                {% for leg in legs %}
+                {% include 'bookings/_manage_hub_leg_card.html' with leg=leg %}
+                {% endfor %}
+            </div>
+            {% else %}
             {% include 'bookings/_confirmation_details.html' with hide_manage_link=True %}
+            {% endif %}
 
             {% comment %}
             Platform/iCal bookings only (Airbnb/Booking.com/Vrbo, per booking_confirmation_context's

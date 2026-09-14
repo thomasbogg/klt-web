@@ -26,7 +26,7 @@
     </div>
 </div>
 
-{% if reservation_group_sibling %}
+{% if reservation_group_sibling and not hide_group_note %}
 <p class="confirmation-group-note">
     Part of a two-apartment reservation &ndash; you've also booked
     <a href="{% url 'bookings:confirmation' reference=reservation_group_sibling.reference %}">{{ reservation_group_sibling.property }}</a>.

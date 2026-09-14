@@ -214,6 +214,69 @@
     color: rgb(80, 80, 80);
 }
 
+/* Multi-property Manage Booking hub landing page - one .stay-leg-card per apartment, replacing
+   the single _confirmation_details.html block a normal (single-property) booking's hub still
+   uses. Stacks to one column below 768px, same breakpoint .manage-hub-layout already uses. */
+.stay-legs {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 16px;
+    margin: 0 auto 32px;
+    max-width: 640px;
+}
+
+.stay-leg-card {
+    flex: 1 1 260px;
+    text-align: left;
+    background: rgba(44, 121, 185, 0.05);
+    border: 1px solid rgba(44, 121, 185, 0.18);
+    border-radius: 12px;
+    padding: 16px 20px;
+}
+
+.stay-leg-card-header {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 10px;
+}
+
+.stay-leg-card-property {
+    font-family: var(--primary-font);
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.stay-leg-card-dates {
+    font-size: 0.85rem;
+    color: rgb(100, 100, 100);
+}
+
+.stay-leg-card-status {
+    font-size: 0.9rem;
+    color: rgb(80, 80, 80);
+    margin-bottom: 12px;
+}
+
+.stay-leg-card-status-cancelled {
+    color: var(--status-booked-color, #c1554f);
+    font-weight: 600;
+}
+
+.stay-leg-card-link {
+    display: inline-block;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.stay-leg-card-link:hover {
+    text-decoration: underline;
+}
+
 .manage-message {
     max-width: 480px;
     margin: 0 auto 48px;

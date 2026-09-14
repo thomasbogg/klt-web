@@ -2853,14 +2853,14 @@ class ManageBookingViewGroupReferenceLookupTests(TestCase):
             fetch_redirect_response=False,
         )
 
-    def test_group_reference_with_both_paid_goes_to_first_legs_hub(self):
+    def test_group_reference_with_both_paid_goes_to_merged_hub(self):
         self.leg_a.payment.status = 'paid'
         self.leg_a.payment.save()
         self.leg_b.payment.status = 'paid'
         self.leg_b.payment.save()
         response = self._post(self.group.reference, self.guest.email)
         self.assertRedirects(
-            response, reverse('bookings:manage_hub', kwargs={'reference': self.leg_a.reference}),
+            response, reverse('bookings:manage_hub', kwargs={'reference': self.group.reference}),
             fetch_redirect_response=False,
         )
 
@@ -2874,6 +2874,66 @@ class ManageBookingViewGroupReferenceLookupTests(TestCase):
             response, reverse('bookings:pay', kwargs={'reference': self.leg_b.reference}),
             fetch_redirect_response=False,
         )
+
+
+class BookingManageHubViewMultiPropertyTests(TestCase):
+    """The merged hub (2026-09-14, Stage A of the multi-property manage-hub merge - see project
+    memory) - visiting a ReservationGroup's own shared reference should show both apartments on
+    one page instead of forcing the guest into one leg's individual hub with just a cross-link to
+    the other. Deeper sections (Contact Details, Extras, etc.) are still per-leg for now - each
+    card's own "Manage this apartment" link is what gets the guest there, still via that leg's
+    individual reference."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Hub Merge Property A', short_title='HMPA')
+        self.property_b = Property.objects.create(title='Hub Merge Property B', short_title='HMPB')
+        self.guest = Guest.objects.create(first_name='Nadia', last_name='Silva', email='nadia-hub@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a)
+        self.leg_b = self._make_booking(self.property_b)
+        self.url = reverse('bookings:manage_hub', kwargs={'reference': self.group.reference})
+
+    def _make_booking(self, property):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        Charge.objects.create(
+            booking=booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        Payment.objects.create(booking=booking, provider='revolut', status='paid')
+        BalancePayment.objects.create(booking=booking, provider='revolut', status='paid')
+        return booking
+
+    def test_both_legs_paid_shows_merged_hub_with_both_properties(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['legs']), 2)
+        self.assertEqual(response.context['stay_reference'], self.group.reference)
+        self.assertContains(response, 'Hub Merge Property A')
+        self.assertContains(response, 'Hub Merge Property B')
+        self.assertContains(response, self.group.reference)
+
+    def test_one_leg_unpaid_redirects_to_its_own_details_page(self):
+        self.leg_b.payment.status = 'pending'
+        self.leg_b.payment.save()
+        response = self.client.get(self.url)
+        self.assertRedirects(
+            response, reverse('bookings:details', kwargs={'reference': self.leg_b.reference}),
+            fetch_redirect_response=False,
+        )
+
+    def test_visiting_an_individual_leg_reference_still_shows_its_own_single_leg_hub(self):
+        response = self.client.get(reverse('bookings:manage_hub', kwargs={'reference': self.leg_a.reference}))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('legs', response.context)
+        self.assertEqual(response.context['booking'], self.leg_a)
 
 
 class BookingManageHubViewTests(TestCase):

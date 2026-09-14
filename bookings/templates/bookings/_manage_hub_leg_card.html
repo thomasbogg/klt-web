@@ -1,0 +1,29 @@
+{% comment %}
+One apartment's compact status card on the merged multi-property Manage Booking hub landing page
+(manage_hub.html, looped once per entry in `legs` - see bookings/views.py::_manage_hub_context()).
+Deliberately NOT a re-use of _confirmation_details.html's full breakdown - that partial is a
+receipt for ONE booking; this is an at-a-glance summary so both apartments fit on the page
+together, with a link through to that apartment's own full hub (still per-leg for Contact
+Details/Extras/Guest Registrations/etc - see project memory on staged merge, later stages fold
+those sections in here too).
+{% endcomment %}
+<div class="stay-leg-card">
+    <div class="stay-leg-card-header">
+        <span class="stay-leg-card-property">{{ leg.booking.property }}</span>
+        <span class="stay-leg-card-dates">{{ leg.booking.arrival_date|date:"D, d M Y" }} &rarr; {{ leg.booking.departure_date|date:"D, d M Y" }}</span>
+    </div>
+    <div class="stay-leg-card-status{% if leg.cancelled %} stay-leg-card-status-cancelled{% endif %}">
+        {% if leg.cancelled %}
+            Cancelled
+        {% elif leg.balance_due %}
+            Balance due by {{ leg.charge.balance_due_date|date:"d M Y" }}:
+            {% if leg.charge.currency == 'GBP' %}&pound;{{ leg.costs_gbp.due_at_balance|floatformat:2 }}
+            {% else %}&euro;{{ leg.charge.due_at_balance|floatformat:2 }}{% endif %}
+        {% elif leg.show_cost_breakdown %}
+            Fully paid
+        {% else %}
+            Confirmed
+        {% endif %}
+    </div>
+    <a class="stay-leg-card-link" href="{% url 'bookings:manage_hub' reference=leg.booking.reference %}">Manage this apartment &rarr;</a>
+</div>
