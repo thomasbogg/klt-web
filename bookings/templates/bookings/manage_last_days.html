@@ -25,6 +25,11 @@
         <div class="manage-hub-content details-page">
             <h1>Last Days &amp; Check-out</h1>
 
+            {% if legs %}
+            {% for leg in legs %}
+            {% include 'bookings/_manage_last_days_leg.html' with leg=leg %}
+            {% endfor %}
+            {% else %}
             <div class="details-section">
                 <h2 class="details-section-title">Check-out</h2>
                 {% if late_checkout_unlimited %}
@@ -69,6 +74,7 @@
                 <p class="details-note details-note-left">{{ paragraph|linkify }}</p>
                 {% endfor %}
             </div>
+            {% endif %}
             {% endif %}
         </div>
     </div>

@@ -277,6 +277,29 @@
     text-decoration: underline;
 }
 
+/* Multi-property Manage Booking hub - Holiday Info sections (Amenities, Last Days & Check-out,
+   Location & Check-in), one .stay-leg-section per apartment inside a details-page. Divider style
+   matches .details-section + .details-section (details.css) - the property heading itself takes
+   the place of the first .details-section's own top margin, so this rule doesn't add a second
+   double-height gap above it. */
+.stay-leg-section {
+    text-align: left;
+    margin: 40px 0;
+}
+
+.stay-leg-section + .stay-leg-section {
+    border-top: 1px solid #ebebeb;
+    padding-top: 40px;
+}
+
+.stay-leg-section-title {
+    font-family: var(--primary-font);
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: var(--primary-color);
+    margin-bottom: 8px;
+}
+
 .manage-message {
     max-width: 480px;
     margin: 0 auto 48px;

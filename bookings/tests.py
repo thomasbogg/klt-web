@@ -2936,6 +2936,78 @@ class BookingManageHubViewMultiPropertyTests(TestCase):
         self.assertEqual(response.context['booking'], self.leg_a)
 
 
+class ManageHubHolidayInfoMultiPropertyTests(TestCase):
+    """Stage B of the multi-property manage-hub merge (2026-09-14, see project memory) - the
+    Holiday Info sidebar group. Amenities and Last Days & Check-out are genuinely per-property, so
+    a merged stay shows one block per leg; Local Rules/FAQ/Local Guide are identical for both legs
+    by construction (MultiPropertyReserveView only offers same-Location combos), so those need no
+    duplication at all - just to keep working (not 404) when given the group's own reference."""
+
+    def setUp(self):
+        self.location = Location.objects.create(title='Holiday Info Test Location')
+        self.property_a = Property.objects.create(
+            title='Holiday Info Property A', short_title='HIPA', location=self.location,
+        )
+        self.property_b = Property.objects.create(
+            title='Holiday Info Property B', short_title='HIPB', location=self.location,
+        )
+        self.property_a.amenities.barbecue = True
+        self.property_a.amenities.save()
+        self.guest = Guest.objects.create(first_name='Priya', last_name='Rao', email='priya-holiday@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a)
+        self.leg_b = self._make_booking(self.property_b)
+
+    def _make_booking(self, property):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        Payment.objects.create(booking=booking, provider='revolut', status='paid')
+        return booking
+
+    def _url(self, name):
+        return reverse(name, kwargs={'reference': self.group.reference})
+
+    def test_amenities_shows_both_legs_separately(self):
+        response = self.client.get(self._url('bookings:manage_amenities'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['legs']), 2)
+        self.assertContains(response, 'Holiday Info Property A')
+        self.assertContains(response, 'Holiday Info Property B')
+
+    def test_last_days_shows_both_legs_separately(self):
+        response = self.client.get(self._url('bookings:manage_last_days'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['legs']), 2)
+        self.assertContains(response, 'Holiday Info Property A')
+        self.assertContains(response, 'Holiday Info Property B')
+
+    def test_local_rules_works_with_group_reference(self):
+        response = self.client.get(self._url('bookings:manage_local_rules'))
+        self.assertEqual(response.status_code, 200)
+
+    def test_faq_works_with_group_reference(self):
+        response = self.client.get(self._url('bookings:manage_faq'))
+        self.assertEqual(response.status_code, 200)
+
+    def test_local_guide_works_with_group_reference(self):
+        response = self.client.get(self._url('bookings:manage_local_guide'))
+        self.assertEqual(response.status_code, 200)
+
+    def test_sidebar_uses_group_reference_for_merged_sections_but_not_contact_details(self):
+        response = self.client.get(self._url('bookings:manage_hub'))
+        content = response.content.decode()
+        self.assertIn(reverse('bookings:manage_amenities', kwargs={'reference': self.group.reference}), content)
+        # Contact Details isn't merged yet - still keyed off the primary leg's own reference.
+        self.assertIn(
+            reverse('bookings:manage_contact_details', kwargs={'reference': self.leg_a.reference}), content,
+        )
+
+
 class BookingManageHubViewTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Test Property HUB', short_title='TESTHUB')

@@ -98,6 +98,13 @@ def booking_for_reference_and_email(reference, email):
     return next((candidate for candidate in bookings if not is_paid(candidate)), bookings[0])
 
 
+def _first_unpaid_leg(bookings):
+    """The first still-unpaid leg of a stay, or None once every leg is paid - the "go pay first"
+    gate every Manage Booking hub section shares (BookingManageHubView and each Holiday Info
+    section view), now checked across every leg of a multi-property stay rather than just one."""
+    return next((booking for booking in bookings if not is_paid(booking)), None)
+
+
 def bookings_for_stay_reference(reference):
     """Every Booking making up "the stay" `reference` points at - a list of one for a normal
     single-property reference (unchanged, the overwhelming majority), or every sibling leg (query-
@@ -1336,6 +1343,15 @@ def _manage_nav_context(booking, active_section):
     cancelled = is_cancelled(booking)
     return {
         'active_section': active_section,
+        # The reference every already-merged sidebar link should use (bookings_for_stay_reference()'s
+        # inverse) - the shared ReservationGroup reference for a multi-property stay, same individual
+        # reference as always otherwise. Computed off `booking` alone (not the full leg list this
+        # function doesn't receive) since it only depends on whether THIS booking belongs to a group,
+        # not on which reference the current page happened to be reached through - see the Holiday
+        # Info sections (Amenities/Location/Local Rules/Last Days/FAQ/Local Guide) and the "Booking"
+        # link itself, all switched onto this 2026-09-14; a section not yet merged (Contact Details,
+        # Guest List, Extras, etc.) keeps using booking.reference directly in the sidebar for now.
+        'stay_reference': booking.reservation_group.reference if booking.reservation_group_id else booking.reference,
         'show_pay_balance': hasattr(booking, 'balance_payment') and not is_balance_paid(booking) and not cancelled,
         'show_cancel_booking': (
             not cancelled
@@ -1432,7 +1448,7 @@ class BookingManageHubView(View):
         # Same "not paid yet -> go pay" gate as before, just checked across every leg - the first
         # still-unpaid one (order matches ReservationGroup's own guest-facing pay sequencing, see
         # next_unpaid_sibling_reference()) is where the guest actually needs to go next.
-        unpaid = next((booking for booking in bookings if not is_paid(booking)), None)
+        unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
         return render(request, self.template_name, _manage_hub_context(bookings))
@@ -2530,6 +2546,18 @@ class BookingCancelView(View):
         return redirect(f"{reverse('bookings:manage_hub', args=[booking.reference])}?cancelled=1")
 
 
+def _amenities_context(booking):
+    amenities = getattr(booking.property, 'amenities', None)
+    cleaning_company = booking.property.cleaning_company
+    return {
+        'booking': booking,
+        'amenities': amenities,
+        'towel_items': amenities.towel_line_items(booking.total_guests()) if amenities else [],
+        'linen_provided': bool(cleaning_company and cleaning_company.linen_provided),
+        'washing_materials': cleaning_company.washing_materials.all() if cleaning_company else [],
+    }
+
+
 class BookingManageAmenitiesView(View):
     """Holiday Info section of the Manage Booking hub - a read-only, guest-facing answer to
     exactly the question staff used to field by hand-typed email (the "what will I find in the
@@ -2542,26 +2570,27 @@ class BookingManageAmenitiesView(View):
     linen_provided/washing_materials (2026-08-27) come from Property.cleaning_company instead -
     per-property towel counts live on Amenity (how many/which types this specific property has),
     but whether beds get dressed in linen at all and what's stocked for the guest are standard
-    practice for whichever company actually cleans the property, not a per-property fact."""
+    practice for whichever company actually cleans the property, not a per-property fact.
+
+    2026-09-14: genuinely per-property content (unlike Local Rules/FAQ/Local Guide below, which a
+    multi-property stay's two legs always share by construction - see MultiPropertyReserveView),
+    so a multi-property stay's Amenities page shows one _amenities_context() per leg
+    (`_manage_amenities_leg.html`, looped) rather than reusing the single-booking markup twice."""
     template_name = 'bookings/manage_amenities.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
-        amenities = getattr(booking.property, 'amenities', None)
-        cleaning_company = booking.property.cleaning_company
-        context = _manage_nav_context(booking, 'amenities')
-        context.update({
-            'booking': booking,
-            'amenities': amenities,
-            'towel_items': amenities.towel_line_items(booking.total_guests()) if amenities else [],
-            'linen_provided': bool(cleaning_company and cleaning_company.linen_provided),
-            'washing_materials': cleaning_company.washing_materials.all() if cleaning_company else [],
-        })
+        primary = bookings[0]
+        context = _manage_nav_context(primary, 'amenities')
+        context.update(_amenities_context(primary))
+        if len(bookings) > 1:
+            context['legs'] = [_amenities_context(booking) for booking in bookings]
         return render(request, self.template_name, context)
 
 
@@ -2741,19 +2770,72 @@ class BookingManageLocalRulesView(View):
     per-property model, unlike Amenities/Location above, since the municipality sets it, not us.
     Hardcoded into the template rather than an admin-editable model for that reason: nothing here
     is ever going to vary by property, and it isn't ours to edit anyway. Read-only, same
-    no-side-effect GET as BookingManageAmenitiesView/BookingManageLocationView."""
+    no-side-effect GET as BookingManageAmenitiesView/BookingManageLocationView.
+
+    2026-09-14: content is identical for every property, so a multi-property stay's two legs (both
+    at the same location by construction - see MultiPropertyReserveView) never need this rendered
+    twice - the primary leg alone is enough, no `legs` context/template loop needed here at all."""
     template_name = 'bookings/manage_local_rules.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
+        booking = bookings[0]
         context = {'booking': booking}
         context.update(_manage_nav_context(booking, 'local_rules'))
         return render(request, self.template_name, context)
+
+
+def _last_days_context(booking):
+    location = booking.property.location
+    late_checkout_grant = getattr(booking, 'late_checkout_grant', None)
+    late_checkout = late_checkout_grant is not None
+    late_checkout_unlimited = late_checkout and late_checkout_grant.time is None
+    cleaning_company = booking.property.cleaning_company
+    checkout_time = (
+        late_checkout_grant.time if late_checkout and not late_checkout_unlimited
+        else cleaning_company.standard_checkout_time if cleaning_company
+        else None
+    )
+    outbound_transfer = booking.airport_transfers.filter(direction=AirportTransferDirection.OUTBOUND).first()
+    outbound_pickup_time = None
+    if outbound_transfer is not None:
+        pickup = (
+            datetime.combine(date.today(), outbound_transfer.time) - timedelta(hours=2, minutes=45)
+        ).time()
+        outbound_pickup_time = pickup
+
+    # Empty outright for an unlimited late checkout (2026-09-09, per Thomas) - the whole point of
+    # this section is bridging the gap between a fixed checkout time and being ready to actually
+    # leave, which doesn't exist when there's no fixed time to bridge from.
+    after_checkout_paragraphs = []
+    if location and not late_checkout_unlimited:
+        after_checkout_paragraphs = [
+            p for p in location.after_checkout_access_instructions.split('\n\n') if p.strip()
+        ]
+
+    return {
+        'booking': booking,
+        'checkout_time': checkout_time,
+        'late_checkout': late_checkout,
+        'late_checkout_unlimited': late_checkout_unlimited,
+        'outbound_transfer': outbound_transfer,
+        'outbound_pickup_time': outbound_pickup_time,
+        'has_bbq': bool(getattr(booking.property, 'amenities', None) and booking.property.amenities.barbecue),
+        'nearest_bins': location.nearest_bins if location else '',
+        # Split into paragraphs here rather than relying on {% linebreaks %} in the template - that
+        # filter always re-escapes its input even when already marked safe, which would mangle the
+        # <a> tags linkify (bookings_extras.py) has already built. A blank line in the stored text
+        # is a deliberate paragraph break (see the QdB/Monaco backfill, properties/migrations/
+        # 0057_...) - collapsed into one run-on block by HTML whitespace rules if rendered as a
+        # single <p>.
+        'after_checkout_paragraphs': after_checkout_paragraphs,
+    }
 
 
 class BookingManageLastDaysView(View):
@@ -2778,63 +2860,26 @@ class BookingManageLastDaysView(View):
     checkout" means for this property. has_bbq reads Property.amenities.barbecue rather than any
     hardcoded property name - MON T's flag was backfilled (bookings/migrations/0055_...) as part of
     this change, since the legacy system knew about its BBQ but nothing had ever set the structured
-    flag."""
+    flag.
+
+    2026-09-14: genuinely per-property content (checkout time, BBQ, after-checkout access), so a
+    multi-property stay's Last Days page shows one _last_days_context() per leg
+    (`_manage_last_days_leg.html`, looped), same pattern as Amenities above."""
     template_name = 'bookings/manage_last_days.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
-        location = booking.property.location
-        late_checkout_grant = getattr(booking, 'late_checkout_grant', None)
-        late_checkout = late_checkout_grant is not None
-        late_checkout_unlimited = late_checkout and late_checkout_grant.time is None
-        cleaning_company = booking.property.cleaning_company
-        checkout_time = (
-            late_checkout_grant.time if late_checkout and not late_checkout_unlimited
-            else cleaning_company.standard_checkout_time if cleaning_company
-            else None
-        )
-        outbound_transfer = booking.airport_transfers.filter(
-            direction=AirportTransferDirection.OUTBOUND
-        ).first()
-        outbound_pickup_time = None
-        if outbound_transfer is not None:
-            pickup = (
-                datetime.combine(date.today(), outbound_transfer.time) - timedelta(hours=2, minutes=45)
-            ).time()
-            outbound_pickup_time = pickup
-
-        # Empty outright for an unlimited late checkout (2026-09-09, per Thomas) - the whole point
-        # of this section is bridging the gap between a fixed checkout time and being ready to
-        # actually leave, which doesn't exist when there's no fixed time to bridge from.
-        after_checkout_paragraphs = []
-        if location and not late_checkout_unlimited:
-            after_checkout_paragraphs = [
-                p for p in location.after_checkout_access_instructions.split('\n\n') if p.strip()
-            ]
-
-        context = _manage_nav_context(booking, 'last_days')
-        context.update({
-            'booking': booking,
-            'checkout_time': checkout_time,
-            'late_checkout': late_checkout,
-            'late_checkout_unlimited': late_checkout_unlimited,
-            'outbound_transfer': outbound_transfer,
-            'outbound_pickup_time': outbound_pickup_time,
-            'has_bbq': bool(getattr(booking.property, 'amenities', None) and booking.property.amenities.barbecue),
-            'nearest_bins': location.nearest_bins if location else '',
-            # Split into paragraphs here rather than relying on {% linebreaks %} in the template -
-            # that filter always re-escapes its input even when already marked safe, which would
-            # mangle the <a> tags linkify (bookings_extras.py) has already built. A blank line in
-            # the stored text is a deliberate paragraph break (see the QdB/Monaco backfill,
-            # properties/migrations/0057_...) - collapsed into one run-on block by HTML whitespace
-            # rules if rendered as a single <p>.
-            'after_checkout_paragraphs': after_checkout_paragraphs,
-        })
+        primary = bookings[0]
+        context = _manage_nav_context(primary, 'last_days')
+        context.update(_last_days_context(primary))
+        if len(bookings) > 1:
+            context['legs'] = [_last_days_context(booking) for booking in bookings]
         return render(request, self.template_name, context)
 
 
@@ -2845,16 +2890,22 @@ class BookingManageFAQView(View):
     "show on every location's page"; otherwise it only shows for a booking whose property sits at
     that exact location (e.g. a parking answer that's only true for one building) - a property
     with no location set at all only ever sees the location=None rows. Read-only, same
-    no-side-effect GET as BookingManageAmenitiesView/BookingManageLocationView."""
+    no-side-effect GET as BookingManageAmenitiesView/BookingManageLocationView.
+
+    2026-09-14: keyed off Location, not Property - a multi-property stay's two legs are always at
+    the same Location by construction (see MultiPropertyReserveView), so the primary leg's own
+    query already covers both apartments and this never needs rendering (or querying) twice."""
     template_name = 'bookings/manage_faq.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
+        booking = bookings[0]
         faqs = FAQ.objects.filter(Q(location__isnull=True) | Q(location=booking.property.location_id))
 
         context = _manage_nav_context(booking, 'faq')
@@ -2873,16 +2924,21 @@ class BookingManageLocalGuideView(View):
     order), but "category" orders alphabetically by its stored value (beaches, day_trips, dining,
     facilities, shopping, things_to_do) - not the Things To Do-first/Facilities-last sequence
     LocalGuideEntry.Category.choices itself declares and this page wants to display in. {% regroup
-    %} only ever groups already-adjacent rows, so it can't fix that ordering by itself."""
+    %} only ever groups already-adjacent rows, so it can't fix that ordering by itself.
+
+    2026-09-14: same Location-keyed reasoning as BookingManageFAQView - a multi-property stay's two
+    legs share a Location by construction, so no per-leg duplication is needed here either."""
     template_name = 'bookings/manage_local_guide.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
+        booking = bookings[0]
         entries = LocalGuideEntry.objects.filter(
             Q(location__isnull=True) | Q(location=booking.property.location_id)
         )

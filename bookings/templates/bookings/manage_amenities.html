@@ -23,6 +23,13 @@
 
         <div class="manage-hub-content details-page">
             <h1>Amenities</h1>
+
+            {% if legs %}
+            <p class="details-note">Everything you can expect to find in each apartment on arrival.</p>
+            {% for leg in legs %}
+            {% include 'bookings/_manage_amenities_leg.html' with leg=leg %}
+            {% endfor %}
+            {% else %}
             <p class="details-note">Everything you can expect to find at {{ booking.property }} on arrival.</p>
 
             {% if amenities %}
@@ -59,6 +66,7 @@
                     {% endfor %}
                 </ul>
             </div>
+            {% endif %}
             {% endif %}
         </div>
     </div>
