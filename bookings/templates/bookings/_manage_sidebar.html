@@ -15,8 +15,8 @@ Multi-property merge (2026-09-14, staged - see project memory): a section that's
 group-aware links via `stay_reference` (the shared ReservationGroup reference once one exists,
 same as booking.reference otherwise) so it lands on the merged page covering every apartment; a
 section not yet merged still links via `booking.reference` (this leg only) until its own stage
-lands - Location & Check-in is the one Holiday Info item still on the old per-leg link as of this
-comment, everything else in that group has moved over.
+lands. All of "Holiday Info" has moved over as of this comment (Stage B); "Manage Your Stay"
+(Contact Details, Guest List, Extras, etc.) is still per-leg, later stages.
 {% endcomment %}
 <nav class="manage-hub-nav">
     <span class="manage-hub-nav-group-label">Manage Your Stay</span>
@@ -57,7 +57,7 @@ comment, everything else in that group has moved over.
     <a class="manage-hub-nav-link{% if active_section == 'amenities' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_amenities' reference=stay_reference %}">Amenities</a>
     <a class="manage-hub-nav-link{% if active_section == 'location' %} manage-hub-nav-link-active{% endif %}"
-       href="{% url 'bookings:manage_location' reference=booking.reference %}">Location &amp; Check-in</a>
+       href="{% url 'bookings:manage_location' reference=stay_reference %}">Location &amp; Check-in</a>
     <a class="manage-hub-nav-link{% if active_section == 'local_rules' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_local_rules' reference=stay_reference %}">Local Rules</a>
     <a class="manage-hub-nav-link{% if active_section == 'last_days' %} manage-hub-nav-link-active{% endif %}"

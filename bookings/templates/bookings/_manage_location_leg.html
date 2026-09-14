@@ -1,0 +1,92 @@
+{% load bookings_extras %}
+{% comment %}
+One apartment's Self Check-in / In-person / access-code / emergency-contact block on the merged
+multi-property Manage Booking hub's Location & Check-in section (manage_location.html, looped once
+per entry in `legs` - see bookings/views.py::_location_context()). Near-duplicate of
+_self_check_in.html plus the "In case of a problem" block from manage_location.html itself,
+`leg.`-prefixed instead of bare - deliberately NOT merged with the shared location-level content
+(address/map/directions/house rules), which renders once above this loop since it's identical for
+every leg by construction (see the view's own docstring). Built with extra care given these are
+real door-access codes - keep this in lockstep with _self_check_in.html if that one ever changes.
+{% endcomment %}
+<div class="stay-leg-section">
+    <h2 class="stay-leg-section-title">{{ leg.booking.property }}</h2>
+
+    {% if leg.in_person %}
+    <div class="details-section">
+        <h3 class="details-section-title">Check-in</h3>
+        {% if leg.in_person_liaison and not leg.inbound_transfer %}
+        <p class="details-note details-note-left">Please call or WhatsApp {{ leg.in_person_liaison.liaison_name|default:"our check-in team" }} on <strong>{{ leg.in_person_liaison.liaison_phone }}</strong> 40 minutes before your expected arrival time at the property, so they can be ready to meet you.</p>
+        {% elif leg.in_person_liaison and leg.inbound_transfer %}
+        <p class="details-note details-note-left">No need to call ahead - your driver will let us know when you're on the way.</p>
+        {% endif %}
+        {% if leg.in_person_check_in_instructions %}
+        <p class="details-note details-note-left">{{ leg.in_person_check_in_instructions|linkify }}</p>
+        {% elif leg.in_person_liaison %}
+        <p class="details-note details-note-left">Your check-in for this stay is in person - a member of our team will meet you at the property.</p>
+        {% else %}
+        <p class="details-note details-note-left">Your check-in for this stay is in person - a member of our team will meet you at the property. Please contact us ahead of arrival if you haven't already shared your arrival details.</p>
+        {% endif %}
+        {% if leg.in_person_checkin_checkout %}
+        <p class="details-note details-note-left">Standard check-in is {{ leg.in_person_checkin_checkout.standard_checkin_time|time:"H:i" }} and check-out is {{ leg.in_person_checkin_checkout.standard_checkout_time|time:"H:i" }} - let us know if you need flexibility either side and we'll do what we can.</p>
+        {% endif %}
+        {% if leg.in_person_late_fee %}
+        <p class="details-note details-note-left">Arriving after {{ leg.in_person_late_fee.late_check_in_after|time:"H:i" }}? A &euro;{{ leg.in_person_late_fee.late_check_in_fee|floatformat:2 }} late check-in fee applies, payable in cash at check-in.</p>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% if leg.self_check_in %}
+    <div class="details-section">
+        <h3 class="details-section-title">Self check-in</h3>
+        {% if leg.self_check_in_late_arrival %}
+        <p class="details-note details-note-left">Because you're arriving very late, we've set you up with self check-in instead of a team member meeting you at the door - here's how it works.</p>
+        {% endif %}
+        {% if leg.postbox_path == 'conflict' %}
+        <p class="details-note details-note-left">Your check-in for this stay is self check-in, but there's a scheduling clash with another arrival the same night - please contact us ahead of arrival and we'll sort out access for you.</p>
+        {% else %}
+            {% if leg.postbox_path == 'preferred' %}
+            <p class="details-note details-note-left">{{ leg.postbox_location.self_check_in_preferred_instructions|linkify }}</p>
+            {% elif leg.postbox_path == 'fallback' %}
+            <p class="details-note details-note-left">{{ leg.postbox_location.self_check_in_fallback_instructions|linkify }}</p>
+            {% endif %}
+            {% if leg.self_check_in_instructions %}
+            <p class="details-note details-note-left">{{ leg.self_check_in_instructions|linkify }}</p>
+            {% elif leg.postbox_path is None %}
+            <p class="details-note details-note-left">Your check-in for this stay is self check-in, but we haven't added the access instructions yet - please contact us ahead of arrival.</p>
+            {% endif %}
+            {% if leg.postbox_path == 'preferred' %}
+            <ul class="details-list">
+                <li>
+                    <strong>Postbox key:</strong>
+                    {% if leg.codes_revealed %}{{ leg.postbox_location.self_check_in_preferred_code }}{% else %}Code revealed {{ leg.code_reveal_days }} day{{ leg.code_reveal_days|pluralize }} before your check-in date.{% endif %}
+                </li>
+            </ul>
+            {% elif leg.postbox_path == 'fallback' %}
+            <ul class="details-list">
+                <li>
+                    <strong>Postbox gate fob:</strong>
+                    {% if leg.codes_revealed %}{{ leg.postbox_location.self_check_in_fallback_code }}{% else %}Code revealed {{ leg.code_reveal_days }} day{{ leg.code_reveal_days|pluralize }} before your check-in date.{% endif %}
+                </li>
+            </ul>
+            {% endif %}
+            {% if leg.access_codes %}
+            <ul class="details-list">
+                {% for access_code in leg.access_codes %}
+                <li>
+                    <strong>{{ access_code.label }}:</strong>
+                    {% if leg.codes_revealed %}{{ access_code.code }}{% else %}Code revealed {{ leg.code_reveal_days }} day{{ leg.code_reveal_days|pluralize }} before your check-in date.{% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if leg.emergency_contact %}
+    <div class="details-section">
+        <h3 class="details-section-title">In case of a problem</h3>
+        <p class="details-note details-note-left">If anything comes up during your stay - a maintenance issue, a lost key, anything you need help with - phone or message {{ leg.emergency_contact.liaison_name|default:"our team" }} on <strong>{{ leg.emergency_contact.liaison_phone }}</strong>.</p>
+    </div>
+    {% endif %}
+</div>

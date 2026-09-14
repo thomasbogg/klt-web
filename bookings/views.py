@@ -2651,116 +2651,124 @@ class BookingManageLocationView(View):
     someone to call for an in-stay problem just as much as meet-and-greet guests do, so unlike
     in_person_liaison this isn't gated on in_person at all. None when there's no cleaning_company
     or it has no liaison_phone set, same "don't show a broken/partial credit" treatment as
-    transfer_fallback_contact above."""
+    transfer_fallback_contact above.
+
+    2026-09-14 (Stage B2 of the multi-property hub merge - see project memory, built with extra
+    care given the access-code stakes): the location-level facts (address, map, directions, house
+    rules) are identical for both legs of a multi-property stay by construction
+    (MultiPropertyReserveView only offers same-Location combos) and render once, from the primary
+    leg. Self check-in / in-person / access codes / the emergency contact are genuinely
+    per-PROPERTY though - each apartment has its own door code - so those render once per leg
+    (`_manage_location_leg.html`, looped), never merged or shared across apartments."""
     template_name = 'bookings/manage_location.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
-        location = booking.property.location
-        arrival = Arrival.objects.filter(booking=booking).first()
-        self_check_in = bool(arrival and arrival.self_check_in)
-        inbound_transfer = booking.airport_transfers.filter(
-            direction=AirportTransferDirection.INBOUND
-        ).first()
-        has_outbound_transfer = booking.airport_transfers.filter(
-            direction=AirportTransferDirection.OUTBOUND
-        ).exists()
-        # A known meet-and-greet, distinct from "we don't know yet" (arrival is None) - only ever
-        # true once an Arrival row exists and explicitly says self_check_in=False, never shown
-        # prematurely before the guest's own arrival details (or a company policy) have actually
-        # settled which path applies.
-        in_person = arrival is not None and arrival.self_check_in is False
-
-        access_codes = []
-        codes_revealed = False
-        reveal_days = None
-        postbox_path = None
-        self_check_in_late_arrival = False
-        if self_check_in:
-            reveal_days = BookingSettings.load().self_check_in_code_reveal_days
-            days_until_arrival = (booking.arrival_date - timezone.now().date()).days
-            codes_revealed = days_until_arrival <= reveal_days
-            if location is not None and location.self_check_in_preferred_code:
-                postbox_path = resolve_shared_postbox_path(booking)
-            if postbox_path in (None, 'fallback'):
-                access_codes = list(booking.property.access_codes.all())
-            # Only true when self check-in is a MIXED company's late-arrival cutoff kicking in,
-            # not a property that's always self check-in - a guest arriving well within normal
-            # hours shouldn't be told they're "arriving very late" just because their property
-            # happens to have no in-person option at all (2026-09-08, per Thomas). Judged on the
-            # computed ETA, not the raw given time, for exactly the same reason
-            # compute_effective_self_check_in() is - otherwise a 21:00 Faro landing would silently
-            # get self check-in (ETA 22:30, past the cutoff) with no explanation of why.
-            from properties.models import ManagementCompany
-            booking_company = booking.property.booking_company
-            arrival_eta = (
-                compute_eta_from_given_time(arrival.method, arrival.time) if arrival is not None else None
-            )
-            self_check_in_late_arrival = bool(
-                booking_company is not None
-                and booking_company.check_in_method == ManagementCompany.CheckInMethod.MIXED
-                and booking_company.self_check_in_after is not None
-                and arrival_eta is not None
-                and arrival_eta >= booking_company.self_check_in_after
-            )
-
-        in_person_cleaning_company = booking.property.cleaning_company if in_person else None
-        in_person_liaison = (
-            in_person_cleaning_company
-            if in_person_cleaning_company is not None and in_person_cleaning_company.liaison_phone
-            else None
-        )
-        in_person_late_fee = (
-            in_person_cleaning_company
-            if in_person_cleaning_company is not None
-            and in_person_cleaning_company.late_check_in_after is not None
-            and in_person_cleaning_company.late_check_in_fee is not None
-            else None
-        )
-
-        transfer_fallback_contact = None
-        if inbound_transfer is not None:
-            extras_settings = ExtrasSettings.load()
-            if (
-                extras_settings.airport_transfer_fallback_contact_name
-                and extras_settings.airport_transfer_fallback_contact_phone
-            ):
-                transfer_fallback_contact = extras_settings
-
-        cleaning_company = booking.property.cleaning_company
-        emergency_contact = (
-            cleaning_company
-            if cleaning_company is not None and cleaning_company.liaison_phone
-            else None
-        )
-
-        context = _manage_nav_context(booking, 'location')
-        context.update({
-            'booking': booking, 'location': location,
-            'self_check_in': self_check_in,
-            'self_check_in_instructions': booking.property.self_check_in_instructions if self_check_in else '',
-            'self_check_in_late_arrival': self_check_in_late_arrival,
-            'in_person': in_person,
-            'in_person_check_in_instructions': booking.property.in_person_check_in_instructions if in_person else '',
-            'in_person_liaison': in_person_liaison,
-            'in_person_checkin_checkout': in_person_cleaning_company,
-            'in_person_late_fee': in_person_late_fee,
-            'access_codes': access_codes,
-            'codes_revealed': codes_revealed,
-            'code_reveal_days': reveal_days,
-            'postbox_path': postbox_path,
-            'postbox_location': location if postbox_path else None,
-            'inbound_transfer': inbound_transfer,
-            'has_outbound_transfer': has_outbound_transfer,
-            'transfer_fallback_contact': transfer_fallback_contact,
-            'emergency_contact': emergency_contact,
-        })
+        primary = bookings[0]
+        context = _manage_nav_context(primary, 'location')
+        context.update(_location_context(primary))
+        if len(bookings) > 1:
+            context['legs'] = [_location_context(booking) for booking in bookings]
         return render(request, self.template_name, context)
+
+
+def _location_context(booking):
+    location = booking.property.location
+    arrival = Arrival.objects.filter(booking=booking).first()
+    self_check_in = bool(arrival and arrival.self_check_in)
+    inbound_transfer = booking.airport_transfers.filter(direction=AirportTransferDirection.INBOUND).first()
+    has_outbound_transfer = booking.airport_transfers.filter(direction=AirportTransferDirection.OUTBOUND).exists()
+    # A known meet-and-greet, distinct from "we don't know yet" (arrival is None) - only ever true
+    # once an Arrival row exists and explicitly says self_check_in=False, never shown prematurely
+    # before the guest's own arrival details (or a company policy) have actually settled which
+    # path applies.
+    in_person = arrival is not None and arrival.self_check_in is False
+
+    access_codes = []
+    codes_revealed = False
+    reveal_days = None
+    postbox_path = None
+    self_check_in_late_arrival = False
+    if self_check_in:
+        reveal_days = BookingSettings.load().self_check_in_code_reveal_days
+        days_until_arrival = (booking.arrival_date - timezone.now().date()).days
+        codes_revealed = days_until_arrival <= reveal_days
+        if location is not None and location.self_check_in_preferred_code:
+            postbox_path = resolve_shared_postbox_path(booking)
+        if postbox_path in (None, 'fallback'):
+            access_codes = list(booking.property.access_codes.all())
+        # Only true when self check-in is a MIXED company's late-arrival cutoff kicking in, not a
+        # property that's always self check-in - a guest arriving well within normal hours
+        # shouldn't be told they're "arriving very late" just because their property happens to
+        # have no in-person option at all (2026-09-08, per Thomas). Judged on the computed ETA,
+        # not the raw given time, for exactly the same reason compute_effective_self_check_in() is
+        # - otherwise a 21:00 Faro landing would silently get self check-in (ETA 22:30, past the
+        # cutoff) with no explanation of why.
+        from properties.models import ManagementCompany
+        booking_company = booking.property.booking_company
+        arrival_eta = compute_eta_from_given_time(arrival.method, arrival.time) if arrival is not None else None
+        self_check_in_late_arrival = bool(
+            booking_company is not None
+            and booking_company.check_in_method == ManagementCompany.CheckInMethod.MIXED
+            and booking_company.self_check_in_after is not None
+            and arrival_eta is not None
+            and arrival_eta >= booking_company.self_check_in_after
+        )
+
+    in_person_cleaning_company = booking.property.cleaning_company if in_person else None
+    in_person_liaison = (
+        in_person_cleaning_company
+        if in_person_cleaning_company is not None and in_person_cleaning_company.liaison_phone
+        else None
+    )
+    in_person_late_fee = (
+        in_person_cleaning_company
+        if in_person_cleaning_company is not None
+        and in_person_cleaning_company.late_check_in_after is not None
+        and in_person_cleaning_company.late_check_in_fee is not None
+        else None
+    )
+
+    transfer_fallback_contact = None
+    if inbound_transfer is not None:
+        extras_settings = ExtrasSettings.load()
+        if (
+            extras_settings.airport_transfer_fallback_contact_name
+            and extras_settings.airport_transfer_fallback_contact_phone
+        ):
+            transfer_fallback_contact = extras_settings
+
+    cleaning_company = booking.property.cleaning_company
+    emergency_contact = (
+        cleaning_company if cleaning_company is not None and cleaning_company.liaison_phone else None
+    )
+
+    return {
+        'booking': booking, 'location': location,
+        'self_check_in': self_check_in,
+        'self_check_in_instructions': booking.property.self_check_in_instructions if self_check_in else '',
+        'self_check_in_late_arrival': self_check_in_late_arrival,
+        'in_person': in_person,
+        'in_person_check_in_instructions': booking.property.in_person_check_in_instructions if in_person else '',
+        'in_person_liaison': in_person_liaison,
+        'in_person_checkin_checkout': in_person_cleaning_company,
+        'in_person_late_fee': in_person_late_fee,
+        'access_codes': access_codes,
+        'codes_revealed': codes_revealed,
+        'code_reveal_days': reveal_days,
+        'postbox_path': postbox_path,
+        'postbox_location': location if postbox_path else None,
+        'inbound_transfer': inbound_transfer,
+        'has_outbound_transfer': has_outbound_transfer,
+        'transfer_fallback_contact': transfer_fallback_contact,
+        'emergency_contact': emergency_contact,
+    }
 
 
 class BookingManageLocalRulesView(View):

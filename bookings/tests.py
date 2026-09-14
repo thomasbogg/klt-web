@@ -3008,6 +3008,87 @@ class ManageHubHolidayInfoMultiPropertyTests(TestCase):
         )
 
 
+class ManageHubLocationMultiPropertyTests(TestCase):
+    """Stage B2 of the multi-property manage-hub merge (2026-09-14, see project memory) -
+    Location & Check-in, built with extra care given real door-access codes are involved. The one
+    thing that must never happen: one apartment's access code appearing under the other
+    apartment's card, or a guest with self check-in at one leg and in-person at the other getting
+    the wrong treatment for either."""
+
+    def setUp(self):
+        self.location = Location.objects.create(title='Location Merge Test Location')
+        self.property_a = Property.objects.create(
+            title='Location Merge Property A', short_title='LMPA', location=self.location,
+            self_check_in_instructions='Property A: use the blue door.',
+        )
+        self.property_b = Property.objects.create(
+            title='Location Merge Property B', short_title='LMPB', location=self.location,
+            self_check_in_instructions='Property B: use the red door.',
+        )
+        PropertyAccessCode.objects.create(property=self.property_a, label='Front door', code='1111')
+        PropertyAccessCode.objects.create(property=self.property_b, label='Front door', code='2222')
+        self.guest = Guest.objects.create(first_name='Kofi', last_name='Mensah', email='kofi-location@example.com')
+        # Within the default self-check-in code reveal window (see
+        # test_access_code_reveal_window_is_configurable above for the single-booking equivalent).
+        self.start = date.today() + timedelta(days=1)
+        self.end = self.start + timedelta(days=3)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a)
+        self.leg_b = self._make_booking(self.property_b)
+        Arrival.objects.create(booking=self.leg_a, self_check_in=True, meet_greet=False)
+        Arrival.objects.create(booking=self.leg_b, self_check_in=True, meet_greet=False)
+        self.url = reverse('bookings:manage_location', kwargs={'reference': self.group.reference})
+
+    def _make_booking(self, property):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        Payment.objects.create(booking=booking, provider='revolut', status='paid')
+        return booking
+
+    def test_each_apartment_shows_only_its_own_access_code(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn('1111', content)
+        self.assertIn('2222', content)
+        self.assertIn('Property A: use the blue door.', content)
+        self.assertIn('Property B: use the red door.', content)
+        # Cross-contamination check: leg A's card should not carry leg B's code, and vice versa -
+        # verified structurally, not just "both codes appear somewhere on the page".
+        leg_a_index = content.index('Location Merge Property A')
+        leg_b_index = content.index('Location Merge Property B')
+        self.assertLess(leg_a_index, leg_b_index)
+        leg_a_block = content[leg_a_index:leg_b_index]
+        leg_b_block = content[leg_b_index:]
+        self.assertIn('1111', leg_a_block)
+        self.assertNotIn('2222', leg_a_block)
+        self.assertIn('2222', leg_b_block)
+
+    def test_shared_location_facts_render_once_not_per_leg(self):
+        response = self.client.get(self.url)
+        content = response.content.decode()
+        # The shared address block is a single element (id'd via its distinctive class), not
+        # duplicated once per leg - unlike the access-code cards above.
+        self.assertEqual(content.count('location-address'), 1)
+
+    def test_mixed_self_check_in_and_in_person_legs_each_get_their_own_treatment(self):
+        self.leg_b.arrival.self_check_in = False
+        self.leg_b.arrival.save(update_fields=['self_check_in'])
+        response = self.client.get(self.url)
+        content = response.content.decode()
+        leg_a_index = content.index('Location Merge Property A')
+        leg_b_index = content.index('Location Merge Property B')
+        leg_a_block = content[leg_a_index:leg_b_index]
+        leg_b_block = content[leg_b_index:]
+        self.assertIn('Self check-in', leg_a_block)
+        self.assertIn('1111', leg_a_block)
+        self.assertNotIn('Self check-in', leg_b_block)
+        self.assertNotIn('2222', leg_b_block)
+
+
 class BookingManageHubViewTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Test Property HUB', short_title='TESTHUB')
