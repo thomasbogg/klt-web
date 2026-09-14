@@ -81,11 +81,26 @@ def _booking_is_live(booking):
 
 def _guest_context(booking):
     charge = getattr(booking, 'charges', None)
+    # Multi-property reservations (ReservationGroup, 2026-09-13) share one guest-facing reference
+    # across their sibling Bookings - see that model's own docstring. `reference` below is
+    # deliberately the GROUP's reference whenever one exists, not this leg's own Booking.reference
+    # (which is still what every action URL below is built from - those views are strictly
+    # single-Booking lookups, confirmed against bookings/views.py, so swapping the group reference
+    # into a URL would 404).
+    group = booking.reservation_group
+    other_property_names = ''
+    if group is not None:
+        other_property_names = ', '.join(
+            sibling.property.title
+            for sibling in group.bookings.exclude(pk=booking.pk).select_related('property').order_by('pk')
+        )
     context = {
         'guest_first_name': booking.guest.first_name or booking.guest.last_name,
         'guest_full_name': str(booking.guest),
         'property_name': booking.property.title,
-        'reference': booking.reference,
+        'reference': group.reference if group is not None and group.reference else booking.reference,
+        'is_multi_property': bool(other_property_names),
+        'other_property_names': other_property_names,
         'arrival_date': booking.arrival_date,
         'departure_date': booking.departure_date,
         'manage_hub_url': _absolute_url('bookings:manage_hub', booking.reference),
@@ -254,10 +269,12 @@ PLACEHOLDER_KEYS = {
     'guest_booking_confirmation': (
         'guest_first_name', 'guest_full_name', 'property_name', 'reference', 'arrival_date',
         'departure_date', 'amount_due_now', 'amount_due_now_currency', 'amount_due_balance',
-        'amount_due_balance_currency', 'balance_due_date', 'manage_hub_url',
+        'amount_due_balance_currency', 'balance_due_date', 'manage_hub_url', 'is_multi_property',
+        'other_property_names',
     ),
     'owner_booking_confirmation': (
         'owner_name', 'guest_full_name', 'property_name', 'reference', 'arrival_date', 'departure_date',
+        'is_multi_property', 'other_property_names',
     ),
     'deposit_payment_received': (
         'guest_first_name', 'property_name', 'reference', 'arrival_date', 'departure_date',
