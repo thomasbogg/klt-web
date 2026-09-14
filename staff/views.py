@@ -2743,6 +2743,7 @@ class StaffBookingDetailView(View):
             ),
             'payment': getattr(booking, 'payment', None),
             'balance_payment': balance_payment,
+            'tourist_tax': getattr(booking, 'tourist_tax', None),
             'subtotal': subtotal,
             'due_total': due_total,
             'split_mismatch': split_mismatch,
@@ -2945,6 +2946,8 @@ class StaffBookingDetailView(View):
         payment_status = post.get('payment_status', '').strip() if payment is not None else ''
         balance_payment = getattr(booking, 'balance_payment', None)
         balance_status = post.get('balance_payment_status', '').strip() if balance_payment is not None else ''
+        tourist_tax = getattr(booking, 'tourist_tax', None)
+        tourist_tax_status = post.get('tourist_tax_status', '').strip() if tourist_tax is not None else ''
 
         with transaction.atomic():
             booking.save()
@@ -3071,6 +3074,9 @@ class StaffBookingDetailView(View):
             if balance_payment is not None and balance_status:
                 balance_payment.status = balance_status
                 balance_payment.save(update_fields=['status'])
+            if tourist_tax is not None and tourist_tax_status:
+                tourist_tax.status = tourist_tax_status
+                tourist_tax.save(update_fields=['status'])
             if new_status and new_status != old_status:
                 TaskHistoryEntry.objects.create(
                     booking=booking, description="Status changed",

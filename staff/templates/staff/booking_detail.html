@@ -391,7 +391,19 @@
                             {% endif %}
                         </div>
                         {% endif %}
-                        {% if not payment and not balance_payment %}
+                        {% if tourist_tax %}
+                        <div class="staff-field-row">
+                            <label class="staff-field">Tourist tax status
+                                <select name="tourist_tax_status" form="booking-detail-form" class="staff-input">
+                                    {% for value, label in payment_status_choices %}
+                                    <option value="{{ value }}" {% if tourist_tax.status == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </label>
+                            <p class="staff-empty">&euro;{{ tourist_tax.total|default:'-' }}{% if tourist_tax.total %} due{% endif %} - the automated webhook is still dormant, confirm here once seen paid in Revolut.</p>
+                        </div>
+                        {% endif %}
+                        {% if not payment and not balance_payment and not tourist_tax %}
                         <p class="staff-empty">No payment records for this booking.</p>
                         {% endif %}
                         {% if charge %}

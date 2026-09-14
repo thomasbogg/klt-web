@@ -18,7 +18,7 @@ from django.utils.http import urlsafe_base64_encode
 from bookings.models import (
     AirportTransfer, AirportTransferDirection, Arrival, BalancePayment, Booking, BookingCondition,
     BookingRequestedExtra, BookingSettings, Charge, CheckinSettings, Departure, Extra, FAQ, Payment,
-    PaymentSettings, PlatformPayout, RequestType, TravelMethod,
+    PaymentSettings, PlatformPayout, RequestType, TouristTax, TravelMethod,
 )
 from bookings.utils import BLOCK_LATE_CHECK_OUT_LAST_NAME, BLOCK_UNBOOKABLE_LAST_NAME
 from finance.models import AdHocService, SageSettings
@@ -425,6 +425,24 @@ class StaffBookingDetailViewTests(TestCase):
         self.assertEqual(self.charge.currency, 'GBP')
         self.assertEqual(self.payment.status, 'paid')
         self.assertEqual(self.balance_payment.status, 'in_progress')
+
+    def test_tourist_tax_status_shown_and_confirmable_once_a_row_exists(self):
+        # TouristTax is created lazily (only once the guest visits the Manage hub's Tourist Tax
+        # section - see BookingManageTouristTaxView), unlike Payment/BalancePayment which always
+        # exist from booking creation - so a booking with no row yet must show no control at all.
+        response = self.client.get(self.url)
+        self.assertIsNone(response.context['tourist_tax'])
+        self.assertNotContains(response, 'tourist_tax_status')
+
+        tourist_tax = TouristTax.objects.create(booking=self.booking, total=Decimal('20.00'))
+        response = self.client.get(self.url)
+        self.assertEqual(response.context['tourist_tax'], tourist_tax)
+        self.assertContains(response, 'tourist_tax_status')
+
+        response = self.client.post(self.url, {'action': 'update_booking', 'tourist_tax_status': 'paid'})
+        self.assertRedirects(response, self.url)
+        tourist_tax.refresh_from_db()
+        self.assertEqual(tourist_tax.status, 'paid')
 
     def test_switching_currency_to_gbp_freezes_the_current_live_rate(self):
         # self.charge starts EUR with no gbp_conversion_rate (setUp) - a booking whose Charge never
