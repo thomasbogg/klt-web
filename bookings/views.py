@@ -2387,6 +2387,31 @@ class BookingManageGuestRegistrationsView(View):
         )
 
 
+def _tourist_tax_context(booking):
+    booking_settings = BookingSettings.load()
+    if not booking.party.exists():
+        return {
+            'booking': booking, 'no_party': True,
+            'min_age': booking_settings.tourist_tax_min_age, 'max_nights': booking_settings.tourist_tax_max_nights,
+        }
+
+    total, qualifying_guests, nights = compute_tourist_tax(booking, booking_settings)
+    tourist_tax, _created = TouristTax.objects.get_or_create(booking=booking, defaults={'total': total})
+    if tourist_tax.status != 'paid' and tourist_tax.total != total:
+        tourist_tax.total = total
+        tourist_tax.revolut_checkout_url = None
+        tourist_tax.save()
+
+    return {
+        'booking': booking,
+        'tourist_tax': tourist_tax,
+        'qualifying_guests': qualifying_guests,
+        'nights': nights,
+        'min_age': booking_settings.tourist_tax_min_age,
+        'max_nights': booking_settings.tourist_tax_max_nights,
+    }
+
+
 class BookingManageTouristTaxView(View):
     """Tourist Tax section of the Manage Booking hub - shows the guest the computed municipal
     tourist tax owed (see bookings/utils.py::compute_tourist_tax()) and a way to pay it, mirroring
@@ -2401,44 +2426,30 @@ class BookingManageTouristTaxView(View):
     The TouristTax row is created lazily here (unlike Payment/BalancePayment, which always exist
     from booking creation) and its total is recomputed on every visit while unpaid, since the party
     can change right up until payment - any change clears revolut_checkout_url too, so the pay
-    page creates a fresh Revolut order for the new amount instead of honouring a stale one."""
+    page creates a fresh Revolut order for the new amount instead of honouring a stale one.
+
+    2026-09-14 (Stage D of the multi-property hub merge - see project memory): this page has no
+    form of its own to duplicate (just a breakdown and a "Pay" link out to
+    BookingManageTouristTaxPayView, which stays per-leg exactly like Pay Balance - a real Revolut
+    checkout redirect isn't something two copies on one page can usefully share). A multi-property
+    stay instead shows one _tourist_tax_context() card per leg, same "one card per apartment"
+    pattern Stage B (Amenities/Last Days/Location) already established, each with its own
+    breakdown/no-party-yet message/pay link pointing at that leg's own individual reference."""
     template_name = 'bookings/manage_tourist_tax.html'
 
-    def _get_gated_booking(self, reference):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
-            raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return booking, redirect('bookings:details', reference=reference)
-        return booking, None
-
     def get(self, request, reference, *args, **kwargs):
-        booking, redirect_response = self._get_gated_booking(reference)
-        if redirect_response is not None:
-            return redirect_response
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
+            raise Http404("No booking found for this reference.")
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
-        context = _manage_nav_context(booking, 'tourist_tax')
-        context['booking'] = booking
-
-        if not booking.party.exists():
-            context['no_party'] = True
-            return render(request, self.template_name, context)
-
-        booking_settings = BookingSettings.load()
-        total, qualifying_guests, nights = compute_tourist_tax(booking, booking_settings)
-        tourist_tax, _created = TouristTax.objects.get_or_create(booking=booking, defaults={'total': total})
-        if tourist_tax.status != 'paid' and tourist_tax.total != total:
-            tourist_tax.total = total
-            tourist_tax.revolut_checkout_url = None
-            tourist_tax.save()
-
-        context.update({
-            'tourist_tax': tourist_tax,
-            'qualifying_guests': qualifying_guests,
-            'nights': nights,
-            'min_age': booking_settings.tourist_tax_min_age,
-            'max_nights': booking_settings.tourist_tax_max_nights,
-        })
+        primary = bookings[0]
+        context = _manage_nav_context(primary, 'tourist_tax', all_bookings=bookings)
+        context.update(_tourist_tax_context(primary))
+        if len(bookings) > 1:
+            context['legs'] = [_tourist_tax_context(booking) for booking in bookings]
         return render(request, self.template_name, context)
 
 

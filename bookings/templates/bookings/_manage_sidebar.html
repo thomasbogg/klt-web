@@ -38,7 +38,7 @@ lands. All of "Holiday Info" has moved over as of this comment (Stage B); "Manag
        href="{% url 'bookings:manage_guest_registrations' reference=booking.reference %}">Guest Registrations</a>
     {% if show_tourist_tax %}
     <a class="manage-hub-nav-link{% if active_section == 'tourist_tax' %} manage-hub-nav-link-active{% endif %}"
-       href="{% url 'bookings:manage_tourist_tax' reference=booking.reference %}">Tourist Tax</a>
+       href="{% url 'bookings:manage_tourist_tax' reference=stay_reference %}">Tourist Tax</a>
     {% endif %}
     {% if show_security_deposit %}
     <a class="manage-hub-nav-link{% if active_section == 'deposit' %} manage-hub-nav-link-active{% endif %}"

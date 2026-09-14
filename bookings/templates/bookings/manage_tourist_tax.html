@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tourist Tax {{ booking.reference }} | Algarve Beach Apartments</title>
+    <title>Tourist Tax {{ stay_reference }} | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
@@ -25,10 +25,19 @@
             <h1>Tourist Tax</h1>
 
             <div class="confirmation-reference">
-                <span class="confirmation-reference-label">Booking Reference</span>
-                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+                <span class="confirmation-reference-label">{% if booking.reservation_group_id %}Party Reference{% else %}Booking Reference{% endif %}</span>
+                <span class="confirmation-reference-value">{{ stay_reference }}</span>
             </div>
 
+            {% if legs %}
+            <p class="details-note">
+                The Algarve municipal tourist tax applies to guests aged {{ min_age }} and over,
+                charged per night up to a maximum of {{ max_nights }} nights per guest.
+            </p>
+            {% for leg in legs %}
+            {% include 'bookings/_manage_tourist_tax_leg.html' with leg=leg %}
+            {% endfor %}
+            {% else %}
             {% if no_party %}
             <p class="details-note">
                 Please add your party to the <a href="{% url 'bookings:manage_guests' reference=booking.reference %}">Guest List</a>
@@ -55,6 +64,7 @@
             <a class="reserve-form-submit" href="{% url 'bookings:manage_tourist_tax_pay' reference=booking.reference %}">Pay Tourist Tax</a>
             {% else %}
             <p class="details-note">No tourist tax is due for your party.</p>
+            {% endif %}
             {% endif %}
             {% endif %}
         </div>

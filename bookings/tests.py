@@ -2390,6 +2390,63 @@ class BookingManageTouristTaxViewTests(TestCase):
         self.assertEqual(tourist_tax.total, Decimal('999.00'))
 
 
+class ManageHubTouristTaxMultiPropertyTests(TestCase):
+    """Stage D of the multi-property manage-hub merge (2026-09-14, see project memory) - Tourist
+    Tax has no form of its own (just a breakdown and a Pay link out to a real Revolut checkout, one
+    per leg), so it uses the same "one card per apartment" pattern as Stage B rather than the
+    dual-form pattern Security Deposit uses."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Tourist Tax Property A', short_title='TTPA')
+        self.property_b = Property.objects.create(title='Tourist Tax Property B', short_title='TTPB')
+        self.guest = Guest.objects.create(first_name='Wale', last_name='Okafor', email='wale-tax@example.com')
+        self.start = date.today() + timedelta(days=100)
+        self.end = self.start + timedelta(days=5)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a)
+        self.leg_b = self._make_booking(self.property_b)
+        self.url = reverse('bookings:manage_tourist_tax', kwargs={'reference': self.group.reference})
+        settings = BookingSettings.load()
+        settings.tourist_tax_season_start_month = 1
+        settings.tourist_tax_season_end_month = 12
+        settings.save()
+
+    def _make_booking(self, property):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        Charge.objects.create(booking=booking, currency='EUR')
+        Payment.objects.create(booking=booking, provider='wise', status='paid')
+        return booking
+
+    def test_each_leg_computed_independently(self):
+        self.leg_a.party.create(first_name='Wale', last_name='Okafor', age=30, is_lead=True)
+        # leg_b's party is left empty on purpose - one leg fully computed, the other still prompting.
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        legs = response.context['legs']
+        self.assertEqual(len(legs), 2)
+        leg_a_context = next(leg for leg in legs if leg['booking'] == self.leg_a)
+        leg_b_context = next(leg for leg in legs if leg['booking'] == self.leg_b)
+        self.assertEqual(TouristTax.objects.get(booking=self.leg_a).total, Decimal('10.00'))
+        self.assertNotIn('no_party', leg_a_context)
+        self.assertTrue(leg_b_context.get('no_party'))
+
+    def test_pay_link_points_at_each_legs_own_individual_reference(self):
+        self.leg_a.party.create(first_name='Wale', last_name='Okafor', age=30, is_lead=True)
+        self.leg_b.party.create(first_name='Wale', last_name='Okafor', age=30, is_lead=True)
+        response = self.client.get(self.url)
+        content = response.content.decode()
+        self.assertIn(
+            reverse('bookings:manage_tourist_tax_pay', kwargs={'reference': self.leg_a.reference}), content,
+        )
+        self.assertIn(
+            reverse('bookings:manage_tourist_tax_pay', kwargs={'reference': self.leg_b.reference}), content,
+        )
+
+
 class BookingManageTouristTaxPayViewTests(TestCase):
     """Unlike BookingBalancePaymentViewTests, there's no Wise-path booking to safely dodge the live
     Revolut API - tourist tax is always Revolut (see TouristTax's docstring) - so the Revolut HTTP

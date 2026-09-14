@@ -1,0 +1,32 @@
+{% comment %}
+One apartment's Tourist Tax breakdown on the merged multi-property Manage Booking hub
+(manage_tourist_tax.html, looped once per entry in `legs` - see bookings/views.py::
+_tourist_tax_context()). Read-only summary, not a form - Pay Tourist Tax stays a real Revolut
+checkout redirect per apartment, same as Pay Balance.
+{% endcomment %}
+<div class="stay-leg-section">
+    <h2 class="stay-leg-section-title">{{ leg.booking.property }}</h2>
+
+    {% if leg.no_party %}
+    <p class="details-note details-note-left">
+        Please add your party to the <a href="{% url 'bookings:manage_guests' reference=leg.booking.reference %}">Guest List</a>
+        first - tourist tax is calculated from each guest's age.
+    </p>
+    {% else %}
+    <div class="details-section">
+        <ul class="details-list">
+            <li><strong>Guests liable for tourist tax:</strong> {{ leg.qualifying_guests }}</li>
+            <li><strong>Nights charged:</strong> {{ leg.nights }}</li>
+            <li><strong>Total due:</strong> &euro;{{ leg.tourist_tax.total|floatformat:2 }}</li>
+        </ul>
+    </div>
+
+    {% if leg.tourist_tax.status == 'paid' %}
+    <p class="details-note details-note-left">Tourist tax has been paid - thank you.</p>
+    {% elif leg.tourist_tax.total > 0 %}
+    <a class="reserve-form-submit" href="{% url 'bookings:manage_tourist_tax_pay' reference=leg.booking.reference %}">Pay Tourist Tax</a>
+    {% else %}
+    <p class="details-note details-note-left">No tourist tax is due for this apartment.</p>
+    {% endif %}
+    {% endif %}
+</div>
