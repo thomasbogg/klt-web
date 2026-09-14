@@ -30,15 +30,15 @@
                 <span class="confirmation-reference-value">{{ stay_reference }}</span>
             </div>
 
-            {% if booking.reservation_group_id %}
-            <p class="details-note">These travel details apply to every apartment in your party - one arrival, so no need to repeat yourself for each.</p>
-            {% endif %}
-
             {% if request.GET.saved %}
             <p class="details-note">Your arrival and departure details have been updated.</p>
             {% endif %}
 
             <p class="details-note">Let us know your travel plans - you can change these any time before you arrive.</p>
+
+            {% if booking.reservation_group_id %}
+            <p class="details-note">These travel details apply to every apartment in your party - one arrival, so no need to repeat yourself for each.</p>
+            {% endif %}
 
             <form method="post" class="details-form">
                 {% csrf_token %}

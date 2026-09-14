@@ -30,15 +30,15 @@
                 <span class="confirmation-reference-value">{{ stay_reference }}</span>
             </div>
 
-            {% if booking.reservation_group_id %}
-            <p class="details-note">These contact details are shared across every apartment in your party - updating them here updates them everywhere.</p>
-            {% endif %}
-
             {% if request.GET.saved %}
             <p class="details-note">Your contact details have been updated.</p>
             {% endif %}
 
             <p class="details-note">Keep your email and phone number up to date - we use these to reach you about this stay.</p>
+
+            {% if booking.reservation_group_id %}
+            <p class="details-note">These contact details are shared across every apartment in your party - updating them here updates them everywhere.</p>
+            {% endif %}
 
             {% if form.non_field_errors %}
             <div class="reserve-form-errors">
