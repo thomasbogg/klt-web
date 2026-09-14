@@ -105,6 +105,32 @@ def _first_unpaid_leg(bookings):
     return next((booking for booking in bookings if not is_paid(booking)), None)
 
 
+def _leg_for_post(bookings, leg_reference):
+    """Which apartment a merged multi-property form's POST is acting on, from the hidden
+    `leg_reference` field every duplicated form carries (see Stage D's dual-form pattern).
+
+    A single-property stay ignores the field entirely and returns its only booking - those forms
+    still render it, but there's nothing to disambiguate and no reason to start rejecting a POST
+    that predates it. A multi-property stay must match an actual leg: returns None for a missing
+    or unrecognised reference rather than silently falling back to the primary leg, which would
+    write one apartment's guest list onto the other."""
+    if len(bookings) == 1:
+        return bookings[0]
+    return next((booking for booking in bookings if booking.reference == leg_reference), None)
+
+
+def _sweep_supplementary_payments(bookings):
+    """Apply any paid-but-not-yet-applied SupplementaryPayment across every leg of a stay - a
+    guest who paid for a guest-addition on their SECOND apartment and closed the tab needs it
+    applied next time they load the page, not just when the primary leg happens to be the one
+    that was paid for. _manage_nav_context() does the same for its single `booking`; this is the
+    every-leg version the merged sections need (see _manage_hub_context(), which already had its
+    own copy of this loop for the hub landing page)."""
+    for booking in bookings:
+        for payment in booking.supplementary_payments.filter(status='paid', applied_at__isnull=True):
+            payment.apply(booking=booking)
+
+
 def _all_equal(values):
     """True if every value is equal to the first (an empty/single-item iterable trivially counts
     as equal). Used to decide whether a subsection genuinely differs between a multi-property
@@ -692,6 +718,47 @@ class BookingFormMixin:
         blank_count = max(1, expected_total - len(existing_party))
         return [{'first_name': '', 'last_name': '', 'age': '', 'errors': {}} for _ in range(blank_count)]
 
+    def _guests_leg_context(self, booking):
+        """One apartment's worth of Guest List state, in the exact shape manage_guests.html has
+        always expected at top level for a single-property booking - so the merged multi-property
+        page (`legs`, one of these per apartment) and the single-property page render through the
+        same keys, just at different nesting depths.
+
+        `stage` is per-leg on purpose, not taken from _manage_nav_context()'s own top-level value:
+        a multi-property stay's two apartments each have their own Charge/BalancePayment and can
+        genuinely be at different stages at once (one balance paid, the other not), so one leg can
+        need the full editable repricing form while the other simultaneously needs the fully-paid
+        add/remove controls. See BookingManageGuestsView's docstring."""
+        stage = 'fully_paid' if is_fully_paid(booking) else 'pre_balance'
+        context = {
+            'booking': booking,
+            'stage': stage,
+            'max_guests': booking.property.specs.max_guests,
+        }
+        if stage == 'fully_paid':
+            party = list(booking.party.all())
+            context['party'] = party
+            context['guest_add_rows'] = self._seed_guest_add_rows(booking, party)
+        else:
+            context['rows'] = self._seed_or_prefill_rows(booking)
+        return context
+
+    def _merged_guest_legs(self, bookings, target=None, overrides=None):
+        """Every leg's _guests_leg_context(), with `overrides` merged into whichever one is
+        `target` - the "re-render the whole merged page, but keep the submitting apartment's own
+        typed values and errors" path every POST below needs on a validation failure or a
+        price-change interstitial. Same shape as Stage D3's guest-registrations equivalent.
+
+        The non-target legs are rebuilt from the database, deliberately: a failed POST against one
+        apartment must never silently discard or re-display stale state for the other."""
+        legs = []
+        for booking in bookings:
+            leg = self._guests_leg_context(booking)
+            if target is not None and booking.pk == target.pk and overrides:
+                leg.update(overrides)
+            legs.append(leg)
+        return legs
+
     def _parse_rows(self, post_data):
         """Three parallel arrays (first_name[]/last_name[]/age[]), not a Django formset - see the
         plan this was built from for why. Returns (rows, non_field_error); rows is [] only when
@@ -1231,9 +1298,16 @@ class BookingManageSupplementaryPaymentView(View):
         return render(request, self.template_name, context)
 
     def _success_url(self, payment):
+        booking = payment.booking
         if payment.kind == 'date_change':
-            return f"{reverse('bookings:manage_dates', args=[payment.booking.reference])}?dates_updated=1"
-        return f"{reverse('bookings:manage_guests', args=[payment.booking.reference])}?guest_added=1"
+            return f"{reverse('bookings:manage_dates', args=[booking.reference])}?dates_updated=1"
+        # Back to the merged Guest List for a multi-property stay (Stage D5) rather than this one
+        # apartment's own page - this checkout is per-apartment, but the page the guest returns to
+        # isn't. guest_added carries the paid-for leg so the note lands against the right one.
+        stay_reference = (
+            booking.reservation_group.reference if booking.reservation_group_id else booking.reference
+        )
+        return f"{reverse('bookings:manage_guests', args=[stay_reference])}?guest_added={booking.reference}"
 
     def _create_revolut_order(self, payment):
         booking = payment.booking
@@ -1576,74 +1650,85 @@ class BookingManageGuestsView(BookingFormMixin, View):
     fully_paid: a Remove control on each non-lead party row (POSTing to the separate
     BookingManageGuestRemoveView) plus an add-guest mini-form (POSTing to
     BookingManageGuestAddView) - both GuestListAdjustment-tracked, both their own separate views -
-    this view's own POST only exists for the pre_balance case."""
+    this view's own POST only exists for the pre_balance case.
+
+    2026-09-15 (Stage D5 of the multi-property hub merge - see project memory): a multi-property
+    stay renders one full, independent copy of whichever treatment each apartment's OWN stage calls
+    for (`legs`, see _guests_leg_context()), each form carrying a hidden leg_reference so this
+    view's POST knows which apartment it's acting on (_leg_for_post()). The two legs can genuinely
+    be at different stages simultaneously - one apartment's balance paid and frozen, the other
+    still repricing on every edit - so the merged page really can show the editable form and the
+    add/remove controls side by side; that's the intended behaviour, not a state to collapse. Every
+    write path stays strictly per-apartment: each leg keeps its own Charge, BalancePayment,
+    GuestListAdjustment trail and max_guests, and nothing here ever writes across legs."""
     template_name = 'bookings/manage_guests.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
-        context = _manage_nav_context(booking, 'guests')
-        if context['stage'] == 'fully_paid':
-            party = list(booking.party.all())
-            context.update({
-                'booking': booking,
-                'party': party,
-                'max_guests': booking.property.specs.max_guests,
-                'guest_add_rows': self._seed_guest_add_rows(booking, party),
-            })
-            return render(request, self.template_name, context)
-
-        rows = self._seed_or_prefill_rows(booking)
-        context.update({
-            'booking': booking,
-            'rows': rows,
-            'max_guests': booking.property.specs.max_guests,
-        })
+        _sweep_supplementary_payments(bookings)
+        primary = bookings[0]
+        context = _manage_nav_context(primary, 'guests', all_bookings=bookings)
+        context.update(self._guests_leg_context(primary))
+        if len(bookings) > 1:
+            context['legs'] = self._merged_guest_legs(bookings)
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
-        nav = _manage_nav_context(booking, 'guests')
-        if nav['stage'] == 'fully_paid':
+        booking = _leg_for_post(bookings, request.POST.get('leg_reference'))
+        if booking is None:
+            return redirect('bookings:manage_guests', reference=reference)
+
+        primary = bookings[0]
+        nav = _manage_nav_context(primary, 'guests', all_bookings=bookings)
+        # This POST is the pre_balance treatment's own; the fully-paid one goes to the separate
+        # add/remove views. Checked against the SUBMITTING leg's stage, not the primary's.
+        if is_fully_paid(booking):
             return redirect('bookings:manage_guests', reference=reference)
 
         max_guests = booking.property.specs.max_guests
         rows, non_field_error = self._parse_rows(request.POST)
-        context = {'booking': booking, 'rows': rows, 'max_guests': max_guests, 'non_field_error': non_field_error}
-        context.update(nav)
+
+        def rendered(**overrides):
+            """The merged page re-rendered with this leg's own typed rows/errors kept in place
+            (and the single-property page rendered exactly as before)."""
+            leg_state = {'rows': rows, 'max_guests': max_guests, **overrides}
+            context = {'booking': booking, **leg_state}
+            context.update(nav)
+            context['stage'] = 'pre_balance'
+            if len(bookings) > 1:
+                context['legs'] = self._merged_guest_legs(bookings, target=booking, overrides=leg_state)
+            return render(request, self.template_name, context)
 
         if non_field_error or any(row['errors'] for row in rows):
-            return render(request, self.template_name, context)
+            return rendered(non_field_error=non_field_error)
 
         if len(rows) > max_guests:
-            context['non_field_error'] = f"This property allows a maximum of {max_guests} guests."
-            return render(request, self.template_name, context)
+            return rendered(non_field_error=f"This property allows a maximum of {max_guests} guests.")
 
         ages = [int(row['age']) for row in rows]
         new_guests, new_costs, changed = recalculate_balance_for_party(booking, ages)
         if new_guests is None:
-            context['non_field_error'] = (
+            return rendered(non_field_error=(
                 "This stay can no longer be priced automatically - please contact us to complete your booking."
-            )
-            return render(request, self.template_name, context)
+            ))
         if new_guests['adults'] == 0:
-            context['non_field_error'] = "At least one adult must be included in the party."
-            return render(request, self.template_name, context)
+            return rendered(non_field_error="At least one adult must be included in the party.")
 
         if changed and request.POST.get('confirmed') != '1':
-            context['price_changed'] = True
-            context['old_charge'] = booking.charges
-            context['new_costs'] = new_costs
-            return render(request, self.template_name, context)
+            return rendered(price_changed=True, old_charge=booking.charges, new_costs=new_costs)
 
         with transaction.atomic():
             self._save_guest_list(booking, rows, new_guests)
@@ -1668,7 +1753,12 @@ class BookingManageGuestsView(BookingFormMixin, View):
                 balance_payment.revolut_checkout_url = None
                 balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
 
-        return redirect(f"{reverse('bookings:manage_guests', args=[booking.reference])}?guests_saved=1")
+        # Back to whichever reference the guest is actually browsing (the shared one for a
+        # multi-property stay), carrying the saved leg so the merged page can put its "updated"
+        # note against the right apartment rather than ambiguously at the top. Still simply
+        # truthy for the single-property page's own existing check.
+        url = reverse('bookings:manage_guests', args=[reference])
+        return redirect(f"{url}?guests_saved={booking.reference}")
 
 
 def _arrival_data_from_model(arrival):
@@ -2089,34 +2179,44 @@ class BookingManageGuestAddView(BookingFormMixin, View):
         return redirect('bookings:manage_guests', reference=reference)
 
     def post(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_fully_paid(booking):
+        booking = _leg_for_post(bookings, request.POST.get('leg_reference'))
+        if booking is None or not is_fully_paid(booking):
             return redirect('bookings:manage_guests', reference=reference)
 
         max_guests = booking.property.specs.max_guests
         new_rows, non_field_error = self._parse_rows(request.POST)
-        context = {'booking': booking, 'party': booking.party.all(), 'max_guests': max_guests}
-        context.update(_manage_nav_context(booking, 'guests'))
-        context['guest_add_rows'] = new_rows
-        context['guest_add_error'] = non_field_error
+        nav = _manage_nav_context(bookings[0], 'guests', all_bookings=bookings)
+
+        def rendered(**overrides):
+            """The merged page re-rendered with this apartment's own add-form state kept in
+            place (and the single-property page rendered exactly as before)."""
+            leg_state = {
+                'party': list(booking.party.all()), 'max_guests': max_guests,
+                'guest_add_rows': new_rows, **overrides,
+            }
+            context = {'booking': booking, **leg_state}
+            context.update(nav)
+            context['stage'] = 'fully_paid'
+            if len(bookings) > 1:
+                context['legs'] = self._merged_guest_legs(bookings, target=booking, overrides=leg_state)
+            return render(request, self.template_name, context)
 
         if non_field_error or any(row['errors'] for row in new_rows):
-            return render(request, self.template_name, context)
+            return rendered(guest_add_error=non_field_error)
 
         existing_party = list(booking.party.all())
         if len(existing_party) + len(new_rows) > max_guests:
-            context['guest_add_error'] = f"This property allows a maximum of {max_guests} guests."
-            return render(request, self.template_name, context)
+            return rendered(guest_add_error=f"This property allows a maximum of {max_guests} guests.")
 
         ages = [guest.age for guest in existing_party] + [int(row['age']) for row in new_rows]
         new_guests, new_costs, _ = recalculate_costs_for_party(booking, ages)
         if new_guests is None:
-            context['guest_add_error'] = (
+            return rendered(guest_add_error=(
                 "This stay can no longer be priced automatically - please contact us to add a guest."
-            )
-            return render(request, self.template_name, context)
+            ))
 
         charge = booking.charges
         additional_charge = max(new_costs['subtotal'] - (charge.total_rental + charge.admin), Decimal('0'))
@@ -2127,8 +2227,7 @@ class BookingManageGuestAddView(BookingFormMixin, View):
         # when there's no price change to review" spirit as Extras never having one at all - see
         # BookingManageExtrasView's own docstring).
         if additional_charge > 0 and request.POST.get('confirmed') != '1':
-            context['pending_guest_addition'] = {'rows': new_rows, 'additional_charge': additional_charge}
-            return render(request, self.template_name, context)
+            return rendered(pending_guest_addition={'rows': new_rows, 'additional_charge': additional_charge})
 
         if additional_charge > 0:
             pay_amount, pay_currency = (
@@ -2153,7 +2252,8 @@ class BookingManageGuestAddView(BookingFormMixin, View):
             )
             self._append_guest_rows(booking, new_rows, adjustment, new_guests)
 
-        return redirect(f"{reverse('bookings:manage_guests', args=[booking.reference])}?guest_added=1")
+        url = reverse('bookings:manage_guests', args=[reference])
+        return redirect(f"{url}?guest_added={booking.reference}")
 
 
 class BookingManageGuestRemoveView(View):
@@ -2174,12 +2274,15 @@ class BookingManageGuestRemoveView(View):
     booking out of sync with the guest list itself."""
 
     def post(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_fully_paid(booking):
+        booking = _leg_for_post(bookings, request.POST.get('leg_reference'))
+        if booking is None or not is_fully_paid(booking):
             return redirect('bookings:manage_guests', reference=reference)
 
+        # Scoped to the submitting apartment's own party, so a guest_id belonging to the OTHER
+        # apartment can never be removed through this leg's form.
         guest = booking.party.filter(pk=request.POST.get('guest_id')).first()
         if guest is None or guest.is_lead:
             return redirect('bookings:manage_guests', reference=reference)
@@ -2199,7 +2302,8 @@ class BookingManageGuestRemoveView(View):
             booking.last_updated = timezone.now()
             booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
 
-        return redirect(f"{reverse('bookings:manage_guests', args=[booking.reference])}?guest_removed=1")
+        url = reverse('bookings:manage_guests', args=[reference])
+        return redirect(f"{url}?guest_removed={booking.reference}")
 
 
 class BookingManageExtrasView(BookingFormMixin, View):

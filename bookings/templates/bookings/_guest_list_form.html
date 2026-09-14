@@ -11,7 +11,7 @@ Guest List shows one of these per apartment, and duplicate ids would silently bi
 <form> for the same reason - see its own comment.
 {% endcomment %}
 <section class="details-section">
-    <h2 class="details-section-title">Guest List</h2>
+    <h2 class="details-section-title">Guest List{% if guest_list_property %} &mdash; {{ guest_list_property }}{% endif %}</h2>
     <p class="details-note">Please enter details for all members of your party (including yourself). <strong>Use each guest's age at the time of your stay, not today.</strong></p>
     <p class="details-note">This property allows up to {{ max_guests }} guests. {{ guest_list_note }}</p>
 

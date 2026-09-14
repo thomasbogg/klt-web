@@ -8,7 +8,7 @@ checkout covering every apartment, shown once at the bottom of the page rather t
 <div class="stay-leg-section">
     {% if leg.no_party %}
     <p class="details-note details-note-left">
-        Please add your party to the <a href="{% url 'bookings:manage_guests' reference=leg.booking.reference %}">Guest List</a>
+        Please add your party to the <a href="{% url 'bookings:manage_guests' reference=stay_reference %}">Guest List</a>
         first - tourist tax is calculated from each guest's age for {{ leg.booking.property }}.
     </p>
     {% else %}

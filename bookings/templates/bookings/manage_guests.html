@@ -26,9 +26,19 @@
             <h1>Guest List</h1>
 
             <div class="confirmation-reference">
-                <span class="confirmation-reference-label">Booking Reference</span>
-                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+                <span class="confirmation-reference-label">{% if legs %}Party Reference{% else %}Booking Reference{% endif %}</span>
+                <span class="confirmation-reference-value">{{ stay_reference|default:booking.reference }}</span>
             </div>
+
+            {% if legs %}
+            <p class="details-note">
+                Each apartment has its own guest list - please name the guests staying in each one.
+            </p>
+            {% for leg in legs %}
+            {% include 'bookings/_manage_guests_leg.html' with leg=leg %}
+            {% endfor %}
+
+            {% else %}
 
             {% if request.GET.guests_saved %}
             <p class="details-note">Your guest list has been updated.</p>
@@ -204,6 +214,7 @@
                 {% endif %}
             </form>
 
+            {% endif %}
             {% endif %}
         </div>
     </div>

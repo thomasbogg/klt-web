@@ -3177,7 +3177,7 @@ class ManageHubHolidayInfoMultiPropertyTests(TestCase):
         response = self.client.get(self._url('bookings:manage_local_guide'))
         self.assertEqual(response.status_code, 200)
 
-    def test_sidebar_uses_group_reference_for_merged_sections_but_not_guest_list(self):
+    def test_sidebar_uses_group_reference_for_merged_sections(self):
         response = self.client.get(self._url('bookings:manage_hub'))
         content = response.content.decode()
         self.assertIn(reverse('bookings:manage_amenities', kwargs={'reference': self.group.reference}), content)
@@ -3185,10 +3185,18 @@ class ManageHubHolidayInfoMultiPropertyTests(TestCase):
         self.assertIn(
             reverse('bookings:manage_arrival_departure', kwargs={'reference': self.group.reference}), content,
         )
-        # Guest List isn't merged yet (Stage D) - still keyed off the primary leg's own reference.
-        self.assertIn(
+        # Guest List joined the merged sections in Stage D5 (2026-09-15).
+        self.assertIn(reverse('bookings:manage_guests', kwargs={'reference': self.group.reference}), content)
+        self.assertNotIn(
             reverse('bookings:manage_guests', kwargs={'reference': self.leg_a.reference}), content,
         )
+
+    def test_sidebar_still_keys_unmerged_sections_off_the_primary_leg(self):
+        # Optional Extras is the remaining unmerged section - kept as an explicit guard so this
+        # flips deliberately when it's merged too, rather than silently.
+        response = self.client.get(self._url('bookings:manage_hub'))
+        content = response.content.decode()
+        self.assertIn(reverse('bookings:manage_extras', kwargs={'reference': self.leg_a.reference}), content)
 
 
 class ManageHubLocationMultiPropertyTests(TestCase):
@@ -3613,7 +3621,7 @@ class BookingManageGuestAddViewTests(TestCase):
         at all, the same way a POST with confirmed=1 already does."""
         self.marco.delete()
         response = self.client.post(self.url, self._post_data(['Sofia'], ['Costa'], [25]))
-        self.assertRedirects(response, f"{self.guests_url}?guest_added=1", fetch_redirect_response=False)
+        self.assertRedirects(response, f"{self.guests_url}?guest_added={self.booking.reference}", fetch_redirect_response=False)
         self.assertEqual(GuestListAdjustment.objects.count(), 1)
         self.assertEqual(GuestListAdjustment.objects.get().additional_charge, Decimal('0'))
 
@@ -3703,7 +3711,7 @@ class BookingManageGuestAddViewTests(TestCase):
         self.charge.admin = Decimal('0.00')
         self.charge.save(update_fields=['basic_rental', 'admin'])
         response = self.client.post(self.url, self._post_data(['Baby'], ['Costa'], [1], confirmed=True))
-        self.assertRedirects(response, f"{self.guests_url}?guest_added=1", fetch_redirect_response=False)
+        self.assertRedirects(response, f"{self.guests_url}?guest_added={self.booking.reference}", fetch_redirect_response=False)
         adjustment = GuestListAdjustment.objects.get()
         self.assertEqual(adjustment.additional_charge, Decimal('0'))
 
@@ -3735,7 +3743,7 @@ class BookingManageGuestRemoveViewTests(TestCase):
 
     def test_removes_a_non_lead_guest(self):
         response = self.client.post(self.url, {'guest_id': self.marco.pk})
-        self.assertRedirects(response, f"{self.guests_url}?guest_removed=1", fetch_redirect_response=False)
+        self.assertRedirects(response, f"{self.guests_url}?guest_removed={self.booking.reference}", fetch_redirect_response=False)
         self.assertFalse(BookingGuest.objects.filter(pk=self.marco.pk).exists())
         self.assertEqual(self.booking.party.count(), 1)
 
@@ -4580,6 +4588,219 @@ class BookingManageDepositViewTests(TestCase):
         self.assertContains(response, 'Security Deposit')
 
 
+class ManageHubGuestsMultiPropertyTests(TestCase):
+    """Stage D5 of the multi-property manage-hub merge (2026-09-15, see project memory) - the
+    Guest List, the hardest section to merge: it's the only one where the two apartments can be at
+    genuinely different stages at the same time (one balance paid and frozen, the other still
+    repricing on every edit), and the only one with three separate write paths (edit / add /
+    remove), each of which must stay strictly scoped to the apartment whose form was submitted."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Guests Merge Property A', short_title='GMPA')
+        self.property_b = Property.objects.create(title='Guests Merge Property B', short_title='GMPB')
+        PropertySpec.objects.create(property=self.property_a, max_guests=4)
+        PropertySpec.objects.create(property=self.property_b, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Rui', last_name='Almeida', email='rui-gm@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        for prop in (self.property_a, self.property_b):
+            Price.objects.create(
+                property=prop, start_date=self.start, end_date=self.end,
+                rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+            )
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a, 'Rui', 'Almeida')
+        self.leg_b = self._make_booking(self.property_b, 'Sofia', 'Almeida')
+        self.url = reverse('bookings:manage_guests', kwargs={'reference': self.group.reference})
+        self.add_url = reverse('bookings:manage_hub_guest_add', kwargs={'reference': self.group.reference})
+        self.remove_url = reverse('bookings:manage_hub_guest_remove', kwargs={'reference': self.group.reference})
+
+    def _make_booking(self, prop, lead_first, lead_last):
+        booking = Booking.objects.create(
+            property=prop, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        BookingGuest.objects.create(
+            booking=booking, first_name=lead_first, last_name=lead_last, age=40, is_lead=True,
+        )
+        Charge.objects.create(
+            booking=booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+        )
+        Payment.objects.create(booking=booking, provider='revolut', status='paid')
+        BalancePayment.objects.create(booking=booking, provider='revolut')
+        return booking
+
+    def _mark_fully_paid(self, booking):
+        booking.balance_payment.status = 'paid'
+        booking.balance_payment.save(update_fields=['status'])
+
+    def _rows(self, names_and_ages, leg, confirmed=False):
+        data = {
+            'first_name[]': [n[0] for n in names_and_ages],
+            'last_name[]': [n[1] for n in names_and_ages],
+            'age[]': [str(n[2]) for n in names_and_ages],
+            'leg_reference': leg.reference,
+        }
+        if confirmed:
+            data['confirmed'] = '1'
+        return data
+
+    def test_each_leg_gets_its_own_form_seeded_from_its_own_party(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        legs = response.context['legs']
+        self.assertEqual(len(legs), 2)
+        leg_a = next(leg for leg in legs if leg['booking'] == self.leg_a)
+        leg_b = next(leg for leg in legs if leg['booking'] == self.leg_b)
+        self.assertEqual(leg_a['rows'][0]['first_name'], 'Rui')
+        self.assertEqual(leg_b['rows'][0]['first_name'], 'Sofia')
+
+    def test_mixed_stages_render_both_treatments_on_one_page(self):
+        # The case that made this section the hard one: leg_b's balance is paid (frozen Charge, so
+        # add/remove controls), leg_a's isn't (editable list that reprices). Both at once.
+        self._mark_fully_paid(self.leg_b)
+        response = self.client.get(self.url)
+        legs = {leg['booking'].reference: leg for leg in response.context['legs']}
+        self.assertEqual(legs[self.leg_a.reference]['stage'], 'pre_balance')
+        self.assertEqual(legs[self.leg_b.reference]['stage'], 'fully_paid')
+        content = response.content.decode()
+        self.assertIn('Save Guest List', content)   # leg_a's editable form
+        self.assertIn('Add a guest', content)       # leg_b's fully-paid controls
+
+    def test_every_form_posts_to_the_shared_reference_not_a_per_apartment_page(self):
+        self._mark_fully_paid(self.leg_b)
+        content = self.client.get(self.url).content.decode()
+        self.assertIn(f'action="{self.url}"', content)
+        self.assertIn(f'action="{self.add_url}"', content)
+        for leg in (self.leg_a, self.leg_b):
+            self.assertNotIn(
+                f'action="{reverse("bookings:manage_guests", kwargs={"reference": leg.reference})}"', content,
+            )
+
+    def test_saving_one_leg_leaves_the_other_untouched(self):
+        response = self.client.post(
+            self.url, self._rows([('Rui', 'Almeida', 40), ('Nuno', 'Almeida', 38)], self.leg_a, confirmed=True),
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            sorted(self.leg_a.party.values_list('first_name', flat=True)), ['Nuno', 'Rui'],
+        )
+        self.assertEqual(list(self.leg_b.party.values_list('first_name', flat=True)), ['Sofia'])
+
+    def test_post_writes_to_the_leg_named_by_leg_reference_not_the_primary(self):
+        self.client.post(
+            self.url, self._rows([('Sofia', 'Almeida', 40), ('Tiago', 'Almeida', 12)], self.leg_b, confirmed=True),
+        )
+        self.assertEqual(list(self.leg_a.party.values_list('first_name', flat=True)), ['Rui'])
+        self.assertEqual(
+            sorted(self.leg_b.party.values_list('first_name', flat=True)), ['Sofia', 'Tiago'],
+        )
+
+    def test_post_with_an_unrecognised_leg_reference_writes_nothing(self):
+        data = self._rows([('Hacker', 'Person', 40)], self.leg_a, confirmed=True)
+        data['leg_reference'] = 'NOPE-NOPE'
+        response = self.client.post(self.url, data)
+        self.assertRedirects(response, self.url, fetch_redirect_response=False)
+        self.assertEqual(list(self.leg_a.party.values_list('first_name', flat=True)), ['Rui'])
+        self.assertEqual(list(self.leg_b.party.values_list('first_name', flat=True)), ['Sofia'])
+
+    def test_validation_error_on_one_leg_still_renders_both_legs(self):
+        response = self.client.post(self.url, self._rows([('', 'Almeida', 40)], self.leg_a))
+        self.assertEqual(response.status_code, 200)
+        legs = {leg['booking'].reference: leg for leg in response.context['legs']}
+        self.assertEqual(legs[self.leg_a.reference]['rows'][0]['errors']['first_name'], "First name is required.")
+        # The other apartment is rebuilt from the database, not left blank or carrying leg_a's error
+        self.assertEqual(legs[self.leg_b.reference]['rows'][0]['first_name'], 'Sofia')
+        self.assertNotIn('errors_present', legs[self.leg_b.reference])
+        self.assertEqual(legs[self.leg_b.reference]['rows'][0]['errors'], {})
+
+    def test_price_change_interstitial_is_scoped_to_the_submitting_leg(self):
+        # A third adult crosses FREE_ADULTS (2), so this genuinely reprices leg_a's balance.
+        response = self.client.post(self.url, self._rows(
+            [('Rui', 'Almeida', 40), ('Nuno', 'Almeida', 38), ('Ana', 'Almeida', 35)], self.leg_a,
+        ))
+        self.assertEqual(response.status_code, 200)
+        legs = {leg['booking'].reference: leg for leg in response.context['legs']}
+        self.assertTrue(legs[self.leg_a.reference].get('price_changed'))
+        self.assertIsNone(legs[self.leg_b.reference].get('price_changed'))
+        # Nothing saved until it's confirmed, and leg_b's own balance is untouched either way
+        self.assertEqual(list(self.leg_a.party.values_list('first_name', flat=True)), ['Rui'])
+        self.leg_b.charges.refresh_from_db()
+        self.assertEqual(self.leg_b.charges.due_at_balance, Decimal('553.87'))
+
+    def test_add_guest_targets_the_named_leg_only(self):
+        # A second adult is within FREE_ADULTS, so there's nothing to pay and the row is appended
+        # immediately - see BookingManageGuestAddView.
+        self._mark_fully_paid(self.leg_a)
+        self._mark_fully_paid(self.leg_b)
+        self.client.post(self.add_url, {
+            'first_name[]': ['Tiago'], 'last_name[]': ['Almeida'], 'age[]': ['38'],
+            'leg_reference': self.leg_b.reference,
+        })
+        self.assertEqual(list(self.leg_a.party.values_list('first_name', flat=True)), ['Rui'])
+        self.assertEqual(
+            sorted(self.leg_b.party.values_list('first_name', flat=True)), ['Sofia', 'Tiago'],
+        )
+
+    def test_chargeable_add_stages_the_payment_against_the_submitting_leg(self):
+        # A child is chargeable from the first one (no free allowance), so this takes the
+        # SupplementaryPayment route instead - which must be raised against leg_b, not the primary.
+        self._mark_fully_paid(self.leg_a)
+        self._mark_fully_paid(self.leg_b)
+        response = self.client.post(self.add_url, {
+            'first_name[]': ['Tiago'], 'last_name[]': ['Almeida'], 'age[]': ['12'],
+            'leg_reference': self.leg_b.reference, 'confirmed': '1',
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(self.leg_a.supplementary_payments.exists())
+        payment = self.leg_b.supplementary_payments.get()
+        self.assertEqual(payment.kind, 'guest_add')
+        self.assertEqual(payment.pending_guest_rows[0]['first_name'], 'Tiago')
+        # Still not appended anywhere until that payment is actually paid
+        self.assertEqual(list(self.leg_b.party.values_list('first_name', flat=True)), ['Sofia'])
+
+    def test_remove_cannot_delete_a_guest_belonging_to_the_other_apartment(self):
+        self._mark_fully_paid(self.leg_a)
+        self._mark_fully_paid(self.leg_b)
+        victim = BookingGuest.objects.create(
+            booking=self.leg_b, first_name='Tiago', last_name='Almeida', age=12, is_lead=False,
+        )
+        # leg_a's own form, but pointing at one of leg_b's guests
+        response = self.client.post(self.remove_url, {
+            'leg_reference': self.leg_a.reference, 'guest_id': victim.pk,
+        })
+        self.assertRedirects(response, self.url, fetch_redirect_response=False)
+        self.assertTrue(BookingGuest.objects.filter(pk=victim.pk).exists())
+
+    def test_remove_deletes_from_the_named_leg(self):
+        self._mark_fully_paid(self.leg_b)
+        extra = BookingGuest.objects.create(
+            booking=self.leg_b, first_name='Tiago', last_name='Almeida', age=12, is_lead=False,
+        )
+        self.client.post(self.remove_url, {
+            'leg_reference': self.leg_b.reference, 'guest_id': extra.pk,
+        })
+        self.assertFalse(BookingGuest.objects.filter(pk=extra.pk).exists())
+        self.assertEqual(list(self.leg_a.party.values_list('first_name', flat=True)), ['Rui'])
+
+    def test_saved_note_names_the_apartment_it_applies_to(self):
+        response = self.client.get(f"{self.url}?guests_saved={self.leg_b.reference}")
+        self.assertContains(response, 'Guests Merge Property B has been updated')
+        self.assertNotContains(response, 'Guests Merge Property A has been updated')
+
+    def test_max_guests_is_enforced_per_apartment(self):
+        response = self.client.post(self.url, self._rows(
+            [('Rui', 'Almeida', 40), ('A', 'B', 30), ('C', 'D', 30), ('E', 'F', 30), ('G', 'H', 30)],
+            self.leg_a,
+        ))
+        legs = {leg['booking'].reference: leg for leg in response.context['legs']}
+        self.assertIn('maximum of 4 guests', legs[self.leg_a.reference]['non_field_error'])
+        self.assertEqual(list(self.leg_a.party.values_list('first_name', flat=True)), ['Rui'])
+
+
 class ManageHubDepositMultiPropertyTests(TestCase):
     """Stage D of the multi-property manage-hub merge (2026-09-14, see project memory) - Security
     Deposit, the first "full duplicate form" section (Thomas's explicit call over a lighter
@@ -4802,7 +5023,7 @@ class BookingManageGuestsViewTests(TestCase):
 
         data['confirmed'] = '1'
         response = self.client.post(self.url, data)
-        self.assertRedirects(response, f"{self.url}?guests_saved=1", fetch_redirect_response=False)
+        self.assertRedirects(response, f"{self.url}?guests_saved={self.booking.reference}", fetch_redirect_response=False)
         self.charge.refresh_from_db()
         self.assertLess(self.charge.due_at_balance, Decimal('581.57'))
         self.assertEqual(self.charge.due_at_booking, Decimal('193.86'))  # deposit stays frozen
@@ -4811,7 +5032,7 @@ class BookingManageGuestsViewTests(TestCase):
         self.charge.due_at_booking = Decimal('100000.00')
         self.charge.save(update_fields=['due_at_booking'])
         response = self.client.post(self.url, self._post_data(['Elena'], ['Costa'], [30], confirmed=True))
-        self.assertRedirects(response, f"{self.url}?guests_saved=1", fetch_redirect_response=False)
+        self.assertRedirects(response, f"{self.url}?guests_saved={self.booking.reference}", fetch_redirect_response=False)
         self.charge.refresh_from_db()
         self.assertEqual(self.charge.due_at_balance, Decimal('0'))
 
@@ -4822,7 +5043,7 @@ class BookingManageGuestsViewTests(TestCase):
         self.charge.security = Decimal('0.00')
         self.charge.save(update_fields=['security'])
         response = self.client.post(self.url, self._post_data(['Elena'], ['Costa'], [30], confirmed=True))
-        self.assertRedirects(response, f"{self.url}?guests_saved=1", fetch_redirect_response=False)
+        self.assertRedirects(response, f"{self.url}?guests_saved={self.booking.reference}", fetch_redirect_response=False)
         self.charge.refresh_from_db()
         self.assertEqual(self.charge.security, Decimal('0.00'))
 
@@ -7178,7 +7399,7 @@ class BookingManageSupplementaryPaymentViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertRedirects(
             response,
-            f"{reverse('bookings:manage_guests', kwargs={'reference': self.booking.reference})}?guest_added=1",
+            f"{reverse('bookings:manage_guests', kwargs={'reference': self.booking.reference})}?guest_added={self.booking.reference}",
             fetch_redirect_response=False,
         )
         self.payment.refresh_from_db()

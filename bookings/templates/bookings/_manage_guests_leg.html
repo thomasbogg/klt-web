@@ -1,0 +1,181 @@
+{% comment %}
+One apartment's Guest List on the merged multi-property Manage Booking hub (manage_guests.html,
+looped once per entry in `legs` - see bookings/views.py::BookingFormMixin._guests_leg_context()).
+
+Each apartment renders whichever treatment its OWN stage calls for, independently of the other's:
+a leg whose balance is still due gets the full editable list (edits reprice that leg's own
+balance), a leg already paid in full gets the read-only party table plus the add/remove controls.
+Both can genuinely appear on the same page at once - see BookingManageGuestsView's docstring.
+
+Every form posts to the merged page's own shared reference and carries a hidden leg_reference so
+the view knows which apartment it's acting on (_leg_for_post()), rather than linking the guest
+off to a per-apartment hub - see the Stage D dual-form pattern.
+{% endcomment %}
+<div class="stay-leg-section">
+
+    {% if request.GET.guests_saved == leg.booking.reference %}
+    <p class="details-note details-note-left">Your guest list for {{ leg.booking.property }} has been updated.</p>
+    {% endif %}
+    {% if request.GET.guest_added == leg.booking.reference %}
+    <p class="details-note details-note-left">Guest added to {{ leg.booking.property }} - thanks!</p>
+    {% endif %}
+    {% if request.GET.guest_removed == leg.booking.reference %}
+    <p class="details-note details-note-left">Guest removed from {{ leg.booking.property }}.</p>
+    {% endif %}
+
+    {% if leg.stage == 'fully_paid' %}
+
+    <section class="details-section">
+        <h2 class="details-section-title">Guest List &mdash; {{ leg.booking.property }}</h2>
+        <div class="guest-rows">
+            <div class="guest-row guest-row-header">
+                <span></span>
+                <span>First name</span>
+                <span>Last name</span>
+                <span>Age</span>
+                <span></span>
+            </div>
+            {% for guest in leg.party %}
+            <div class="guest-row">
+                <span class="guest-row-index">{{ forloop.counter }}</span>
+                <span>{{ guest.first_name }}</span>
+                <span>{{ guest.last_name }}</span>
+                <span>{{ guest.age }}</span>
+                <span>
+                    {% if not guest.is_lead %}
+                    <form method="post" action="{% url 'bookings:manage_hub_guest_remove' reference=stay_reference %}" class="guest-row-remove-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="leg_reference" value="{{ leg.booking.reference }}">
+                        <input type="hidden" name="guest_id" value="{{ guest.pk }}">
+                        <button type="submit" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
+                    </form>
+                    {% endif %}
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="details-section">
+        <h2 class="details-section-title">Add a guest &mdash; {{ leg.booking.property }}</h2>
+        <p class="details-note details-note-left">This apartment allows up to {{ leg.max_guests }} guests. Adding a guest may add an extra charge, payable online - we'll show you the amount before anything is confirmed.</p>
+
+        {% if leg.guest_add_error %}
+        <div class="reserve-form-errors">
+            <p>{{ leg.guest_add_error }}</p>
+        </div>
+        {% endif %}
+
+        <form method="post" action="{% url 'bookings:manage_hub_guest_add' reference=stay_reference %}" class="details-form">
+        {% csrf_token %}
+        <input type="hidden" name="leg_reference" value="{{ leg.booking.reference }}">
+
+        <div class="guest-rows" data-guest-rows>
+            <div class="guest-row guest-row-header">
+                <span></span>
+                <span>First name</span>
+                <span>Last name</span>
+                <span>Age</span>
+                <span></span>
+            </div>
+            {% for row in leg.guest_add_rows %}
+            <div class="guest-row">
+                <span class="guest-row-index">{{ forloop.counter }}</span>
+                <div class="guest-row-field">
+                    <input type="text" name="first_name[]" class="reserve-input" value="{{ row.first_name }}" placeholder="First name">
+                    {% if row.errors.first_name %}<p class="reserve-form-error">{{ row.errors.first_name }}</p>{% endif %}
+                </div>
+                <div class="guest-row-field">
+                    <input type="text" name="last_name[]" class="reserve-input" value="{{ row.last_name }}" placeholder="Last name">
+                    {% if row.errors.last_name %}<p class="reserve-form-error">{{ row.errors.last_name }}</p>{% endif %}
+                </div>
+                <div class="guest-row-field guest-row-age">
+                    <input type="number" name="age[]" class="reserve-input" value="{{ row.age }}" min="0" max="120" placeholder="Age">
+                    {% if row.errors.age %}<p class="reserve-form-error">{{ row.errors.age }}</p>{% endif %}
+                </div>
+                <button type="button" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
+            </div>
+            {% endfor %}
+        </div>
+
+        <template data-guest-row-template>
+            <div class="guest-row">
+                <span class="guest-row-index"></span>
+                <div class="guest-row-field">
+                    <input type="text" name="first_name[]" class="reserve-input" placeholder="First name">
+                </div>
+                <div class="guest-row-field">
+                    <input type="text" name="last_name[]" class="reserve-input" placeholder="Last name">
+                </div>
+                <div class="guest-row-field guest-row-age">
+                    <input type="number" name="age[]" class="reserve-input" min="0" max="120" placeholder="Age">
+                </div>
+                <button type="button" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
+            </div>
+        </template>
+
+        <button type="button" class="guest-row-add" data-guest-row-add>+ Add another guest</button>
+        <button type="submit" class="reserve-form-submit">Update Guests &mdash; {{ leg.booking.property }}</button>
+
+        {% if leg.pending_guest_addition %}
+        <div class="price-change-overlay" data-price-change-overlay>
+            <div class="price-change-panel">
+                <p class="price-change-title">Confirm the added guest(s) for {{ leg.booking.property }}</p>
+                <p class="price-change-body">Adding {{ leg.pending_guest_addition.rows|length }} guest{{ leg.pending_guest_addition.rows|length|pluralize }} adds an extra cost, payable online now - this apartment's balance is already paid, so there's no cash-in-hand option for this.</p>
+                <div class="price-change-row price-change-new">
+                    <span>Amount to pay now</span>
+                    <span>&euro;{{ leg.pending_guest_addition.additional_charge|floatformat:2 }}</span>
+                </div>
+                <div class="price-change-actions">
+                    <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Continue to payment</button>
+                    <button type="button" class="reserve-form-cancel" data-price-change-edit>Cancel</button>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        </form>
+    </section>
+
+    {% else %}
+
+    <form method="post" action="{% url 'bookings:manage_guests' reference=stay_reference %}" class="details-form">
+        {% csrf_token %}
+        <input type="hidden" name="leg_reference" value="{{ leg.booking.reference }}">
+
+        {% if leg.non_field_error %}
+        <div class="reserve-form-errors">
+            <p>{{ leg.non_field_error }}</p>
+        </div>
+        {% endif %}
+
+        {% include 'bookings/_guest_list_form.html' with rows=leg.rows max_guests=leg.max_guests guest_list_property=leg.booking.property guest_list_note="Removing guests can reduce this apartment's balance if applicable; adding guests may increase it - we'll show you the updated amount before anything is charged." %}
+
+        {# Named per apartment: two identical full-width buttons on one page would otherwise be
+           told apart only by scroll position, which is exactly the "which apartment am I acting
+           on?" confusion the merged hub exists to remove. #}
+        <button type="submit" class="reserve-form-submit">Save Guest List &mdash; {{ leg.booking.property }}</button>
+
+        {% if leg.price_changed %}
+        <div class="price-change-overlay" data-price-change-overlay>
+            <div class="price-change-panel">
+                <p class="price-change-title">The price for the party you entered for {{ leg.booking.property }} differs from its current balance</p>
+                <p class="price-change-body">This can happen if a guest's age puts them in a different pricing category, or the party size changed. Your deposit already paid isn't affected - only the balance still due on this apartment.</p>
+                <div class="price-change-row">
+                    <span>Previously quoted balance</span>
+                    <span>&euro;{{ leg.old_charge.due_at_balance|floatformat:2 }}</span>
+                </div>
+                <div class="price-change-row price-change-new">
+                    <span>Recalculated balance</span>
+                    <span>&euro;{{ leg.new_costs.due_at_balance|floatformat:2 }}</span>
+                </div>
+                <div class="price-change-actions">
+                    <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Save anyway</button>
+                    <button type="button" class="reserve-form-cancel" data-price-change-edit>Edit details</button>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </form>
+
+    {% endif %}
+</div>
