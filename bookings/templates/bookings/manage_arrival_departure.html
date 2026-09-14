@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Arrival &amp; Departure {{ booking.reference }} | Algarve Beach Apartments</title>
+    <title>Arrival &amp; Departure {{ stay_reference }} | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
@@ -26,9 +26,13 @@
             <h1>Arrival &amp; Departure</h1>
 
             <div class="confirmation-reference">
-                <span class="confirmation-reference-label">Booking Reference</span>
-                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+                <span class="confirmation-reference-label">{% if booking.reservation_group_id %}Party Reference{% else %}Booking Reference{% endif %}</span>
+                <span class="confirmation-reference-value">{{ stay_reference }}</span>
             </div>
+
+            {% if booking.reservation_group_id %}
+            <p class="details-note">These travel details apply to every apartment in your party - one arrival, so no need to repeat yourself for each.</p>
+            {% endif %}
 
             {% if request.GET.saved %}
             <p class="details-note">Your arrival and departure details have been updated.</p>

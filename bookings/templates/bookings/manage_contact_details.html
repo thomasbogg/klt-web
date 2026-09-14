@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Contact Details {{ booking.reference }} | Algarve Beach Apartments</title>
+    <title>Contact Details {{ stay_reference }} | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
@@ -26,9 +26,13 @@
             <h1>Contact Details</h1>
 
             <div class="confirmation-reference">
-                <span class="confirmation-reference-label">Booking Reference</span>
-                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+                <span class="confirmation-reference-label">{% if booking.reservation_group_id %}Party Reference{% else %}Booking Reference{% endif %}</span>
+                <span class="confirmation-reference-value">{{ stay_reference }}</span>
             </div>
+
+            {% if booking.reservation_group_id %}
+            <p class="details-note">These contact details are shared across every apartment in your party - updating them here updates them everywhere.</p>
+            {% endif %}
 
             {% if request.GET.saved %}
             <p class="details-note">Your contact details have been updated.</p>

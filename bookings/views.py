@@ -113,11 +113,25 @@ def bookings_for_stay_reference(reference):
     reference. No email check here (unlike booking_for_reference_and_email) - this is for
     bearer-readable-by-reference views (BookingManageHubView et al), same trust model every other
     post-deposit view in this file already uses. Empty list, never None, if nothing matches either
-    way - callers 404 on that, same as a plain failed Booking lookup would."""
+    way - callers 404 on that, same as a plain failed Booking lookup would.
+
+    select_related is deliberately wide - every relation any merged hub section currently reads
+    off a leg (is_paid's payment/charges/balance_payment, the Holiday Info sections' property__
+    booking_company/cleaning_company/amenities/location, Arrival & Departure's arrival/departure) -
+    caught 2026-09-14 when a guest reported a "very long" save on Arrival & Departure: this
+    project's remote Postgres has real, noticeable per-round-trip latency (see project memory on
+    preferring bulk DB ops here), so a 2-leg stay whose views each lazily fetch half a dozen
+    relations per leg turns into a dozen-plus sequential round trips instead of the one JOINed
+    query below. A single-property stay (a list of one) pays the same one query either way, so
+    this is free for the common case, not just a multi-property optimization."""
+    relations = (
+        'property__booking_company', 'property__cleaning_company', 'property__amenities',
+        'property__location', 'guest', 'payment', 'charges', 'balance_payment', 'arrival', 'departure',
+    )
     group = ReservationGroup.objects.filter(reference=reference).first()
     if group is not None:
-        return list(group.bookings.select_related('property', 'guest').order_by('pk'))
-    booking = Booking.objects.filter(reference=reference).first()
+        return list(group.bookings.select_related(*relations).order_by('pk'))
+    booking = Booking.objects.filter(reference=reference).select_related(*relations).first()
     return [booking] if booking is not None else []
 
 
@@ -1473,16 +1487,25 @@ class BookingManageContactDetailsView(View):
     backs owner login), a guest who changes their email here must use the new address for that
     lookup afterward. Not flagged in the UI - every hub page is normally reached via an emailed
     link, not the lookup form, so this is a much rarer path than the equivalent question was for
-    owners (whose portal login IS the email)."""
+    owners (whose portal login IS the email).
+
+    2026-09-14 (Stage C of the multi-property hub merge - see project memory): needs no per-leg
+    loop at all, unlike the Holiday Info sections - create_booking()'s existing "filter-then-create
+    by email" Guest lookup already means every leg of a ReservationGroup shares the exact same
+    Guest row (confirmed directly against the live DB, not assumed), so editing it via the primary
+    leg here already updates what every leg sees. The only change needed was accepting the group's
+    own reference and using the primary leg for the form/gating."""
     template_name = 'bookings/manage_contact_details.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
+        booking = bookings[0]
         phone_code, phone_local = split_phone(booking.guest.phone)
         form = GuestContactDetailsForm(initial={
             'email': booking.guest.email, 'phone_country_code': phone_code, 'phone': phone_local,
@@ -1492,19 +1515,21 @@ class BookingManageContactDetailsView(View):
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
+        booking = bookings[0]
         form = GuestContactDetailsForm(request.POST)
         if form.is_valid():
             guest = booking.guest
             guest.email = form.cleaned_data['email']
             guest.phone = form.cleaned_data['phone'] or None
             guest.save(update_fields=['email', 'phone'])
-            url = reverse('bookings:manage_contact_details', kwargs={'reference': booking.reference})
+            url = reverse('bookings:manage_contact_details', kwargs={'reference': reference})
             return redirect(f"{url}?saved=1")
 
         context = {'booking': booking, 'form': form}
@@ -1740,16 +1765,26 @@ class BookingManageArrivalDepartureView(View):
     detail page afterward is never clobbered. The module-level _arrival_data_from_model()/
     _save_arrival()/etc. helpers above
     are shared with BookingBalanceDetailsView, which embeds the same _arrival_departure_form.html
-    partial as a second entry point to these same rows (see that view's docstring)."""
+    partial as a second entry point to these same rows (see that view's docstring).
+
+    2026-09-14 (Stage C of the multi-property hub merge - see project memory): one shared form
+    covering the whole party's travel plans (same flight/arrival almost always applies to every
+    apartment) - a submit here calls _save_arrival()/_save_departure() once per leg of the stay,
+    not just the one in the URL, so the two apartments' Arrival/Departure rows can never drift out
+    of sync the way editing them independently would let happen. Each call still computes
+    self_check_in per-property (compute_effective_self_check_in reads booking.property), so this
+    stays correct even when the two apartments have different check-in policies."""
     template_name = 'bookings/manage_arrival_departure.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
+        booking = bookings[0]
         arrival = getattr(booking, 'arrival', None)
         departure = getattr(booking, 'departure', None)
         context = {'booking': booking}
@@ -1760,12 +1795,14 @@ class BookingManageArrivalDepartureView(View):
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:details', reference=reference)
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
+        booking = bookings[0]
         arrival_data = _arrival_data_from_post(request.POST)
         departure_data = _departure_data_from_post(request.POST)
 
@@ -1777,10 +1814,11 @@ class BookingManageArrivalDepartureView(View):
             context['errors'] = errors
             return render(request, self.template_name, context)
 
-        _save_arrival(booking, arrival_data)
-        _save_departure(booking, departure_data)
+        for leg in bookings:
+            _save_arrival(leg, arrival_data)
+            _save_departure(leg, departure_data)
 
-        return redirect(f"{reverse('bookings:manage_arrival_departure', args=[booking.reference])}?saved=1")
+        return redirect(f"{reverse('bookings:manage_arrival_departure', args=[reference])}?saved=1")
 
 
 class BookingManageDatesView(View):

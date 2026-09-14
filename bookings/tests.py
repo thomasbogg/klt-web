@@ -2998,13 +2998,17 @@ class ManageHubHolidayInfoMultiPropertyTests(TestCase):
         response = self.client.get(self._url('bookings:manage_local_guide'))
         self.assertEqual(response.status_code, 200)
 
-    def test_sidebar_uses_group_reference_for_merged_sections_but_not_contact_details(self):
+    def test_sidebar_uses_group_reference_for_merged_sections_but_not_guest_list(self):
         response = self.client.get(self._url('bookings:manage_hub'))
         content = response.content.decode()
         self.assertIn(reverse('bookings:manage_amenities', kwargs={'reference': self.group.reference}), content)
-        # Contact Details isn't merged yet - still keyed off the primary leg's own reference.
+        self.assertIn(reverse('bookings:manage_contact_details', kwargs={'reference': self.group.reference}), content)
         self.assertIn(
-            reverse('bookings:manage_contact_details', kwargs={'reference': self.leg_a.reference}), content,
+            reverse('bookings:manage_arrival_departure', kwargs={'reference': self.group.reference}), content,
+        )
+        # Guest List isn't merged yet (Stage D) - still keyed off the primary leg's own reference.
+        self.assertIn(
+            reverse('bookings:manage_guests', kwargs={'reference': self.leg_a.reference}), content,
         )
 
 
