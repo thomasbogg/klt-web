@@ -2463,6 +2463,39 @@ def _tourist_tax_context(booking):
     }
 
 
+def _combined_tourist_tax_context(bookings):
+    """Multi-property counterpart to _tourist_tax_context() above - Stage D4 of the multi-property
+    hub merge (see project memory): unlike every other Manage hub section, Tourist Tax gets ONE
+    combined Revolut payment across every apartment rather than duplicate forms/links per leg,
+    since (unlike Pay Balance) there's no owner-payout split to keep separate - it's a pass-through
+    municipal tax, not rental revenue. Each leg still gets its own TouristTax row (so per-apartment
+    accounting keeps working, and klt-hooks' mark_tourist_tax_paid() can still key off the row it
+    already updates by revolut_order_id) - BookingManageTouristTaxPayView stamps the SAME
+    revolut_order_id/revolut_checkout_url onto every payable leg's row, and that raw-SQL UPDATE has
+    no LIMIT, so one guest payment marks every row sharing the order id paid at once - no
+    klt-hooks change needed.
+
+    total_due only counts a leg once its party is known and something's actually owed.
+    missing_party is True if ANY leg still needs its Guest List filled in - the combined total
+    can't be trusted until every leg's real ages are known, so the pay button stays hidden (each
+    leg's own breakdown/prompt still renders individually via `legs`)."""
+    legs = [_tourist_tax_context(booking) for booking in bookings]
+    missing_party = any(leg.get('no_party') for leg in legs)
+    any_due = any(not leg.get('no_party') and leg['tourist_tax'].total for leg in legs)
+    payable_legs = [
+        leg for leg in legs
+        if not leg.get('no_party') and leg['tourist_tax'].total and leg['tourist_tax'].status != 'paid'
+    ]
+    total_due = sum((leg['tourist_tax'].total for leg in payable_legs), Decimal('0'))
+    return {
+        'legs': legs,
+        'missing_party': missing_party,
+        'any_due': any_due,
+        'total_due': total_due,
+        'all_settled': not missing_party and any_due and not payable_legs,
+    }
+
+
 class BookingManageTouristTaxView(View):
     """Tourist Tax section of the Manage Booking hub - shows the guest the computed municipal
     tourist tax owed (see bookings/utils.py::compute_tourist_tax()) and a way to pay it, mirroring
@@ -2479,13 +2512,10 @@ class BookingManageTouristTaxView(View):
     can change right up until payment - any change clears revolut_checkout_url too, so the pay
     page creates a fresh Revolut order for the new amount instead of honouring a stale one.
 
-    2026-09-14 (Stage D of the multi-property hub merge - see project memory): this page has no
-    form of its own to duplicate (just a breakdown and a "Pay" link out to
-    BookingManageTouristTaxPayView, which stays per-leg exactly like Pay Balance - a real Revolut
-    checkout redirect isn't something two copies on one page can usefully share). A multi-property
-    stay instead shows one _tourist_tax_context() card per leg, same "one card per apartment"
-    pattern Stage B (Amenities/Last Days/Location) already established, each with its own
-    breakdown/no-party-yet message/pay link pointing at that leg's own individual reference."""
+    2026-09-14 (Stage D4 of the multi-property hub merge - see project memory): a multi-property
+    stay shows one _tourist_tax_context() breakdown card per leg (same "one card per apartment"
+    pattern Stage B established), but a single combined total/Pay link at the bottom instead of a
+    pay link per leg - see _combined_tourist_tax_context() and BookingManageTouristTaxPayView."""
     template_name = 'bookings/manage_tourist_tax.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -2498,56 +2528,95 @@ class BookingManageTouristTaxView(View):
 
         primary = bookings[0]
         context = _manage_nav_context(primary, 'tourist_tax', all_bookings=bookings)
+        # Always seed from the primary leg first (not just in the single-property case) - the
+        # sidebar and every other chrome on this page still link off top-level `booking`, same
+        # convention as BookingManageAmenitiesView etc. The multi-property overlay below only adds
+        # `legs`/combined-total keys on top, it doesn't replace this.
         context.update(_tourist_tax_context(primary))
         if len(bookings) > 1:
-            context['legs'] = [_tourist_tax_context(booking) for booking in bookings]
+            context.update(_combined_tourist_tax_context(bookings))
         return render(request, self.template_name, context)
 
 
 class BookingManageTouristTaxPayView(View):
     """Checkout step for BookingManageTouristTaxView - mirrors BookingBalancePaymentView's lazy
-    Revolut-order-creation pattern exactly, but always provider='revolut' (no Wise branch - the
-    legacy pattern this is ported from never had one for tourist tax) and always EUR (a Portuguese
+    Revolut-order-creation pattern, but always provider='revolut' (no Wise branch - the legacy
+    pattern this is ported from never had one for tourist tax) and always EUR (a Portuguese
     municipal tax, collected in EUR regardless of whatever currency the guest was quoted the
-    rental in - matches the legacy code's own hardcoded payment.currency = 'EUR')."""
+    rental in - matches the legacy code's own hardcoded payment.currency = 'EUR').
+
+    2026-09-14 (Stage D4 of the multi-property hub merge - see project memory): unlike every other
+    per-leg Manage hub payment, this now resolves `reference` via bookings_for_stay_reference() and
+    creates ONE combined Revolut order covering every apartment that still owes tourist tax
+    (`payable`), stamping the SAME revolut_order_id/revolut_checkout_url onto each of their
+    TouristTax rows. klt-hooks' mark_tourist_tax_paid() already does a plain
+    `UPDATE ... WHERE revolut_order_id = %s` with no LIMIT, so one guest payment marks every row
+    sharing that order id paid at once - no klt-hooks change required (see also
+    staff/views.py::StaffBookingDetailView._update_booking(), which propagates a manual staff
+    confirm across the same shared order id for the dormant-webhook fallback case).
+
+    `payable` is a list of one for the overwhelming majority (single-property) case, so this is
+    byte-for-byte the same behaviour as before there."""
     template_name = 'bookings/tourist_tax_pay.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return redirect('bookings:pay', reference=reference)
-        if not hasattr(booking, 'tourist_tax') or is_tourist_tax_paid(booking):
+        # Deliberately 'bookings:pay' (that leg's own deposit checkout), not 'bookings:details' -
+        # unlike the hub summary page (BookingManageTouristTaxView), this IS the checkout step
+        # itself, matching BookingBalancePaymentView's own unpaid-deposit redirect target exactly.
+        # In practice this only fires on a direct/stale URL - the summary page's own gate already
+        # guarantees every leg's deposit is paid before a "Pay Tourist Tax" link is ever shown.
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:pay', reference=unpaid.reference)
+
+        payable = [
+            booking for booking in bookings
+            if hasattr(booking, 'tourist_tax') and booking.tourist_tax.total and not is_tourist_tax_paid(booking)
+        ]
+        if not payable:
             return redirect('bookings:manage_tourist_tax', reference=reference)
 
-        tourist_tax = booking.tourist_tax
+        pay_amount = sum((booking.tourist_tax.total for booking in payable), Decimal('0'))
+        primary_tax = payable[0].tourist_tax
         context = {
-            'booking': booking,
-            'tourist_tax': tourist_tax,
-            'pay_amount': tourist_tax.total,
+            'booking': bookings[0],
+            'stay_reference': reference,
+            'tourist_tax': primary_tax,
+            'pay_amount': pay_amount,
             'pay_currency': 'EUR',
+            'legs': payable if len(payable) > 1 else None,
         }
 
-        if not tourist_tax.revolut_checkout_url:
-            self._create_revolut_order(booking, tourist_tax, tourist_tax.total)
+        # Regenerate the order if it's missing, OR if a leg's own total changed since it was
+        # created (_tourist_tax_context nulls that leg's own revolut_checkout_url when that
+        # happens, so its row would otherwise drift out of sync with the others' still-shared one).
+        needs_order = not primary_tax.revolut_checkout_url or any(
+            booking.tourist_tax.revolut_checkout_url != primary_tax.revolut_checkout_url for booking in payable
+        )
+        if needs_order:
+            self._create_revolut_order(bookings[0], payable, pay_amount)
 
-        context['payment_error'] = not tourist_tax.revolut_checkout_url
+        context['payment_error'] = not primary_tax.revolut_checkout_url
         return render(request, self.template_name, context)
 
-    def _create_revolut_order(self, booking, tourist_tax, pay_amount):
+    def _create_revolut_order(self, primary_booking, payable, pay_amount):
         order = Revolut(secretKey=env_settings.REVOLUT_API_SECRET_KEY).payment
         order.amount = int(pay_amount * 100)  # Revolut wants minor units (cents/pence), not major units
         order.currency = 'EUR'
-        order.description = f"Tourist Tax for booking {booking.reference}"
-        order.customerEmail = booking.guest.email
-        order.customerName = f"{booking.guest.first_name} {booking.guest.last_name}".strip()
+        references = ', '.join(booking.reference for booking in payable)
+        order.description = f"Tourist Tax for booking {references}"
+        order.customerEmail = primary_booking.guest.email
+        order.customerName = f"{primary_booking.guest.first_name} {primary_booking.guest.last_name}".strip()
         order.create()
 
         if order.id and order.has('checkout_url'):
-            tourist_tax.revolut_order_id = order.id
-            tourist_tax.revolut_checkout_url = order.checkoutUrl
-            tourist_tax.save()
+            for booking in payable:
+                booking.tourist_tax.revolut_order_id = order.id
+                booking.tourist_tax.revolut_checkout_url = order.checkoutUrl
+                booking.tourist_tax.save()
         # else: order.create() already logged the failure via logerror(); leave revolut_checkout_url
         # unset so payment_error renders and the guest can retry on reload.
 

@@ -2391,10 +2391,10 @@ class BookingManageTouristTaxViewTests(TestCase):
 
 
 class ManageHubTouristTaxMultiPropertyTests(TestCase):
-    """Stage D of the multi-property manage-hub merge (2026-09-14, see project memory) - Tourist
-    Tax has no form of its own (just a breakdown and a Pay link out to a real Revolut checkout, one
-    per leg), so it uses the same "one card per apartment" pattern as Stage B rather than the
-    dual-form pattern Security Deposit uses."""
+    """Stage D4 of the multi-property manage-hub merge (2026-09-14, see project memory) - Tourist
+    Tax shows one breakdown card per leg (same "one card per apartment" pattern as Stage B), but a
+    single combined total/Pay link across every apartment rather than a Pay link per leg - unlike
+    Pay Balance, there's no owner-payout split to keep separate here."""
 
     def setUp(self):
         self.property_a = Property.objects.create(title='Tourist Tax Property A', short_title='TTPA')
@@ -2434,16 +2434,138 @@ class ManageHubTouristTaxMultiPropertyTests(TestCase):
         self.assertNotIn('no_party', leg_a_context)
         self.assertTrue(leg_b_context.get('no_party'))
 
-    def test_pay_link_points_at_each_legs_own_individual_reference(self):
+    def test_missing_party_on_either_leg_hides_the_pay_link(self):
+        self.leg_a.party.create(first_name='Wale', last_name='Okafor', age=30, is_lead=True)
+        # leg_b's party is left empty - the combined total can't be trusted yet.
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['missing_party'])
+        self.assertNotContains(response, 'Pay Tourist Tax')
+
+    def test_combined_pay_link_points_at_the_shared_stay_reference_with_the_summed_total(self):
+        self.leg_a.party.create(first_name='Wale', last_name='Okafor', age=30, is_lead=True)
+        self.leg_b.party.create(first_name='Wale', last_name='Okafor', age=30, is_lead=True)
+        self.leg_b.party.create(first_name='Ada', last_name='Okafor', age=25)
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['missing_party'])
+        # leg_a: 1 qualifying guest x 5 nights x 2.00 = 10.00; leg_b: 2 qualifying guests x 5 x 2.00 = 20.00
+        self.assertEqual(response.context['total_due'], Decimal('30.00'))
+        self.assertContains(response, '30.00')
+        pay_url = reverse('bookings:manage_tourist_tax_pay', kwargs={'reference': self.group.reference})
+        self.assertContains(response, pay_url)
+        self.assertNotContains(
+            response, reverse('bookings:manage_tourist_tax_pay', kwargs={'reference': self.leg_a.reference}),
+        )
+
+    def test_already_paid_shows_thank_you_and_hides_the_pay_link(self):
         self.leg_a.party.create(first_name='Wale', last_name='Okafor', age=30, is_lead=True)
         self.leg_b.party.create(first_name='Wale', last_name='Okafor', age=30, is_lead=True)
         response = self.client.get(self.url)
-        content = response.content.decode()
-        self.assertIn(
-            reverse('bookings:manage_tourist_tax_pay', kwargs={'reference': self.leg_a.reference}), content,
+        for leg in response.context['legs']:
+            leg['tourist_tax'].status = 'paid'
+            leg['tourist_tax'].save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['all_settled'])
+        self.assertNotContains(response, 'Pay Tourist Tax')
+        self.assertContains(response, 'has been paid')
+
+    def test_no_tax_due_across_the_whole_stay_shows_a_single_message(self):
+        settings = BookingSettings.load()
+        settings.tourist_tax_season_start_month = 1
+        settings.tourist_tax_season_end_month = 1  # excludes self.start's month - nothing owed anywhere
+        settings.save()
+        self.leg_a.party.create(first_name='Wale', last_name='Okafor', age=30, is_lead=True)
+        self.leg_b.party.create(first_name='Wale', last_name='Okafor', age=30, is_lead=True)
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['any_due'])
+        self.assertNotContains(response, 'Pay Tourist Tax')
+        self.assertContains(response, 'No tourist tax is due for your stay.')
+
+
+class BookingManageTouristTaxPayViewMultiPropertyTests(TestCase):
+    """Stage D4 (see project memory): unlike every other per-leg Manage hub payment, tourist tax
+    combines every apartment still owing into ONE Revolut order, stamping the same
+    revolut_order_id/revolut_checkout_url onto each leg's own TouristTax row - klt-hooks'
+    mark_tourist_tax_paid() does an unlimited `UPDATE ... WHERE revolut_order_id = %s`, so this
+    needs no klt-hooks change to mark every leg paid from one guest payment."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Tourist Tax Pay Property A', short_title='TTPPA')
+        self.property_b = Property.objects.create(title='Tourist Tax Pay Property B', short_title='TTPPB')
+        self.guest = Guest.objects.create(first_name='Nadia', last_name='Costa', email='nadia-tax@example.com')
+        self.start = date.today() + timedelta(days=100)
+        self.end = self.start + timedelta(days=5)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a)
+        self.leg_b = self._make_booking(self.property_b)
+        self.leg_a.party.create(first_name='Nadia', last_name='Costa', age=30, is_lead=True)
+        self.leg_b.party.create(first_name='Nadia', last_name='Costa', age=30, is_lead=True)
+        settings = BookingSettings.load()
+        settings.tourist_tax_season_start_month = 1
+        settings.tourist_tax_season_end_month = 12
+        settings.save()
+        TouristTax.objects.create(booking=self.leg_a, total=Decimal('10.00'))
+        TouristTax.objects.create(booking=self.leg_b, total=Decimal('20.00'))
+        self.url = reverse('bookings:manage_tourist_tax_pay', kwargs={'reference': self.group.reference})
+        self.summary_url = reverse('bookings:manage_tourist_tax', kwargs={'reference': self.group.reference})
+
+    def _make_booking(self, property):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
         )
-        self.assertIn(
-            reverse('bookings:manage_tourist_tax_pay', kwargs={'reference': self.leg_b.reference}), content,
+        Charge.objects.create(booking=booking, currency='EUR')
+        Payment.objects.create(booking=booking, provider='wise', status='paid')
+        return booking
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_get_creates_one_combined_order_for_both_legs(self, mock_post):
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {
+            'id': 'order-combined-1', 'checkout_url': 'https://checkout.revolut.com/pay/order-combined-1',
+        }
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_post.call_count, 1)
+        _args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['json']['amount'], 3000)  # (10.00 + 20.00) in cents
+
+        leg_a_tax = TouristTax.objects.get(booking=self.leg_a)
+        leg_b_tax = TouristTax.objects.get(booking=self.leg_b)
+        self.assertEqual(leg_a_tax.revolut_order_id, 'order-combined-1')
+        self.assertEqual(leg_b_tax.revolut_order_id, 'order-combined-1')
+        self.assertEqual(leg_a_tax.revolut_checkout_url, leg_b_tax.revolut_checkout_url)
+        self.assertFalse(response.context['payment_error'])
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_leg_with_nothing_owed_is_excluded_from_the_combined_order(self, mock_post):
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {
+            'id': 'order-combined-2', 'checkout_url': 'https://checkout.revolut.com/pay/order-combined-2',
+        }
+        leg_b_tax = TouristTax.objects.get(booking=self.leg_b)
+        leg_b_tax.total = Decimal('0.00')
+        leg_b_tax.save(update_fields=['total'])
+
+        response = self.client.get(self.url)
+        _args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['json']['amount'], 1000)  # leg_b excluded, only leg_a's 10.00
+        leg_b_tax.refresh_from_db()
+        self.assertIsNone(leg_b_tax.revolut_order_id)
+        self.assertIsNone(response.context['legs'])  # only one payable leg left
+
+    def test_already_settled_redirects_to_the_summary_page(self):
+        TouristTax.objects.filter(booking__in=[self.leg_a, self.leg_b]).update(status='paid')
+        response = self.client.get(self.url)
+        self.assertRedirects(response, self.summary_url, fetch_redirect_response=False)
+
+    def test_unpaid_deposit_on_either_leg_redirects_to_that_legs_own_deposit_checkout(self):
+        self.leg_b.payment.status = 'pending'
+        self.leg_b.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(
+            response, reverse('bookings:pay', kwargs={'reference': self.leg_b.reference}),
+            fetch_redirect_response=False,
         )
 
 

@@ -25,7 +25,7 @@ from availability.utils import calendar_date_range, get_property_calendar
 from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Arrival, Booking, BookingCondition,
     BookingSettings, CheckinSettings, Departure, ExtrasSettings, FAQ, LocalGuideEntry, PaymentSettings,
-    PlatformPayout, RequestType, TravelMethod, SupplementaryPayment, WelcomePackItem,
+    PlatformPayout, RequestType, TouristTax, TravelMethod, SupplementaryPayment, WelcomePackItem,
 )
 from bookings.payouts import compute_owner_payout
 from finance.models import AdHocService, DepositReturn, Memo, OwnerInvoice, PayoutRecord, SageSettings
@@ -3082,6 +3082,17 @@ class StaffBookingDetailView(View):
             if tourist_tax is not None and tourist_tax_status:
                 tourist_tax.status = tourist_tax_status
                 tourist_tax.save(update_fields=['status'])
+                if tourist_tax.revolut_order_id:
+                    # Combined-payment siblings (Stage D4 of the multi-property hub merge - see
+                    # project memory): a multi-property stay's TouristTax rows share ONE Revolut
+                    # order across every apartment, exactly the same way klt-hooks'
+                    # mark_tourist_tax_paid() would flip them all via its own unlimited
+                    # `UPDATE ... WHERE revolut_order_id = %s` - so staff confirming one leg paid
+                    # here means the shared order was seen paid, and every other row sharing that
+                    # order id should follow, not just this booking's own.
+                    TouristTax.objects.filter(
+                        revolut_order_id=tourist_tax.revolut_order_id,
+                    ).exclude(pk=tourist_tax.pk).update(status=tourist_tax_status)
             if new_status and new_status != old_status:
                 TaskHistoryEntry.objects.create(
                     booking=booking, description="Status changed",

@@ -1,8 +1,9 @@
 {% comment %}
 One apartment's Tourist Tax breakdown on the merged multi-property Manage Booking hub
 (manage_tourist_tax.html, looped once per entry in `legs` - see bookings/views.py::
-_tourist_tax_context()). Read-only summary, not a form - Pay Tourist Tax stays a real Revolut
-checkout redirect per apartment, same as Pay Balance.
+_combined_tourist_tax_context()). Read-only - payment itself is a single combined Revolut
+checkout covering every apartment, shown once at the bottom of the page rather than per leg
+(unlike Pay Balance - tourist tax has no owner-payout split to keep separate).
 {% endcomment %}
 <div class="stay-leg-section">
     {% if leg.no_party %}
@@ -21,11 +22,9 @@ checkout redirect per apartment, same as Pay Balance.
     </div>
 
     {% if leg.tourist_tax.status == 'paid' %}
-    <p class="details-note details-note-left">Tourist tax has been paid - thank you.</p>
-    {% elif leg.tourist_tax.total > 0 %}
-    <a class="reserve-form-submit" href="{% url 'bookings:manage_tourist_tax_pay' reference=leg.booking.reference %}">Pay Tourist Tax</a>
-    {% else %}
-    <p class="details-note details-note-left">No tourist tax is due for this apartment.</p>
+    <p class="details-note details-note-left">Tourist tax for {{ leg.booking.property }} has been paid - thank you.</p>
+    {% elif leg.tourist_tax.total <= 0 %}
+    <p class="details-note details-note-left">No tourist tax is due for {{ leg.booking.property }}.</p>
     {% endif %}
     {% endif %}
 </div>

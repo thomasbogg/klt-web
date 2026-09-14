@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pay Tourist Tax for Booking {{ booking.reference }} | Algarve Beach Apartments</title>
+    <title>Pay Tourist Tax for Booking {{ stay_reference|default:booking.reference }} | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
@@ -19,10 +19,20 @@
         <h1>Pay your tourist tax</h1>
 
         <div class="confirmation-reference">
-            <span class="confirmation-reference-label">Booking Reference</span>
-            <span class="confirmation-reference-value">{{ booking.reference }}</span>
+            <span class="confirmation-reference-label">{% if legs %}Party Reference{% else %}Booking Reference{% endif %}</span>
+            <span class="confirmation-reference-value">{{ stay_reference|default:booking.reference }}</span>
         </div>
 
+        {% if legs %}
+        <div class="confirmation-summary">
+            {% for leg in legs %}
+            <div class="confirmation-chip">
+                <span class="confirmation-chip-label">{{ leg.property }}</span>
+                <span class="confirmation-chip-value">{{ leg.arrival_date|date:"D, d M" }} &ndash; {{ leg.departure_date|date:"D, d M Y" }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
         <div class="confirmation-summary">
             <div class="confirmation-chip">
                 <span class="confirmation-chip-label">Property</span>
@@ -38,6 +48,7 @@
                 <span class="confirmation-chip-value">{{ booking.departure_date|date:"D, d M Y" }}</span>
             </div>
         </div>
+        {% endif %}
 
         <div class="pay-amount">
             <span class="pay-amount-label">Amount due</span>

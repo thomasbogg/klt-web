@@ -37,6 +37,25 @@
             {% for leg in legs %}
             {% include 'bookings/_manage_tourist_tax_leg.html' with leg=leg %}
             {% endfor %}
+
+            {% if missing_party %}
+            <p class="details-note">
+                Once every apartment's Guest List is filled in, we'll total the tourist tax due
+                across your stay into a single payment.
+            </p>
+            {% elif not any_due %}
+            <p class="details-note">No tourist tax is due for your stay.</p>
+            {% elif all_settled %}
+            <p class="details-note">Tourist tax has been paid for your stay - thank you.</p>
+            {% else %}
+            <div class="details-section">
+                <h2 class="details-section-title">Total due</h2>
+                <ul class="details-list">
+                    <li><strong>Total due, all apartments:</strong> &euro;{{ total_due|floatformat:2 }}</li>
+                </ul>
+            </div>
+            <a class="reserve-form-submit pay-button" href="{% url 'bookings:manage_tourist_tax_pay' reference=stay_reference %}">Pay Tourist Tax</a>
+            {% endif %}
             {% else %}
             {% if no_party %}
             <p class="details-note">
@@ -61,7 +80,7 @@
             {% if tourist_tax.status == 'paid' %}
             <p class="details-note">Tourist tax has been paid - thank you.</p>
             {% elif tourist_tax.total > 0 %}
-            <a class="reserve-form-submit" href="{% url 'bookings:manage_tourist_tax_pay' reference=booking.reference %}">Pay Tourist Tax</a>
+            <a class="reserve-form-submit pay-button" href="{% url 'bookings:manage_tourist_tax_pay' reference=booking.reference %}">Pay Tourist Tax</a>
             {% else %}
             <p class="details-note">No tourist tax is due for your party.</p>
             {% endif %}

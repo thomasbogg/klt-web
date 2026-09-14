@@ -444,6 +444,48 @@ class StaffBookingDetailViewTests(TestCase):
         tourist_tax.refresh_from_db()
         self.assertEqual(tourist_tax.status, 'paid')
 
+    def test_confirming_one_leg_paid_also_flips_a_sibling_sharing_the_same_revolut_order(self):
+        # Stage D4 of the multi-property hub merge (2026-09-14, see project memory): a
+        # multi-property stay's TouristTax rows share ONE Revolut order across every apartment, so
+        # staff confirming one leg paid here should behave exactly like klt-hooks'
+        # mark_tourist_tax_paid() would - flipping every row sharing that order id, not just this
+        # booking's own.
+        sibling_booking = Booking.objects.create(
+            property=self.other_property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        tourist_tax = TouristTax.objects.create(
+            booking=self.booking, total=Decimal('10.00'), revolut_order_id='order-shared-1',
+        )
+        sibling_tax = TouristTax.objects.create(
+            booking=sibling_booking, total=Decimal('20.00'), revolut_order_id='order-shared-1',
+        )
+
+        response = self.client.post(self.url, {'action': 'update_booking', 'tourist_tax_status': 'paid'})
+        self.assertRedirects(response, self.url)
+        tourist_tax.refresh_from_db()
+        sibling_tax.refresh_from_db()
+        self.assertEqual(tourist_tax.status, 'paid')
+        self.assertEqual(sibling_tax.status, 'paid')
+
+    def test_confirming_one_leg_paid_leaves_an_unrelated_booking_with_no_shared_order_untouched(self):
+        unrelated_booking = Booking.objects.create(
+            property=self.other_property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        tourist_tax = TouristTax.objects.create(
+            booking=self.booking, total=Decimal('10.00'), revolut_order_id='order-shared-2',
+        )
+        unrelated_tax = TouristTax.objects.create(booking=unrelated_booking, total=Decimal('20.00'))
+
+        self.client.post(self.url, {'action': 'update_booking', 'tourist_tax_status': 'paid'})
+        tourist_tax.refresh_from_db()
+        unrelated_tax.refresh_from_db()
+        self.assertEqual(tourist_tax.status, 'paid')
+        self.assertEqual(unrelated_tax.status, 'pending')
+
     def test_switching_currency_to_gbp_freezes_the_current_live_rate(self):
         # self.charge starts EUR with no gbp_conversion_rate (setUp) - a booking whose Charge never
         # went through create_booking() (which always freezes one). Found live 2026-09-09: a
