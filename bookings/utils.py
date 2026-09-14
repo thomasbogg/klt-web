@@ -1169,7 +1169,7 @@ def extras_request_windows(booking):
     return windows
 
 
-def compute_eta_from_given_time(method, given_time):
+def compute_eta_from_given_time(method, given_time, time_unknown=False):
     """Applies the same per-method last-mile buffer as staff/utils.py::compute_arrival_eta (which
     delegates here) - the single source of truth for "what time does this guest actually reach the
     property", given what they told us on the arrival form. A flight's given time is its *landing*
@@ -1178,9 +1178,11 @@ def compute_eta_from_given_time(method, given_time):
     other are already a final at-property estimate, used as-is with no buffer (see
     compute_arrival_eta's own docstring for the 'other' reasoning).
 
-    Returns None if given_time is None or the time(0, 0) migration/data-entry sentinel (see
-    compute_arrival_eta's docstring - hundreds of real rows have this baked in as "no time known",
-    not a genuine midnight arrival) - both mean there's no real time to compute an ETA from.
+    Returns None if given_time is None or time_unknown is True (Arrival.time_unknown - see that
+    field's own docstring for why a genuine midnight arrival and "we don't actually know" can't be
+    told apart from `given_time` alone for pre-2026-09-14 data) - both mean there's no real time to
+    compute an ETA from. time_unknown defaults to False for callers with no real Arrival row to
+    read it from (e.g. an iCal-synced booking with no arrival info at all).
 
     2026-09-08, per Thomas: built so MIXED-policy self-check-in eligibility
     (compute_effective_self_check_in below) judges lateness by this same computed ETA rather than
@@ -1189,7 +1191,7 @@ def compute_eta_from_given_time(method, given_time):
     check-ins calendar already shows it would."""
     from bookings.models import CheckinSettings, TravelMethod
 
-    if given_time is None or given_time == time(0, 0):
+    if given_time is None or time_unknown:
         return None
 
     if method == TravelMethod.FLIGHT_FARO:
@@ -1211,10 +1213,12 @@ def compute_eta_from_given_time(method, given_time):
     return combined.time()
 
 
-def compute_effective_self_check_in(property, method, arrival_time):
+def compute_effective_self_check_in(property, method, arrival_time, time_unknown=False):
     """Derives Arrival.self_check_in from property.booking_company's check-in policy (2026-09-05,
     per Thomas), given the guest's currently-known travel method and arrival time (may be None if
-    not supplied yet).
+    not supplied yet). time_unknown (Arrival.time_unknown - see that field's own docstring)
+    suppresses arrival_time even when it looks like a real value, for a pre-2026-09-14 row still
+    carrying the old time(0,0) "unknown" placeholder.
 
     Returns True/False when the policy determines an answer, or None when there's nothing to
     apply - no booking_company, one with check_in_method unset, or a MIXED policy that can't yet
@@ -1243,7 +1247,7 @@ def compute_effective_self_check_in(property, method, arrival_time):
         return False
     if not company.self_check_in_after:
         return None
-    eta = compute_eta_from_given_time(method, arrival_time)
+    eta = compute_eta_from_given_time(method, arrival_time, time_unknown)
     if eta is None:
         return None
     return eta >= company.self_check_in_after

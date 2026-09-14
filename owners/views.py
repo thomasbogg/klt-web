@@ -758,10 +758,15 @@ class OwnerBookingDetailView(BookingFormMixin, View):
         arrival.hiring_car = post.get('arrival_hiring_car') == 'on'
         arrival.time = parsed_arrival_departure_time(post.get('arrival_time'))
         arrival.details = post.get('arrival_details', '').strip()[:140]
+        # A fresh save's own `time` is never a legacy time(0,0) placeholder - see
+        # Arrival.time_unknown's own docstring.
+        arrival.time_unknown = False
         # Unlike the guest-facing Manage Booking hub (which never lets a guest touch this),
         # meet_greet IS owner-editable here - see this view's own docstring.
         arrival.meet_greet = post.get('meet_greet') == 'on'
-        computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.method, arrival.time)
+        computed_self_check_in = compute_effective_self_check_in(
+            booking.property, arrival.method, arrival.time, arrival.time_unknown,
+        )
         if computed_self_check_in is not None:
             arrival.self_check_in = computed_self_check_in
         arrival.save()

@@ -776,6 +776,19 @@ class Arrival(models.Model):
     travelling_from = models.CharField(max_length=200, blank=True)
     hiring_car = models.BooleanField(default=False)
     time = models.TimeField(blank=True, null=True)
+    # 2026-09-14, per Thomas - `time` alone can't distinguish "guest genuinely arrives at
+    # midnight" from "we don't actually know the time", since ~1,365 real rows (pre-dating this
+    # field) already use time(0,0) as a migration/data-entry placeholder for "unknown" (see
+    # bookings/utils.py::compute_eta_from_given_time's own docstring). Rather than reinterpret
+    # that existing data (which would silently change self-check-in eligibility for thousands of
+    # real bookings the next time any of those rows is touched), this field carries the
+    # distinction going forward instead: True means "ignore `time` for ETA purposes, even if it's
+    # a real-looking value" - set True by a one-off data migration for every pre-existing
+    # time(0,0) row (preserving exactly today's behavior for that data), and reset to False by
+    # every real save from here on (guest hub/Owner Suite/staff Booking Info panel - see each
+    # _save_arrival-equivalent), since a fresh save's `time` value - even a genuine midnight, even
+    # a genuine blank/None - is never a legacy placeholder.
+    time_unknown = models.BooleanField(default=False)
     details = models.TextField(blank=True, null=True)
     self_check_in = models.BooleanField(blank=True, null=True)
     # Defaults to True (2026-08-29, per Thomas), same reasoning and same "normal case, not an

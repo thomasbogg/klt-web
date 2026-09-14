@@ -1083,7 +1083,10 @@ def compute_arrival_eta(booking):
     from bookings.utils import compute_eta_from_given_time
 
     arrival = getattr(booking, 'arrival', None)
-    eta = compute_eta_from_given_time(arrival.method, arrival.time) if arrival is not None else None
+    eta = (
+        compute_eta_from_given_time(arrival.method, arrival.time, arrival.time_unknown)
+        if arrival is not None else None
+    )
     if eta is None:
         return _standard_checkin_time(booking), False
     return eta, True

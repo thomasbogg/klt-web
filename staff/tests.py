@@ -5516,22 +5516,30 @@ class ComputeArrivalEtaTests(TestCase):
         self.assertFalse(has_given_eta)
         self.assertEqual(computed, time(14, 0))
 
-    def test_midnight_time_is_treated_as_no_time_given(self):
-        # Real bug, fixed 2026-09-03: time(0, 0) is a migration/data-artifact sentinel for "no time
-        # known", not a genuine given time - 772 method='other' rows and 21 flight_faro rows have
-        # arrival.time exactly midnight, none of them for driving/bus/train. Naively trusting it
-        # (as the 'other'-verbatim fix above would otherwise do) computed a nonsense literal-
-        # midnight ETA for hundreds of rows instead of falling back to the standard time.
-        Arrival.objects.create(booking=self.booking, method=TravelMethod.OTHER, time=time(0, 0), meet_greet=True)
+    def test_time_unknown_flag_is_treated_as_no_time_given(self):
+        # Real bug, fixed 2026-09-03, refined 2026-09-14: time(0, 0) used to be an unconditional
+        # migration/data-artifact sentinel for "no time known" - 772 method='other' rows and 21
+        # flight_faro rows have arrival.time exactly midnight, none of them for driving/bus/train.
+        # A second real bug found 2026-09-14 (a guest's genuine midnight arrival being silently
+        # discarded) means time(0,0) alone no longer means "unknown" - Arrival.time_unknown now
+        # carries that distinction explicitly (see that field's own docstring). This still falls
+        # back correctly when the flag is set, same as the old unconditional sentinel did.
+        Arrival.objects.create(
+            booking=self.booking, method=TravelMethod.OTHER, time=time(0, 0), time_unknown=True, meet_greet=True,
+        )
         computed, has_given_eta = compute_arrival_eta(self.booking)
         self.assertFalse(has_given_eta)
         self.assertEqual(computed, time(14, 0))
 
-    def test_midnight_flight_time_also_falls_back_to_standard_checkin_time(self):
+    def test_genuine_midnight_flight_time_now_computes_a_real_eta(self):
+        # 2026-09-14: without the time_unknown flag (the default for any freshly-created or
+        # freshly-saved Arrival row), a genuine midnight time is trusted and a real ETA computed -
+        # see Arrival.time_unknown's own docstring for why this couldn't safely apply to the
+        # ~1,365 pre-existing rows still carrying the old sentinel value.
         Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(0, 0), meet_greet=True)
         computed, has_given_eta = compute_arrival_eta(self.booking)
-        self.assertFalse(has_given_eta)
-        self.assertEqual(computed, time(14, 0))
+        self.assertTrue(has_given_eta)
+        self.assertEqual(computed, time(1, 30))
 
     def test_no_arrival_row_falls_back_to_standard_checkin_time(self):
         computed, has_given_eta = compute_arrival_eta(self.booking)

@@ -2976,10 +2976,15 @@ class StaffBookingDetailView(View):
             arrival.hiring_car = post.get('arrival_hiring_car') == 'on'
             arrival.time = parsed_arrival_departure_time(post.get('arrival_time'))
             arrival.details = post.get('arrival_details', '').strip()[:140]
+            # A fresh save's own `time` is never a legacy time(0,0) placeholder - see
+            # Arrival.time_unknown's own docstring.
+            arrival.time_unknown = False
             # A property whose booking_company has a check-in policy set overrides whatever this
             # checkbox was posted as - see compute_effective_self_check_in's own docstring. Only a
             # property with no such policy leaves this fully staff-manual, same as always.
-            computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.method, arrival.time)
+            computed_self_check_in = compute_effective_self_check_in(
+                booking.property, arrival.method, arrival.time, arrival.time_unknown,
+            )
             arrival.self_check_in = (
                 computed_self_check_in if computed_self_check_in is not None
                 else post.get('self_check_in') == 'on'

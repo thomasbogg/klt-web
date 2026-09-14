@@ -1672,12 +1672,16 @@ class BookingManageGuestsView(BookingFormMixin, View):
 
 
 def _arrival_data_from_model(arrival):
+    # A legacy row flagged time_unknown pre-fills blank, not "00:00" - showing the old sentinel
+    # value back to the guest would read as "you already told us midnight", when we actually don't
+    # know it at all (see Arrival.time_unknown's own docstring).
+    has_real_time = arrival and arrival.time and not arrival.time_unknown
     return {
         'method': arrival.method if arrival else TravelMethod.FLIGHT_FARO,
         'flight_number': arrival.flight_number if arrival else '',
         'travelling_from': arrival.travelling_from if arrival else '',
         'hiring_car': arrival.hiring_car if arrival else False,
-        'time': arrival.time.strftime('%H:%M') if arrival and arrival.time else '',
+        'time': arrival.time.strftime('%H:%M') if has_real_time else '',
         'details': arrival.details if arrival else '',
     }
 
@@ -1753,8 +1757,15 @@ def _save_arrival(booking, data):
     arrival.hiring_car = data['hiring_car']
     arrival.time = parsed_arrival_departure_time(data['time'])
     arrival.details = data['details']
-    update_fields = ['method', 'flight_number', 'travelling_from', 'hiring_car', 'time', 'details']
-    computed_self_check_in = compute_effective_self_check_in(booking.property, arrival.method, arrival.time)
+    # A fresh save's own `time` (even a genuine None) is never a legacy time(0,0) placeholder -
+    # see Arrival.time_unknown's own docstring.
+    arrival.time_unknown = False
+    update_fields = [
+        'method', 'flight_number', 'travelling_from', 'hiring_car', 'time', 'time_unknown', 'details',
+    ]
+    computed_self_check_in = compute_effective_self_check_in(
+        booking.property, arrival.method, arrival.time, arrival.time_unknown,
+    )
     if computed_self_check_in is not None:
         arrival.self_check_in = computed_self_check_in
         update_fields.append('self_check_in')
@@ -2862,7 +2873,10 @@ def _location_context(booking):
         # cutoff) with no explanation of why.
         from properties.models import ManagementCompany
         booking_company = booking.property.booking_company
-        arrival_eta = compute_eta_from_given_time(arrival.method, arrival.time) if arrival is not None else None
+        arrival_eta = (
+            compute_eta_from_given_time(arrival.method, arrival.time, arrival.time_unknown)
+            if arrival is not None else None
+        )
         self_check_in_late_arrival = bool(
             booking_company is not None
             and booking_company.check_in_method == ManagementCompany.CheckInMethod.MIXED

@@ -137,7 +137,7 @@
                                 <input type="text" name="arrival_flight_number" value="{{ arrival.flight_number|default:'' }}" placeholder="e.g. TP1234">
                             </label>
                             <label data-methods="flight_faro flight_lisbon bus train driving">Time
-                                <input type="time" name="arrival_time" value="{{ arrival.time|time:'H:i'|default:'' }}">
+                                <input type="time" name="arrival_time" value="{% if arrival.time and not arrival.time_unknown %}{{ arrival.time|time:'H:i' }}{% endif %}">
                             </label>
                             <label data-methods="driving">Travelling from
                                 <input type="text" name="arrival_travelling_from" value="{{ arrival.travelling_from|default:'' }}">

@@ -128,12 +128,12 @@
                                 <input type="text" name="arrival_flight_number" form="booking-detail-form" class="staff-input" value="{{ arrival.flight_number|default:'' }}" placeholder="e.g. TP1234">
                             </label>
                             <label class="staff-field">Landing time
-                                <input type="time" name="arrival_time" form="booking-detail-form" class="staff-input" value="{{ arrival.time|time:'H:i'|default:'' }}">
+                                <input type="time" name="arrival_time" form="booking-detail-form" class="staff-input" value="{% if arrival.time and not arrival.time_unknown %}{{ arrival.time|time:'H:i' }}{% endif %}">
                             </label>
                         </div>
                         <div class="staff-field-row details-section-hidden" data-methods="bus train">
                             <label class="staff-field">Expected time
-                                <input type="time" name="arrival_time" form="booking-detail-form" class="staff-input" value="{{ arrival.time|time:'H:i'|default:'' }}">
+                                <input type="time" name="arrival_time" form="booking-detail-form" class="staff-input" value="{% if arrival.time and not arrival.time_unknown %}{{ arrival.time|time:'H:i' }}{% endif %}">
                             </label>
                         </div>
                         <div class="staff-field-row details-section-hidden" data-methods="driving">
@@ -141,7 +141,7 @@
                                 <input type="text" name="arrival_travelling_from" form="booking-detail-form" class="staff-input" value="{{ arrival.travelling_from|default:'' }}">
                             </label>
                             <label class="staff-field">Estimated arrival time
-                                <input type="time" name="arrival_time" form="booking-detail-form" class="staff-input" value="{{ arrival.time|time:'H:i'|default:'' }}">
+                                <input type="time" name="arrival_time" form="booking-detail-form" class="staff-input" value="{% if arrival.time and not arrival.time_unknown %}{{ arrival.time|time:'H:i' }}{% endif %}">
                             </label>
                         </div>
                         <label class="staff-checkbox-label details-section-hidden" data-methods="flight_faro flight_lisbon">

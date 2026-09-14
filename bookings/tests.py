@@ -4185,8 +4185,18 @@ class ComputeEtaFromGivenTimeTests(TestCase):
     def test_no_time_returns_none(self):
         self.assertIsNone(compute_eta_from_given_time(TravelMethod.FLIGHT_FARO, None))
 
-    def test_midnight_sentinel_is_treated_as_no_time(self):
-        self.assertIsNone(compute_eta_from_given_time(TravelMethod.FLIGHT_FARO, time(0, 0)))
+    def test_genuine_midnight_time_now_computes_a_real_eta(self):
+        # 2026-09-14: time(0,0) is no longer an unconditional "no time" sentinel - a real bug
+        # found live (a guest's genuine 00:00 arrival was silently discarded, so MIXED-policy self
+        # check-in never evaluated it). Arrival.time_unknown now carries the "we don't actually
+        # know" distinction instead - see that field's own docstring for why time alone can't.
+        self.assertEqual(
+            compute_eta_from_given_time(TravelMethod.FLIGHT_FARO, time(0, 0)), time(1, 30),
+        )
+
+    def test_time_unknown_flag_is_treated_as_no_time(self):
+        self.assertIsNone(compute_eta_from_given_time(TravelMethod.FLIGHT_FARO, time(0, 0), time_unknown=True))
+        self.assertIsNone(compute_eta_from_given_time(TravelMethod.FLIGHT_FARO, time(14, 0), time_unknown=True))
 
     def test_buffer_past_midnight_is_clamped_into_the_last_hour(self):
         # 23:30 landing + 90 minutes would roll into 01:00 the next day - must read as "very late
@@ -4282,13 +4292,31 @@ class ComputeEffectiveSelfCheckInTests(TestCase):
             compute_effective_self_check_in(self.property, TravelMethod.FLIGHT_FARO, time(19, 0))
         )
 
-    def test_mixed_midnight_sentinel_time_returns_none(self):
+    def test_mixed_genuine_midnight_time_now_computes_a_real_eta_but_still_reads_as_early(self):
+        # 2026-09-14: time_unknown fixed the "silently discarded" half of the midnight bug (see
+        # ComputeEtaFromGivenTimeTests.test_genuine_midnight_time_now_computes_a_real_eta) - a
+        # midnight landing now computes a real ETA (01:30 here) instead of None. But the plain
+        # `eta >= self_check_in_after` comparison this function does below is still a same-day
+        # clock-time comparison, so 01:30 reads as "before" a 22:00 cutoff, not after it - a
+        # genuinely late-night/small-hours arrival still doesn't qualify for the MIXED-policy
+        # self-check-in override. Flagged as a real, separate residual gap, not fixed here.
         self.property.booking_company = ManagementCompany.objects.create(
             name='Mixed Co Midnight', check_in_method=ManagementCompany.CheckInMethod.MIXED,
             self_check_in_after=time(22, 0),
         )
-        self.assertIsNone(
+        self.assertFalse(
             compute_effective_self_check_in(self.property, TravelMethod.FLIGHT_FARO, time(0, 0))
+        )
+
+    def test_mixed_time_unknown_flag_returns_none(self):
+        self.property.booking_company = ManagementCompany.objects.create(
+            name='Mixed Co Unknown', check_in_method=ManagementCompany.CheckInMethod.MIXED,
+            self_check_in_after=time(22, 0),
+        )
+        self.assertIsNone(
+            compute_effective_self_check_in(
+                self.property, TravelMethod.FLIGHT_FARO, time(0, 0), time_unknown=True,
+            )
         )
 
 

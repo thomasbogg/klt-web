@@ -42,7 +42,9 @@ class Command(BaseCommand):
         flips = []
         for booking in candidates:
             arrival = booking.arrival
-            computed = compute_effective_self_check_in(booking.property, arrival.method, arrival.time)
+            computed = compute_effective_self_check_in(
+                booking.property, arrival.method, arrival.time, arrival.time_unknown,
+            )
             if computed is None or computed == arrival.self_check_in:
                 continue
             flips.append((booking, arrival, computed))
@@ -50,7 +52,7 @@ class Command(BaseCommand):
         self.stdout.write(f"Upcoming bookings checked: {candidates.count()}")
         self.stdout.write(f"Arrival.self_check_in values that change: {len(flips)}")
         for booking, arrival, computed in flips:
-            eta = compute_eta_from_given_time(arrival.method, arrival.time)
+            eta = compute_eta_from_given_time(arrival.method, arrival.time, arrival.time_unknown)
             self.stdout.write(
                 f"  {booking.reference} {booking.property.title} {booking.arrival_date} "
                 f"{arrival.method} given={arrival.time} eta={eta} "
