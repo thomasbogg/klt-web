@@ -5590,6 +5590,153 @@ class ManageHubGuestsMultiPropertyTests(TestCase):
         self.assertEqual(list(self.leg_a.party.values_list('first_name', flat=True)), ['Rui'])
 
 
+class ManageHubGuestsCombinedSaveTests(ManageHubGuestsMultiPropertyTests):
+    """One Save button for every apartment (2026-09-15, per Thomas). Two buttons meant a guest who
+    filled in both lists and clicked one silently lost the other's work.
+
+    Inherits the multi-property fixture above deliberately: the per-apartment behaviour those tests
+    pin down still has to hold on the mixed-stage fallback path, so both run against the same
+    bookings."""
+
+    def _combined(self, rows_by_leg, confirmed=False):
+        """rows_by_leg: {booking: [(first, last, age), ...]} -> prefixed POST data."""
+        data = {'form': 'combined'}
+        for booking, rows in rows_by_leg.items():
+            prefix = f'{booking.reference}-'
+            data[f'{prefix}first_name[]'] = [r[0] for r in rows]
+            data[f'{prefix}last_name[]'] = [r[1] for r in rows]
+            data[f'{prefix}age[]'] = [str(r[2]) for r in rows]
+        if confirmed:
+            data['confirmed'] = '1'
+        return data
+
+    def test_both_lists_are_offered_under_one_button_while_both_are_pre_balance(self):
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['combined_save'])
+        body = _normalized_text(response)
+        self.assertIn('Save Guest Lists', body)
+        # ...and not the per-apartment buttons.
+        self.assertNotIn(f'Save Guest List &mdash; {self.property_a}', body)
+
+    def test_fields_are_namespaced_per_apartment_inside_the_shared_form(self):
+        """Without this the two lists concatenate into one flat set of arrays and the apartments
+        become indistinguishable on the server."""
+        response = self.client.get(self.url)
+        body = response.content.decode()
+        self.assertIn(f'name="{self.leg_a.reference}-first_name[]"', body)
+        self.assertIn(f'name="{self.leg_b.reference}-first_name[]"', body)
+
+    def test_one_submit_saves_every_apartment(self):
+        response = self.client.post(self.url, self._combined({
+            self.leg_a: [('Rui', 'Almeida', 40), ('Nuno', 'Almeida', 38)],
+            self.leg_b: [('Sofia', 'Almeida', 35)],
+        }))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            sorted(self.leg_a.party.values_list('first_name', flat=True)), ['Nuno', 'Rui'],
+        )
+        self.assertEqual(list(self.leg_b.party.values_list('first_name', flat=True)), ['Sofia'])
+
+    def test_an_error_in_one_apartment_saves_neither(self):
+        """All-or-nothing: a half-save would leave the guest working out which list landed."""
+        response = self.client.post(self.url, self._combined({
+            self.leg_a: [('Rui', 'Almeida', 40), ('Nuno', 'Almeida', 38)],
+            self.leg_b: [('', 'Almeida', 35)],  # missing first name
+        }))
+        self.assertEqual(response.status_code, 200)
+        # leg_a's valid edit is NOT written
+        self.assertEqual(list(self.leg_a.party.values_list('first_name', flat=True)), ['Rui'])
+        legs = {leg['booking'].reference: leg for leg in response.context['legs']}
+        self.assertEqual(legs[self.leg_b.reference]['rows'][0]['errors']['first_name'],
+                         'First name is required.')
+        # and leg_a's typed values survive the re-render, so nothing has to be retyped
+        self.assertEqual(
+            [row['first_name'] for row in legs[self.leg_a.reference]['rows']], ['Rui', 'Nuno'],
+        )
+
+    def test_exceeding_one_apartments_max_guests_blocks_the_whole_save(self):
+        response = self.client.post(self.url, self._combined({
+            self.leg_a: [('Rui', 'Almeida', 40)],
+            self.leg_b: [('A', 'B', 30), ('C', 'D', 31), ('E', 'F', 32), ('G', 'H', 33), ('I', 'J', 34)],
+        }))
+        self.assertEqual(response.status_code, 200)
+        legs = {leg['booking'].reference: leg for leg in response.context['legs']}
+        self.assertIn('maximum of 4 guests', legs[self.leg_b.reference]['non_field_error'])
+        self.assertEqual(list(self.leg_b.party.values_list('first_name', flat=True)), ['Sofia'])
+
+    def test_one_interstitial_covers_every_repriced_apartment(self):
+        """Not one confirmation per apartment - the guest made a single edit and should answer a
+        single question about it."""
+        response = self.client.post(self.url, self._combined({
+            self.leg_a: [('Rui', 'Almeida', 40), ('Nuno', 'Almeida', 38), ('Ana', 'Almeida', 35)],
+            self.leg_b: [('Sofia', 'Almeida', 35), ('Tiago', 'Almeida', 33), ('Marta', 'Almeida', 31)],
+        }))
+        self.assertEqual(response.status_code, 200)
+        changes = response.context['combined_price_change']
+        self.assertEqual({c['booking'].reference for c in changes},
+                         {self.leg_a.reference, self.leg_b.reference})
+        # Nothing saved until it's confirmed
+        self.assertEqual(list(self.leg_a.party.values_list('first_name', flat=True)), ['Rui'])
+        self.assertEqual(list(self.leg_b.party.values_list('first_name', flat=True)), ['Sofia'])
+
+    def test_confirming_the_interstitial_saves_and_reprices_every_apartment(self):
+        before_a = self.leg_a.charges.due_at_balance
+        response = self.client.post(self.url, self._combined({
+            self.leg_a: [('Rui', 'Almeida', 40), ('Nuno', 'Almeida', 38), ('Ana', 'Almeida', 35)],
+            self.leg_b: [('Sofia', 'Almeida', 35)],
+        }, confirmed=True))
+        self.assertEqual(response.status_code, 302)
+        self.leg_a.charges.refresh_from_db()
+        self.assertNotEqual(self.leg_a.charges.due_at_balance, before_a)
+        self.assertEqual(len(self.leg_a.party.all()), 3)
+
+    def test_a_reprice_clears_the_shared_balance_checkout_url(self):
+        """The balance is collected as one combined Revolut order now, so a reprice on ANY leg
+        invalidates it - a stale URL would charge the old total."""
+        for leg in (self.leg_a, self.leg_b):
+            leg.balance_payment.revolut_order_id = 'order-stale'
+            leg.balance_payment.revolut_checkout_url = 'https://checkout.revolut.com/pay/order-stale'
+            leg.balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
+
+        self.client.post(self.url, self._combined({
+            self.leg_a: [('Rui', 'Almeida', 40), ('Nuno', 'Almeida', 38), ('Ana', 'Almeida', 35)],
+            self.leg_b: [('Sofia', 'Almeida', 35)],
+        }, confirmed=True))
+
+        self.leg_a.balance_payment.refresh_from_db()
+        self.assertIsNone(self.leg_a.balance_payment.revolut_checkout_url)
+
+    def test_a_mixed_stage_stay_falls_back_to_per_apartment_buttons(self):
+        """A fully-paid apartment isn't a form to save - it's the add/remove controls, which post
+        to their own views and can raise a real charge. One shared Save must never span both."""
+        self._mark_fully_paid(self.leg_b)
+        response = self.client.get(self.url)
+        self.assertFalse(response.context['combined_save'])
+        body = _normalized_text(response)
+        self.assertNotIn('Save Guest Lists', body)
+        self.assertIn('Save Guest List', body)  # the per-apartment one
+
+    def test_the_per_apartment_path_still_works_on_a_mixed_stage_stay(self):
+        """The fallback has to keep working - it's the same unprefixed field names as before."""
+        self._mark_fully_paid(self.leg_b)
+        response = self.client.post(self.url, self._rows(
+            [('Rui', 'Almeida', 40), ('Nuno', 'Almeida', 38)], self.leg_a, confirmed=True,
+        ))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            sorted(self.leg_a.party.values_list('first_name', flat=True)), ['Nuno', 'Rui'],
+        )
+
+    def test_fields_are_not_namespaced_when_the_legs_are_not_combined(self):
+        """The prefix exists only to keep apartments apart inside one shared form. Separate forms
+        post unprefixed names, and the per-leg parser reads unprefixed names - they must agree."""
+        self._mark_fully_paid(self.leg_b)
+        response = self.client.get(self.url)
+        body = response.content.decode()
+        self.assertIn('name="first_name[]"', body)
+        self.assertNotIn(f'name="{self.leg_a.reference}-first_name[]"', body)
+
+
 class ManageHubDepositMultiPropertyTests(TestCase):
     """Stage D of the multi-property manage-hub merge (2026-09-14, see project memory) - Security
     Deposit, the first "full duplicate form" section (Thomas's explicit call over a lighter

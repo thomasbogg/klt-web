@@ -18,12 +18,20 @@ function renumberRows(rowsContainer) {
 }
 
 document.querySelectorAll('[data-guest-rows]').forEach((rowsContainer) => {
-    const scope = rowsContainer.closest('form') || document;
+    // Scoped to the enclosing <section>, NOT the <form> (2026-09-15): once every apartment's
+    // guest list shares one combined form, a form-level lookup finds the FIRST leg's row
+    // template, add button and limit note and binds every apartment to them. Each apartment's
+    // list is its own .details-section, which is the real boundary here.
+    const scope = rowsContainer.closest('section') || rowsContainer.closest('form') || document;
     const rowTemplate = scope.querySelector('[data-guest-row-template]');
     const addButton = scope.querySelector('[data-guest-row-add]');
     const limitNote = scope.querySelector('[data-guest-row-limit]');
-    const priceChangeOverlay = scope.querySelector('[data-price-change-overlay]');
-    const priceChangeEditButton = scope.querySelector('[data-price-change-edit]');
+    // The price-change overlay belongs to the SUBMISSION, not to one apartment's section - in
+    // combined mode there's one overlay for the whole stay, sitting in the shared form outside
+    // every section - so it keeps the wider scope on purpose.
+    const formScope = rowsContainer.closest('form') || document;
+    const priceChangeOverlay = formScope.querySelector('[data-price-change-overlay]');
+    const priceChangeEditButton = formScope.querySelector('[data-price-change-edit]');
 
     // Occupancy cap (2026-09-15, per Thomas): stop the guest adding a row they'd only be told
     // about on save. Read per container, never page-wide - each apartment of a merged stay has

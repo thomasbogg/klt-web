@@ -5023,6 +5023,11 @@ class CleaningGapBlockTests(TestCase):
         # BookingSettings itself isn't a watched signal sender (unlike CheckinSettings/
         # PaymentSettings) - flipping this setting doesn't proactively resync every property, only
         # the next real Booking save on one does. Documented limitation, exercised explicitly here.
+        #
+        # Narrowed 2026-09-15: a full save (or one touching dates/status) still clears the stale
+        # block, but a field-scoped save that can't affect gap blocks no longer triggers the sweep -
+        # it walks every booking for the property and was costing ~15s on a Guest List save. See
+        # BookingSaveResyncScopeTests.
         departure = self.start + timedelta(days=25)
         booking = self._booking(self.start, departure)
         self.assertTrue(CleaningGapBlock.objects.filter(booking=booking).exists())
@@ -5030,8 +5035,23 @@ class CleaningGapBlockTests(TestCase):
         settings = BookingSettings.load()
         settings.cleaning_gap_nights_per_block_day = 0
         settings.save()
-        booking.save(update_fields=['last_updated'])
+        booking.save()
         self.assertFalse(CleaningGapBlock.objects.filter(booking=booking).exists())
+
+    def test_a_party_only_save_no_longer_triggers_the_property_wide_sweep(self):
+        """The cost side of the narrowing above, pinned so it can't silently regress: saving a
+        guest list writes adults/children/babies/last_updated, none of which can change a gap
+        block, and must not walk the property's whole booking history to find that out."""
+        departure = self.start + timedelta(days=25)
+        booking = self._booking(self.start, departure)
+
+        settings = BookingSettings.load()
+        settings.cleaning_gap_nights_per_block_day = 0
+        settings.save()
+        booking.save(update_fields=['adults', 'children', 'babies', 'last_updated'])
+
+        # Still there - cleared by the next full/date/status save, not by this one.
+        self.assertTrue(CleaningGapBlock.objects.filter(booking=booking).exists())
 
     def test_creating_a_qualifying_booking_creates_exactly_one_block_no_recursion(self):
         # Regression test for the is_block_booking() guard in staff/signals.py - without it,
@@ -5060,6 +5080,76 @@ class CleaningGapBlockTests(TestCase):
                 self.property, departure + timedelta(days=2), departure + timedelta(days=3),
             ).exists()
         )
+
+
+class BookingSaveResyncScopeTests(TestCase):
+    """staff/signals.py::_sync_cleaning_tasks_on_booking_save only does the per-booking resyncs
+    when the save could actually have changed their output (2026-09-15, after Thomas reported a
+    ~10s Guest List save).
+
+    None of those resyncs read the party - saving a guest list writes only
+    adults/children/babies/last_updated, but was still firing five property-wide syncs per
+    apartment. On this project's remote Postgres that is real latency the guest sits through.
+    """
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Resync Property', short_title='RESYNC')
+        self.guest = Guest.objects.create(
+            first_name='Rui', last_name='Resync', email='rui-resync@example.com',
+        )
+        self.start = date.today() + timedelta(days=30)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start,
+            departure_date=self.start + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def _save_and_count(self, **save_kwargs):
+        targets = (
+            'staff.signals.sync_cleaning_tasks_for_booking',
+            'staff.signals.sync_freshen_tasks_for_property',
+            'staff.signals.sync_checkins_for_booking',
+            'staff.signals.sync_memo_for_turnover_task',
+            'staff.signals.sync_cleaning_gap_blocks_for_property',
+        )
+        with patch(targets[0]) as tasks, patch(targets[1]) as freshen, \
+                patch(targets[2]) as checkins, patch(targets[3]) as memo, \
+                patch(targets[4]) as gaps:
+            self.booking.save(**save_kwargs)
+        per_booking = (tasks.call_count, freshen.call_count, checkins.call_count, memo.call_count)
+        return per_booking, gaps.call_count
+
+    def test_a_party_only_save_skips_the_per_booking_resyncs(self):
+        per_booking, _gaps = self._save_and_count(
+            update_fields=['adults', 'children', 'babies', 'last_updated'],
+        )
+        self.assertEqual(per_booking, (0, 0, 0, 0))
+
+    def test_a_date_change_still_resyncs(self):
+        per_booking, _gaps = self._save_and_count(update_fields=['departure_date'])
+        self.assertEqual(per_booking, (1, 1, 1, 1))
+
+    def test_a_status_change_still_resyncs(self):
+        """Cancel/uncancel drives the Freshen cascade and the check-ins cancellation branch."""
+        per_booking, _gaps = self._save_and_count(update_fields=['enquiry_status'])
+        self.assertEqual(per_booking, (1, 1, 1, 1))
+
+    def test_a_plain_save_still_resyncs_everything(self):
+        """update_fields=None means the caller hasn't said what changed - assume the worst."""
+        per_booking, _gaps = self._save_and_count()
+        self.assertEqual(per_booking, (1, 1, 1, 1))
+
+    def test_the_property_wide_gap_block_sweep_is_skipped_too(self):
+        """The expensive one: sync_cleaning_gap_blocks_for_property() walks EVERY booking ever made
+        for the property. Leaving it running on party-only saves put a Guest List save back to ~15s
+        on real data, so it's narrowed with the rest."""
+        _per_booking, gaps = self._save_and_count(update_fields=['adults', 'last_updated'])
+        self.assertEqual(gaps, 0)
+
+    def test_the_gap_block_sweep_still_runs_on_a_date_change(self):
+        _per_booking, gaps = self._save_and_count(update_fields=['departure_date'])
+        self.assertEqual(gaps, 1)
 
 
 class ApplyManualTaskDateTests(TestCase):

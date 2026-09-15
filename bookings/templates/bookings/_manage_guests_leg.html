@@ -148,6 +148,25 @@ off to a per-apartment hub - see the Stage D dual-form pattern.
 
     {% else %}
 
+    {% comment %}
+    When every apartment is still pre_balance the whole page is ONE form with ONE Save button
+    (combined_save, see BookingManageGuestsView._can_combine) - so this partial contributes only
+    its fields, and manage_guests.html owns the <form> and the button. The per-apartment form
+    below is the fallback for a mixed-stage stay, where one apartment is frozen and its controls
+    post somewhere else entirely.
+    {% endcomment %}
+    {% if combined_save %}
+
+    {% if leg.non_field_error %}
+    <div class="reserve-form-errors">
+        <p>{{ leg.non_field_error }}</p>
+    </div>
+    {% endif %}
+
+    {% include 'bookings/_guest_list_form.html' with rows=leg.rows max_guests=leg.max_guests field_prefix=leg.field_prefix guest_list_property=leg.booking.property guest_list_note="Removing guests can reduce this apartment's balance if applicable; adding guests may increase it - we'll show you the updated amount before anything is charged." %}
+
+    {% else %}
+
     <form method="post" action="{% url 'bookings:manage_guests' reference=stay_reference %}" class="details-form">
         {% csrf_token %}
         <input type="hidden" name="leg_reference" value="{{ leg.booking.reference }}">
@@ -158,7 +177,7 @@ off to a per-apartment hub - see the Stage D dual-form pattern.
         </div>
         {% endif %}
 
-        {% include 'bookings/_guest_list_form.html' with rows=leg.rows max_guests=leg.max_guests guest_list_property=leg.booking.property guest_list_note="Removing guests can reduce this apartment's balance if applicable; adding guests may increase it - we'll show you the updated amount before anything is charged." %}
+        {% include 'bookings/_guest_list_form.html' with rows=leg.rows max_guests=leg.max_guests field_prefix=leg.field_prefix guest_list_property=leg.booking.property guest_list_note="Removing guests can reduce this apartment's balance if applicable; adding guests may increase it - we'll show you the updated amount before anything is charged." %}
 
         {% comment %}
         Named per apartment: two identical full-width buttons on one page would otherwise be told
@@ -189,6 +208,8 @@ off to a per-apartment hub - see the Stage D dual-form pattern.
         </div>
         {% endif %}
     </form>
+
+    {% endif %}
 
     {% endif %}
 </div>

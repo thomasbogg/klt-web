@@ -219,7 +219,8 @@ def bookings_for_stay_reference(reference):
 
     select_related is deliberately wide - every relation any merged hub section currently reads
     off a leg (is_paid's payment/charges/balance_payment, the Holiday Info sections' property__
-    booking_company/cleaning_company/amenities/location, Arrival & Departure's arrival/departure) -
+    booking_company/cleaning_company/amenities/location, Arrival & Departure's arrival/departure,
+    and property__specs for max_guests and the bedroom-based extra-guest allowance) -
     caught 2026-09-14 when a guest reported a "very long" save on Arrival & Departure: this
     project's remote Postgres has real, noticeable per-round-trip latency (see project memory on
     preferring bulk DB ops here), so a 2-leg stay whose views each lazily fetch half a dozen
@@ -228,7 +229,8 @@ def bookings_for_stay_reference(reference):
     this is free for the common case, not just a multi-property optimization."""
     relations = (
         'property__booking_company', 'property__cleaning_company', 'property__amenities',
-        'property__location', 'guest', 'payment', 'charges', 'balance_payment', 'arrival', 'departure',
+        'property__location', 'property__specs', 'guest', 'payment', 'charges', 'balance_payment',
+        'arrival', 'departure',
     )
     group = ReservationGroup.objects.filter(reference=reference).first()
     if group is not None:
@@ -797,6 +799,10 @@ class BookingFormMixin:
             'booking': booking,
             'stage': stage,
             'max_guests': booking.property.specs.max_guests,
+            # Namespaces this apartment's field names when every leg shares one <form> (see
+            # _parse_rows). Harmless when it doesn't - the single-property page passes it too and
+            # just gets ''.
+            'field_prefix': f'{booking.reference}-',
         }
         if stage == 'fully_paid':
             party = list(booking.party.all())
@@ -806,29 +812,42 @@ class BookingFormMixin:
             context['rows'] = self._seed_or_prefill_rows(booking)
         return context
 
-    def _merged_guest_legs(self, bookings, target=None, overrides=None):
+    def _merged_guest_legs(self, bookings, target=None, overrides=None, per_leg=None):
         """Every leg's _guests_leg_context(), with `overrides` merged into whichever one is
         `target` - the "re-render the whole merged page, but keep the submitting apartment's own
         typed values and errors" path every POST below needs on a validation failure or a
         price-change interstitial. Same shape as Stage D3's guest-registrations equivalent.
 
         The non-target legs are rebuilt from the database, deliberately: a failed POST against one
-        apartment must never silently discard or re-display stale state for the other."""
+        apartment must never silently discard or re-display stale state for the other.
+
+        `per_leg` ({booking.pk: overrides}) is the combined-form equivalent: one submission carries
+        every apartment's rows at once, so a failure has to redisplay ALL of them with their own
+        typed values, not just one. Mutually exclusive with target/overrides in practice.
+        """
         legs = []
         for booking in bookings:
             leg = self._guests_leg_context(booking)
             if target is not None and booking.pk == target.pk and overrides:
                 leg.update(overrides)
+            if per_leg and booking.pk in per_leg:
+                leg.update(per_leg[booking.pk])
             legs.append(leg)
         return legs
 
-    def _parse_rows(self, post_data):
+    def _parse_rows(self, post_data, prefix=''):
         """Three parallel arrays (first_name[]/last_name[]/age[]), not a Django formset - see the
         plan this was built from for why. Returns (rows, non_field_error); rows is [] only when
-        non_field_error is set (a malformed submission, not a normal validation failure)."""
-        first_names = post_data.getlist('first_name[]')
-        last_names = post_data.getlist('last_name[]')
-        ages_raw = post_data.getlist('age[]')
+        non_field_error is set (a malformed submission, not a normal validation failure).
+
+        `prefix` namespaces the field names per apartment, for the merged Guest List's single
+        combined form (2026-09-15): with every leg's rows inside ONE <form>, unprefixed names would
+        concatenate into a single flat list and the legs would be indistinguishable. Empty
+        everywhere else, so every single-form caller is unchanged.
+        """
+        first_names = post_data.getlist(f'{prefix}first_name[]')
+        last_names = post_data.getlist(f'{prefix}last_name[]')
+        ages_raw = post_data.getlist(f'{prefix}age[]')
 
         if not first_names or not (len(first_names) == len(last_names) == len(ages_raw)):
             return [], "Something went wrong submitting the guest list - please try again."
@@ -1923,7 +1942,31 @@ class BookingManageGuestsView(BookingFormMixin, View):
         context.update(self._guests_leg_context(primary))
         if len(bookings) > 1:
             context['legs'] = self._merged_guest_legs(bookings)
+            context['combined_save'] = self._can_combine(context['legs'])
         return render(request, self.template_name, context)
+
+    def _can_combine(self, legs):
+        """Whether every apartment can share ONE Save button (2026-09-15, per Thomas).
+
+        Only when every leg is still pre_balance. A fully-paid leg isn't a form to save at all -
+        it's the add/remove controls, which post to their own views and can raise a
+        SupplementaryPayment (a real charge). Folding those into a shared "Save" would mean one
+        click silently billing for one apartment while making a free edit to the other.
+
+        Since Pay Balance was merged the legs normally settle together, so a mixed stage is now the
+        rare case rather than the norm - it falls back to the per-apartment buttons, which still
+        work exactly as before.
+
+        Also blanks each leg's field_prefix when the legs are NOT combined. The prefix only exists
+        to keep apartments apart inside one shared <form>; separate forms don't need it, and the
+        per-leg POST path reads unprefixed names. Keeping the two in step here, rather than in the
+        template, means the field names can never disagree with the parser that reads them.
+        """
+        combined = bool(legs) and all(leg['stage'] == 'pre_balance' for leg in legs)
+        if not combined:
+            for leg in legs:
+                leg['field_prefix'] = ''
+        return combined
 
     def post(self, request, reference, *args, **kwargs):
         bookings, merged = resolve_stay(request, reference)
@@ -1932,6 +1975,9 @@ class BookingManageGuestsView(BookingFormMixin, View):
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
+
+        if request.POST.get('form') == 'combined' and len(bookings) > 1:
+            return self._post_combined(request, reference, bookings)
 
         booking = _leg_for_post(bookings, request.POST.get('leg_reference'))
         if booking is None:
@@ -1956,6 +2002,7 @@ class BookingManageGuestsView(BookingFormMixin, View):
             context['stage'] = 'pre_balance'
             if len(bookings) > 1:
                 context['legs'] = self._merged_guest_legs(bookings, target=booking, overrides=leg_state)
+                context['combined_save'] = self._can_combine(context['legs'])
             return render(request, self.template_name, context)
 
         if non_field_error or any(row['errors'] for row in rows):
@@ -2005,6 +2052,105 @@ class BookingManageGuestsView(BookingFormMixin, View):
         # truthy for the single-property page's own existing check.
         url = reverse('bookings:manage_guests', args=[reference])
         return redirect(f"{url}?guests_saved={booking.reference}")
+
+    def _post_combined(self, request, reference, bookings):
+        """One Save button covering every apartment (2026-09-15, per Thomas).
+
+        All-or-nothing on purpose. A guest editing both lists thinks of it as one action, so a
+        half-save - apartment A written, apartment B rejected - would be the worst outcome: they'd
+        have to work out which half landed. Anything invalid anywhere means nothing is written and
+        every apartment is redisplayed with its own typed values and its own errors.
+
+        The price-change interstitial is likewise raised once for the whole stay, listing each
+        apartment whose balance moved, rather than asking for a confirmation per apartment.
+        """
+        primary = bookings[0]
+        nav = _manage_nav_context(primary, 'guests', all_bookings=bookings)
+
+        editable = [b for b in bookings if not is_fully_paid(b)]
+        if not editable:
+            return redirect('bookings:manage_guests', reference=reference)
+
+        parsed = []
+        per_leg_state = {}
+        blocked = False
+
+        for booking in editable:
+            max_guests = booking.property.specs.max_guests
+            rows, non_field_error = self._parse_rows(request.POST, prefix=f'{booking.reference}-')
+            state = {'rows': rows, 'max_guests': max_guests}
+
+            if non_field_error or any(row['errors'] for row in rows):
+                state['non_field_error'] = non_field_error
+                blocked = True
+            elif len(rows) > max_guests:
+                state['non_field_error'] = f"This property allows a maximum of {max_guests} guests."
+                blocked = True
+            else:
+                ages = [int(row['age']) for row in rows]
+                new_guests, new_costs, changed = recalculate_balance_for_party(booking, ages)
+                if new_guests is None:
+                    state['non_field_error'] = (
+                        "This stay can no longer be priced automatically - please contact us to "
+                        "complete your booking."
+                    )
+                    blocked = True
+                elif new_guests['adults'] == 0:
+                    state['non_field_error'] = "At least one adult must be included in the party."
+                    blocked = True
+                else:
+                    parsed.append((booking, rows, new_guests, new_costs, changed))
+
+            per_leg_state[booking.pk] = state
+
+        def rendered(extra=None):
+            context = {'booking': primary, **nav, 'stage': 'pre_balance'}
+            context['legs'] = self._merged_guest_legs(bookings, per_leg=per_leg_state)
+            context['combined_save'] = self._can_combine(context['legs'])
+            context.update(extra or {})
+            return render(request, self.template_name, context)
+
+        if blocked:
+            return rendered()
+
+        repriced = [entry for entry in parsed if entry[4]]
+        if repriced and request.POST.get('confirmed') != '1':
+            return rendered({'combined_price_change': [
+                {
+                    'booking': booking,
+                    'old_charge': booking.charges,
+                    'new_costs': new_costs,
+                }
+                for booking, _rows, _new_guests, new_costs, _changed in repriced
+            ]})
+
+        with transaction.atomic():
+            for booking, rows, new_guests, new_costs, changed in parsed:
+                self._save_guest_list(booking, rows, new_guests)
+
+                charge = booking.charges
+                charge.basic_rental = new_costs['basic_rental']
+                charge.discount_total = new_costs['discount_total']
+                charge.extra_guest_total = new_costs['extra_guest_total']
+                charge.admin = new_costs['admin_fee']
+                # security deliberately NOT touched here - same reason as the per-leg path above.
+                charge.due_at_balance = new_costs['due_at_balance']
+                charge.save(update_fields=[
+                    'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'due_at_balance',
+                ])
+
+                # A stale checkout URL would leave the guest paying an amount that no longer
+                # matches Charge. Doubly true now the balance is collected as one combined order -
+                # a reprice on ANY leg invalidates the shared order, and
+                # BookingBalancePaymentView regenerates it when the legs' URLs disagree.
+                balance_payment = getattr(booking, 'balance_payment', None)
+                if changed and balance_payment is not None and balance_payment.revolut_checkout_url:
+                    balance_payment.revolut_order_id = None
+                    balance_payment.revolut_checkout_url = None
+                    balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
+
+        url = reverse('bookings:manage_guests', args=[reference])
+        return redirect(f"{url}?guests_saved=all")
 
 
 def _arrival_data_from_model(arrival):

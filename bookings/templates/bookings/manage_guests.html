@@ -34,9 +34,50 @@
             <p class="details-note">
                 Each apartment has its own guest list - please name the guests staying in each one.
             </p>
+            {% if request.GET.guests_saved == 'all' %}
+            <p class="details-note">Your guest lists have been updated.</p>
+            {% endif %}
+
+            {% comment %}
+            One form, one Save, when every apartment is still pre_balance (per Thomas, 2026-09-15):
+            a guest editing both lists thinks of it as one action, and two buttons meant filling in
+            both and silently losing whichever one they didn't click. Each apartment's fields are
+            namespaced by its reference (leg.field_prefix) so they stay apart inside the shared
+            form. A mixed-stage stay falls back to per-apartment forms - see _can_combine().
+            {% endcomment %}
+            {% if combined_save %}
+            <form method="post" action="{% url 'bookings:manage_guests' reference=stay_reference %}" class="details-form">
+                {% csrf_token %}
+                <input type="hidden" name="form" value="combined">
+                {% for leg in legs %}
+                {% include 'bookings/_manage_guests_leg.html' with leg=leg %}
+                {% endfor %}
+                <button type="submit" class="reserve-form-submit">Save Guest Lists</button>
+
+                {% if combined_price_change %}
+                <div class="price-change-overlay" data-price-change-overlay>
+                    <div class="price-change-panel">
+                        <p class="price-change-title">The party you entered changes what's still due</p>
+                        <p class="price-change-body">This can happen if a guest's age puts them in a different pricing category, or the party size changed. The deposit you've already paid isn't affected - only the balance still due.</p>
+                        {% for change in combined_price_change %}
+                        <div class="price-change-row">
+                            <span>{{ change.booking.property }}</span>
+                            <span>&euro;{{ change.old_charge.due_at_balance|floatformat:2 }} &rarr; <strong>&euro;{{ change.new_costs.due_at_balance|floatformat:2 }}</strong></span>
+                        </div>
+                        {% endfor %}
+                        <div class="price-change-actions">
+                            <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Save anyway</button>
+                            <button type="button" class="reserve-form-cancel" data-price-change-edit>Edit details</button>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </form>
+            {% else %}
             {% for leg in legs %}
             {% include 'bookings/_manage_guests_leg.html' with leg=leg %}
             {% endfor %}
+            {% endif %}
 
             {% else %}
 

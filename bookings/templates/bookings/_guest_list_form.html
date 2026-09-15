@@ -33,15 +33,15 @@ Guest List shows one of these per apartment, and duplicate ids would silently bi
         <div class="guest-row">
             <span class="guest-row-index">{{ forloop.counter }}</span>
             <div class="guest-row-field">
-                <input type="text" name="first_name[]" class="reserve-input" value="{{ row.first_name }}" placeholder="First name">
+                <input type="text" name="{{ field_prefix }}first_name[]" class="reserve-input" value="{{ row.first_name }}" placeholder="First name">
                 {% if row.errors.first_name %}<p class="reserve-form-error">{{ row.errors.first_name }}</p>{% endif %}
             </div>
             <div class="guest-row-field">
-                <input type="text" name="last_name[]" class="reserve-input" value="{{ row.last_name }}" placeholder="Last name">
+                <input type="text" name="{{ field_prefix }}last_name[]" class="reserve-input" value="{{ row.last_name }}" placeholder="Last name">
                 {% if row.errors.last_name %}<p class="reserve-form-error">{{ row.errors.last_name }}</p>{% endif %}
             </div>
             <div class="guest-row-field guest-row-age">
-                <input type="number" name="age[]" class="reserve-input" value="{{ row.age }}" min="0" max="120" placeholder="Age">
+                <input type="number" name="{{ field_prefix }}age[]" class="reserve-input" value="{{ row.age }}" min="0" max="120" placeholder="Age">
                 {% if row.errors.age %}<p class="reserve-form-error">{{ row.errors.age }}</p>{% endif %}
             </div>
             {% if forloop.first %}
@@ -57,13 +57,13 @@ Guest List shows one of these per apartment, and duplicate ids would silently bi
         <div class="guest-row">
             <span class="guest-row-index"></span>
             <div class="guest-row-field">
-                <input type="text" name="first_name[]" class="reserve-input" placeholder="First name">
+                <input type="text" name="{{ field_prefix }}first_name[]" class="reserve-input" placeholder="First name">
             </div>
             <div class="guest-row-field">
-                <input type="text" name="last_name[]" class="reserve-input" placeholder="Last name">
+                <input type="text" name="{{ field_prefix }}last_name[]" class="reserve-input" placeholder="Last name">
             </div>
             <div class="guest-row-field guest-row-age">
-                <input type="number" name="age[]" class="reserve-input" min="0" max="120" placeholder="Age">
+                <input type="number" name="{{ field_prefix }}age[]" class="reserve-input" min="0" max="120" placeholder="Age">
             </div>
             <button type="button" class="guest-row-remove" aria-label="Remove guest">&minus;</button>
         </div>
