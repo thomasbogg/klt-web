@@ -244,10 +244,6 @@ REVOLUT_BUSINESS_TRANSFER_WEBHOOK_SIGNING_KEY = os.getenv('REVOLUT_BUSINESS_TRAN
 # explicitly True until the sandbox flow has been exercised end-to-end.
 REVOLUT_BUSINESS_SANDBOX = os.getenv('REVOLUT_BUSINESS_SANDBOX', 'False').lower() == 'true'
 
-# Static Wise business pay page - guest enters the amount and reference themselves, nothing is
-# created per-booking via API. Used for Nov-Mar arrivals - see bookings/utils.py::determine_payment_provider.
-WISE_BASE_PAYMENT_LINK = 'https://wise.com/pay/business/algarvebeachapartments'
-
 ##################################################
 # SAGE ONE CREDENTIALS
 ##################################################

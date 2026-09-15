@@ -42,22 +42,9 @@
             <p>We couldn't set up card payment just now. Please reload this page to try again.</p>
         </div>
 
-        {% elif payment.provider == 'revolut' %}
+        {% else %}
         <a class="reserve-form-submit pay-button" href="{{ payment.revolut_checkout_url }}">Pay now</a>
         <p class="pay-instructions">Opens Revolut's secure checkout, where you can pay by card or bank transfer in {{ pay_currency }}.</p>
-
-        {% else %}
-        <div class="pay-wise-panel">
-            <p class="pay-instructions pay-instructions-lead">
-                Our Wise payment page lets you enter these details yourself. Before clicking the button below (it opens in a new tab), note:
-            </p>
-            <ol class="pay-steps">
-                <li>Enter the amount: <strong>{% if pay_currency == 'GBP' %}&pound;{% else %}&euro;{% endif %}{{ pay_amount|floatformat:2 }}</strong></li>
-                <li>Select <strong>{{ pay_currency }}</strong> as the currency</li>
-                <li>Enter the reference: <strong>{{ booking.reference }}</strong></li>
-            </ol>
-            <a class="reserve-form-submit pay-button" href="{{ wise_payment_link }}" target="_blank" rel="noopener">Pay via Wise</a>
-        </div>
         {% endif %}
     </div>
 

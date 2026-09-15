@@ -19,7 +19,7 @@ from bookings.payouts import compute_owner_payout
 from bookings.views import next_unpaid_sibling_reference
 from staff.models import LateCheckoutGrant, OwnerPayment
 from bookings.utils import (
-    add_business_days, apply_supplementary_payment, compute_deposit_waiver,
+    add_business_days, adopt_revolut_provider, apply_supplementary_payment, compute_deposit_waiver,
     compute_effective_self_check_in, compute_eta_from_given_time, compute_initial_hold_expiry,
     compute_tourist_tax, create_booking, extra_request_window_open, extras_request_windows,
     create_owner_booking, determine_payment_provider, expire_stale_holds, extras_summary,
@@ -45,17 +45,63 @@ def _normalized_text(response):
 
 
 class DeterminePaymentProviderTests(TestCase):
+    """Wise was retired 2026-09-15 - Revolut is now the provider for every arrival, year-round.
+    These cases are the old Nov-Mar/Apr-Oct season boundaries, kept deliberately: they're the
+    exact dates that used to split the two providers, so they're the ones that would catch a
+    seasonal rule creeping back in."""
+
     def test_october_31_is_revolut(self):
         self.assertEqual(determine_payment_provider(date(2026, 10, 31)), 'revolut')
 
-    def test_november_1_is_wise(self):
-        self.assertEqual(determine_payment_provider(date(2026, 11, 1)), 'wise')
+    def test_november_1_is_revolut(self):
+        self.assertEqual(determine_payment_provider(date(2026, 11, 1)), 'revolut')
 
-    def test_march_31_is_wise(self):
-        self.assertEqual(determine_payment_provider(date(2027, 3, 31)), 'wise')
+    def test_march_31_is_revolut(self):
+        self.assertEqual(determine_payment_provider(date(2027, 3, 31)), 'revolut')
 
     def test_april_1_is_revolut(self):
         self.assertEqual(determine_payment_provider(date(2027, 4, 1)), 'revolut')
+
+    def test_midwinter_is_revolut(self):
+        self.assertEqual(determine_payment_provider(date(2027, 1, 15)), 'revolut')
+
+
+class AdoptRevolutProviderTests(TestCase):
+    """adopt_revolut_provider() migrates one still-unpaid row off the retired Wise provider, in
+    place, at the moment its guest next opens a payment page."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Test Property ARP', short_title='TESTARP')
+        self.guest = Guest.objects.create(first_name='Rui', last_name='Santos', email='rui-arp@example.com')
+        self.start = date.today() + timedelta(days=100)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start,
+            departure_date=self.start + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+    def test_pending_wise_row_is_converted_and_persisted(self):
+        payment = BalancePayment.objects.create(
+            booking=self.booking, provider='wise', status='pending',
+        )
+        self.assertTrue(adopt_revolut_provider(payment))
+        payment.refresh_from_db()
+        self.assertEqual(payment.provider, 'revolut')
+
+    def test_paid_wise_row_is_left_alone(self):
+        """A paid row's provider is the record of how the money actually arrived - staff and
+        accounting read it, so it must never be rewritten."""
+        payment = Payment.objects.create(booking=self.booking, provider='wise', status='paid')
+        self.assertFalse(adopt_revolut_provider(payment))
+        payment.refresh_from_db()
+        self.assertEqual(payment.provider, 'wise')
+
+    def test_revolut_row_is_a_no_op(self):
+        payment = Payment.objects.create(booking=self.booking, provider='revolut', status='pending')
+        self.assertFalse(adopt_revolut_provider(payment))
+        payment.refresh_from_db()
+        self.assertEqual(payment.provider, 'revolut')
 
 
 class BookingOverlappingTests(TestCase):
@@ -2166,16 +2212,21 @@ class BookingBalanceDetailsViewTests(TestCase):
 
 
 class BookingBalancePaymentViewTests(TestCase):
-    """Uses a Wise-path booking throughout (arrival month in WISE_MONTHS) - Wise never calls the
-    live Revolut API (a static payment link, see BookingBalancePaymentView), so this can safely
-    test the full render path. A Revolut-path booking would need the API mocked - out of scope
-    here, matching the existing untested state of BookingPaymentView for the same reason."""
+    """Fixtures here are deliberately a pre-retirement leftover: a winter arrival whose Payment/
+    BalancePayment rows were stamped provider='wise' at booking time, mirroring the 28 real
+    confirmed bookings that still had an unpaid Wise balance when Wise was retired 2026-09-15.
+    They're the case adopt_revolut_provider() exists for.
+
+    This class used to lean on Wise to dodge the live Revolut API (a static link creates no
+    order). That escape hatch is gone now that every render creates an order, so the API call is
+    mocked instead - same @patch('libraries.banking.revolut.requests.post') approach as
+    BookingManageTouristTaxPayViewTests."""
 
     def setUp(self):
         self.property = Property.objects.create(title='Test Property BALP', short_title='TESTBALP')
         PropertySpec.objects.create(property=self.property, max_guests=4)
         self.guest = Guest.objects.create(first_name='Marco', last_name='Reis', email='marco-balp@example.com')
-        self.start = self._next_wise_season_date()
+        self.start = self._next_former_wise_season_date()
         self.end = self.start + timedelta(days=7)
         self.booking = Booking.objects.create(
             property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
@@ -2194,7 +2245,9 @@ class BookingBalancePaymentViewTests(TestCase):
         self.confirmation_url = reverse('bookings:confirmation', kwargs={'reference': self.booking.reference})
         self.deposit_pay_url = reverse('bookings:pay', kwargs={'reference': self.booking.reference})
 
-    def _next_wise_season_date(self):
+    def _next_former_wise_season_date(self):
+        """A Nov-Mar arrival - what used to route to Wise, and now must route to Revolut like any
+        other month."""
         candidate = date.today() + timedelta(days=100)  # safely more than 56 days out
         while candidate.month not in (11, 12, 1, 2, 3):
             candidate += timedelta(days=1)
@@ -2217,14 +2270,70 @@ class BookingBalancePaymentViewTests(TestCase):
         response = self.client.get(self.url)
         self.assertRedirects(response, self.confirmation_url, fetch_redirect_response=False)
 
-    def test_get_renders_wise_payment_page_with_correct_amount(self):
+    @patch('libraries.banking.revolut.requests.post')
+    def test_get_renders_revolut_checkout_with_correct_amount(self, mock_post):
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {
+            'id': 'order-balp', 'checkout_url': 'https://checkout.revolut.com/pay/order-balp',
+        }
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['pay_amount'], Decimal('553.87'))
         self.assertEqual(response.context['pay_currency'], 'EUR')
-        self.assertContains(response, "Pay via Wise")
+        self.assertContains(response, 'https://checkout.revolut.com/pay/order-balp')
 
-    def test_get_includes_extras_summary(self):
+        _args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['json']['amount'], 55387)  # minor units
+        self.assertEqual(kwargs['json']['currency'], 'EUR')
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_leftover_wise_balance_is_converted_to_revolut_on_first_visit(self, mock_post):
+        """The 28-real-bookings case: an unpaid balance stamped provider='wise' before the
+        retirement gets a real Revolut order, and the row itself flips, the first time its guest
+        comes back to pay. No bulk rewrite of live data - it happens per row, on visit."""
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {
+            'id': 'order-conv', 'checkout_url': 'https://checkout.revolut.com/pay/order-conv',
+        }
+        self.assertEqual(self.balance_payment.provider, 'wise')
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.balance_payment.refresh_from_db()
+        self.assertEqual(self.balance_payment.provider, 'revolut')
+        self.assertEqual(self.balance_payment.revolut_order_id, 'order-conv')
+        self.assertFalse(response.context['payment_error'])
+        self.assertNotContains(response, 'Wise')
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_paid_deposit_keeps_its_wise_provider_as_the_record_of_how_it_was_paid(self, mock_post):
+        """Converting must never rewrite history. The deposit here was genuinely paid via Wise, so
+        its provider stays 'wise' for staff/accounting even though the balance moves to Revolut."""
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {
+            'id': 'order-hist', 'checkout_url': 'https://checkout.revolut.com/pay/order-hist',
+        }
+        self.client.get(self.url)
+
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.provider, 'wise')
+        self.assertEqual(self.payment.status, 'paid')
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_get_shows_payment_error_when_revolut_order_creation_fails(self, mock_post):
+        mock_post.return_value.status_code = 400
+        mock_post.return_value.text = 'bad request'
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['payment_error'])
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_get_includes_extras_summary(self, mock_post):
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {
+            'id': 'order-extras', 'checkout_url': 'https://checkout.revolut.com/pay/order-extras',
+        }
         Extra.objects.create(
             booking=self.booking, late_checkout=True, late_checkout_charge=Decimal('20.00'),
         )
@@ -2570,10 +2679,10 @@ class BookingManageTouristTaxPayViewMultiPropertyTests(TestCase):
 
 
 class BookingManageTouristTaxPayViewTests(TestCase):
-    """Unlike BookingBalancePaymentViewTests, there's no Wise-path booking to safely dodge the live
-    Revolut API - tourist tax is always Revolut (see TouristTax's docstring) - so the Revolut HTTP
-    call itself is mocked here (libraries.banking.revolut.requests.post), rather than left untested
-    the way BookingPaymentView's own Revolut path currently is."""
+    """Tourist tax has always been Revolut-only (see TouristTax's docstring), so the Revolut HTTP
+    call itself is mocked here (libraries.banking.revolut.requests.post). Since Wise's retirement
+    that's the only approach available anywhere - BookingBalancePaymentViewTests, which used to
+    dodge the live API with a Wise-path booking, now mocks the same way."""
 
     def setUp(self):
         self.property = Property.objects.create(title='Test Property TTP', short_title='TESTTTP')
@@ -7649,7 +7758,8 @@ class BookingManageDatesViewTests(TestCase):
         self.charge.refresh_from_db()
         self.assertEqual(self.charge.basic_rental, Decimal('700.00'))  # unchanged until paid
 
-        # Revolut-path (self.start is well outside WISE_MONTHS) - a flat 20-minute initial hold.
+        # A flat 20-minute initial hold - the only path there is now Wise is retired, and what
+        # every arrival month gets (see compute_initial_hold_expiry).
         self.assertIsNotNone(payment.hold_expires_at)
         self.assertLess(abs((payment.hold_expires_at - timezone.now()).total_seconds() - 20 * 60), 5)
 
@@ -7774,7 +7884,7 @@ class BookingManageDatesViewTests(TestCase):
 
 class BookingManageSupplementaryPaymentViewTests(TestCase):
     """Same Revolut-mocking approach as BookingManageTouristTaxPayViewTests - this checkout page
-    always creates a real order (no Wise-path booking to dodge it with in these fixtures)."""
+    always creates a real order, so the Revolut HTTP call is mocked."""
 
     def setUp(self):
         self.property = Property.objects.create(title='Test Property SP', short_title='TESTSP')

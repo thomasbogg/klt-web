@@ -204,6 +204,15 @@ EMAIL_TYPES: dict[str, EmailDefinition] = {
         event_triggered=True,
     ),
 
+    # DORMANT since Wise's retirement (2026-09-15) - eligible() below can no longer be satisfied,
+    # so this never schedules again. Kept, rather than deleted, because its EmailTemplate row and
+    # three (stale, past-dated, never-sent) ScheduledEmail rows are real data - removing the key
+    # would orphan them. Retiring those rows is a separate cleanup for Thomas to call.
+    #
+    # It has no Revolut equivalent by design, not by omission: this warned a day before a hold
+    # lapsed, which only made sense for the multi-day Wise payment-clearing hold. A Revolut hold is
+    # ~20 minutes (BookingSettings.revolut_hold_minutes), so a day-ahead warning has nothing to
+    # warn about. Net effect: no hold-expiry warning email goes out to anyone any more.
     'hold_expiry_warning_wise': EmailDefinition(
         audience='guest',
         anchor=lambda booking: booking.hold_expires_at.date() if booking.hold_expires_at else None,

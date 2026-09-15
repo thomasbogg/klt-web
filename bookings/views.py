@@ -22,7 +22,8 @@ from bookings.models import (
     WelcomePackItem,
 )
 from bookings.utils import (
-    FLIGHT_NUMBER_HINT, append_guest_rows, booking_confirmation_context, cancel_booking_hold,
+    FLIGHT_NUMBER_HINT, adopt_revolut_provider, append_guest_rows, booking_confirmation_context,
+    cancel_booking_hold,
     compute_effective_self_check_in, compute_eta_from_given_time, compute_initial_hold_expiry,
     compute_tourist_tax, extras_request_windows, tourist_tax_in_season,
     determine_payment_provider, extras_summary, guest_counts_by_age, mid_stay_clean_window,
@@ -1203,9 +1204,12 @@ class BookingBalanceDetailsView(BookingFormMixin, View):
 
 
 class BookingPaymentView(View):
-    """Deposit-payment step shown right after a reservation is created. Revolut-path bookings get
-    a hosted checkout link (created lazily here, on first visit); Wise-path bookings get a static
-    pay-page link with instructions, since there's no per-booking API object to create for Wise."""
+    """Deposit-payment step shown right after a reservation is created. Every booking gets a
+    hosted Revolut checkout link, created lazily here on first visit.
+
+    Until Wise was retired, Nov-Mar arrivals instead got a static Wise pay page with manual
+    amount/reference instructions. A pre-retirement row that is still unpaid is converted on
+    arrival here by adopt_revolut_provider(), so it gets a real checkout like any other."""
     template_name = 'bookings/pay.html'
 
     def get(self, request, reference, *args, **kwargs):
@@ -1228,11 +1232,12 @@ class BookingPaymentView(View):
             'extras': extras_summary(booking),
         }
 
-        if not context['hold_expired'] and payment.provider == 'revolut' and not payment.revolut_checkout_url:
+        adopt_revolut_provider(payment)
+
+        if not context['hold_expired'] and not payment.revolut_checkout_url:
             self._create_revolut_order(booking, payment, pay_amount, pay_currency)
 
-        context['payment_error'] = payment.provider == 'revolut' and not payment.revolut_checkout_url and not context['hold_expired']
-        context['wise_payment_link'] = env_settings.WISE_BASE_PAYMENT_LINK
+        context['payment_error'] = not payment.revolut_checkout_url and not context['hold_expired']
 
         return render(request, self.template_name, context)
 
@@ -1256,10 +1261,11 @@ class BookingPaymentView(View):
 class BookingBalancePaymentView(View):
     """Balance-payment step for a two-stage booking, reached after BookingBalanceDetailsView (or
     directly, if the guest already chose their Extras and is just returning to pay). Mirrors
-    BookingPaymentView closely - same lazy Revolut order creation, same static Wise link - but
-    against BalancePayment/due_at_balance instead of Payment/due_at_booking, same provider as the
-    deposit (no need to recompute - determine_payment_provider() is a pure function of arrival_date
-    anyway). No hold/countdown here: the calendar slot was already locked in by the confirmed
+    BookingPaymentView closely - same lazy Revolut order creation - but against BalancePayment/
+    due_at_balance instead of Payment/due_at_booking. This is where Wise's retirement actually
+    lands for real money: the balances still outstanding when it was retired were stamped
+    provider='wise' at booking time, and adopt_revolut_provider() flips each one here the first
+    time its guest returns. No hold/countdown here: the calendar slot was already locked in by the confirmed
     deposit, so there's nothing to expire, and no cancel-and-restart flow either (nothing to release)."""
     template_name = 'bookings/balance_pay.html'
 
@@ -1286,11 +1292,12 @@ class BookingBalancePaymentView(View):
             'extras': extras_summary(booking),
         }
 
-        if balance_payment.provider == 'revolut' and not balance_payment.revolut_checkout_url:
+        adopt_revolut_provider(balance_payment)
+
+        if not balance_payment.revolut_checkout_url:
             self._create_revolut_order(booking, balance_payment, pay_amount, pay_currency)
 
-        context['payment_error'] = balance_payment.provider == 'revolut' and not balance_payment.revolut_checkout_url
-        context['wise_payment_link'] = env_settings.WISE_BASE_PAYMENT_LINK
+        context['payment_error'] = not balance_payment.revolut_checkout_url
 
         return render(request, self.template_name, context)
 
@@ -1321,8 +1328,8 @@ class BookingManageSupplementaryPaymentView(View):
     """Checkout page for a SupplementaryPayment - the top-up a guest owes for a self-serve date
     change or guest addition that raised the price after the balance was already paid (see that
     model's own docstring; BookingManageDatesView/BookingManageGuestAddView are what create these
-    rows). Mirrors BookingBalancePaymentView closely: same lazy Revolut order creation, same
-    static Wise link, same lack of any polling - a guest who pays here and closes the tab has
+    rows). Mirrors BookingBalancePaymentView closely: same lazy Revolut order creation, same lack
+    of any polling - a guest who pays here and closes the tab has
     their date-change/guest-add applied the next time they load any Manage hub page (see
     _manage_nav_context()'s apply-pending-supplementary-payments step), exactly the same
     "confirmed on next visit, not via live polling" norm balance_pay.html already has while the
@@ -1358,11 +1365,12 @@ class BookingManageSupplementaryPaymentView(View):
         }
         context.update(_manage_nav_context(booking, 'dates' if payment.kind == 'date_change' else 'guests'))
 
-        if payment.provider == 'revolut' and not payment.revolut_checkout_url:
+        adopt_revolut_provider(payment)
+
+        if not payment.revolut_checkout_url:
             self._create_revolut_order(payment, pay_amount=pay_amount, siblings=siblings)
 
-        context['payment_error'] = payment.provider == 'revolut' and not payment.revolut_checkout_url
-        context['wise_payment_link'] = env_settings.WISE_BASE_PAYMENT_LINK
+        context['payment_error'] = not payment.revolut_checkout_url
         return render(request, self.template_name, context)
 
     def _success_url(self, payment):

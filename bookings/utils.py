@@ -17,7 +17,6 @@ REFERENCE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTVWXYZ'  # no 0/O/1/I/L/U - avoids
 REFERENCE_GROUP_LENGTH = 4
 REFERENCE_GROUPS = 2
 
-WISE_MONTHS = {11, 12, 1, 2, 3}  # Nov-Mar arrivals
 
 # The two legacy PIMS calendar-block categories (an owner/admin marking a property unbookable, or
 # holding a late check-out) - not a real guest, so never a real arrival/departure for anything
@@ -88,11 +87,40 @@ def _apply_manual_discount(basic_total, discount_total, manual_discount_percent)
 
 
 def determine_payment_provider(arrival_date):
-    """Which payment provider handles a booking's deposit, decided by arrival month, not guest
-    choice. Nov-Mar arrivals go through Wise (a static pay page, no in-progress payment signal);
-    Apr-Oct go through Revolut (a Payment Link whose checkout supports card + Open Banking, and
-    whose webhooks expose an in-progress signal - see bookings/views.py::BookingPaymentView)."""
-    return 'wise' if arrival_date.month in WISE_MONTHS else 'revolut'
+    """Which payment provider handles a booking's deposit. Always Revolut, year-round.
+
+    Wise was retired 2026-09-15 (Thomas): until then Nov-Mar arrivals went through a static Wise
+    pay page, because the business only ran Revolut checkout in season. Revolut is now the default
+    for every arrival - a Payment Link whose checkout supports card + Open Banking, and whose
+    webhooks expose an in-progress signal (see bookings/views.py::BookingPaymentView).
+
+    Kept as a function, and still taking arrival_date, deliberately: every caller already routes
+    through it, so this stays the single place to change if a second provider ever returns. Rows
+    already stamped provider='wise' are untouched history - 'wise' remains in PROVIDER_CHOICES and
+    still renders correctly in staff/accounting views."""
+    return 'revolut'
+
+
+def adopt_revolut_provider(payment):
+    """Migrate one still-unpaid payment row off the retired Wise provider, just in time.
+
+    Wise was retired with real money still outstanding: 28 confirmed bookings held a pending
+    BalancePayment stamped provider='wise' (arrivals Nov 2026 - Jan 2028, ~EUR 55k). Rather than
+    bulk-rewriting provider across live rows, each flips here the first time its guest actually
+    opens the payment page - so a row changes only at the moment we're about to create a real
+    Revolut order for it, and one that's never revisited is never touched.
+
+    Never touches a paid row: there, provider is the true record of how that money arrived, which
+    staff and accounting views read. Callers are the three payment views, each of which has
+    already redirected a settled payment away before reaching this point.
+
+    Returns True if the row was changed, so callers can tell a conversion from a no-op.
+    """
+    if payment.provider == 'revolut' or payment.status == 'paid':
+        return False
+    payment.provider = 'revolut'
+    payment.save(update_fields=['provider'])
+    return True
 
 
 def add_business_days(start, business_days):
@@ -108,30 +136,32 @@ def add_business_days(start, business_days):
 
 
 def payment_clearing_expiry(now, booking_settings):
-    """now + payment_clearing_business_days business days (skipping Sat/Sun). Used both for the
-    Wise-path initial hold (Wise gives no in-progress signal, so every Wise booking gets this from
-    the moment it's made) and for the Revolut-path hold once ORDER_PAYMENT_AUTHENTICATED fires
-    (see klt-hooks postgres_bookings.py::mark_payment_authenticated) - bank transfers can take up
-    to 2 business days to settle after authentication; card payments settle in seconds so this
-    costs them nothing."""
+    """now + payment_clearing_business_days business days (skipping Sat/Sun). Used for the hold
+    once ORDER_PAYMENT_AUTHENTICATED fires (see klt-hooks postgres_bookings.py::
+    mark_payment_authenticated) - bank transfers can take up to 2 business days to settle after
+    authentication; card payments settle in seconds so this costs them nothing.
+
+    Before Wise was retired this also gave every Nov-Mar booking its initial hold, since Wise
+    emitted no in-progress signal to react to. Revolut-path bookings never used it that way, so
+    compute_initial_hold_expiry() no longer calls it at all - the authenticated-payment extension
+    is now its only caller here."""
     return add_business_days(now, booking_settings.payment_clearing_business_days)
 
 
 def compute_initial_hold_expiry(arrival_date, booking_settings, now=None):
-    """(provider, hold_expires_at) for a brand-new hold on `arrival_date`, decided by
-    determine_payment_provider() - Wise-path bookings get the full payment-clearing window
-    immediately (no in-progress signal to react to later), Revolut-path bookings get a short flat
-    window that klt-hooks extends as payment events arrive (mark_payment_in_progress/
-    _authenticated, and their SupplementaryPayment mirrors). Shared by create_booking() (a new
-    reservation's own Booking.hold_expires_at) and BookingManageDatesView (a pending date change's
+    """(provider, hold_expires_at) for a brand-new hold on `arrival_date`: a short flat window
+    that klt-hooks extends as payment events arrive (mark_payment_in_progress/_authenticated, and
+    their SupplementaryPayment mirrors). Shared by create_booking() (a new reservation's own
+    Booking.hold_expires_at) and BookingManageDatesView (a pending date change's
     SupplementaryPayment.hold_expires_at) - same rules, same reasoning, two different things being
-    held."""
+    held.
+
+    Since Wise's retirement every booking takes this one path, so arrival_date no longer affects
+    the window - it stays in the signature because determine_payment_provider() remains the single
+    seam where a provider decision would go."""
     now = now or timezone.now()
     provider = determine_payment_provider(arrival_date)
-    if provider == 'wise':
-        hold_expires_at = payment_clearing_expiry(now, booking_settings)
-    else:
-        hold_expires_at = now + timedelta(minutes=booking_settings.revolut_hold_minutes)
+    hold_expires_at = now + timedelta(minutes=booking_settings.revolut_hold_minutes)
     return provider, hold_expires_at
 
 
