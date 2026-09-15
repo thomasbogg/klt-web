@@ -14,9 +14,8 @@ switch), just grouped visually - see bookings.css's .manage-hub-nav-group-label.
 Multi-property merge (2026-09-14/15, staged - see project memory): a section that's been made
 group-aware links via `stay_reference` (the shared ReservationGroup reference once one exists,
 same as booking.reference otherwise) so it lands on the merged page covering every apartment.
-Every guest-facing section is merged as of Stage D7 (Edit Dates was the last). The only link
-still keyed to a single leg is Pay Balance, and that's pending work, not a limitation: one Revolut
-order CAN settle every leg at once, because klt-hooks' mark_balance_payment_paid() updates by
+Every guest-facing section is now merged, Pay Balance included (2026-09-15): one Revolut order
+settles every leg at once, because klt-hooks' mark_balance_payment_paid() updates by
 revolut_order_id with no LIMIT - the same shared-order trick Tourist Tax and supplementary
 payments already use. Each leg keeps its own Charge and BalancePayment row so each apartment's
 balance stays attributed to its own owner; only the collection is shared.
@@ -47,9 +46,16 @@ balance stays attributed to its own owner; only the collection is shared.
     <a class="manage-hub-nav-link{% if active_section == 'deposit' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_deposit' reference=stay_reference %}">Security Deposit</a>
     {% endif %}
+    {% comment %}
+    Single-property keeps the established funnel: balance_details first (guest list + arrival &
+    departure + extras in one page), then its own checkout. A multi-property stay goes straight to
+    the combined checkout instead - balance_details is a per-apartment page, and every section it
+    bundles is already merged and reachable from this same sidebar, so routing a two-apartment
+    party through it would just show them one leg's guest list and extras again.
+    {% endcomment %}
     {% if show_pay_balance %}
     <a class="manage-hub-nav-link manage-hub-nav-link-cta"
-       href="{% url 'bookings:balance_details' reference=booking.reference %}">Pay Balance</a>
+       href="{% if stay_has_multiple_legs %}{% url 'bookings:balance_pay' reference=stay_reference %}{% else %}{% url 'bookings:balance_details' reference=booking.reference %}{% endif %}">Pay Balance</a>
     {% endif %}
     {% if show_cancel_booking %}
     <a class="manage-hub-nav-link manage-hub-nav-link-danger{% if active_section == 'cancel' %} manage-hub-nav-link-active{% endif %}"

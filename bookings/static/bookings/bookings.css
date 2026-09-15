@@ -206,6 +206,77 @@
     color: rgb(130, 130, 130);
 }
 
+/* Combined balance checkout for a multi-property stay (2026-09-15) - the guest pays one total,
+   but still sees which apartment each part of it belongs to. Deliberately reuses
+   .pay-extras-breakdown's proportions so the two stacked blocks read as one column. */
+.pay-legs-breakdown {
+    max-width: 420px;
+    margin: 24px auto 0;
+    text-align: left;
+    border-top: 1px solid #ebebeb;
+    padding-top: 16px;
+}
+
+.pay-legs-breakdown-title {
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+    margin: 0 0 8px;
+}
+
+.pay-legs-breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 6px 0;
+    font-size: 0.95rem;
+    color: rgb(80, 80, 80);
+}
+
+/* The currency-split fallback: two apartments frozen in different currencies can't share one
+   order, so each gets its own bordered panel and its own checkout button. */
+.pay-leg-panel {
+    max-width: 420px;
+    margin: 24px auto 0;
+    padding: 20px;
+    border: 1px solid rgb(214, 226, 238);
+    border-radius: 8px;
+    background: rgb(247, 250, 253);
+}
+
+.pay-leg-title {
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+    margin: 0 0 8px;
+}
+
+/* .reserve-form-submit is width:100% but content-box, so its 48px of horizontal padding is added
+   ON TOP of the container width - inside this panel's own padding that overflowed the border by
+   27px at phone width (measured, not guessed). Scoped here rather than adding box-sizing to
+   .reserve-form-submit itself, which is shared by every reserve form on the site. The button label
+   carries a property name, so it also has to be allowed to wrap. */
+.pay-leg-panel .pay-button {
+    box-sizing: border-box;
+    max-width: 100%;
+    white-space: normal;
+}
+
+/* Lead-in line above a stacked set of panels. (Previously used by the retired Wise block; kept
+   because the currency-split fallback needs the same "read this first" treatment.) */
+.pay-instructions-lead {
+    color: var(--primary-color);
+    font-weight: 600;
+    max-width: 420px;
+    margin: 20px auto 0;
+}
+
 .confirmation-message {
     max-width: 480px;
     margin: 0 auto;

@@ -20,15 +20,17 @@
         <h1>Pay your balance</h1>
 
         <div class="confirmation-reference">
-            <span class="confirmation-reference-label">Booking Reference</span>
-            <span class="confirmation-reference-value">{{ booking.reference }}</span>
+            <span class="confirmation-reference-label">{% if legs or currency_split_legs %}Party Reference{% else %}Booking Reference{% endif %}</span>
+            <span class="confirmation-reference-value">{% if legs or currency_split_legs %}{{ stay_reference }}{% else %}{{ booking.reference }}{% endif %}</span>
         </div>
 
         <div class="confirmation-summary">
+            {% if not legs and not currency_split_legs %}
             <div class="confirmation-chip">
                 <span class="confirmation-chip-label">Property</span>
                 <span class="confirmation-chip-value">{{ booking.property }}</span>
             </div>
+            {% endif %}
             <div class="confirmation-chip">
                 <span class="confirmation-chip-label">Check-in</span>
                 <span class="confirmation-chip-value">{{ booking.arrival_date|date:"D, d M Y" }}</span>
@@ -40,8 +42,49 @@
             </div>
         </div>
 
+        {% if currency_split_legs %}
+        {% comment %}
+        Two apartments frozen in different currencies (see BookingBalancePaymentView._render_currency_split)
+        - they can't be summed into one Revolut order, so each is paid on its own. Rare enough that
+        it's worth saying plainly rather than silently showing two buttons.
+        {% endcomment %}
+        <p class="pay-instructions pay-instructions-lead">
+            Your apartments were booked in different currencies, so they're paid separately.
+        </p>
+        {% for leg in currency_split_legs %}
+        <div class="pay-leg-panel">
+            <p class="pay-leg-title">{{ leg.booking.property }}</p>
+            <div class="pay-amount">
+                <span class="pay-amount-label">Amount due now</span>
+                <span class="pay-amount-value">{% if leg.currency == 'GBP' %}&pound;{% else %}&euro;{% endif %}{{ leg.amount|floatformat:2 }}</span>
+            </div>
+            {% if leg.payment_error %}
+            <div class="reserve-form-errors">
+                <p>We couldn't set up card payment for this apartment just now. Please reload this page to try again.</p>
+            </div>
+            {% else %}
+            <a class="reserve-form-submit pay-button" href="{{ leg.balance_payment.revolut_checkout_url }}">Pay {{ leg.booking.property }}</a>
+            <p class="pay-instructions">Opens Revolut's secure checkout, where you can pay by card or bank transfer in {{ leg.currency }}.</p>
+            {% endif %}
+        </div>
+        {% endfor %}
+
+        {% else %}
+
+        {% if legs %}
+        <div class="pay-legs-breakdown">
+            <p class="pay-legs-breakdown-title">Your Apartments</p>
+            {% for leg in legs %}
+            <div class="pay-legs-breakdown-row">
+                <span>{{ leg.booking.property }}</span>
+                <span>{% if leg.currency == 'GBP' %}&pound;{% else %}&euro;{% endif %}{{ leg.amount|floatformat:2 }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
         <div class="pay-amount">
-            <span class="pay-amount-label">Amount due now</span>
+            <span class="pay-amount-label">{% if legs %}Total due now{% else %}Amount due now{% endif %}</span>
             <span class="pay-amount-value">{% if pay_currency == 'GBP' %}&pound;{% else %}&euro;{% endif %}{{ pay_amount|floatformat:2 }}</span>
         </div>
 
@@ -62,6 +105,25 @@
         </div>
         {% endif %}
 
+        {% for leg in legs %}
+        {% if leg.extras.items %}
+        <div class="pay-extras-breakdown">
+            <p class="pay-extras-breakdown-title">Your Extras &mdash; {{ leg.booking.property }}</p>
+            {% for item in leg.extras.items %}
+            <div class="pay-extras-breakdown-row">
+                <span>{{ item.label }}</span>
+                <span>&euro;{{ item.price|floatformat:2 }}</span>
+            </div>
+            {% endfor %}
+            <div class="pay-extras-breakdown-row pay-extras-breakdown-total">
+                <span>Total</span>
+                <span>&euro;{{ leg.extras.total|floatformat:2 }}</span>
+            </div>
+            <p class="pay-extras-breakdown-note">Paid in cash at check-in - not included in the amount due now.</p>
+        </div>
+        {% endif %}
+        {% endfor %}
+
         {% if payment_error %}
         <div class="reserve-form-errors">
             <p>We couldn't set up card payment just now. Please reload this page to try again.</p>
@@ -69,7 +131,12 @@
 
         {% else %}
         <a class="reserve-form-submit pay-button" href="{{ balance_payment.revolut_checkout_url }}">Pay now</a>
-        <p class="pay-instructions">Opens Revolut's secure checkout, where you can pay by card or bank transfer in {{ pay_currency }}.</p>
+        <p class="pay-instructions">
+            Opens Revolut's secure checkout, where you can pay by card or bank transfer in {{ pay_currency }}.
+            {% if legs %}One payment covers all your apartments.{% endif %}
+        </p>
+        {% endif %}
+
         {% endif %}
     </div>
 

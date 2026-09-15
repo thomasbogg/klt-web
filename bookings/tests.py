@@ -2347,6 +2347,233 @@ class BookingBalancePaymentViewTests(TestCase):
         self.assertEqual(response.context['extras']['total'], Decimal('20.00'))
 
 
+class BalancePaymentMultiPropertyTests(TestCase):
+    """The last stage of the multi-property hub merge (2026-09-15): a grouped stay pays ONE
+    combined balance. Each apartment keeps its own Charge and BalancePayment row so each owner's
+    revenue stays attributed to their own booking - only the collection is shared, via a single
+    Revolut order whose id is stamped on every payable leg (klt-hooks' mark_balance_payment_paid()
+    updates by revolut_order_id with no LIMIT, so one payment settles them all)."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Balance Merge A', short_title='BMA')
+        self.property_b = Property.objects.create(title='Balance Merge B', short_title='BMB')
+        PropertySpec.objects.create(property=self.property_a, max_guests=4)
+        PropertySpec.objects.create(property=self.property_b, max_guests=4)
+        self.guest = Guest.objects.create(
+            first_name='Ines', last_name='Rocha', email='ines-bm@example.com',
+        )
+        self.start = date.today() + timedelta(days=120)
+        self.end = self.start + timedelta(days=7)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_leg(self.property_a, Decimal('400.00'))
+        self.leg_b = self._make_leg(self.property_b, Decimal('250.00'))
+        self.url = reverse('bookings:balance_pay', kwargs={'reference': self.group.reference})
+
+    def _make_leg(self, property, due_at_balance, currency='EUR'):
+        booking = Booking.objects.create(
+            property=property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+            reservation_group=self.group,
+        )
+        Charge.objects.create(
+            booking=booking, basic_rental=Decimal('600.00'), admin=Decimal('33.00'),
+            due_at_booking=Decimal('150.00'), due_at_balance=due_at_balance,
+            balance_due_date=self.start - timedelta(days=56), currency=currency,
+            gbp_conversion_rate=Decimal('0.8600'),
+        )
+        Payment.objects.create(booking=booking, provider='revolut', status='paid')
+        BalancePayment.objects.create(booking=booking, provider='revolut', status='pending')
+        return booking
+
+    def _mock_order(self, mock_post, order_id='order-combined'):
+        mock_post.return_value.status_code = 201
+        mock_post.return_value.json.return_value = {
+            'id': order_id, 'checkout_url': f'https://checkout.revolut.com/pay/{order_id}',
+        }
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_one_order_covers_both_legs_and_is_stamped_on_each(self, mock_post):
+        self._mock_order(mock_post)
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_post.call_count, 1)  # ONE order, not one per apartment
+        _args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['json']['amount'], 65000)  # 400.00 + 250.00, in minor units
+        self.assertEqual(kwargs['json']['currency'], 'EUR')
+
+        self.leg_a.balance_payment.refresh_from_db()
+        self.leg_b.balance_payment.refresh_from_db()
+        self.assertEqual(self.leg_a.balance_payment.revolut_order_id, 'order-combined')
+        self.assertEqual(self.leg_b.balance_payment.revolut_order_id, 'order-combined')
+        self.assertEqual(response.context['pay_amount'], Decimal('650.00'))
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_each_leg_keeps_its_own_charge_untouched(self, mock_post):
+        """The whole point of per-leg rows: combining the collection must not merge the money."""
+        self._mock_order(mock_post)
+        self.client.get(self.url)
+
+        self.leg_a.charges.refresh_from_db()
+        self.leg_b.charges.refresh_from_db()
+        self.assertEqual(self.leg_a.charges.due_at_balance, Decimal('400.00'))
+        self.assertEqual(self.leg_b.charges.due_at_balance, Decimal('250.00'))
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_a_cancelled_leg_is_never_charged_for(self, mock_post):
+        """Cancelling a leg only sets enquiry_status - BalancePayment stays 'pending' and
+        due_at_balance is left intact as the record of what the stay was priced at. So a cancelled
+        apartment looks payable on every other check, and must be excluded explicitly or the guest
+        is billed for an apartment they cancelled."""
+        self._mock_order(mock_post)
+        self.leg_b.enquiry_status = 'Cancelled by guest'
+        self.leg_b.save(update_fields=['enquiry_status'])
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.context['pay_amount'], Decimal('400.00'))  # leg_a only
+        _args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs['json']['amount'], 40000)
+        self.leg_b.balance_payment.refresh_from_db()
+        self.assertIsNone(self.leg_b.balance_payment.revolut_order_id)
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_a_leg_already_paid_is_excluded(self, mock_post):
+        self._mock_order(mock_post)
+        self.leg_a.balance_payment.status = 'paid'
+        self.leg_a.balance_payment.save(update_fields=['status'])
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.context['pay_amount'], Decimal('250.00'))
+        self.assertIsNone(response.context['legs'])  # only one payable leg left - no breakdown
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_a_leg_fully_covered_by_a_sibling_credit_is_excluded(self, mock_post):
+        """Stage D8: a cancelled sibling's deposit can wipe out a remaining leg's balance. The row
+        stays 'pending' but there is nothing to charge, and a zero-amount leg would be rejected by
+        Revolut outright."""
+        self._mock_order(mock_post)
+        charge = self.leg_b.charges
+        charge.sibling_cancellation_credit = Decimal('250.00')
+        charge.save(update_fields=['sibling_cancellation_credit'])
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.context['pay_amount'], Decimal('400.00'))
+        self.leg_b.balance_payment.refresh_from_db()
+        self.assertIsNone(self.leg_b.balance_payment.revolut_order_id)
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_a_partial_sibling_credit_reduces_the_combined_total(self, mock_post):
+        self._mock_order(mock_post)
+        charge = self.leg_b.charges
+        charge.sibling_cancellation_credit = Decimal('100.00')
+        charge.save(update_fields=['sibling_cancellation_credit'])
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.context['pay_amount'], Decimal('550.00'))  # 400 + (250 - 100)
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_every_leg_settled_redirects_away(self, mock_post):
+        for leg in (self.leg_a, self.leg_b):
+            leg.balance_payment.status = 'paid'
+            leg.balance_payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 302)
+        mock_post.assert_not_called()
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_legs_in_different_currencies_are_not_summed(self, mock_post):
+        """Nothing in the data model forces a group into one currency - Charge freezes its own per
+        leg. Two currencies can't go into one order, so each is paid separately rather than being
+        silently added together at the wrong total."""
+        mock_post.side_effect = [
+            type('R', (), {'status_code': 201,
+                           'json': staticmethod(lambda: {'id': 'o-eur', 'checkout_url': 'https://checkout.revolut.com/pay/o-eur'})})(),
+            type('R', (), {'status_code': 201,
+                           'json': staticmethod(lambda: {'id': 'o-gbp', 'checkout_url': 'https://checkout.revolut.com/pay/o-gbp'})})(),
+        ]
+        charge = self.leg_b.charges
+        charge.currency = 'GBP'
+        charge.save(update_fields=['currency'])
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.context.get('pay_amount'))
+        split = response.context['currency_split_legs']
+        self.assertEqual(len(split), 2)
+        self.assertEqual({leg['currency'] for leg in split}, {'EUR', 'GBP'})
+        # Separate orders, so the two rows must NOT share an id
+        self.leg_a.balance_payment.refresh_from_db()
+        self.leg_b.balance_payment.refresh_from_db()
+        self.assertNotEqual(
+            self.leg_a.balance_payment.revolut_order_id,
+            self.leg_b.balance_payment.revolut_order_id,
+        )
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_a_leg_reference_redirects_to_the_shared_checkout(self, mock_post):
+        self._mock_order(mock_post)
+        response = self.client.get(
+            reverse('bookings:balance_pay', kwargs={'reference': self.leg_a.reference})
+        )
+        self.assertRedirects(response, self.url, fetch_redirect_response=False)
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_balance_details_sends_a_grouped_stay_to_the_combined_checkout(self, mock_post):
+        """That page collects a guest list and extras for ONE apartment - handing a two-apartment
+        party a bill for both after filling it in would be wrong."""
+        self._mock_order(mock_post)
+        response = self.client.get(
+            reverse('bookings:balance_details', kwargs={'reference': self.leg_a.reference})
+        )
+        self.assertRedirects(response, self.url, fetch_redirect_response=False)
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_an_unpaid_deposit_on_any_leg_blocks_the_balance(self, mock_post):
+        self.leg_b.payment.status = 'pending'
+        self.leg_b.payment.save(update_fields=['status'])
+        response = self.client.get(self.url)
+        self.assertRedirects(
+            response, reverse('bookings:pay', kwargs={'reference': self.leg_b.reference}),
+            fetch_redirect_response=False,
+        )
+        mock_post.assert_not_called()
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_a_repriced_leg_regenerates_one_shared_order(self, mock_post):
+        """A reprice nulls that leg's own checkout URL. Without regeneration it would sit out of
+        step with the sibling still pointing at the old, now-wrong-amount order."""
+        self._mock_order(mock_post)
+        self.client.get(self.url)
+        self.assertEqual(mock_post.call_count, 1)
+
+        payment = self.leg_b.balance_payment
+        payment.revolut_order_id = None
+        payment.revolut_checkout_url = None
+        payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
+
+        self._mock_order(mock_post, order_id='order-regenerated')
+        self.client.get(self.url)
+
+        self.assertEqual(mock_post.call_count, 2)
+        self.leg_a.balance_payment.refresh_from_db()
+        self.leg_b.balance_payment.refresh_from_db()
+        self.assertEqual(self.leg_a.balance_payment.revolut_order_id, 'order-regenerated')
+        self.assertEqual(self.leg_b.balance_payment.revolut_order_id, 'order-regenerated')
+
+    @patch('libraries.banking.revolut.requests.post')
+    def test_an_existing_shared_order_is_not_recreated_on_revisit(self, mock_post):
+        self._mock_order(mock_post)
+        self.client.get(self.url)
+        self.client.get(self.url)
+        self.assertEqual(mock_post.call_count, 1)
+
+
 class ComputeTouristTaxTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Test Property TT', short_title='TESTTT')

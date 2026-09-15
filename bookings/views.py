@@ -142,9 +142,10 @@ def resolve_stay(request, reference):
     reference matches nothing at all, and redirect to the shared reference if the guest arrived via
     a single leg of a grouped stay (see merged_stay_redirect()).
 
-    Deliberately NOT used by the genuinely per-apartment views (Edit Dates, Pay Balance, the
-    deposit/balance checkouts, supplementary payments) - those act on one booking's own calendar
-    slot or charge and are supposed to be reached by its own reference."""
+    Deliberately NOT used by the views that genuinely act on ONE apartment: the deposit checkout
+    (each leg's deposit is taken separately, at booking time) and supplementary payments (raised
+    against the single leg whose price actually moved). The balance checkout DOES use this - a
+    grouped stay pays one combined balance, see BookingBalancePaymentView."""
     bookings = bookings_for_stay_reference(reference)
     if not bookings:
         raise Http404("No booking found for this reference.")
@@ -1077,6 +1078,15 @@ class BookingBalanceDetailsView(BookingFormMixin, View):
         booking = Booking.objects.filter(reference=reference).first()
         if booking is None:
             raise Http404("No booking found for this reference.")
+        # A multi-property party pays one combined balance (2026-09-15), so this per-apartment page
+        # is the wrong place for them entirely: it would collect a guest list and extras for ONE
+        # apartment and then hand them a bill covering both. Every section it bundles is already
+        # merged in the hub, so send them to the combined checkout. Reached here by an old emailed
+        # link or a bookmark - the sidebar and confirmation CTAs already route around it.
+        if booking.reservation_group_id:
+            return booking, redirect(
+                'bookings:balance_pay', reference=booking.reservation_group.reference,
+            )
         if not hasattr(booking, 'balance_payment'):
             return booking, redirect('bookings:confirmation', reference=reference)
         if not is_paid(booking):
@@ -1266,54 +1276,171 @@ class BookingBalancePaymentView(View):
     lands for real money: the balances still outstanding when it was retired were stamped
     provider='wise' at booking time, and adopt_revolut_provider() flips each one here the first
     time its guest returns. No hold/countdown here: the calendar slot was already locked in by the confirmed
-    deposit, so there's nothing to expire, and no cancel-and-restart flow either (nothing to release)."""
+    deposit, so there's nothing to expire, and no cancel-and-restart flow either (nothing to release).
+
+    2026-09-15 (the last stage of the multi-property hub merge - see project memory): a grouped
+    stay pays ONE combined balance. Every apartment keeps its own Charge and BalancePayment row, so
+    each owner's revenue stays attributed to their own booking - only the COLLECTION is shared: one
+    Revolut order for the summed balance_payable(), with the same revolut_order_id stamped onto
+    every payable leg's BalancePayment. klt-hooks' mark_balance_payment_paid() is a plain
+    `UPDATE ... WHERE revolut_order_id = %s` with no LIMIT, so that single payment settles every
+    leg at once, with no klt-hooks change - the same shared-order trick Tourist Tax (Stage D4) and
+    supplementary payments already use.
+
+    `payable` is a list of one for the overwhelming majority (single-property) case, so behaviour
+    there is unchanged."""
     template_name = 'bookings/balance_pay.html'
 
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
-            raise Http404("No booking found for this reference.")
-        if not hasattr(booking, 'balance_payment'):
-            return redirect('bookings:confirmation', reference=reference)
-        if not is_paid(booking):
-            return redirect('bookings:pay', reference=reference)
-        if is_balance_paid(booking):
-            return redirect('bookings:confirmation', reference=reference)
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
 
-        balance_payment = booking.balance_payment
-        charge = booking.charges
-        pay_amount, pay_currency = charge.due_at_balance_in_charge_currency()
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:pay', reference=unpaid.reference)
+
+        payable = self._payable_legs(bookings)
+        if not payable:
+            # Nothing left to collect anywhere on this stay - either every leg is settled, or a
+            # sibling cancellation credit has already covered whatever was outstanding.
+            return redirect('bookings:confirmation', reference=bookings[0].reference)
+
+        # A grouped stay is normally quoted in ONE currency (the legs are booked together, in the
+        # same session, off the same toggle), but nothing in the data model enforces it - Charge
+        # freezes its own currency per leg. Two currencies can't be summed into a single Revolut
+        # order, so refuse cleanly and per-leg rather than silently charging the wrong total.
+        currencies = {charge_currency for _booking, _bp, _amount, charge_currency in payable}
+        if len(currencies) > 1:
+            return self._render_currency_split(request, bookings, payable)
+
+        pay_amount = sum((amount for _booking, _bp, amount, _cur in payable), Decimal('0'))
+        pay_currency = currencies.pop()
+        primary_payment = payable[0][1]
+
+        for _booking, balance_payment, _amount, _cur in payable:
+            adopt_revolut_provider(balance_payment)
+
+        # Regenerate when the order is missing, OR when the legs' stored checkout URLs have drifted
+        # apart - a reprice (guest list/date change) nulls that leg's own URL, which would otherwise
+        # leave it out of step with the siblings still pointing at the old shared order.
+        needs_order = not primary_payment.revolut_checkout_url or any(
+            balance_payment.revolut_checkout_url != primary_payment.revolut_checkout_url
+            for _booking, balance_payment, _amount, _cur in payable
+        )
+        if needs_order:
+            self._create_revolut_order(bookings[0], payable, pay_amount, pay_currency)
+
+        primary_booking, _bp, _primary_amount, _cur = payable[0]
+        multi = len(payable) > 1
         context = {
-            'booking': booking,
-            'charge': charge,
-            'balance_payment': balance_payment,
+            'booking': primary_booking,
+            'charge': primary_booking.charges,
+            'balance_payment': primary_payment,
             'pay_amount': pay_amount,
             'pay_currency': pay_currency,
-            'extras': extras_summary(booking),
+            # Single-property keeps the one Extras block it always had; a merged stay carries
+            # extras per leg instead (see _leg_rows) so they're attributed to the right apartment.
+            'extras': None if multi else extras_summary(primary_booking),
+            'payment_error': not primary_payment.revolut_checkout_url,
+            'stay_reference': reference,
+            'legs': self._leg_rows(payable) if multi else None,
         }
-
-        adopt_revolut_provider(balance_payment)
-
-        if not balance_payment.revolut_checkout_url:
-            self._create_revolut_order(booking, balance_payment, pay_amount, pay_currency)
-
-        context['payment_error'] = not balance_payment.revolut_checkout_url
-
         return render(request, self.template_name, context)
 
-    def _create_revolut_order(self, booking, balance_payment, pay_amount, pay_currency):
+    def _payable_legs(self, bookings):
+        """(booking, balance_payment, amount, currency) per leg that still genuinely owes money.
+
+        Four separate reasons a leg drops out, all of which really happen:
+          - CANCELLED (Stage D8, partial cancellation): cancelling a leg only sets enquiry_status -
+            it deliberately leaves BalancePayment 'pending' and due_at_balance intact as the record
+            of what the stay was priced at. So a cancelled apartment looks payable on every other
+            check and MUST be excluded explicitly here, or the guest is charged the balance on an
+            apartment they cancelled.
+          - no BalancePayment row at all (a collapsed booking, paid in full at deposit time - see
+            create_booking(), which only creates the row when due_at_balance > 0);
+          - already paid;
+          - balance_payable() is zero because a cancelled sibling's deposit credit covered it
+            (Stage D8) - the row is still 'pending' but there is nothing left to charge, and
+            sending a zero-amount leg to Revolut would be rejected outright.
+        """
+        rows = []
+        for booking in bookings:
+            if is_cancelled(booking):
+                continue
+            balance_payment = getattr(booking, 'balance_payment', None)
+            if balance_payment is None or is_balance_paid(booking):
+                continue
+            amount, currency = booking.charges.due_at_balance_in_charge_currency()
+            if not amount or amount <= 0:
+                continue
+            rows.append((booking, balance_payment, amount, currency))
+        return rows
+
+    def _leg_rows(self, payable):
+        """Per-apartment breakdown for the combined checkout - the guest pays one total, but should
+        still see which apartment each part of it belongs to.
+
+        Extras ride along per leg rather than being summed: they're chosen per apartment and paid
+        in cash at check-in, not part of the amount being collected here, so showing one merged
+        Extras block (or worse, only the primary leg's, which is what this page did before it was
+        merged) would misattribute them.
+        """
+        return [
+            {
+                'booking': booking,
+                'amount': amount,
+                'currency': currency,
+                'extras': extras_summary(booking),
+            }
+            for booking, _balance_payment, amount, currency in payable
+        ]
+
+    def _render_currency_split(self, request, bookings, payable):
+        """Two legs frozen in different currencies - can't be combined into one order. Renders the
+        per-apartment amounts with their own checkout links instead of a single total, so the guest
+        can still pay, just in two steps. Deliberately a clean fallback rather than an error page:
+        nothing is wrong with the booking, it just can't be collected in one go."""
+        legs = []
+        for booking, balance_payment, amount, currency in payable:
+            adopt_revolut_provider(balance_payment)
+            if not balance_payment.revolut_checkout_url:
+                self._create_revolut_order(
+                    booking, [(booking, balance_payment, amount, currency)], amount, currency,
+                )
+            legs.append({
+                'booking': booking, 'amount': amount, 'currency': currency,
+                'balance_payment': balance_payment,
+                'payment_error': not balance_payment.revolut_checkout_url,
+            })
+        primary_booking, primary_payment, _amount, _cur = payable[0]
+        return render(request, self.template_name, {
+            'booking': primary_booking,
+            'charge': primary_booking.charges,
+            'balance_payment': primary_payment,
+            'stay_reference': (
+                bookings[0].reservation_group.reference if bookings[0].reservation_group_id
+                else bookings[0].reference
+            ),
+            'currency_split_legs': legs,
+        })
+
+    def _create_revolut_order(self, primary_booking, payable, pay_amount, pay_currency):
         order = Revolut(secretKey=env_settings.REVOLUT_API_SECRET_KEY).payment
         order.amount = int(pay_amount * 100)  # Revolut wants minor units (cents/pence), not major units
         order.currency = pay_currency
-        order.description = f"Balance for booking {booking.reference}"
-        order.customerEmail = booking.guest.email
-        order.customerName = f"{booking.guest.first_name} {booking.guest.last_name}".strip()
+        references = ', '.join(booking.reference for booking, _bp, _amount, _cur in payable)
+        order.description = f"Balance for booking {references}"
+        order.customerEmail = primary_booking.guest.email
+        order.customerName = f"{primary_booking.guest.first_name} {primary_booking.guest.last_name}".strip()
         order.create()
 
         if order.id and order.has('checkout_url'):
-            balance_payment.revolut_order_id = order.id
-            balance_payment.revolut_checkout_url = order.checkoutUrl
-            balance_payment.save()
+            # The SAME order id on every leg is the whole mechanism - see this class's docstring.
+            for _booking, balance_payment, _amount, _cur in payable:
+                balance_payment.revolut_order_id = order.id
+                balance_payment.revolut_checkout_url = order.checkoutUrl
+                balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
         # else: order.create() already logged the failure via logerror(); leave revolut_checkout_url
         # unset so payment_error renders and the guest can retry on reload.
 
@@ -1564,10 +1691,24 @@ def _manage_nav_context(booking, active_section, all_bookings=None):
         # function doesn't receive) since it only depends on whether THIS booking belongs to a group,
         # not on which reference the current page happened to be reached through - see the Holiday
         # Info sections (Amenities/Location/Local Rules/Last Days/FAQ/Local Guide) and the "Booking"
-        # link itself, all switched onto this 2026-09-14; a section not yet merged (Guest List,
-        # Extras, etc.) keeps using booking.reference directly in the sidebar for now.
+        # link itself, all switched onto this 2026-09-14. Every guest-facing section now uses it.
         'stay_reference': booking.reservation_group.reference if booking.reservation_group_id else booking.reference,
-        'show_pay_balance': hasattr(booking, 'balance_payment') and not is_balance_paid(booking) and not cancelled,
+        # Whether this stay is more than one apartment - drives the Pay Balance link's target (see
+        # _manage_sidebar.html). Needs the real leg list, not booking.reservation_group_id: a group
+        # that has had all but one apartment cancelled is still a "group" by id, but there's only
+        # one leg left to pay for and the ordinary single-property funnel is the right one.
+        'stay_has_multiple_legs': len([leg for leg in legs if not is_cancelled(leg)]) > 1,
+        # Any NOT-CANCELLED leg with a balance still outstanding, not just the primary (2026-09-15,
+        # alongside the combined balance checkout): the legs settle together now, but they can still
+        # fall out of step - a collapsed leg has no BalancePayment row at all, and a partial
+        # cancellation can leave one apartment owing nothing. Hiding the CTA because the FIRST leg
+        # happens to be settled (or cancelled) would strand a real outstanding balance on the second
+        # with no way to reach it. Matches BookingBalancePaymentView._payable_legs() exactly - if
+        # the two ever disagree, the guest either sees a dead CTA or loses access to a live one.
+        'show_pay_balance': any(
+            not is_cancelled(leg) and hasattr(leg, 'balance_payment') and not is_balance_paid(leg)
+            for leg in legs
+        ),
         'show_cancel_booking': (
             not cancelled
             and booking.enquiry_source not in env_settings.PLATFORMS

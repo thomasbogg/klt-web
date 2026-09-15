@@ -126,8 +126,18 @@ show_security_deposit_row both false), which would otherwise render as an empty 
 </p>
 {% endif %}
 
+{% comment %}
+A leg of a multi-property party pays ONE combined balance covering every apartment (2026-09-15,
+see BookingBalancePaymentView), so it goes to that shared checkout rather than this one leg's own
+balance_details page - which would collect extras for a single apartment and then charge for all
+of them. Single-property is unchanged.
+{% endcomment %}
 {% if balance_due and not hide_manage_link %}
+{% if booking.reservation_group_id %}
+<a class="reserve-form-submit pay-button" href="{% url 'bookings:balance_pay' reference=booking.reservation_group.reference %}">Pay Balance</a>
+{% else %}
 <a class="reserve-form-submit pay-button" href="{% url 'bookings:balance_details' reference=booking.reference %}">Choose Extras &amp; Pay Balance</a>
+{% endif %}
 {% endif %}
 
 {% if not hide_manage_link %}
