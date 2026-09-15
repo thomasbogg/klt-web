@@ -1,0 +1,22 @@
+{% comment %}
+Progress checklist chips (2026-09-16, per Thomas) - an at-a-glance done/not-done marker per
+actionable section, one per bookings.views._hub_progress_items() entry. Shared by both
+manage_hub.html welcome variants (platform "Getting ready for your stay" and direct "What's
+next") - originally its own standalone block between the confirmation summary and that panel, but
+merged inside it (also per Thomas) since the chips are really just a fast mirror of the very list
+that follows underneath them, not a distinct feature of their own. Deliberately narrower than the
+sidebar's own section list: Location & Check-in, FAQ, Local Guide etc. are read-only reference
+pages with nothing to "complete", so they're left off rather than sitting permanently unchecked.
+{% endcomment %}
+<div class="hub-progress">
+    {% for item in progress_items %}
+    <div class="hub-progress-item{% if item.done %} hub-progress-item-done{% endif %}">
+        {% if item.done %}
+        <svg class="hub-progress-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5l10 -10"/></svg>
+        {% else %}
+        <svg class="hub-progress-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6l-12 12"/></svg>
+        {% endif %}
+        <span class="hub-progress-label">{{ item.label }}</span>
+    </div>
+    {% endfor %}
+</div>

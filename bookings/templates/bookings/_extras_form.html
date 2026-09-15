@@ -23,7 +23,25 @@ when this renders more than once on a page. Empty everywhere else.
 already says extras are paid in cash at check-in, so no individual section repeats that line right
 underneath it - each keeps only whatever's actually unique to that section. details.html has no
 such page-level note, so it leaves this unset and every section keeps its own full line.
+
+`show_no_extras_option`: set only by manage_extras.html (single-property and per-apartment alike)
+- the Manage hub's own "I confirm I don't want any extras" checkbox, feeding
+Extra.no_extras_confirmed so the hub's progress checklist can tell "genuinely nothing wanted" apart
+from "hasn't looked yet" (2026-09-16, per Thomas). Rendered as its own leading `.details-section`
+deliberately, not a bare label above the sections - it's what the existing `:first-of-type`
+divider-spacing rules key off, so it inherits the correct zero-margin-top gap for free instead of
+needing a new CSS rule, and pushes Cot & High Chair down into the normal inter-section gap.
+balance_details.html and details.html leave this unset, since neither shows a hub-style checklist.
 {% endcomment %}
+{% if show_no_extras_option %}
+<section class="details-section">
+    <label class="details-checkbox-label details-checkbox-label-primary">
+        <input type="checkbox" name="no_extras_confirmed" {% if no_extras_confirmed %}checked{% endif %}>
+        I confirm I don't want any extras
+    </label>
+</section>
+{% endif %}
+
 <section class="details-section{% if not show_cot_high_chair %} details-section-hidden{% endif %}" data-cot-high-chair-section>
     <h2 class="details-section-title">Cot &amp; High Chair{% if extras_property %} &mdash; {{ extras_property }}{% endif %}</h2>
     {% if extras_windows.cot_high_chair %}

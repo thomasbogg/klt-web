@@ -316,13 +316,19 @@ class BookingFormMixin:
     Extras move to the balance stage instead - see BalancePayment's docstring). All cash-at-checkin
     - never touches Charge/Payment/BalancePayment."""
 
-    def _save_extras(self, booking, post_data):
+    def _save_extras(self, booking, post_data, save_no_extras_confirmed=False):
         """Welcome Pack + RequestType selections are cash-at-checkin (see the plan this was built
         from) so, unlike the guest list, they never touch Charge/Payment - just persisted as-is.
         The pack's food/drinks choices are only meaningful (and only stored) when welcome_pack is
         actually wanted - a fixed pair of picks, not a freeform swap request (see the memory this
         was rebuilt from after the first version's freeform text field turned out to invite too
-        much back-and-forth for a two-person operation)."""
+        much back-and-forth for a two-person operation).
+
+        save_no_extras_confirmed: only BookingManageExtrasView (the Manage hub) actually renders
+        the "I confirm I don't want any extras" checkbox this flag guards - BookingDetailsView and
+        BookingBalanceDetailsView share this same method but don't show that control, so without
+        this guard their POSTs (which never carry the field) would silently reset it to False every
+        time a guest saved extras from either of those older, pre-hub pages."""
         extra, _ = Extra.objects.get_or_create(booking=booking)
         settings = ExtrasSettings.load()
         # An extra past its own cutoff keeps whatever is already stored - the form doesn't render
@@ -389,6 +395,10 @@ class BookingFormMixin:
             if (bool(extra.mid_stay_clean), extra.mid_stay_clean_date) != previous:
                 update_fields += ['mid_stay_clean', 'mid_stay_clean_date']
 
+        if save_no_extras_confirmed:
+            extra.no_extras_confirmed = post_data.get('no_extras_confirmed') == 'on'
+            update_fields.append('no_extras_confirmed')
+
         if update_fields:
             extra.save(update_fields=update_fields)
 
@@ -430,6 +440,7 @@ class BookingFormMixin:
             late_checkout = post_data.get('late_checkout') == 'on'
             late_checkout_time = post_data.get('late_checkout_time', '').strip()
             mid_stay_clean = post_data.get('mid_stay_clean') == 'on'
+            no_extras_confirmed = post_data.get('no_extras_confirmed') == 'on'
             quantities = {t.id: post_data.get(f'request_qty_{t.id}', '0').strip() or '0' for t in active_types}
             notes = {t.id: post_data.get(f'request_note_{t.id}', '').strip() for t in active_types}
         else:
@@ -447,6 +458,7 @@ class BookingFormMixin:
                 extra.late_checkout_time.strftime('%H:%M') if extra and extra.late_checkout_time else ''
             )
             mid_stay_clean = bool(extra and extra.mid_stay_clean)
+            no_extras_confirmed = bool(extra and extra.no_extras_confirmed)
             existing = {r.request_type_id: r for r in booking.requested_extras.all()}
             quantities = {t.id: str(existing[t.id].quantity) if t.id in existing else '0' for t in active_types}
             notes = {t.id: existing[t.id].note if t.id in existing else '' for t in active_types}
@@ -505,6 +517,7 @@ class BookingFormMixin:
             # _parse_mid_stay_clean's docstring for the same rule enforced server-side on save,
             # not just this display gate.
             'show_mid_stay_clean': nights >= settings.mid_stay_clean_minimum_nights,
+            'no_extras_confirmed': no_extras_confirmed,
             'request_rows': [
                 {'request_type': t, 'quantity': quantities[t.id], 'note': notes[t.id],
                  'open': windows['request_types'].get(t.id, False)}
@@ -1784,6 +1797,74 @@ def _manage_nav_context(booking, active_section, all_bookings=None):
     }
 
 
+def _hub_progress_items(bookings):
+    """Checklist state for the Manage Booking hub landing page's progress strip - one item per
+    actionable section, each done once the guest has genuinely done something there (not
+    "everything possible"). Deliberately read-only: no TouristTax/Extra/etc. row gets created just
+    because a guest loaded the landing page - see is_tourist_tax_paid()'s own docstring on why "no
+    row yet" has to stay readable as "hasn't visited", not silently turned into "nothing due" by a
+    side-effecting helper call from here (_tourist_tax_context() does exactly that side effect, so
+    this deliberately doesn't call it).
+
+    - Contact Details: an email on file. Shared Guest row (see
+      BookingManageContactDetailsView's own docstring) - checking the primary leg is enough, every
+      leg points at the same guest.
+    - Arrival & Departure: `time` or `time_unknown` set on the primary leg's Arrival - `method`
+      always has a default (Flight/Faro) so alone it can't tell "guest told us" from "never
+      visited". One shared form saves identically to every leg (see
+      BookingManageArrivalDepartureView.post()), so the primary leg alone is sufficient.
+    - Optional Extras: every leg has either a real extra requested or the guest's own "I don't
+      want any extras" confirmation (Extra.no_extras_confirmed) - Extra is per-apartment, not
+      stay-merged like the two sections above, so every leg is checked individually.
+    - Guest Registrations: every current party member's registration is complete - stay-wide,
+      per the 2026-09-16 merge into one continuous guest sequence.
+    - Tourist Tax (only included when in season, same guard the sidebar's own explainer bullet
+      uses): nothing outstanding on any leg whose party is already known.
+    """
+    primary = bookings[0]
+
+    arrival = getattr(primary, 'arrival', None)
+    arrival_departure_done = bool(arrival and (arrival.time or arrival.time_unknown))
+
+    extras_done = True
+    for booking in bookings:
+        extra = getattr(booking, 'extras', None)
+        has_extra = bool(extra and (
+            extra.welcome_pack or extra.cot or extra.high_chair
+            or extra.late_checkout or extra.mid_stay_clean
+        )) or booking.airport_transfers.exists() or booking.requested_extras.exists()
+        if not (has_extra or (extra and extra.no_extras_confirmed)):
+            extras_done = False
+            break
+
+    guests = [guest for booking in bookings for guest in booking.party.select_related('registration').all()]
+    registrations_done = bool(guests) and all(
+        getattr(guest, 'registration', None) and guest.registration.is_complete() for guest in guests
+    )
+
+    items = [
+        {'label': 'Contact Details', 'done': bool(primary.guest.email)},
+        {'label': 'Arrival & Departure', 'done': arrival_departure_done},
+        {'label': 'Optional Extras', 'done': extras_done},
+        {'label': 'Guest Registrations', 'done': registrations_done},
+    ]
+
+    if not is_cancelled(primary) and tourist_tax_in_season(primary):
+        booking_settings = BookingSettings.load()
+        tourist_tax_done = True
+        for booking in bookings:
+            if not booking.party.exists():
+                tourist_tax_done = False
+                break
+            total, _qualifying_guests, _nights = compute_tourist_tax(booking, booking_settings)
+            if total and not is_tourist_tax_paid(booking):
+                tourist_tax_done = False
+                break
+        items.append({'label': 'Tourist Tax', 'done': tourist_tax_done})
+
+    return items
+
+
 def _manage_hub_context(bookings):
     """Context for the hub's landing ("Booking") section. `bookings` is every leg of the stay
     (bookings_for_stay_reference()) - one for a normal single-property booking (unchanged output,
@@ -1813,6 +1894,7 @@ def _manage_hub_context(bookings):
     if len(bookings) > 1:
         context['legs'] = [booking_confirmation_context(booking) for booking in bookings]
         context['stay_reference'] = primary.reservation_group.reference
+    context['progress_items'] = _hub_progress_items(bookings)
     return context
 
 
@@ -2971,7 +3053,7 @@ class BookingManageExtrasView(BookingFormMixin, View):
             return render(request, self.template_name, context)
 
         with transaction.atomic():
-            self._save_extras(booking, request.POST)
+            self._save_extras(booking, request.POST, save_no_extras_confirmed=True)
             if single:
                 self._save_transfers(booking, transfer_rows)
 

@@ -3519,6 +3519,70 @@ class BookingManageHubViewMultiPropertyTests(TestCase):
         self.assertEqual(response.status_code, 200)
 
 
+class BookingManageHubProgressChecklistMultiPropertyTests(TestCase):
+    """_hub_progress_items() (views.py) across a multi-property stay - Optional Extras is checked
+    per apartment (Extra isn't stay-merged, unlike the sections below), Guest Registrations spans
+    every leg's party as one continuous sequence (per the 2026-09-16 merge)."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Progress Merge Property A', short_title='PMPA')
+        self.property_b = Property.objects.create(title='Progress Merge Property B', short_title='PMPB')
+        self.guest = Guest.objects.create(first_name='Ines', last_name='Rocha', email='ines-pm@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a)
+        self.leg_b = self._make_booking(self.property_b)
+        self.lead_a = BookingGuest.objects.create(booking=self.leg_a, first_name='Ines', last_name='Rocha', age=30, is_lead=True)
+        self.lead_b = BookingGuest.objects.create(booking=self.leg_b, first_name='Paulo', last_name='Rocha', age=32, is_lead=True)
+        self.url = reverse('bookings:manage_hub', kwargs={'reference': self.group.reference})
+
+    def _make_booking(self, prop):
+        booking = Booking.objects.create(
+            property=prop, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        Charge.objects.create(booking=booking, currency='EUR')
+        Payment.objects.create(booking=booking, provider='wise', status='paid')
+        return booking
+
+    def _progress(self, response):
+        return {item['label']: item['done'] for item in response.context['progress_items']}
+
+    def test_extras_needs_every_leg_covered(self):
+        Extra.objects.create(booking=self.leg_a, welcome_pack=True)
+        response = self.client.get(self.url)
+        self.assertFalse(self._progress(response)['Optional Extras'])
+
+        Extra.objects.create(booking=self.leg_b, no_extras_confirmed=True)
+        response = self.client.get(self.url)
+        self.assertTrue(self._progress(response)['Optional Extras'])
+
+    def test_guest_registrations_needs_every_legs_party_complete(self):
+        GuestRegistration.objects.create(booking_guest=self.lead_a, has_nif=True, nif_number='123456789')
+        response = self.client.get(self.url)
+        # leg_b's lead has no registration at all yet
+        self.assertFalse(self._progress(response)['Guest Registrations'])
+
+        GuestRegistration.objects.create(
+            booking_guest=self.lead_b, has_nif=False, birth_date=date(1990, 1, 1),
+            place_of_birth='PT', nationality='PT', country_of_residence='PT',
+            id_type=GuestRegistration.IDType.PASSPORT, id_number='X1', issued_by='PT',
+        )
+        response = self.client.get(self.url)
+        self.assertTrue(self._progress(response)['Guest Registrations'])
+
+    def test_contact_details_and_arrival_departure_check_the_primary_leg_only(self):
+        # Both are stay-merged (shared Guest row; one Arrival & Departure form saved to every
+        # leg) - no need to loop every leg for these two.
+        Arrival.objects.create(booking=self.leg_a, method=TravelMethod.FLIGHT_FARO, time=time(14, 0))
+        response = self.client.get(self.url)
+        progress = self._progress(response)
+        self.assertTrue(progress['Contact Details'])
+        self.assertTrue(progress['Arrival & Departure'])
+
+
 class ManageHubHolidayInfoMultiPropertyTests(TestCase):
     """Stage B of the multi-property manage-hub merge (2026-09-14, see project memory) - the
     Holiday Info sidebar group. Amenities and Last Days & Check-out are genuinely per-property, so
@@ -3960,6 +4024,140 @@ class BookingManageHubViewTests(TestCase):
         self.assertContains(response, 'Security deposit')
 
 
+class BookingManageHubProgressChecklistTests(TestCase):
+    """_hub_progress_items() (views.py) - the hub landing page's progress checklist. See that
+    function's own docstring for exactly what "done" means per item."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Progress Property', short_title='PROGP')
+        PropertySpec.objects.create(property=self.property, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Rita', last_name='Alves', email='')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        Price.objects.create(
+            property=self.property, start_date=self.start, end_date=self.end,
+            rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+        )
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.lead = BookingGuest.objects.create(
+            booking=self.booking, first_name='Rita', last_name='Alves', age=30, is_lead=True)
+        Charge.objects.create(booking=self.booking, currency='EUR')
+        self.url = reverse('bookings:manage_hub', kwargs={'reference': self.booking.reference})
+
+    def _progress(self, response):
+        return {item['label']: item['done'] for item in response.context['progress_items']}
+
+    def test_fresh_booking_shows_nothing_done(self):
+        response = self.client.get(self.url)
+        progress = self._progress(response)
+        self.assertFalse(progress['Contact Details'])
+        self.assertFalse(progress['Arrival & Departure'])
+        self.assertFalse(progress['Optional Extras'])
+        self.assertFalse(progress['Guest Registrations'])
+
+    def test_contact_details_done_once_email_is_set(self):
+        self.guest.email = 'rita@example.com'
+        self.guest.save(update_fields=['email'])
+        response = self.client.get(self.url)
+        self.assertTrue(self._progress(response)['Contact Details'])
+
+    def test_arrival_departure_done_once_a_time_is_given(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time=time(14, 0))
+        response = self.client.get(self.url)
+        self.assertTrue(self._progress(response)['Arrival & Departure'])
+
+    def test_arrival_departure_not_done_from_the_default_method_alone(self):
+        # method always has a default (Flight/Faro), so an Arrival row existing on its own
+        # mustn't read as "done" - only a real time (or time_unknown) proves the guest was here.
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO)
+        response = self.client.get(self.url)
+        self.assertFalse(self._progress(response)['Arrival & Departure'])
+
+    def test_arrival_departure_done_with_time_unknown_ticked(self):
+        Arrival.objects.create(booking=self.booking, method=TravelMethod.FLIGHT_FARO, time_unknown=True)
+        response = self.client.get(self.url)
+        self.assertTrue(self._progress(response)['Arrival & Departure'])
+
+    def test_extras_done_once_a_real_extra_is_added(self):
+        Extra.objects.create(booking=self.booking, welcome_pack=True)
+        response = self.client.get(self.url)
+        self.assertTrue(self._progress(response)['Optional Extras'])
+
+    def test_extras_done_via_the_opt_out_checkbox(self):
+        Extra.objects.create(booking=self.booking, no_extras_confirmed=True)
+        response = self.client.get(self.url)
+        self.assertTrue(self._progress(response)['Optional Extras'])
+
+    def test_extras_not_done_with_a_blank_extra_row_and_no_opt_out(self):
+        Extra.objects.create(booking=self.booking)
+        response = self.client.get(self.url)
+        self.assertFalse(self._progress(response)['Optional Extras'])
+
+    def test_guest_registrations_done_once_the_only_guest_is_complete(self):
+        GuestRegistration.objects.create(booking_guest=self.lead, has_nif=True, nif_number='123456789')
+        response = self.client.get(self.url)
+        self.assertTrue(self._progress(response)['Guest Registrations'])
+
+    def test_guest_registrations_not_done_when_incomplete(self):
+        GuestRegistration.objects.create(booking_guest=self.lead)
+        response = self.client.get(self.url)
+        self.assertFalse(self._progress(response)['Guest Registrations'])
+
+    def test_tourist_tax_omitted_from_the_checklist_out_of_season(self):
+        settings = BookingSettings.load()
+        settings.tourist_tax_season_start_month = 4
+        settings.tourist_tax_season_end_month = 10
+        settings.save()
+        self.booking.arrival_date = date(2027, 12, 1)
+        self.booking.departure_date = date(2027, 12, 8)
+        self.booking.save(update_fields=['arrival_date', 'departure_date'])
+        response = self.client.get(self.url)
+        self.assertNotIn('Tourist Tax', self._progress(response))
+
+    def test_tourist_tax_not_done_when_due_and_unpaid(self):
+        settings = BookingSettings.load()
+        settings.tourist_tax_min_age = 13
+        settings.tourist_tax_season_start_month = 1
+        settings.tourist_tax_season_end_month = 12
+        settings.save()
+        response = self.client.get(self.url)
+        self.assertFalse(self._progress(response)['Tourist Tax'])
+
+    def test_tourist_tax_done_once_paid(self):
+        settings = BookingSettings.load()
+        settings.tourist_tax_min_age = 13
+        settings.tourist_tax_season_start_month = 1
+        settings.tourist_tax_season_end_month = 12
+        settings.save()
+        TouristTax.objects.create(booking=self.booking, total=Decimal('14.00'), status='paid')
+        response = self.client.get(self.url)
+        self.assertTrue(self._progress(response)['Tourist Tax'])
+
+    def test_tourist_tax_done_when_nothing_qualifies(self):
+        # No guest over the minimum age - genuinely nothing due, not merely "not visited yet".
+        settings = BookingSettings.load()
+        settings.tourist_tax_min_age = 99
+        settings.tourist_tax_season_start_month = 1
+        settings.tourist_tax_season_end_month = 12
+        settings.save()
+        response = self.client.get(self.url)
+        self.assertTrue(self._progress(response)['Tourist Tax'])
+
+    def test_reading_the_checklist_creates_no_touristtax_row(self):
+        # is_tourist_tax_paid()'s own docstring: "no row yet" must stay readable as "hasn't
+        # visited" - the checklist must never create one just by being displayed.
+        settings = BookingSettings.load()
+        settings.tourist_tax_season_start_month = 1
+        settings.tourist_tax_season_end_month = 12
+        settings.save()
+        self.client.get(self.url)
+        self.assertFalse(TouristTax.objects.filter(booking=self.booking).exists())
+
+
 class BookingManageGuestAddViewTests(TestCase):
     def setUp(self):
         self.property = Property.objects.create(title='Test Property GAD', short_title='TESTGAD')
@@ -4392,6 +4590,21 @@ class BookingManageExtrasViewTests(TestCase):
             response = self.client.post(self.url, {'mid_stay_clean': 'on', 'welcome_pack': 'on'})
         self.assertRedirects(response, f"{self.url}?extras_saved={self.booking.reference}", fetch_redirect_response=False)
         self.assertEqual((tasks.call_count, freshen.call_count, memo.call_count), (0, 0, 0))
+
+    def test_get_prefills_no_extras_confirmed_checkbox(self):
+        Extra.objects.create(booking=self.booking, no_extras_confirmed=True)
+        response = self.client.get(self.url)
+        self.assertTrue(response.context['no_extras_confirmed'])
+
+    def test_post_ticking_no_extras_confirmed_persists_it(self):
+        response = self.client.post(self.url, {'no_extras_confirmed': 'on'})
+        self.assertRedirects(response, f"{self.url}?extras_saved={self.booking.reference}", fetch_redirect_response=False)
+        self.assertTrue(Extra.objects.get(booking=self.booking).no_extras_confirmed)
+
+    def test_post_omitting_no_extras_confirmed_unsets_a_previous_yes(self):
+        Extra.objects.create(booking=self.booking, no_extras_confirmed=True)
+        self.client.post(self.url, {})
+        self.assertFalse(Extra.objects.get(booking=self.booking).no_extras_confirmed)
 
 
 class BookingManageGuestRegistrationsViewTests(TestCase):
@@ -5508,6 +5721,15 @@ class ManageHubExtrasMultiPropertyTests(TestCase):
             self.assertNotIn(
                 f'action="{reverse("bookings:manage_extras", kwargs={"reference": leg.reference})}"', content,
             )
+
+    def test_no_extras_confirmed_is_saved_per_apartment_not_the_whole_stay(self):
+        """Extra isn't stay-merged like Arrival & Departure or Guest Registrations - each
+        apartment has its own form/Save button, so ticking the checkbox on one leg must not
+        touch the other."""
+        self.client.post(self.url, {'leg_reference': self.leg_a.reference, 'no_extras_confirmed': 'on'})
+        self.leg_a.refresh_from_db()
+        self.assertTrue(self.leg_a.extras.no_extras_confirmed)
+        self.assertFalse(getattr(self.leg_b, 'extras', None) and self.leg_b.extras.no_extras_confirmed)
 
 
 class ManageHubGuestsMultiPropertyTests(TestCase):

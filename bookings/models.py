@@ -1208,6 +1208,14 @@ class Extra(models.Model):
     )
     extra_nights = models.BooleanField(blank=True, null=True)
 
+    # Guest confirmation
+    no_extras_confirmed = models.BooleanField(
+        default=False,
+        help_text="Guest ticked 'I confirm I don't want any extras' on the Manage Booking hub - "
+                  "lets the hub's progress checklist tell 'genuinely nothing wanted' apart from "
+                  "'hasn't looked yet', since this section has no other way to reach a done state.",
+    )
+
     # Payment
     owner_is_paying = models.BooleanField(blank=True, null=True)
 

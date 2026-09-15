@@ -886,6 +886,56 @@ button.manage-hub-nav-link {
     text-align: center;
 }
 
+/* Hub landing page's progress checklist (2026-09-16) - reuses the same status-color vocabulary as
+   the availability calendar (--status-available-* and --status-booked-* variables) rather than
+   introducing new colours, so "done"/"not done" reads consistently with the rest of the site.
+   Lives inside the
+   "What's next"/"Getting ready for your stay" panel, directly under its (left-aligned) heading -
+   left-aligned (not centered) to match that panel's own text-align. margin-top: 24px here, not a
+   margin-top: 8px "on top of" .details-section-title's 16px margin-bottom as first tried - adjacent
+   block margins collapse to the larger of the two, not their sum, so an 8px addition against a
+   16px neighbour was silently absorbed (2026-09-16, per Thomas: "a little more space between the
+   header and the chips" - the previous attempt visibly hadn't moved). 24px is the real, larger
+   value the collapse settles on, not extra room stacked on the header's own 16px gap - every other
+   section-title-to-content pairing on this page still uses that unchanged 16px.
+
+   Wraps to a second row rather than forcing one line (tried nowrap + overflow-x, matching the
+   mobile sidebar nav's own pattern, but it clipped Tourist Tax with no visible scroll affordance
+   at Thomas's real window width - reverted, 2026-09-16, per Thomas: "this is arguably worse").
+   Still, five chips only missed fitting on one row by ~12px at that width (measured via
+   getBoundingClientRect, not eyeballed) - the gap/padding below are trimmed just enough to close
+   that, wrap staying on as a safety net for a narrower window rather than clipping again. */
+.hub-progress {
+    display: flex;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 24px;
+    margin-bottom: 32px;
+}
+
+.hub-progress-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--status-booked-bg, #fbe4e4);
+    color: var(--status-booked-color, #c1554f);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-family: var(--secondary-font);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.hub-progress-item-done {
+    background: var(--status-available-bg, #e5f4ec);
+    color: var(--status-available-color, #2f8f5b);
+}
+
+.hub-progress-icon {
+    flex: 0 0 auto;
+}
+
 @media (max-width: 768px) {
     .manage-hub-layout {
         flex-direction: column;
