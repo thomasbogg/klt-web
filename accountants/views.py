@@ -1,7 +1,6 @@
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth import views as auth_views
-from django.http import Http404
 from django.shortcuts import render
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
@@ -9,9 +8,9 @@ from django.utils.decorators import method_decorator
 from django.views import View
 
 from accountants.permissions import accountant_login_required
-from finance.models import Memo, PayoutRecord
+from finance.models import OwnerInvoice
 from properties.models import Property
-from staff.reports import OWNER_SAFE_REPORT_COLUMNS, booking_report_rows, report_totals
+from staff.reports import ACCOUNTANT_REPORT_COLUMNS, ZERO, booking_report_rows, report_totals
 from staff.utils import last_day_of_month, parsed_date
 
 
@@ -71,11 +70,34 @@ class AccountantHomeView(View):
 @method_decorator(accountant_login_required, name='dispatch')
 class AccountantReportView(View):
     """The accountant-facing booking-listing report - same staff.reports.py::booking_report_rows
-    row-builder and OWNER_SAFE_REPORT_COLUMNS the Owner Suite's own OwnerReportView uses, scoped
-    across every property this accountant looks after (potentially spanning several owners)
-    rather than a single owner's properties."""
+    row-builder the Owner Suite's own OwnerReportView uses, but ACCOUNTANT_REPORT_COLUMNS rather
+    than OWNER_SAFE_REPORT_COLUMNS (accountants need to see Commission, unlike owners - see that
+    tuple's own comment), scoped across every property this accountant looks after (potentially
+    spanning several owners) rather than a single owner's properties.
+
+    Figures on top of booking_report_rows' own output, computed here rather than added to the
+    shared row-builder since they're accountant-report-specific, not something staff/owner
+    reports need:
+      - total_to_be_receipted: basic_rental + platform_fee + platform_fee_vat, the amount the
+        accountant actually has to issue a receipt for (2026-09-15, per Thomas, working from his
+        own real accountancy spreadsheets).
+      - clean_cost/meet_greet_cost/maintenance_cost blanked to None per-row when that row's
+        booking's property's owner has cleans_are_invoiced=False - "management fees" (Thomas's
+        term for clean+meet&greet+maintenance, NOT rental commission, which is always invoiced
+        with no opt-out) shouldn't appear in a report for an owner who never actually gets them
+        formally invoiced. Per-row, not per-request, since one accountant can span owners with
+        different cleans_are_invoiced settings. Must run before _attach_invoice_total, which reads
+        the (possibly now-None) clean/meet-greet/maintenance figures.
+      - invoice_total: commission + platform_fee + management fees (clean/meet-greet/maintenance),
+        each "if applicable" (None/gated treated as zero) - replaces Owner Net Revenue in the
+        accountant report (2026-09-15, per Thomas - owners' own net revenue isn't what an
+        accountant needs; what KLT actually invoices the owner is).
+      - invoice: whichever OwnerInvoice (if any) this row's booking is linked to via the
+        `bookings` M2M - covers COMMISSION_PAYOUT/COMMISSION_MONTHLY/COMBINED_MONTHLY kinds (the
+        ones that actually populate `bookings`; see finance/services.py). Renders as Invoice N°
+        via invoice.sage_invoice_id."""
     template_name = 'accountants/reports.html'
-    COLUMNS = OWNER_SAFE_REPORT_COLUMNS
+    COLUMNS = ACCOUNTANT_REPORT_COLUMNS
 
     def get(self, request, *args, **kwargs):
         accountant = request.user.accountant_profile
@@ -95,6 +117,15 @@ class AccountantReportView(View):
         rows = booking_report_rows(
             start, end, properties=[selected_property] if selected_property else properties,
         )
+        self._apply_management_fee_gate(rows)
+        self._attach_total_to_be_receipted(rows)
+        self._attach_invoice_total(rows)
+        self._attach_invoices(rows)
+
+        totals = report_totals(rows)
+        for key in ('total_to_be_receipted', 'invoice_total'):
+            values = [row[key] for row in rows if row[key] is not None]
+            totals[key] = sum(values, ZERO) if values else None
 
         return render(request, self.template_name, {
             'accountant': accountant,
@@ -105,88 +136,42 @@ class AccountantReportView(View):
             'columns': self.COLUMNS,
             'selected_columns': selected_columns,
             'rows': rows,
-            'totals': report_totals(rows),
+            'totals': totals,
             'active_section': 'reports',
         })
 
+    def _apply_management_fee_gate(self, rows):
+        for row in rows:
+            owner = row['booking'].property.owner
+            if owner is None or not owner.cleans_are_invoiced:
+                row['clean_cost'] = None
+                row['meet_greet_cost'] = None
+                row['maintenance_cost'] = None
 
-@method_decorator(accountant_login_required, name='dispatch')
-class AccountantPayoutsMemosView(View):
-    """Payouts & Memos - mirrors owners/views.py::OwnerPayoutsMemosView exactly, scoped to
-    property__accountant instead of property__owner. See that view's own docstring for why a
-    payout/memo row is always exactly one booking, and _payout_detail_url below for why the
-    detail link's date range depends on the booking's own owner's is_paid_regularly flag (not a
-    single fixed owner, since this view can span several)."""
-    template_name = 'accountants/payouts_memos.html'
+    def _attach_total_to_be_receipted(self, rows):
+        for row in rows:
+            if row['basic_rental'] is None:
+                row['total_to_be_receipted'] = None
+            else:
+                row['total_to_be_receipted'] = (
+                    row['basic_rental'] + (row['platform_fee'] or ZERO) + (row['platform_fee_vat'] or ZERO)
+                )
 
-    def get(self, request, *args, **kwargs):
-        accountant = request.user.accountant_profile
-        payout_records = PayoutRecord.objects.filter(
-            booking__property__accountant=accountant,
-        ).select_related('booking', 'booking__property', 'booking__property__owner')
-        memos = Memo.objects.filter(
-            property__accountant=accountant, sent_at__isnull=False,
-        ).select_related('property', 'property__owner', 'cleaning_task__booking')
+    def _attach_invoice_total(self, rows):
+        for row in rows:
+            if row['commission'] is None:
+                row['invoice_total'] = None
+            else:
+                row['invoice_total'] = (
+                    row['commission'] + (row['platform_fee'] or ZERO)
+                    + (row['clean_cost'] or ZERO) + (row['meet_greet_cost'] or ZERO) + (row['maintenance_cost'] or ZERO)
+                )
 
-        rows = []
-        for record in payout_records:
-            rows.append({
-                'type': 'Payout',
-                'property': record.booking.property,
-                'reference': record.booking.reference,
-                'date': record.paid_at,
-                'amount': record.amount,
-                'is_charge': False,
-                'detail_url': self._payout_detail_url(record.booking),
-            })
-        for memo in memos:
-            booking = memo.cleaning_task.booking if memo.cleaning_task else None
-            rows.append({
-                'type': 'Memo',
-                'property': memo.property,
-                'reference': booking.reference if booking else '—',
-                'date': memo.sent_at,
-                'amount': memo.total(),
-                'is_charge': True,
-                'detail_url': reverse('accountants:memo_detail', kwargs={'pk': memo.pk}),
-            })
-        rows.sort(key=lambda row: row['date'], reverse=True)
-
-        return render(request, self.template_name, {
-            'accountant': accountant,
-            'rows': rows,
-            'active_section': 'payouts_memos',
-        })
-
-    def _payout_detail_url(self, booking):
-        owner = booking.property.owner
-        if owner is not None and owner.is_paid_regularly:
-            start, end = booking.arrival_date, booking.departure_date
-        else:
-            start = booking.arrival_date.replace(day=1)
-            end = last_day_of_month(booking.arrival_date)
-        return (
-            f"{reverse('accountants:reports')}?property_id={booking.property_id}"
-            f"&start={start.isoformat()}&end={end.isoformat()}"
-        )
-
-
-@method_decorator(accountant_login_required, name='dispatch')
-class AccountantMemoDetailView(View):
-    """Trimmed, accountant-facing mirror of owners/views.py::OwnerMemoDetailView, scoped to
-    property__accountant instead of property__owner."""
-    template_name = 'accountants/memo_detail.html'
-
-    def get(self, request, pk, *args, **kwargs):
-        accountant = request.user.accountant_profile
-        memo = Memo.objects.select_related('property', 'cleaning_task__booking', 'sent_by').filter(
-            pk=pk, property__accountant=accountant, sent_at__isnull=False,
-        ).first()
-        if memo is None:
-            raise Http404("No memo found.")
-        return render(request, self.template_name, {
-            'accountant': accountant,
-            'memo': memo,
-            'ad_hoc_services': memo.ad_hoc_services.order_by('date'),
-            'active_section': 'payouts_memos',
-        })
+    def _attach_invoices(self, rows):
+        bookings = [row['booking'] for row in rows]
+        invoices_by_booking_id = {}
+        for invoice in OwnerInvoice.objects.filter(bookings__in=bookings).prefetch_related('bookings'):
+            for booking in invoice.bookings.all():
+                invoices_by_booking_id[booking.id] = invoice
+        for row in rows:
+            row['invoice'] = invoices_by_booking_id.get(row['booking'].id)

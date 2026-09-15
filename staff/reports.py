@@ -33,6 +33,20 @@ OWNER_SAFE_REPORT_COLUMNS = tuple(
     if key not in ('commission', 'klt_net_commission', 'klt_net_revenue')
 )
 
+# Accountants (accountants/views.py::AccountantReportView) DO need Commission, unlike owners -
+# 2026-09-15, per Thomas, working from his own real accountancy spreadsheets: the firm's "Invoice
+# Total" figure is built from it. klt_net_commission/klt_net_revenue stay excluded regardless -
+# those are KLT's own post-VAT internal take, pure internal bookkeeping no accountant needs.
+# net_revenue (Owner Net Revenue) is also dropped, in favour of the accountant-only 'invoice_total'
+# synthetic column appended below - not a real REPORT_COLUMNS figure, computed in
+# AccountantReportView itself (commission + platform_fee + management fees, each "if applicable" -
+# 2026-09-15, per Thomas) since it's accountant-report-specific, not something staff/owner reports
+# need.
+ACCOUNTANT_REPORT_COLUMNS = tuple(
+    (key, label) for key, label in REPORT_COLUMNS
+    if key not in ('klt_net_commission', 'klt_net_revenue', 'net_revenue')
+) + (('invoice_total', 'Invoice Total'),)
+
 
 def booking_report_rows(start, end, properties=None):
     """One row per booking arriving within [start, end] (inclusive), each carrying every figure

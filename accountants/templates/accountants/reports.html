@@ -70,11 +70,13 @@
                             <th>Departure</th>
                             <th>Nights</th>
                             <th>Guests</th>
+                            <th>Total to be Receipted</th>
                             {% for key, label in columns %}
                             {% if key in selected_columns %}
                             <th>{{ label }}</th>
                             {% endif %}
                             {% endfor %}
+                            <th>Invoice N&deg;</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -86,6 +88,7 @@
                             <td>{{ row.booking.departure_date|date:'j M Y' }}</td>
                             <td>{{ row.nights }}</td>
                             <td>{{ row.booking.total_guests }}</td>
+                            <td>{% if row.total_to_be_receipted is not None %}&euro;{{ row.total_to_be_receipted }}{% else %}&mdash;{% endif %}</td>
                             {% if 'platform_fee' in selected_columns %}
                             <td class="accountant-table-deduction">{% if row.platform_fee is not None %}&euro;{{ row.platform_fee }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
@@ -95,30 +98,35 @@
                             {% if 'basic_rental' in selected_columns %}
                             <td>{% if row.basic_rental is not None %}&euro;{{ row.basic_rental }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
+                            {% if 'commission' in selected_columns %}
+                            <td class="accountant-table-deduction">{% if row.commission is not None %}&euro;{{ row.commission }}{% else %}&mdash;{% endif %}</td>
+                            {% endif %}
                             {% if 'rental_to_owner' in selected_columns %}
                             <td>{% if row.rental_to_owner is not None %}&euro;{{ row.rental_to_owner }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'clean_cost' in selected_columns %}
-                            <td class="accountant-table-deduction">&euro;{{ row.clean_cost }}</td>
+                            <td class="accountant-table-deduction">{% if row.clean_cost is not None %}&euro;{{ row.clean_cost }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'meet_greet_cost' in selected_columns %}
-                            <td class="accountant-table-deduction">&euro;{{ row.meet_greet_cost }}</td>
+                            <td class="accountant-table-deduction">{% if row.meet_greet_cost is not None %}&euro;{{ row.meet_greet_cost }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'maintenance_cost' in selected_columns %}
-                            <td class="accountant-table-deduction">&euro;{{ row.maintenance_cost }}</td>
+                            <td class="accountant-table-deduction">{% if row.maintenance_cost is not None %}&euro;{{ row.maintenance_cost }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
-                            {% if 'net_revenue' in selected_columns %}
-                            <td{% if row.net_revenue < 0 %} class="accountant-table-deduction"{% endif %}>&euro;{{ row.net_revenue|cut:"-" }}</td>
+                            {% if 'invoice_total' in selected_columns %}
+                            <td>{% if row.invoice_total is not None %}&euro;{{ row.invoice_total }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
+                            <td>{% if row.invoice %}{{ row.invoice.sage_invoice_id|default:"—" }}{% else %}&mdash;{% endif %}</td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="6" class="accountant-empty">No bookings in this range.</td></tr>
+                        <tr><td colspan="7" class="accountant-empty">No bookings in this range.</td></tr>
                         {% endfor %}
                     </tbody>
                     {% if rows %}
                     <tfoot>
                         <tr>
                             <td colspan="6" class="accountant-table-totals-label">Totals</td>
+                            <td>{% if totals.total_to_be_receipted is not None %}&euro;{{ totals.total_to_be_receipted }}{% else %}&mdash;{% endif %}</td>
                             {% if 'platform_fee' in selected_columns %}
                             <td class="accountant-table-deduction">{% if totals.platform_fee is not None %}&euro;{{ totals.platform_fee }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
@@ -128,21 +136,25 @@
                             {% if 'basic_rental' in selected_columns %}
                             <td>{% if totals.basic_rental is not None %}&euro;{{ totals.basic_rental }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
+                            {% if 'commission' in selected_columns %}
+                            <td class="accountant-table-deduction">{% if totals.commission is not None %}&euro;{{ totals.commission }}{% else %}&mdash;{% endif %}</td>
+                            {% endif %}
                             {% if 'rental_to_owner' in selected_columns %}
                             <td>{% if totals.rental_to_owner is not None %}&euro;{{ totals.rental_to_owner }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'clean_cost' in selected_columns %}
-                            <td class="accountant-table-deduction">&euro;{{ totals.clean_cost }}</td>
+                            <td class="accountant-table-deduction">{% if totals.clean_cost is not None %}&euro;{{ totals.clean_cost }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'meet_greet_cost' in selected_columns %}
-                            <td class="accountant-table-deduction">&euro;{{ totals.meet_greet_cost }}</td>
+                            <td class="accountant-table-deduction">{% if totals.meet_greet_cost is not None %}&euro;{{ totals.meet_greet_cost }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
                             {% if 'maintenance_cost' in selected_columns %}
-                            <td class="accountant-table-deduction">&euro;{{ totals.maintenance_cost }}</td>
+                            <td class="accountant-table-deduction">{% if totals.maintenance_cost is not None %}&euro;{{ totals.maintenance_cost }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
-                            {% if 'net_revenue' in selected_columns %}
-                            <td{% if totals.net_revenue < 0 %} class="accountant-table-deduction"{% endif %}>&euro;{{ totals.net_revenue|cut:"-" }}</td>
+                            {% if 'invoice_total' in selected_columns %}
+                            <td>{% if totals.invoice_total is not None %}&euro;{{ totals.invoice_total }}{% else %}&mdash;{% endif %}</td>
                             {% endif %}
+                            <td></td>
                         </tr>
                     </tfoot>
                     {% endif %}

@@ -22,7 +22,7 @@
 
         <div class="manage-hub-content">
             <h1>Welcome, {{ accountant.company }}</h1>
-            <p class="accountant-welcome">Below are the owners and properties you look after. Use Reports to see bookings, payouts and costs for a chosen period, and Payouts &amp; Memos for a running record of what's been paid out and charged.</p>
+            <p class="accountant-welcome">Below are the owners and properties you look after. Use Reports to see bookings, receiptable totals and costs for a chosen period.</p>
 
             {% regroup properties by owner as owner_groups %}
             {% for group in owner_groups %}

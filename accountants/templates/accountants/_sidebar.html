@@ -1,8 +1,9 @@
 {% comment %}
 Accountants Suite sidebar - mirrors owners/_sidebar.html's shape exactly (same manage-hub-nav
-classes). Only three links, unlike the Owner Suite - no Calendar/My Stays/Update Details, since
-those are owner-specific actions with no accountant analogue. Expects `active_section` and
-`accountant`.
+classes). Only two links - no Calendar/My Stays/Update Details (owner-specific, no accountant
+analogue), and no Payouts & Memos (removed 2026-09-15, per Thomas - those are informative for the
+owner only, not financially binding, and shouldn't appear for accountants at all). Expects
+`active_section` and `accountant`.
 {% endcomment %}
 <nav class="manage-hub-nav">
     <span class="manage-hub-nav-group-label">Accountants Suite</span>
@@ -10,8 +11,6 @@ those are owner-specific actions with no accountant analogue. Expects `active_se
        href="{% url 'accountants:home' %}">Home</a>
     <a class="manage-hub-nav-link{% if active_section == 'reports' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'accountants:reports' %}">Reports</a>
-    <a class="manage-hub-nav-link{% if active_section == 'payouts_memos' %} manage-hub-nav-link-active{% endif %}"
-       href="{% url 'accountants:payouts_memos' %}">Payouts &amp; Memos</a>
     <form method="post" action="{% url 'accountants:logout' %}">
         {% csrf_token %}
         <button type="submit" class="manage-hub-nav-link manage-hub-nav-link-danger">Log out</button>

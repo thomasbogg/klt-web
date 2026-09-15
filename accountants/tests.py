@@ -7,7 +7,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from bookings.models import Arrival, Booking, Charge, Departure, PaymentSettings
-from finance.models import Memo, PayoutRecord
+from finance.models import OwnerInvoice
 from guests.models import Guest
 from properties.models import Accountant, ManagementCompany, Owner, Property, PropertySpec
 
@@ -38,9 +38,11 @@ class AccountantSuiteTests(TestCase):
             name='Accountant Client Owner', email='accountant-client-owner@example.com', currency=Owner.Currency.EUR,
             is_paid_regularly=False, cleans_are_invoiced=False,
         )
+        # cleans_are_invoiced=True (unlike self.owner above) - lets tests exercise the per-row
+        # management-fee gate across two owners under the same accountant in one report.
         self.other_owner = Owner.objects.create(
             name='Accountant Second Owner', email='accountant-second-owner@example.com', currency=Owner.Currency.EUR,
-            is_paid_regularly=False, cleans_are_invoiced=False,
+            is_paid_regularly=False, cleans_are_invoiced=True,
         )
         self.company = ManagementCompany.objects.create(name='Accountant Suite Co', finances_managed_internally=True)
         self.property = Property.objects.create(
@@ -83,6 +85,8 @@ class AccountantSuiteTests(TestCase):
             adults=2, children=0, babies=0, last_updated=timezone.now(),
         )
         Charge.objects.create(booking=self.second_owner_booking, basic_rental=Decimal('200.00'))
+        Departure.objects.create(booking=self.second_owner_booking, clean=True)
+        Arrival.objects.create(booking=self.second_owner_booking, meet_greet=True)
 
         self.unrelated_booking = Booking.objects.create(
             property=self.unrelated_property, guest=self.guest, arrival_date=self.today + timedelta(days=3),
@@ -145,18 +149,87 @@ class AccountantSuiteTests(TestCase):
         bookings_seen = {row['booking'] for row in response.context['rows']}
         self.assertNotIn(self.unrelated_booking, bookings_seen)
 
-    def test_report_never_shows_klt_internal_commission_columns(self):
-        """Same OWNER_SAFE_REPORT_COLUMNS the Owner Suite uses - see owners/tests.py::
-        OwnerSuiteTests.test_report_never_shows_klt_internal_commission_columns for why."""
+    def test_report_shows_commission_but_never_klt_internal_columns(self):
+        """Unlike OWNER_SAFE_REPORT_COLUMNS (which owners get), ACCOUNTANT_REPORT_COLUMNS keeps
+        Commission visible - 2026-09-15, per Thomas, accountants need it for their own invoice
+        totals - but klt_net_commission/klt_net_revenue (KLT's own internal post-VAT take) stay
+        hidden, same as for owners. See owners/tests.py::OwnerSuiteTests.
+        test_report_never_shows_klt_internal_commission_columns for the owner-side contrast."""
         self.client.login(username='portalaccountant', password='pw')
         response = self.client.get(reverse('accountants:reports'), {
             'start': self.today.isoformat(), 'end': (self.today + timedelta(days=14)).isoformat(),
         })
-        self.assertNotIn('commission', response.context['selected_columns'])
+        self.assertIn('commission', response.context['selected_columns'])
+        self.assertContains(response, 'Commission')
         self.assertNotIn('klt_net_commission', response.context['selected_columns'])
         self.assertNotIn('klt_net_revenue', response.context['selected_columns'])
         self.assertNotContains(response, 'KLT Net Commission')
         self.assertNotContains(response, 'KLT Net Revenue')
+
+    def test_total_to_be_receipted_sums_basic_rental_platform_fee_and_vat(self):
+        """basic_rental + platform_fee + platform_fee_vat - self.booking is a direct (non-platform)
+        Website booking, so platform_fee/platform_fee_vat are both zero and the figure is just its
+        €300.00 basic_rental."""
+        self.client.login(username='portalaccountant', password='pw')
+        response = self.client.get(reverse('accountants:reports'), {
+            'start': self.today.isoformat(), 'end': (self.today + timedelta(days=14)).isoformat(),
+        })
+        rows_by_booking = {row['booking']: row for row in response.context['rows']}
+        self.assertEqual(rows_by_booking[self.booking]['total_to_be_receipted'], Decimal('300.00'))
+
+    def test_management_fee_costs_gated_per_row_by_owner_cleans_are_invoiced(self):
+        """self.owner has cleans_are_invoiced=False, self.other_owner has it True - both under the
+        same accountant in one report, so this checks the gate is per-row, not per-request."""
+        self.client.login(username='portalaccountant', password='pw')
+        response = self.client.get(reverse('accountants:reports'), {
+            'start': self.today.isoformat(), 'end': (self.today + timedelta(days=14)).isoformat(),
+        })
+        rows_by_booking = {row['booking']: row for row in response.context['rows']}
+        not_invoiced_row = rows_by_booking[self.booking]
+        self.assertIsNone(not_invoiced_row['clean_cost'])
+        self.assertIsNone(not_invoiced_row['meet_greet_cost'])
+        self.assertIsNone(not_invoiced_row['maintenance_cost'])
+
+        invoiced_row = rows_by_booking[self.second_owner_booking]
+        self.assertIsNotNone(invoiced_row['clean_cost'])
+        self.assertIsNotNone(invoiced_row['meet_greet_cost'])
+
+    def test_invoice_total_is_commission_plus_platform_fee_plus_applicable_management_fees(self):
+        """2026-09-15, per Thomas: replaces Owner Net Revenue. 'If applicable' means the
+        management-fee gate above still applies - self.booking's owner isn't invoiced for those,
+        so its invoice_total is commission alone (platform_fee is zero, a direct Website booking);
+        self.second_owner_booking's owner is invoiced, so clean/meet-greet count too."""
+        self.client.login(username='portalaccountant', password='pw')
+        response = self.client.get(reverse('accountants:reports'), {
+            'start': self.today.isoformat(), 'end': (self.today + timedelta(days=14)).isoformat(),
+        })
+        rows_by_booking = {row['booking']: row for row in response.context['rows']}
+
+        not_invoiced_row = rows_by_booking[self.booking]
+        self.assertEqual(not_invoiced_row['invoice_total'], not_invoiced_row['commission'])
+
+        invoiced_row = rows_by_booking[self.second_owner_booking]
+        expected = (
+            invoiced_row['commission'] + invoiced_row['platform_fee']
+            + invoiced_row['clean_cost'] + invoiced_row['meet_greet_cost'] + invoiced_row['maintenance_cost']
+        )
+        self.assertEqual(invoiced_row['invoice_total'], expected)
+
+    def test_invoice_number_shown_when_a_linked_owner_invoice_exists(self):
+        invoice = OwnerInvoice.objects.create(
+            owner=self.owner, kind=OwnerInvoice.Kind.COMMISSION_PAYOUT,
+            commission_amount=Decimal('30.00'), sage_invoice_id='SAGE-123',
+        )
+        invoice.bookings.add(self.booking)
+
+        self.client.login(username='portalaccountant', password='pw')
+        response = self.client.get(reverse('accountants:reports'), {
+            'start': self.today.isoformat(), 'end': (self.today + timedelta(days=14)).isoformat(),
+        })
+        rows_by_booking = {row['booking']: row for row in response.context['rows']}
+        self.assertEqual(rows_by_booking[self.booking]['invoice'], invoice)
+        self.assertIsNone(rows_by_booking[self.second_owner_booking]['invoice'])
+        self.assertContains(response, 'SAGE-123')
 
 
 class AccountantAcceptInviteViewTests(TestCase):
@@ -192,78 +265,3 @@ class AccountantAcceptInviteViewTests(TestCase):
         self.assertTrue(self.user.has_usable_password())
         self.assertIn('_auth_user_id', self.client.session)
         self.assertRedirects(response, reverse('accountants:home'))
-
-
-class AccountantPayoutsMemosTests(TestCase):
-    """Payouts & Memos - mirrors owners/tests.py::OwnerPayoutsMemosTests, scoped to
-    property__accountant. PayoutRecord/Memo are created via the real staff views, same
-    convention."""
-
-    def setUp(self):
-        self.accountant = Accountant.objects.create(
-            company='Payouts Accounting Co', name='Payouts Accountant', email='payouts-accountant@example.com', phone='+351900000004',
-        )
-        self.accountant_user = User.objects.create_user(username='payoutsaccountant', password='pw')
-        self.accountant.user = self.accountant_user
-        self.accountant.save(update_fields=['user'])
-
-        self.other_accountant = Accountant.objects.create(
-            company='Other Payouts Accounting Co', name='Other Payouts Accountant', email='other-payouts-accountant@example.com', phone='+351900000006',
-        )
-        self.other_accountant_user = User.objects.create_user(username='otherpayoutsaccountant', password='pw')
-        self.other_accountant.user = self.other_accountant_user
-        self.other_accountant.save(update_fields=['user'])
-
-        self.owner = Owner.objects.create(
-            name='Payouts Accountant Owner', email='payouts-accountant-owner@example.com', currency=Owner.Currency.EUR,
-            is_paid_regularly=True, cleans_are_invoiced=False,
-        )
-        self.company = ManagementCompany.objects.create(name='Payouts Accountant Test Co', finances_managed_internally=True)
-        self.property = Property.objects.create(
-            title='Payouts Accountant Property', short_title='ACCPAYOUT', owner=self.owner, accountant=self.accountant,
-            cleaning_company=self.company, booking_company=self.company, standard_cleaning_fee=Decimal('80.00'),
-        )
-        PropertySpec.objects.create(property=self.property, bedrooms=2)
-        guest = Guest.objects.create(first_name='Acc', last_name='Pay', email='accountant-payouts-guest@example.com')
-        self.today = timezone.now().date()
-        self.booking = Booking.objects.create(
-            property=self.property, guest=guest,
-            arrival_date=self.today + timedelta(days=10), departure_date=self.today + timedelta(days=14),
-            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
-            adults=2, children=0, babies=0, last_updated=timezone.now(),
-        )
-        Charge.objects.create(booking=self.booking, basic_rental=Decimal('300.00'))
-        Departure.objects.create(booking=self.booking, clean=True)  # auto-creates a Memo via signal
-
-        staffer = User.objects.create_user(username='accpayoutsstaff', password='pw', is_staff=True, is_superuser=True)
-        self.client.login(username='accpayoutsstaff', password='pw')
-        self.client.post(reverse('staff:finance_payout_mark_paid', kwargs={'reference': self.booking.reference}))
-        self.memo = Memo.objects.get(property=self.property)
-        self.client.post(reverse('staff:finance_memo_send', kwargs={'pk': self.memo.pk}))
-        self.client.logout()
-        self.payout_record = PayoutRecord.objects.get(booking=self.booking)
-        self.memo.refresh_from_db()
-
-    def test_lists_both_a_payout_and_a_memo_row(self):
-        self.client.login(username='payoutsaccountant', password='pw')
-        response = self.client.get(reverse('accountants:payouts_memos'))
-        rows_by_type = {row['type']: row for row in response.context['rows']}
-        self.assertEqual(set(rows_by_type), {'Payout', 'Memo'})
-        self.assertEqual(rows_by_type['Payout']['reference'], self.booking.reference)
-        self.assertEqual(rows_by_type['Memo']['reference'], self.booking.reference)
-
-    def test_never_shows_another_accountants_rows(self):
-        self.client.login(username='otherpayoutsaccountant', password='pw')
-        response = self.client.get(reverse('accountants:payouts_memos'))
-        self.assertEqual(response.context['rows'], [])
-
-    def test_memo_detail_shows_breakdown_and_total(self):
-        self.client.login(username='payoutsaccountant', password='pw')
-        response = self.client.get(reverse('accountants:memo_detail', kwargs={'pk': self.memo.pk}))
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context['memo'], self.memo)
-
-    def test_memo_detail_404s_for_another_accountants_memo(self):
-        self.client.login(username='otherpayoutsaccountant', password='pw')
-        response = self.client.get(reverse('accountants:memo_detail', kwargs={'pk': self.memo.pk}))
-        self.assertEqual(response.status_code, 404)
