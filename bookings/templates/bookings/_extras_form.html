@@ -18,6 +18,11 @@ Airport Transfers deliberately never gets one - it's hoisted out and shared.
 
 `leg_id_suffix`: appended to the one id/label-for pair in here, so the association still works
 when this renders more than once on a page. Empty everywhere else.
+
+`omit_transfers_cash_note`: set by callers (manage_extras.html, balance_details.html) whose
+page-level note already says extras are paid in cash at check-in, so the Airport Transfers
+section's own copy of that line isn't repeated right underneath it. details.html has no such
+page-level note, so it leaves this unset and keeps the line.
 {% endcomment %}
 <section class="details-section{% if not show_cot_high_chair %} details-section-hidden{% endif %}" data-cot-high-chair-section>
     <h2 class="details-section-title">Cot &amp; High Chair{% if extras_property %} &mdash; {{ extras_property }}{% endif %}</h2>

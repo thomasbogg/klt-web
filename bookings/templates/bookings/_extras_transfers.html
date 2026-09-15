@@ -12,11 +12,16 @@ Check-in and Last Days sections resolve transfers across the whole stay rather t
 every apartment's page still reflects the party's transfer.
 {% endcomment %}
 <section class="details-section">
+{% if not transfers_for_stay %}
     <h2 class="details-section-title">Airport Transfers (Faro Airport only)</h2>
+{% endif %}
 {% if extras_windows.airport_transfer %}
-    <p class="details-note">Everything below is paid in cash at check-in - it isn't included in {{ due_phrase }}. Prices shown are estimates based on total headcount and pickup/drop-off time; we'll confirm the final price with you.</p>
+    {% if not transfers_for_stay and not omit_transfers_cash_note %}
+    <p class="details-note">Everything below is paid in cash at check-in - it isn't included in {{ due_phrase }}.</p>
+    {% endif %}
+    <p class="details-note">Prices shown are estimates based on total headcount and pickup/drop-off time; we'll confirm the final price with you.</p>
     {% if transfers_for_stay %}
-    <p class="details-note">This covers everyone in your party across both apartments - enter your total headcount here, not one request per apartment.</p>
+    <p class="details-note">Enter your total headcount here, not one request per apartment.</p>
     {% else %}
     <p class="details-note">Sharing a ride with another apartment's guests? Only one lead guest should submit the combined request with the total headcount - the other party shouldn't submit a separate one.</p>
     {% endif %}

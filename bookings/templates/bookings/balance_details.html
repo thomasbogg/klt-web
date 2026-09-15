@@ -47,7 +47,7 @@
             <p class="details-note">Don't have your travel plans yet? That's fine for now - we just need them at least two weeks before your arrival date, and we'll email you a reminder closer to the time if anything's still missing.</p>
             {% include 'bookings/_arrival_departure_form.html' %}
 
-            {% include 'bookings/_extras_form.html' with due_phrase="your balance payment" %}
+            {% include 'bookings/_extras_form.html' with due_phrase="your balance payment" omit_transfers_cash_note=True %}
 
             <button type="submit" class="reserve-form-submit">Proceed to Balance Payment</button>
 

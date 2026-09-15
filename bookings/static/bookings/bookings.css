@@ -459,23 +459,22 @@
     color: var(--secondary-color);
 }
 
-/* The panel already provides the top boundary, so the first .details-section inside must not add
-   its own 40px on top - the exact double-margin trap the .stay-leg-section rules above document.
-   Zeroed on the section AND its heading, since .details-section-title carries its own margin-top
-   that would otherwise leak through an empty-bordered parent. */
+/* The header's own border-bottom is this boundary's divider (equivalent to the border-top a plain
+   .details-section + .details-section pair draws), but the header's own margin-bottom is only 4px
+   - left alone, the first section's natural 40px margin-top collapses against that 4px and the
+   title lands right under the divider, nowhere near the ~92px gap a real .details-section +
+   .details-section boundary reads at (40px collapsed margin + 1px border + 40px padding-top +
+   .details-section-title's own ~13.6px margin-top, all left un-zeroed there). Adding padding-top
+   here reproduces that same total without touching either margin, so the title keeps the same
+   natural margin-top every other section's title has (2026-09-16, per Thomas: matched to the
+   between-extras gap so the apartment title reads with the same breathing room below it). */
 .extras-group > .details-section:first-of-type,
 .extras-group .details-form > .details-section:first-of-type,
 /* :first-of-type matches the HIDDEN Cot & High Chair section when it's hidden, so the first
-   section the guest can actually see needs zeroing too - otherwise it keeps its own 40px on top
-   of the group header's boundary. */
+   section the guest can actually see needs the same treatment - otherwise it keeps only the
+   header's 4px margin on top of the group header's boundary. */
 .extras-group .details-form > .details-section-hidden + .details-section {
-    margin-top: 0;
-}
-
-.extras-group > .details-section:first-of-type > .details-section-title,
-.extras-group .details-form > .details-section:first-of-type > .details-section-title,
-.extras-group .details-form > .details-section-hidden + .details-section > .details-section-title {
-    margin-top: 0;
+    padding-top: 40px;
 }
 
 @media (max-width: 560px) {

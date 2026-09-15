@@ -50,7 +50,7 @@
             <section class="extras-group">
                 <div class="extras-group-header">
                     <h2 class="extras-group-title">Airport Transfers</h2>
-                    <p class="extras-group-subtitle">For everyone in your party</p>
+                    <p class="extras-group-subtitle">For everyone in your party &mdash; Faro Airport only</p>
                 </div>
 
                 {% if request.GET.extras_saved == 'transfers' %}
@@ -88,7 +88,7 @@
 
             <form method="post" class="details-form">
                 {% csrf_token %}
-                {% include 'bookings/_extras_form.html' with due_phrase="any online payment" %}
+                {% include 'bookings/_extras_form.html' with due_phrase="any online payment" omit_transfers_cash_note=True %}
 
                 {% if not extras_locked %}
                 <button type="submit" class="reserve-form-submit">Save Extras</button>

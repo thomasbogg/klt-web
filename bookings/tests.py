@@ -5328,8 +5328,10 @@ class ManageHubExtrasMultiPropertyTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.context['legs']), 2)
         content = response.content.decode()
-        # Airport Transfers exactly once, not once per apartment
-        self.assertEqual(content.count('Airport Transfers (Faro Airport only)'), 1)
+        # Airport Transfers exactly once, not once per apartment - and not as a second, redundant
+        # heading underneath the group's own title (2026-09-16, per Thomas).
+        self.assertEqual(content.count('<h2 class="extras-group-title">Airport Transfers</h2>'), 1)
+        self.assertEqual(content.count('Faro Airport only'), 1)
         self.assertEqual(content.count('id="transfer-rows"'), 1)
         # ...and a duplicated json_script id would be invalid HTML
         self.assertEqual(content.count('id="cot-high-chair-pricing-config"'), 1)
