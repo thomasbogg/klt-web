@@ -24,6 +24,17 @@
     padding-top: 40px;
 }
 
+/* The adjacent-sibling combinator above still matches a display:none neighbour, so a section
+   following a hidden one drew a divider against nothing - visible as a stray rule and a 40px gap
+   above the first real section whenever Cot & High Chair is hidden (it's the first section in
+   _extras_form.html, hidden unless the party has an infant). Only ever removes a divider that
+   shouldn't have been drawn: the hidden section is always the first one, so there's never a
+   visible section above it that wanted a boundary. */
+.details-section-hidden + .details-section {
+    border-top: none;
+    padding-top: 0;
+}
+
 .details-section-title {
     text-align: left;
     font-family: var(--secondary-font);

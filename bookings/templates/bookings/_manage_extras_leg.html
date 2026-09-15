@@ -13,7 +13,21 @@ Each apartment is its own <form> posting to the stay's shared reference with a h
 leg_reference, which also keeps the same-named radio groups (welcome_pack_food, late_checkout_time)
 independent between apartments - they would otherwise be one mutually-exclusive group.
 {% endcomment %}
-<div class="stay-leg-section">
+<section class="extras-group">
+    {% comment %}
+    The apartment's name lives in the group header now (2026-09-15, per Thomas: the three parts of
+    this page - the party's transfers and one block per apartment - needed to read as three
+    distinct groups rather than one long run of sections). That's also why extras_property is no
+    longer passed into _extras_form.html below: with the name on the header, repeating
+    "- Clube do Monaco - AB" on all five sub-headings inside is noise.
+    {% endcomment %}
+    <div class="extras-group-header">
+        <h2 class="extras-group-title">{{ leg.booking.property }}</h2>
+        {% if total_legs > 1 %}
+        <p class="extras-group-subtitle">Apartment {{ leg_number }} of {{ total_legs }}</p>
+        {% endif %}
+    </div>
+
     {% if request.GET.extras_saved == leg.booking.reference %}
     <p class="details-note details-note-left">Your extras for {{ leg.booking.property }} have been saved.</p>
     {% endif %}
@@ -28,10 +42,10 @@ independent between apartments - they would otherwise be one mutually-exclusive 
         {% csrf_token %}
         <input type="hidden" name="leg_reference" value="{{ leg.booking.reference }}">
 
-        {% include 'bookings/_extras_form.html' with due_phrase="any online payment" extras_property=leg.booking.property show_cot_high_chair=leg.show_cot_high_chair extras_windows=leg.extras_windows transfers_hoisted=True leg_id_suffix=leg.leg_id_suffix cot=leg.cot high_chair=leg.high_chair cot_high_chair_pricing_config=leg.cot_high_chair_pricing_config late_checkout=leg.late_checkout late_checkout_time=leg.late_checkout_time late_checkout_price=leg.late_checkout_price late_checkout_unlimited=leg.late_checkout_unlimited late_checkout_available_times=leg.late_checkout_available_times late_checkout_offerable=leg.late_checkout_offerable late_checkout_error=leg.late_checkout_error mid_stay_clean=leg.mid_stay_clean mid_stay_clean_price=leg.mid_stay_clean_price show_mid_stay_clean=leg.show_mid_stay_clean mid_stay_clean_error=leg.mid_stay_clean_error welcome_pack=leg.welcome_pack welcome_pack_food=leg.welcome_pack_food welcome_pack_drinks=leg.welcome_pack_drinks welcome_pack_note=leg.welcome_pack_note welcome_pack_price=leg.welcome_pack_price welcome_pack_items=leg.welcome_pack_items request_rows=leg.request_rows all_request_types_open=leg.all_request_types_open %}
+        {% include 'bookings/_extras_form.html' with due_phrase="any online payment" show_cot_high_chair=leg.show_cot_high_chair extras_windows=leg.extras_windows transfers_hoisted=True leg_id_suffix=leg.leg_id_suffix cot=leg.cot high_chair=leg.high_chair cot_high_chair_pricing_config=leg.cot_high_chair_pricing_config late_checkout=leg.late_checkout late_checkout_time=leg.late_checkout_time late_checkout_price=leg.late_checkout_price late_checkout_unlimited=leg.late_checkout_unlimited late_checkout_available_times=leg.late_checkout_available_times late_checkout_offerable=leg.late_checkout_offerable late_checkout_error=leg.late_checkout_error mid_stay_clean=leg.mid_stay_clean mid_stay_clean_price=leg.mid_stay_clean_price show_mid_stay_clean=leg.show_mid_stay_clean mid_stay_clean_error=leg.mid_stay_clean_error welcome_pack=leg.welcome_pack welcome_pack_food=leg.welcome_pack_food welcome_pack_drinks=leg.welcome_pack_drinks welcome_pack_note=leg.welcome_pack_note welcome_pack_price=leg.welcome_pack_price welcome_pack_items=leg.welcome_pack_items request_rows=leg.request_rows all_request_types_open=leg.all_request_types_open %}
 
         {% if not leg.extras_locked %}
         <button type="submit" class="reserve-form-submit">Save Extras &mdash; {{ leg.booking.property }}</button>
         {% endif %}
     </form>
-</div>
+</section>

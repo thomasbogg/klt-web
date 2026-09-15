@@ -1461,17 +1461,41 @@ class ExtrasSettings(models.Model):
         return pickup_time >= start or pickup_time <= end
 
     def compute_transfer_price(self, total_guests, pickup_time):
-        """Two fixed tiers only (1-4 guests, 5-8 guests) - a single transfer vehicle's real
-        capacity, not an arbitrary pricing choice. Returns None above 8 guests; the caller is
-        responsible for deciding what that means (in practice, booking a second transfer)."""
-        if total_guests <= 4:
-            price = self.airport_transfer_price_1_4_guests
-        elif total_guests <= 8:
-            price = self.airport_transfer_price_5_8_guests
-        else:
+        """Price for however many vehicles this party needs.
+
+        The two rates are vehicle sizes, not pricing bands: a 4-seater
+        (airport_transfer_price_1_4_guests) and an 8-seater (airport_transfer_price_5_8_guests).
+        A party is filled with 8-seaters, and whatever is left over takes a 4-seater if it fits in
+        one, otherwise another 8-seater. So at EUR 42/57 (the live rates):
+
+            1-4   -> 42            9-12  -> 57 + 42
+            5-8   -> 57            13-16 -> 57 + 57
+                                   17-20 -> 57 + 57 + 42
+
+        Extended beyond 8 on 2026-09-15 per Thomas - it previously returned None above 8 guests and
+        the guest was shown "contact us", which stopped quoting exactly when the party was biggest.
+
+        The night surcharge applies PER VEHICLE: two vehicles at 3am is two drivers doing two
+        night runs, so one surcharge between them would undercharge.
+
+        Returns None for a party of nobody - that's an empty row, not a free transfer.
+        """
+        if total_guests < 1:
             return None
+
+        large_capacity = 8
+        small_capacity = 4
+        vehicles = [self.airport_transfer_price_5_8_guests] * (total_guests // large_capacity)
+        remainder = total_guests % large_capacity
+        if remainder:
+            vehicles.append(
+                self.airport_transfer_price_1_4_guests if remainder <= small_capacity
+                else self.airport_transfer_price_5_8_guests
+            )
+
+        price = sum(vehicles)
         if self.is_night_time(pickup_time):
-            price += self.airport_transfer_night_surcharge
+            price += self.airport_transfer_night_surcharge * len(vehicles)
         return price
 
     def compute_cot_high_chair_price(self, nights, wants_cot, wants_high_chair):

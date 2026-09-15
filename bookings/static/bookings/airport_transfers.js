@@ -18,11 +18,28 @@ function isNightTime(timeValue) {
     return timeValue >= start || timeValue <= end;
 }
 
-function priceForGuestCount(totalGuests) {
-    const band = [...config.bands]
-        .sort((a, b) => a.max_guests - b.max_guests)
-        .find((b) => b.max_guests >= totalGuests);
-    return band ? parseFloat(band.price) : null;
+// Must stay in step with ExtrasSettings.compute_transfer_price() - this is only the live estimate,
+// the authoritative price is always recomputed server-side on save, but showing the guest one
+// number and charging another is its own kind of wrong.
+//
+// The two rates are VEHICLE SIZES, not bands: fill with 8-seaters, and whatever is left over takes
+// a 4-seater if it fits in one, otherwise another 8-seater. Returns the vehicle count too, because
+// the night surcharge applies per vehicle.
+function vehiclesForGuestCount(totalGuests) {
+    const bands = [...config.bands].sort((a, b) => a.max_guests - b.max_guests);
+    const small = bands[0];
+    const large = bands[bands.length - 1];
+    if (!small || !large || totalGuests < 1) return null;
+
+    const prices = [];
+    for (let i = 0; i < Math.floor(totalGuests / large.max_guests); i += 1) {
+        prices.push(parseFloat(large.price));
+    }
+    const remainder = totalGuests % large.max_guests;
+    if (remainder) {
+        prices.push(parseFloat(remainder <= small.max_guests ? small.price : large.price));
+    }
+    return prices;
 }
 
 function computePrice(row) {
@@ -39,14 +56,26 @@ function computePrice(row) {
         return;
     }
 
-    const basePrice = priceForGuestCount(totalGuests);
-    if (basePrice === null) {
+    const vehiclePrices = vehiclesForGuestCount(totalGuests);
+    if (!vehiclePrices || !vehiclePrices.length) {
         priceDisplay.textContent = 'contact us';
         return;
     }
 
-    const surcharge = isNightTime(time) ? parseFloat(config.night_surcharge) : 0;
-    priceDisplay.textContent = `€${(basePrice + surcharge).toFixed(2)}`;
+    const base = vehiclePrices.reduce((sum, price) => sum + price, 0);
+    const surcharge = isNightTime(time)
+        ? parseFloat(config.night_surcharge) * vehiclePrices.length
+        : 0;
+    priceDisplay.textContent = `€${(base + surcharge).toFixed(2)}`;
+
+    // A party needing more than one vehicle should be told so before they arrive at the airport
+    // expecting a single car.
+    const vehicleNote = row.querySelector('.transfer-row-vehicles');
+    if (vehicleNote) {
+        vehicleNote.textContent = vehiclePrices.length > 1
+            ? ` (${vehiclePrices.length} vehicles)`
+            : '';
+    }
 }
 
 function wireRow(row) {

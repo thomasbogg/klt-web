@@ -413,6 +413,79 @@
     margin-bottom: 8px;
 }
 
+/* The merged Optional Extras page reads as three distinct groups (2026-09-15, per Thomas): the
+   party's airport transfers, then one block per apartment. Deliberately its own container rather
+   than reusing .stay-leg-section - that class's adjacency rules are finely tuned divider maths
+   shared with Guest Registrations and Location & Check-in (see the block above), and widening
+   them to carry a bordered panel too would put those pages at risk for no benefit.
+
+   An enclosing panel rather than just a heading, because the sections inside already have their
+   own headings - without a boundary the apartment's five sub-sections read as a continuation of
+   whatever came before. */
+.extras-group {
+    text-align: left;
+    margin: 32px 0;
+    padding: 4px 24px 24px;
+    border: 1px solid rgb(222, 232, 242);
+    border-radius: 10px;
+    background: rgb(251, 253, 255);
+}
+
+.extras-group-header {
+    margin: 0 0 4px;
+    padding: 16px 0 12px;
+    border-bottom: 1px solid rgb(228, 236, 244);
+}
+
+/* text-align is set explicitly, not left to inherit from .extras-group: a bare `h2 { text-align:
+   center }` element rule exists globally, and a directly-matching rule always beats an inherited
+   value no matter how specific the ancestor's selector is. Measured, not guessed. */
+.extras-group-title {
+    font-family: var(--primary-font);
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--primary-color);
+    text-align: left;
+    margin: 0;
+}
+
+.extras-group-subtitle {
+    margin: 4px 0 0;
+    font-family: var(--secondary-font);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--secondary-color);
+}
+
+/* The panel already provides the top boundary, so the first .details-section inside must not add
+   its own 40px on top - the exact double-margin trap the .stay-leg-section rules above document.
+   Zeroed on the section AND its heading, since .details-section-title carries its own margin-top
+   that would otherwise leak through an empty-bordered parent. */
+.extras-group > .details-section:first-of-type,
+.extras-group .details-form > .details-section:first-of-type,
+/* :first-of-type matches the HIDDEN Cot & High Chair section when it's hidden, so the first
+   section the guest can actually see needs zeroing too - otherwise it keeps its own 40px on top
+   of the group header's boundary. */
+.extras-group .details-form > .details-section-hidden + .details-section {
+    margin-top: 0;
+}
+
+.extras-group > .details-section:first-of-type > .details-section-title,
+.extras-group .details-form > .details-section:first-of-type > .details-section-title,
+.extras-group .details-form > .details-section-hidden + .details-section > .details-section-title {
+    margin-top: 0;
+}
+
+@media (max-width: 560px) {
+    /* Side padding is the first thing to give at phone width - the forms inside are already tight. */
+    .extras-group {
+        padding-left: 14px;
+        padding-right: 14px;
+    }
+}
+
 .manage-message {
     max-width: 480px;
     margin: 0 auto 48px;

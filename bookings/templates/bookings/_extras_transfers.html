@@ -83,7 +83,7 @@ every apartment's page still reflects the party's transfer.
                     <textarea name="transfer_notes[]" class="reserve-input" rows="2"{% if not extras_windows.airport_transfer %} disabled{% endif %}>{{ row.notes }}</textarea>
                 </div>
             </div>
-            <p class="transfer-row-price">Estimated price: <span class="transfer-row-price-value">&ndash;</span></p>
+            <p class="transfer-row-price">Estimated price: <span class="transfer-row-price-value">&ndash;</span><span class="transfer-row-vehicles"></span></p>
         </div>
         {% endfor %}
     </div>
@@ -138,7 +138,7 @@ every apartment's page still reflects the party's transfer.
                     <textarea name="transfer_notes[]" class="reserve-input" rows="2"></textarea>
                 </div>
             </div>
-            <p class="transfer-row-price">Estimated price: <span class="transfer-row-price-value">&ndash;</span></p>
+            <p class="transfer-row-price">Estimated price: <span class="transfer-row-price-value">&ndash;</span><span class="transfer-row-vehicles"></span></p>
         </div>
     </template>
 

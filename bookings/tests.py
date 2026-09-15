@@ -3018,10 +3018,41 @@ class ExtrasSettingsTransferPricingTests(TestCase):
         self.assertEqual(self.settings.compute_transfer_price(5, time(14, 0)), Decimal('45.00'))
         self.assertEqual(self.settings.compute_transfer_price(8, time(14, 0)), Decimal('45.00'))
 
-    def test_more_than_eight_guests_returns_none(self):
-        # more guests than a single transfer can carry - staff book separate transfers instead of
-        # there being a third price tier (see compute_transfer_price's docstring).
-        self.assertIsNone(self.settings.compute_transfer_price(9, time(14, 0)))
+    def test_more_than_eight_guests_adds_vehicles(self):
+        """Extended beyond 8 on 2026-09-15 per Thomas: it used to return None and the guest was
+        shown "contact us", which stopped quoting exactly when the party was biggest. The two rates
+        are vehicle sizes - fill with 8-seaters, the remainder takes a 4-seater if it fits.
+
+        Fixture rates here are 25 (4-seater) and 45 (8-seater), not the live 42/57."""
+        # 9-12: one 8-seater + one 4-seater
+        self.assertEqual(self.settings.compute_transfer_price(9, time(14, 0)), Decimal('70.00'))
+        self.assertEqual(self.settings.compute_transfer_price(12, time(14, 0)), Decimal('70.00'))
+        # 13-16: the remainder no longer fits a 4-seater, so two 8-seaters
+        self.assertEqual(self.settings.compute_transfer_price(13, time(14, 0)), Decimal('90.00'))
+        self.assertEqual(self.settings.compute_transfer_price(16, time(14, 0)), Decimal('90.00'))
+        # and it keeps going rather than falling off a cliff at some second limit
+        self.assertEqual(self.settings.compute_transfer_price(17, time(14, 0)), Decimal('115.00'))
+        self.assertEqual(self.settings.compute_transfer_price(24, time(14, 0)), Decimal('135.00'))
+
+    def test_the_live_rates_match_the_numbers_thomas_specified(self):
+        """Guards the exact worked examples from the request, at the real EUR 42/57 rates."""
+        self.settings.airport_transfer_price_1_4_guests = Decimal('42.00')
+        self.settings.airport_transfer_price_5_8_guests = Decimal('57.00')
+        self.settings.save()
+        self.assertEqual(self.settings.compute_transfer_price(9, time(14, 0)), Decimal('99.00'))
+        self.assertEqual(self.settings.compute_transfer_price(12, time(14, 0)), Decimal('99.00'))
+        self.assertEqual(self.settings.compute_transfer_price(13, time(14, 0)), Decimal('114.00'))
+        self.assertEqual(self.settings.compute_transfer_price(16, time(14, 0)), Decimal('114.00'))
+
+    def test_the_night_surcharge_applies_per_vehicle(self):
+        """Two vehicles at 3am is two drivers doing two night runs - one surcharge between them
+        would undercharge."""
+        self.assertEqual(self.settings.compute_transfer_price(9, time(3, 0)), Decimal('90.00'))
+        self.assertEqual(self.settings.compute_transfer_price(2, time(3, 0)), Decimal('35.00'))
+
+    def test_a_party_of_nobody_has_no_price(self):
+        """An empty row, not a free transfer."""
+        self.assertIsNone(self.settings.compute_transfer_price(0, time(14, 0)))
 
     def test_daytime_transfer_has_no_surcharge(self):
         self.assertEqual(self.settings.compute_transfer_price(2, time(14, 0)), Decimal('25.00'))
@@ -5302,9 +5333,28 @@ class ManageHubExtrasMultiPropertyTests(TestCase):
         self.assertEqual(content.count('id="transfer-rows"'), 1)
         # ...and a duplicated json_script id would be invalid HTML
         self.assertEqual(content.count('id="cot-high-chair-pricing-config"'), 1)
-        # every other extra repeats, labelled per apartment
-        self.assertIn('Welcome Pack &mdash; Extras Merge Property A', content)
-        self.assertIn('Welcome Pack &mdash; Extras Merge Property B', content)
+        # every other extra repeats, once per apartment
+        self.assertEqual(content.count('>Welcome Pack</h2>'), 2)
+
+    def test_the_page_reads_as_three_labelled_groups(self):
+        """2026-09-15, per Thomas: the transfers block and the two apartments ran together as one
+        long list of sections. Each is now its own titled panel, and the apartment name lives on
+        the group header instead of being repeated on all five sub-headings inside it."""
+        response = self.client.get(self.url)
+        content = response.content.decode()
+
+        self.assertEqual(content.count('class="extras-group"'), 3)
+        self.assertIn('<h2 class="extras-group-title">Airport Transfers</h2>', content)
+        self.assertIn('<h2 class="extras-group-title">Extras Merge Property A</h2>', content)
+        self.assertIn('<h2 class="extras-group-title">Extras Merge Property B</h2>', content)
+
+        body = _normalized_text(response)
+        self.assertIn('For everyone in your party', body)
+        self.assertIn('Apartment 1 of 2', body)
+        self.assertIn('Apartment 2 of 2', body)
+
+        # The old per-section suffix is gone - the group header carries the name now.
+        self.assertNotIn('Welcome Pack &mdash; Extras Merge Property A', content)
 
     def test_saving_one_apartments_extras_leaves_the_other_alone(self):
         self.client.post(self.url, {'leg_reference': self.leg_b.reference, 'welcome_pack': 'on'})
