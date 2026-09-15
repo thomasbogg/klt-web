@@ -5,7 +5,7 @@ _extras_context()/_transfer_context() variables in the parent context, plus a `d
 for the one substring that differs per caller ("the amount due now" / "your balance payment" /
 "any online payment").
 {% endcomment %}
-<section class="details-section{% if not show_cot_high_chair %} details-section-hidden{% endif %}" id="cot-high-chair-section">
+<section class="details-section{% if not show_cot_high_chair %} details-section-hidden{% endif %}" data-cot-high-chair-section>
     <h2 class="details-section-title">Cot &amp; High Chair</h2>
     {% if extras_windows.cot_high_chair %}
     <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}. Pricing depends on the length of your stay, and requesting both together gets a discount.</p>
@@ -15,14 +15,14 @@ for the one substring that differs per caller ("the amount due now" / "your bala
 
     <div class="cot-high-chair-block">
         <label class="details-checkbox-label">
-            <input type="checkbox" name="cot" id="cot_checkbox" {% if cot %}checked{% endif %}{% if not extras_windows.cot_high_chair %} disabled{% endif %}>
+            <input type="checkbox" name="cot" data-cot-checkbox {% if cot %}checked{% endif %}{% if not extras_windows.cot_high_chair %} disabled{% endif %}>
             I need a cot
         </label>
         <label class="details-checkbox-label">
-            <input type="checkbox" name="high_chair" id="high_chair_checkbox" {% if high_chair %}checked{% endif %}{% if not extras_windows.cot_high_chair %} disabled{% endif %}>
+            <input type="checkbox" name="high_chair" data-high-chair-checkbox {% if high_chair %}checked{% endif %}{% if not extras_windows.cot_high_chair %} disabled{% endif %}>
             I need a high chair
         </label>
-        <p class="cot-high-chair-price">Estimated price: <span id="cot-high-chair-price-value">&ndash;</span></p>
+        <p class="cot-high-chair-price">Estimated price: <span data-cot-high-chair-price-value>&ndash;</span></p>
     </div>
 
     {{ cot_high_chair_pricing_config|json_script:"cot-high-chair-pricing-config" }}
@@ -174,11 +174,11 @@ for the one substring that differs per caller ("the amount due now" / "your bala
 
     <div class="welcome-pack-block">
         <label class="details-checkbox-label details-checkbox-label-primary">
-            <input type="checkbox" name="late_checkout" id="late_checkout_checkbox" data-price="{{ late_checkout_price|floatformat:2 }}" {% if late_checkout %}checked{% endif %}{% if not extras_windows.late_checkout or not late_checkout_offerable %} disabled{% endif %}>
+            <input type="checkbox" name="late_checkout" data-late-checkout-checkbox data-price="{{ late_checkout_price|floatformat:2 }}" {% if late_checkout %}checked{% endif %}{% if not extras_windows.late_checkout or not late_checkout_offerable %} disabled{% endif %}>
             I'd like a late checkout
         </label>
 
-        <div class="welcome-pack-picker{% if not late_checkout %} welcome-pack-picker-hidden{% endif %}" id="late-checkout-picker">
+        <div class="welcome-pack-picker{% if not late_checkout %} welcome-pack-picker-hidden{% endif %}" data-late-checkout-picker>
             {% if late_checkout_unlimited %}
             <p class="details-note details-note-left">There's no clean scheduled for your property that day yet, so you can check out whenever suits you - no fixed time needed.</p>
             {% elif late_checkout_available_times %}
@@ -209,11 +209,11 @@ for the one substring that differs per caller ("the amount due now" / "your bala
 
     <div class="welcome-pack-block">
         <label class="details-checkbox-label details-checkbox-label-primary">
-            <input type="checkbox" name="mid_stay_clean" id="mid_stay_clean_checkbox" data-price="{{ mid_stay_clean_price|floatformat:2 }}" {% if mid_stay_clean %}checked{% endif %}{% if not extras_windows.mid_stay_clean %} disabled{% endif %}>
+            <input type="checkbox" name="mid_stay_clean" data-mid-stay-clean-checkbox data-price="{{ mid_stay_clean_price|floatformat:2 }}" {% if mid_stay_clean %}checked{% endif %}{% if not extras_windows.mid_stay_clean %} disabled{% endif %}>
             I'd like a clean partway through my stay
         </label>
 
-        <div class="welcome-pack-picker{% if not mid_stay_clean %} welcome-pack-picker-hidden{% endif %}" id="mid-stay-clean-picker">
+        <div class="welcome-pack-picker{% if not mid_stay_clean %} welcome-pack-picker-hidden{% endif %}" data-mid-stay-clean-picker>
             <p class="details-note">We'll schedule this around the middle of your stay and confirm the exact day closer to arrival.</p>
             {% if mid_stay_clean_error %}<p class="reserve-form-error">{{ mid_stay_clean_error }}</p>{% endif %}
             <p class="cot-high-chair-price">Flat fee: &euro;{{ mid_stay_clean_price|floatformat:2 }}</p>
@@ -232,11 +232,11 @@ for the one substring that differs per caller ("the amount due now" / "your bala
 
     <div class="welcome-pack-block">
         <label class="details-checkbox-label details-checkbox-label-primary">
-            <input type="checkbox" name="welcome_pack" id="welcome_pack_checkbox" data-price="{{ welcome_pack_price|floatformat:2 }}" {% if welcome_pack %}checked{% endif %}{% if not extras_windows.welcome_pack %} disabled{% endif %}>
+            <input type="checkbox" name="welcome_pack" data-welcome-pack-checkbox data-price="{{ welcome_pack_price|floatformat:2 }}" {% if welcome_pack %}checked{% endif %}{% if not extras_windows.welcome_pack %} disabled{% endif %}>
             I'd like a Welcome Pack
         </label>
 
-        <div class="welcome-pack-picker{% if not welcome_pack %} welcome-pack-picker-hidden{% endif %}" id="welcome-pack-picker">
+        <div class="welcome-pack-picker{% if not welcome_pack %} welcome-pack-picker-hidden{% endif %}" data-welcome-pack-picker>
             <p class="cot-high-chair-price">Flat fee: &euro;{{ welcome_pack_price|floatformat:2 }}</p>
             <div class="welcome-pack-choice-group">
                 <span class="welcome-pack-choice-label">Food</span>
@@ -250,7 +250,7 @@ for the one substring that differs per caller ("the amount due now" / "your bala
             </div>
 
             {% if welcome_pack_items %}
-            <ul class="welcome-pack-items" id="welcome-pack-items">
+            <ul class="welcome-pack-items" data-welcome-pack-items>
                 {% for item in welcome_pack_items %}
                 <li data-category="{{ item.category }}">{{ item.name }}</li>
                 {% endfor %}
@@ -258,8 +258,8 @@ for the one substring that differs per caller ("the amount due now" / "your bala
             {% endif %}
 
             <div class="welcome-pack-field">
-                <label for="welcome_pack_note">Allergies or dietary notes (optional) - the pack's contents are fixed by your choices above.</label>
-                <textarea name="welcome_pack_note" id="welcome_pack_note" class="reserve-input" rows="2"{% if not extras_windows.welcome_pack %} disabled{% endif %}>{{ welcome_pack_note }}</textarea>
+                <label for="welcome_pack_note{{ leg_id_suffix }}">Allergies or dietary notes (optional) - the pack's contents are fixed by your choices above.</label>
+                <textarea name="welcome_pack_note" id="welcome_pack_note{{ leg_id_suffix }}" class="reserve-input" rows="2"{% if not extras_windows.welcome_pack %} disabled{% endif %}>{{ welcome_pack_note }}</textarea>
             </div>
         </div>
     </div>

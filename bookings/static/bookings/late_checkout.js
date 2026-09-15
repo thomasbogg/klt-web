@@ -1,13 +1,16 @@
-const checkbox = document.getElementById('late_checkout_checkbox');
-const picker = document.getElementById('late-checkout-picker');
+// Scoped per enclosing <form> - see welcome_pack.js for why (one section per apartment on the
+// merged multi-property Extras page).
 
-function updatePickerVisibility() {
-    if (picker && checkbox) {
-        picker.classList.toggle('welcome-pack-picker-hidden', !checkbox.checked);
+document.querySelectorAll('[data-late-checkout-checkbox]').forEach((checkbox) => {
+    const scope = checkbox.closest('form') || document;
+    const picker = scope.querySelector('[data-late-checkout-picker]');
+
+    function updatePickerVisibility() {
+        if (picker) {
+            picker.classList.toggle('welcome-pack-picker-hidden', !checkbox.checked);
+        }
     }
-}
 
-if (checkbox) {
     checkbox.addEventListener('change', updatePickerVisibility);
     updatePickerVisibility();
-}
+});
