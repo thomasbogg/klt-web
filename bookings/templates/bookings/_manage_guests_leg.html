@@ -150,9 +150,12 @@ off to a per-apartment hub - see the Stage D dual-form pattern.
 
         {% include 'bookings/_guest_list_form.html' with rows=leg.rows max_guests=leg.max_guests guest_list_property=leg.booking.property guest_list_note="Removing guests can reduce this apartment's balance if applicable; adding guests may increase it - we'll show you the updated amount before anything is charged." %}
 
-        {# Named per apartment: two identical full-width buttons on one page would otherwise be
-           told apart only by scroll position, which is exactly the "which apartment am I acting
-           on?" confusion the merged hub exists to remove. #}
+        {% comment %}
+        Named per apartment: two identical full-width buttons on one page would otherwise be told
+        apart only by scroll position, which is exactly the "which apartment am I acting on?"
+        confusion the merged hub exists to remove. ({# #} is single-line only in Django - a
+        multi-line one renders as literal text on the page.)
+        {% endcomment %}
         <button type="submit" class="reserve-form-submit">Save Guest List &mdash; {{ leg.booking.property }}</button>
 
         {% if leg.price_changed %}
