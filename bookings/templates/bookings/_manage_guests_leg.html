@@ -70,7 +70,14 @@ off to a per-apartment hub - see the Stage D dual-form pattern.
         {% csrf_token %}
         <input type="hidden" name="leg_reference" value="{{ leg.booking.reference }}">
 
-        <div class="guest-rows" data-guest-rows>
+        {% comment %}
+        Unlike the pre-balance guest list, the rows in this container are ADDITIONS on top of the
+        party already staying - so guest_list.js has to count both against max_guests, hence
+        data-existing-guests alongside data-max-guests. The server still enforces the same sum
+        (BookingManageGuestAddView), this just stops the guest filling in a row that can't be saved.
+        {% endcomment %}
+        <div class="guest-rows" data-guest-rows
+             data-max-guests="{{ leg.max_guests }}" data-existing-guests="{{ leg.party|length }}">
             <div class="guest-row guest-row-header">
                 <span></span>
                 <span>First name</span>
@@ -115,6 +122,9 @@ off to a per-apartment hub - see the Stage D dual-form pattern.
         </template>
 
         <button type="button" class="guest-row-add" data-guest-row-add>+ Add another guest</button>
+        <p class="guest-row-limit-note" data-guest-row-limit hidden>
+            That's the most this apartment sleeps ({{ leg.max_guests }} guests), counting everyone already staying.
+        </p>
         <button type="submit" class="reserve-form-submit">Update Guests &mdash; {{ leg.booking.property }}</button>
 
         {% if leg.pending_guest_addition %}

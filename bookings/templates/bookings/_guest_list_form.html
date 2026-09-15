@@ -15,7 +15,13 @@ Guest List shows one of these per apartment, and duplicate ids would silently bi
     <p class="details-note">Please enter details for all members of your party (including yourself). <strong>Use each guest's age at the time of your stay, not today.</strong></p>
     <p class="details-note">This property allows up to {{ max_guests }} guests. {{ guest_list_note }}</p>
 
-    <div class="guest-rows" data-guest-rows>
+    {% comment %}
+    data-max-guests lets guest_list.js stop the guest adding more rows than the property allows,
+    rather than letting them fill in a row that the server will only reject on save (2026-09-15,
+    per Thomas). No data-existing-guests here: the rows in this container ARE the whole party, so
+    the count starts from zero. The server-side check in the view stays as the real authority.
+    {% endcomment %}
+    <div class="guest-rows" data-guest-rows data-max-guests="{{ max_guests }}">
         <div class="guest-row guest-row-header">
             <span></span>
             <span>First name</span>
@@ -64,4 +70,7 @@ Guest List shows one of these per apartment, and duplicate ids would silently bi
     </template>
 
     <button type="button" class="guest-row-add" data-guest-row-add>+ Add guest</button>
+    <p class="guest-row-limit-note" data-guest-row-limit hidden>
+        That's the most this property sleeps ({{ max_guests }} guests). Remove someone to add a different guest.
+    </p>
 </section>

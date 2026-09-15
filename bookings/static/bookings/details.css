@@ -260,8 +260,24 @@ browser-default underlined blue, which reads as shouting next to a whole paragra
     color: var(--primary-color);
 }
 
-.guest-row-add:hover {
+.guest-row-add:hover:not(:disabled) {
     background: rgba(44, 121, 185, 0.08);
+}
+
+/* At the property's occupancy cap (see guest_list.js). Greyed rather than hidden so the guest can
+   see the control still exists and why it isn't available - a button that vanishes reads as a bug.
+   :disabled also blocks the click and takes it out of the tab order for free. */
+.guest-row-add:disabled {
+    border-color: rgb(205, 205, 205);
+    color: rgb(150, 150, 150);
+    cursor: not-allowed;
+}
+
+.guest-row-limit-note {
+    margin: -8px 0 20px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: rgb(120, 120, 120);
 }
 
 @media (max-width: 560px) {

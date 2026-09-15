@@ -95,7 +95,9 @@
                 <form method="post" action="{% url 'bookings:manage_hub_guest_add' reference=booking.reference %}" class="details-form">
                 {% csrf_token %}
 
-                <div class="guest-rows" data-guest-rows>
+                {# Additions on top of the party already staying - both count against max_guests. #}
+                <div class="guest-rows" data-guest-rows
+                     data-max-guests="{{ max_guests }}" data-existing-guests="{{ party|length }}">
                     <div class="guest-row guest-row-header">
                         <span></span>
                         <span>First name</span>
@@ -156,6 +158,9 @@
                 </template>
 
                 <button type="button" class="guest-row-add" data-guest-row-add>+ Add another guest</button>
+                <p class="guest-row-limit-note" data-guest-row-limit hidden>
+                    That's the most this property sleeps ({{ max_guests }} guests), counting everyone already staying.
+                </p>
                 <button type="submit" class="reserve-form-submit">Update Guests</button>
 
                 {% if pending_guest_addition %}
