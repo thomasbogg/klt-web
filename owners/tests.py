@@ -17,7 +17,10 @@ from bookings.utils import create_owner_booking, guest_for_owner
 from finance.models import Memo, PayoutRecord
 from guests.models import Guest
 from libraries.phone_country_codes import join_phone, split_phone
-from properties.models import Location, ManagementCompany, Owner, OwnerBankAccount, Platform, Property, PropertySpec, iCalLink
+from properties.models import (
+    Location, ManagementCompany, Owner, OwnerBankAccount, Platform, Property, PropertyOwnership,
+    PropertySpec, iCalLink,
+)
 from staff.models import CleaningTask, LateCheckoutGrant
 from staff.utils import grant_late_checkout
 
@@ -160,6 +163,26 @@ class OwnerSuiteTests(TestCase):
         self.assertNotIn('klt_net_revenue', response.context['selected_columns'])
         self.assertNotContains(response, 'KLT Net Commission')
         self.assertNotContains(response, 'KLT Net Revenue')
+
+    def test_report_hides_a_booking_before_this_owners_recorded_handover(self):
+        """PropertyOwnership.visible_since() gating (2026-09-15, per Thomas) - a new owner must
+        not see bookings/financials from before they took over. self.booking arrives at
+        today+3, so a handover recorded effective today+5 puts it before this owner's own
+        visible window."""
+        PropertyOwnership.record_handover(self.property, self.owner, self.today + timedelta(days=5))
+        self.client.login(username='portalowner', password='pw')
+        response = self.client.get(reverse('owners:reports'), {
+            'start': self.today.isoformat(), 'end': (self.today + timedelta(days=14)).isoformat(),
+        })
+        self.assertEqual(response.context['rows'], [])
+
+    def test_report_still_shows_a_booking_after_this_owners_recorded_handover(self):
+        PropertyOwnership.record_handover(self.property, self.owner, self.today)
+        self.client.login(username='portalowner', password='pw')
+        response = self.client.get(reverse('owners:reports'), {
+            'start': self.today.isoformat(), 'end': (self.today + timedelta(days=14)).isoformat(),
+        })
+        self.assertEqual(response.context['rows'][0]['booking'], self.booking)
 
 
 class OwnerAcceptInviteViewTests(TestCase):
@@ -547,6 +570,17 @@ class OwnerBookingsTests(TestCase):
         all_shown = [row['booking'] for row in response.context['upcoming_rows']]
         all_shown += list(response.context['history_bookings'])
         self.assertNotIn(self.other_owner_booking, all_shown)
+
+    def test_list_hides_a_stay_before_this_owners_recorded_handover(self):
+        """self.past_booking arrives today-10, self.upcoming_booking arrives today+30 - a
+        handover recorded effective today+20 puts only the past stay before this owner's own
+        visible window (PropertyOwnership.visible_since())."""
+        PropertyOwnership.record_handover(self.property, self.owner, self.today + timedelta(days=20))
+        self.client.login(username='staysowner', password='pw')
+        response = self.client.get(reverse('owners:bookings'))
+        upcoming = [row['booking'] for row in response.context['upcoming_rows']]
+        self.assertEqual(upcoming, [self.upcoming_booking])
+        self.assertEqual(list(response.context['history_bookings']), [])
 
     def test_upcoming_row_flags_missing_arrival_details(self):
         """A freshly-reserved stay has an eagerly-created but blank Arrival row (no flight
@@ -1185,6 +1219,21 @@ class OwnerPayoutsMemosTests(TestCase):
 
     def test_memo_detail_404s_for_another_owners_memo(self):
         self.client.login(username='otherpayoutsowner', password='pw')
+        response = self.client.get(reverse('owners:memo_detail', kwargs={'pk': self.memo.pk}))
+        self.assertEqual(response.status_code, 404)
+
+    def test_hides_a_payout_and_memo_before_this_owners_recorded_handover(self):
+        """self.booking arrives today+10 - a handover recorded effective today+15 puts both its
+        PayoutRecord and Memo before this owner's own visible window
+        (PropertyOwnership.visible_since())."""
+        PropertyOwnership.record_handover(self.property, self.owner, self.today + timedelta(days=15))
+        self.client.login(username='payoutsowner', password='pw')
+        response = self.client.get(reverse('owners:payouts_memos'))
+        self.assertEqual(response.context['rows'], [])
+
+    def test_memo_detail_404s_for_a_memo_before_this_owners_recorded_handover(self):
+        PropertyOwnership.record_handover(self.property, self.owner, self.today + timedelta(days=15))
+        self.client.login(username='payoutsowner', password='pw')
         response = self.client.get(reverse('owners:memo_detail', kwargs={'pk': self.memo.pk}))
         self.assertEqual(response.status_code, 404)
 

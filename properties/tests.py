@@ -698,6 +698,27 @@ class PropertyOwnershipTests(TestCase):
         with self.assertRaises(ValidationError):
             PropertyOwnership.record_handover(self.property, self.owner_b, date(2024, 1, 1))
 
+    def test_visible_since_is_none_with_no_ownership_history_at_all(self):
+        self.assertIsNone(PropertyOwnership.visible_since(self.property, self.owner_a))
+
+    def test_visible_since_is_none_for_a_null_start_open_row(self):
+        PropertyOwnership.record_initial_ownership(self.property, self.owner_a)
+        self.assertIsNone(PropertyOwnership.visible_since(self.property, self.owner_a))
+
+    def test_visible_since_is_the_new_owners_start_date_after_a_handover(self):
+        PropertyOwnership.record_initial_ownership(self.property, self.owner_a)
+        PropertyOwnership.record_handover(self.property, self.owner_b, date(2024, 7, 1))
+        self.assertEqual(PropertyOwnership.visible_since(self.property, self.owner_b), date(2024, 7, 1))
+
+    def test_visible_since_is_none_for_the_departed_owners_own_now_closed_row(self):
+        """Deliberately None (not the closed row's own start_date) - visible_since() only looks
+        at the CURRENTLY OPEN row for the given owner, and a departed owner already loses access
+        to this property's pages entirely today via Property.objects.filter(owner=owner) before
+        this method would ever run for them - see the method's own docstring."""
+        PropertyOwnership.record_initial_ownership(self.property, self.owner_a)
+        PropertyOwnership.record_handover(self.property, self.owner_b, date(2024, 7, 1))
+        self.assertIsNone(PropertyOwnership.visible_since(self.property, self.owner_a))
+
     def test_record_handover_rejects_handover_to_the_same_owner(self):
         PropertyOwnership.record_initial_ownership(self.property, self.owner_a)
         with self.assertRaises(ValidationError):

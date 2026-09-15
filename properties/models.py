@@ -799,6 +799,20 @@ class PropertyOwnership(models.Model):
         property.save(update_fields=['owner'])
         return new_row
 
+    @classmethod
+    def visible_since(cls, property, owner):
+        """The date on/after which `owner`'s CURRENT ownership window makes bookings/financial
+        events on `property` visible to them in the owner-facing portal (owners/views.py) - None
+        means no gating (owned since before klt-web tracked ownership history, or no ownership
+        history exists for this property/owner pair at all). Looks only at the currently-open row
+        (end_date is null) for this owner - a departed owner regaining read-only access to their
+        own past window, once they're no longer `Property.owner`, is a separate, not-yet-built
+        feature (see the OwnerView docstring on this model's own history in project memory);
+        today `Property.objects.filter(owner=owner)` already drops a departed owner's properties
+        from every owner-facing list before this method would even run."""
+        row = cls.objects.filter(property=property, owner=owner, end_date__isnull=True).first()
+        return row.start_date if row else None
+
 
 class PropertySpec(models.Model):
     """Property specifications and features."""

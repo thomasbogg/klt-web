@@ -23,7 +23,7 @@ from bookings.views import BookingFormMixin
 from finance.models import Memo, PayoutRecord
 from owners.permissions import owner_login_required
 from libraries.phone_country_codes import join_phone, phone_country_choices, split_phone
-from properties.models import Owner, OwnerBankAccount, Property, iCalLink
+from properties.models import Owner, OwnerBankAccount, Property, PropertyOwnership, iCalLink
 from staff.models import TaskHistoryEntry
 from staff.reports import OWNER_SAFE_REPORT_COLUMNS, booking_report_rows, report_totals
 from staff.utils import CLOSED_STATUSES, last_day_of_month, parsed_date
@@ -268,6 +268,15 @@ class OwnerReportView(View):
         rows = booking_report_rows(
             start, end, properties=[selected_property] if selected_property else properties,
         )
+        # Pre-handover bookings on a property this owner didn't yet own must not appear on their
+        # own Reports - PropertyOwnership.visible_since()'s own docstring. Filtered here rather
+        # than inside booking_report_rows() itself so the shared row-builder's default behaviour
+        # (used by staff's own unfiltered Reports page) is untouched.
+        visible_since = _owner_visible_since_by_property(owner, properties)
+        rows = [
+            row for row in rows
+            if _visible_to_owner(row['booking'].property_id, row['booking'].arrival_date, visible_since)
+        ]
 
         return render(request, self.template_name, {
             'owner': owner,
@@ -308,6 +317,19 @@ class OwnerCalendarView(View):
             'calendar_months': get_property_calendar(selected_property) if selected_property else [],
             'active_section': 'calendar',
         })
+
+
+def _owner_visible_since_by_property(owner, properties):
+    """Maps each of `owner`'s properties to PropertyOwnership.visible_since() - the date on/after
+    which a booking/financial event on that property is visible to this owner, or None for "no
+    gating" (see that method's own docstring). Computed once per request and passed around rather
+    than re-querying PropertyOwnership per row."""
+    return {property.pk: PropertyOwnership.visible_since(property, owner) for property in properties}
+
+
+def _visible_to_owner(property_id, event_date, visible_since_by_property):
+    since = visible_since_by_property.get(property_id)
+    return since is None or event_date >= since
 
 
 def _owner_booking_editable(booking):
@@ -359,9 +381,14 @@ class OwnerBookingsListView(View):
 
     def get(self, request, *args, **kwargs):
         owner = request.user.owner_profile
-        bookings = list(Booking.objects.filter(
-            property__owner=owner, is_owner=True,
-        ).select_related('property', 'arrival', 'guest').order_by('-arrival_date'))
+        properties = list(Property.objects.filter(owner=owner))
+        visible_since = _owner_visible_since_by_property(owner, properties)
+        bookings = [
+            b for b in Booking.objects.filter(
+                property__owner=owner, is_owner=True,
+            ).select_related('property', 'arrival', 'guest').order_by('-arrival_date')
+            if _visible_to_owner(b.property_id, b.arrival_date, visible_since)
+        ]
         upcoming = sorted(
             (b for b in bookings if _owner_booking_editable(b)), key=lambda b: b.arrival_date,
         )
@@ -807,6 +834,18 @@ class OwnerBookingDetailView(BookingFormMixin, View):
         messages.success(request, "Stay cancelled.")
 
 
+def _memo_event_date(memo):
+    """Which date decides whether `memo` falls inside an owner's visible ownership window - the
+    arrival date of the booking its turnover clean belongs to (CleaningTask.booking is a required
+    FK, never null, whenever cleaning_task itself is set), matching the same arrival_date the
+    Reports gating above keys off. Falls back to sent_at for an orphaned-but-already-sent memo
+    (CleaningTask.booking on_delete=CASCADE - see Memo's own docstring on why cleaning_task can go
+    null after sending) - the only case with no booking left to ask."""
+    if memo.cleaning_task is not None:
+        return memo.cleaning_task.booking.arrival_date
+    return memo.sent_at.date()
+
+
 @method_decorator(owner_login_required, name='dispatch')
 class OwnerPayoutsMemosView(View):
     """Payouts & Memos - a unified, reverse-chronological ledger of every finance.models.
@@ -824,12 +863,20 @@ class OwnerPayoutsMemosView(View):
 
     def get(self, request, *args, **kwargs):
         owner = request.user.owner_profile
-        payout_records = PayoutRecord.objects.filter(
-            booking__property__owner=owner,
-        ).select_related('booking', 'booking__property')
-        memos = Memo.objects.filter(
-            property__owner=owner, sent_at__isnull=False,
-        ).select_related('property', 'cleaning_task__booking')
+        properties = list(Property.objects.filter(owner=owner))
+        visible_since = _owner_visible_since_by_property(owner, properties)
+        payout_records = [
+            record for record in PayoutRecord.objects.filter(
+                booking__property__owner=owner,
+            ).select_related('booking', 'booking__property')
+            if _visible_to_owner(record.booking.property_id, record.booking.arrival_date, visible_since)
+        ]
+        memos = [
+            memo for memo in Memo.objects.filter(
+                property__owner=owner, sent_at__isnull=False,
+            ).select_related('property', 'cleaning_task__booking')
+            if _visible_to_owner(memo.property_id, _memo_event_date(memo), visible_since)
+        ]
 
         rows = []
         for record in payout_records:
@@ -897,6 +944,9 @@ class OwnerMemoDetailView(View):
             pk=pk, property__owner=owner, sent_at__isnull=False,
         ).first()
         if memo is None:
+            raise Http404("No memo found.")
+        visible_since = PropertyOwnership.visible_since(memo.property, owner)
+        if visible_since is not None and _memo_event_date(memo) < visible_since:
             raise Http404("No memo found.")
         return render(request, self.template_name, {
             'owner': owner,
