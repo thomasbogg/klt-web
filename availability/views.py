@@ -86,7 +86,10 @@ class SearchView(View):
 
     def get_available_properties(self, start_date, end_date, guests):
 
-        properties = Property.objects.bookable_on_website().filter(
+        # select_related('specs'): the pricing loop below reads property.specs.bedrooms for each
+        # result (extra-guest allowance, see properties/utils.py::free_guest_allowance), which
+        # would otherwise be one extra query per property.
+        properties = Property.objects.bookable_on_website().select_related('specs').filter(
             #specs__bedrooms__gte=guests.get('adults', 0) - 1 + guests.get('children', 0) - 1, # Assuming 1 bedroom can accommodate 2 adults or 2 children
             specs__max_guests__gte=guests.get('adults', 0) + guests.get('children', 0) + guests.get('infants', 0),
             # max_adults is a separate, tighter cap than max_guests (see Booking.clean()'s own

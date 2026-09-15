@@ -1777,6 +1777,10 @@ class BookingDetailsViewTests(TestCase):
         self._set_session()
         data = self._post_data(['Vitor', 'Joana', 'Ines'], ['Carvalho', 'Moura', 'Carvalho'], [30, 32, 10])
         data['mid_stay_clean'] = 'on'
+        # Bumping to 3 bedrooms also raises the free-guest allowance to 6, so Ines stops being a
+        # chargeable extra and the balance drops - which trips the price-change interstitial. This
+        # test is about the clean's own price, so accept the change and carry on.
+        data['confirmed'] = '1'
         response = self.client.post(self.url, data)
         self.assertRedirects(response, self.pay_url, fetch_redirect_response=False)
         self.booking.refresh_from_db()
@@ -1987,7 +1991,8 @@ class BookingBalanceDetailsViewTests(TestCase):
             is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
             adults=2, children=1, babies=0, last_updated=timezone.now(),
         )
-        # 2 adults + 1 child: FREE_ADULTS=2 means the first two adults are never priced extra
+        # 2 adults + 1 child: this 1-bedroom property's free allowance is 2 guests, which the two
+        # adults fill, so the child is the one over the line
         # (properties/utils.py) - a child (unlike a 3rd+ adult) always adds extra_child_rate, so
         # this party actually changes price when a guest is added/removed, unlike a 2-adults-only
         # party would. Matches the same fixture numbers as RecalculateCostsForPartyTests.
@@ -2111,7 +2116,8 @@ class BookingBalanceDetailsViewTests(TestCase):
         self.assertIn('adult', response.context['non_field_error'])
 
     def test_removing_a_guest_shows_the_price_change_interstitial_and_reduces_balance_when_confirmed(self):
-        # Dropping Ines (the priced child): FREE_ADULTS=2 means Elena+Marco alone are no cheaper
+        # Dropping Ines (the priced child): Elena+Marco exactly fill the 2-guest allowance, so alone
+        # they are no cheaper
         # or costlier than each other, but the child's extra_child_rate genuinely drops off.
         data = self._post_data(['Elena', 'Marco'], ['Costa', 'Costa'], [30, 32])
         response = self.client.post(self.url, data)
@@ -2130,7 +2136,7 @@ class BookingBalanceDetailsViewTests(TestCase):
         self.assertEqual(self.booking.party.count(), 2)
 
     def test_adding_a_guest_increases_the_balance(self):
-        # A 4th person (a 3rd adult, beyond FREE_ADULTS=2) genuinely adds extra_adult_rate on top
+        # A 4th person (a 3rd adult, beyond the 2-guest allowance) genuinely adds extra_adult_rate on top
         # of the existing child.
         data = self._post_data(
             ['Elena', 'Marco', 'Ines', 'Sofia'], ['Costa', 'Costa', 'Costa', 'Costa'], [30, 32, 10, 25],
@@ -3714,7 +3720,7 @@ class BookingManageGuestAddViewTests(TestCase):
         )
         self.elena = BookingGuest.objects.create(booking=self.booking, first_name='Elena', last_name='Costa', age=30, is_lead=True)
         self.marco = BookingGuest.objects.create(booking=self.booking, first_name='Marco', last_name='Costa', age=32, is_lead=False)
-        # 2 adults only: FREE_ADULTS=2 means this party is currently at the free-adult ceiling, so
+        # 2 adults only: this party exactly fills the 2-guest allowance (1 bedroom), so
         # a 3rd adult genuinely adds extra_adult_rate - see RecalculateCostsForPartyTests for the
         # same underlying pricing fixture.
         self.charge = Charge.objects.create(
@@ -3763,7 +3769,7 @@ class BookingManageGuestAddViewTests(TestCase):
     def test_unconfirmed_post_skips_the_interstitial_when_theres_nothing_to_confirm(self):
         """Real bug report: the interstitial used to show unconditionally, even asking a guest to
         'confirm' a charge that was actually 0.00 - starting from 1 named adult (Marco removed) and
-        adding a 2nd stays within the free-adult ceiling (see setUp's own FREE_ADULTS=2 comment),
+        adding a 2nd stays within the free allowance (see setUp's own comment),
         so there's nothing to confirm and this should save immediately without a `confirmed` field
         at all, the same way a POST with confirmed=1 already does."""
         self.marco.delete()
@@ -5267,7 +5273,7 @@ class ManageHubGuestsMultiPropertyTests(TestCase):
         self.assertEqual(legs[self.leg_b.reference]['rows'][0]['errors'], {})
 
     def test_price_change_interstitial_is_scoped_to_the_submitting_leg(self):
-        # A third adult crosses FREE_ADULTS (2), so this genuinely reprices leg_a's balance.
+        # A third adult crosses the 2-guest allowance, so this genuinely reprices leg_a's balance.
         response = self.client.post(self.url, self._rows(
             [('Rui', 'Almeida', 40), ('Nuno', 'Almeida', 38), ('Ana', 'Almeida', 35)], self.leg_a,
         ))
@@ -5281,7 +5287,7 @@ class ManageHubGuestsMultiPropertyTests(TestCase):
         self.assertEqual(self.leg_b.charges.due_at_balance, Decimal('553.87'))
 
     def test_add_guest_targets_the_named_leg_only(self):
-        # A second adult is within FREE_ADULTS, so there's nothing to pay and the row is appended
+        # A second adult is within the 2-guest allowance, so there's nothing to pay and the row is appended
         # immediately - see BookingManageGuestAddView.
         self._mark_fully_paid(self.leg_a)
         self._mark_fully_paid(self.leg_b)
@@ -5295,8 +5301,13 @@ class ManageHubGuestsMultiPropertyTests(TestCase):
         )
 
     def test_chargeable_add_stages_the_payment_against_the_submitting_leg(self):
-        # A child is chargeable from the first one (no free allowance), so this takes the
-        # SupplementaryPayment route instead - which must be raised against leg_b, not the primary.
+        # These properties are 1-bedroom, so the free allowance is 2 guests (see
+        # properties/utils.py::free_guest_allowance). Sofia plus this second adult fill it, so the
+        # child added below is the 3rd guest and genuinely costs money - taking the
+        # SupplementaryPayment route, which must be raised against leg_b, not the primary.
+        BookingGuest.objects.create(
+            booking=self.leg_b, first_name='Marta', last_name='Almeida', age=41, is_lead=False,
+        )
         self._mark_fully_paid(self.leg_a)
         self._mark_fully_paid(self.leg_b)
         response = self.client.post(self.add_url, {
@@ -5309,7 +5320,9 @@ class ManageHubGuestsMultiPropertyTests(TestCase):
         self.assertEqual(payment.kind, 'guest_add')
         self.assertEqual(payment.pending_guest_rows[0]['first_name'], 'Tiago')
         # Still not appended anywhere until that payment is actually paid
-        self.assertEqual(list(self.leg_b.party.values_list('first_name', flat=True)), ['Sofia'])
+        self.assertEqual(
+            sorted(self.leg_b.party.values_list('first_name', flat=True)), ['Marta', 'Sofia'],
+        )
 
     def test_remove_cannot_delete_a_guest_belonging_to_the_other_apartment(self):
         self._mark_fully_paid(self.leg_a)

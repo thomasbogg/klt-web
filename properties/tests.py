@@ -15,7 +15,8 @@ from properties.models import (
     PropertyOwnership, PropertySpec,
 )
 from properties.utils import (
-    apply_price_bulk_plan, build_price_bulk_plan, gross_up_for_commission, get_stay_total_price,
+    apply_price_bulk_plan, build_price_bulk_plan, free_guest_allowance, gross_up_for_commission,
+    get_stay_total_price, split_chargeable_guests,
 )
 
 
@@ -798,6 +799,87 @@ class SplitCommaJoinedOwnerEmailsMigrationTests(TestCase):
         self.rejoin(apps, None)
         owner.refresh_from_db()
         self.assertEqual(owner.email, 'only@example.com')
+
+
+class FreeGuestAllowanceTests(TestCase):
+    """The extra-guest surcharge starts once a party exceeds 2 guests per BEDROOM (per Thomas,
+    2026-09-15), replacing a flat two-adult allowance that ignored property size and charged every
+    child from the first."""
+
+    def _property(self, bedrooms=None, **spec_kwargs):
+        property = Property.objects.create(
+            title=f'Allowance {bedrooms}', short_title=f'ALLOW{bedrooms or 0}',
+        )
+        if bedrooms is not None:
+            PropertySpec.objects.create(property=property, bedrooms=bedrooms, max_guests=8,
+                                        **spec_kwargs)
+        return property
+
+    def test_allowance_is_two_per_bedroom(self):
+        self.assertEqual(free_guest_allowance(self._property(bedrooms=1)), 2)
+        self.assertEqual(free_guest_allowance(self._property(bedrooms=2)), 4)
+        self.assertEqual(free_guest_allowance(self._property(bedrooms=3)), 6)
+
+    def test_property_without_specs_falls_back_to_a_single_bedroom(self):
+        """Not unlimited - a missing spec row must not silently make a stay free of surcharges."""
+        self.assertEqual(free_guest_allowance(self._property(bedrooms=None)), 2)
+
+    def test_party_within_the_allowance_is_never_charged(self):
+        two_bed = self._property(bedrooms=2)
+        for guests in ({'adults': 4}, {'adults': 2, 'children': 2}, {'adults': 1, 'children': 1}):
+            self.assertEqual(split_chargeable_guests(two_bed, guests), (0, 0), guests)
+
+    def test_a_child_within_the_allowance_is_free(self):
+        """The case that prompted the change: in a 2-bed, one adult plus one child is two people
+        against an allowance of four, so it must cost nothing extra. Under the old flat rule that
+        child was charged, making a 5-year-old more expensive than a second adult."""
+        self.assertEqual(split_chargeable_guests(self._property(bedrooms=2),
+                                                 {'adults': 1, 'children': 1}), (0, 0))
+
+    def test_adults_take_the_free_places_first_so_children_spill_over(self):
+        """4 adults fill a 2-bed's four places, so the child is the one over the line and is
+        charged at the cheaper child rate rather than pushing an adult over at double."""
+        self.assertEqual(split_chargeable_guests(self._property(bedrooms=2),
+                                                 {'adults': 4, 'children': 1}), (0, 1))
+
+    def test_adults_beyond_the_allowance_are_charged_as_adults(self):
+        self.assertEqual(split_chargeable_guests(self._property(bedrooms=2), {'adults': 5}), (1, 0))
+        self.assertEqual(split_chargeable_guests(self._property(bedrooms=1), {'adults': 4}), (2, 0))
+
+    def test_children_beyond_the_allowance_are_charged_as_children(self):
+        self.assertEqual(split_chargeable_guests(self._property(bedrooms=1),
+                                                 {'adults': 1, 'children': 3}), (0, 2))
+
+    def test_babies_never_count_toward_the_allowance(self):
+        """An infant in a cot occupies no bed, so it must not push a family over the line."""
+        one_bed = self._property(bedrooms=1)
+        self.assertEqual(split_chargeable_guests(one_bed, {'adults': 2, 'infants': 3}), (0, 0))
+        self.assertEqual(split_chargeable_guests(one_bed, {'adults': 2, 'babies': 3}), (0, 0))
+
+    def test_allowance_is_independent_of_max_guests(self):
+        """A 1-bed that sleeps 4 still accepts 4 guests - it just charges for the 3rd and 4th.
+        max_guests remains the capacity cap; the allowance is only about where money starts."""
+        one_bed = self._property(bedrooms=1)
+        one_bed.specs.max_guests = 4
+        one_bed.specs.save()
+        self.assertEqual(free_guest_allowance(one_bed), 2)
+        self.assertEqual(split_chargeable_guests(one_bed, {'adults': 4}), (2, 0))
+
+    def test_pricing_uses_the_bedroom_allowance_end_to_end(self):
+        two_bed = self._property(bedrooms=2)
+        start = date.today() + timedelta(days=300)
+        end = start + timedelta(days=5)
+        Price.objects.create(
+            property=two_bed, start_date=start, end_date=end,
+            rate=Decimal('240.00'), extra_adult_rate=Decimal('10.00'),
+            extra_child_rate=Decimal('5.00'),
+        )
+        free = get_stay_total_price(two_bed, start, end, {'adults': 1, 'children': 1})
+        self.assertEqual(free['extra_guest_total'], Decimal('0.00'))
+
+        # 5th guest in a 2-bed: one child over the line, 5 nights at the child rate.
+        charged = get_stay_total_price(two_bed, start, end, {'adults': 4, 'children': 1})
+        self.assertEqual(charged['extra_guest_total'], Decimal('25.00'))
 
 
 class GetStayTotalPriceTests(TestCase):

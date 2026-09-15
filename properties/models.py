@@ -668,13 +668,16 @@ class Price(models.Model):
         max_digits=10, decimal_places=2, default=10,
         verbose_name='extra adult',
         validators=[MinValueValidator(0)],
-        help_text="Charge per night for each adult beyond the first 2."
+        help_text="Charge per night for each adult beyond the property's free allowance "
+                  "(2 guests per bedroom)."
     )
     extra_child_rate = models.DecimalField(
         max_digits=10, decimal_places=2, default=5,
         verbose_name='extra child',
         validators=[MinValueValidator(0)],
-        help_text="Charge per night for each child."
+        help_text="Charge per night for each child beyond the property's free allowance "
+                  "(2 guests per bedroom). Adults fill the free places first, so it's the "
+                  "children who spill over that are charged."
     )
 
     class Meta:

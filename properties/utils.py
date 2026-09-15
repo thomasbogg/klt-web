@@ -4,8 +4,52 @@ from decimal import Decimal, ROUND_HALF_UP
 
 TWO_PLACES = Decimal('0.01')
 WEEKLY_DISCOUNT_MIN_NIGHTS = 7
-FREE_ADULTS = 2
 DEFAULT_MONTHLY_DISCOUNT_MIN_NIGHTS = 28
+
+# How many guests one bedroom is taken to sleep before the extra-guest surcharge starts.
+# Replaced a flat FREE_ADULTS = 2 on 2026-09-15 (per Thomas): the old constant applied the same
+# two-guest allowance to a studio and a three-bed, and charged every child from the first even when
+# the property was nowhere near full. See free_guest_allowance() below.
+GUESTS_PER_BEDROOM = 2
+DEFAULT_BEDROOMS = 1
+
+
+def free_guest_allowance(property):
+    """How many guests this property sleeps before the extra-guest surcharge applies:
+    bedrooms * GUESTS_PER_BEDROOM.
+
+    This is NOT the same as PropertySpec.max_guests, and the two are deliberately independent: a
+    one-bed with max_guests=4 still ACCEPTS four guests, it just charges for the third and fourth.
+    max_guests stays the hard capacity cap (and max_adults the tighter one) - this is only about
+    where money starts.
+
+    Falls back to DEFAULT_BEDROOMS when a property has no PropertySpec row, which reproduces the
+    old flat allowance of 2 rather than accidentally pricing the stay as unlimited.
+    """
+    specs = getattr(property, 'specs', None)
+    bedrooms = getattr(specs, 'bedrooms', None) or DEFAULT_BEDROOMS
+    return max(1, bedrooms) * GUESTS_PER_BEDROOM
+
+
+def split_chargeable_guests(property, guests):
+    """(extra_adults, extra_children) - how many of this party fall beyond the property's free
+    allowance, and so carry extra_adult_rate/extra_child_rate per night.
+
+    Free slots go to ADULTS first (per Thomas, 2026-09-15), so whoever spills over the line is a
+    child wherever possible and is charged at the cheaper child rate. The alternative - filling
+    free slots with children - would push adults over at double the rate for the same party size,
+    which is harder to justify to a guest.
+
+    Babies are ignored entirely, as they always have been: an infant in a cot doesn't occupy a bed,
+    and counting them would push an ordinary family over the line.
+    """
+    allowance = free_guest_allowance(property)
+    adults = guests.get('adults', 0) or 0
+    children = guests.get('children', 0) or 0
+
+    free_adults = min(adults, allowance)
+    free_children = allowance - free_adults  # whatever the adults didn't use
+    return adults - free_adults, max(0, children - free_children)
 
 
 def get_stay_total_price(property, start_date, end_date, guests=None, monthly_discount_min_nights=None):
@@ -19,6 +63,10 @@ def get_stay_total_price(property, start_date, end_date, guests=None, monthly_di
 
     monthly_discount_min_nights is a site-wide setting (BookingSettings), not per-property,
     so it's passed in by the caller rather than read off each Price row.
+
+    extra_guest_total depends on the property's bedroom count (see split_chargeable_guests), so
+    this reads `property.specs`. Callers that price MANY properties in a loop should
+    select_related('specs') to avoid an N+1 - availability search does.
     """
     if not start_date or not end_date or end_date <= start_date:
         return None
@@ -43,8 +91,7 @@ def get_stay_total_price(property, start_date, end_date, guests=None, monthly_di
     is_monthly_stay = total_nights >= monthly_discount_min_nights
     days_to_arrival = (start_date - date.today()).days
     guests = guests or {}
-    extra_adults = max(0, guests.get('adults', 0) - FREE_ADULTS)
-    extra_children = guests.get('children', 0)
+    extra_adults, extra_children = split_chargeable_guests(property, guests)
 
     basic_total = Decimal('0')
     discount_total = Decimal('0')
