@@ -105,6 +105,51 @@ def _first_unpaid_leg(bookings):
     return next((booking for booking in bookings if not is_paid(booking)), None)
 
 
+def merged_stay_redirect(request, bookings):
+    """Move a guest who reached a merged hub section via ONE apartment's own reference onto the
+    stay's shared reference instead - or None when they're already in the right place.
+
+    bookings_for_stay_reference() happily resolves an individual leg's reference (it has to: that's
+    the normal single-property case), which meant every merged section stayed fully reachable at a
+    leg's own URL and rendered there in SINGLE-apartment mode - showing a guest a hub covering half
+    their stay. Old bookmarks, pre-merge confirmation emails and forwarded links all land that way,
+    so this isn't hypothetical (2026-09-15, per Thomas: reaching a per-apartment hub at all is not
+    the intended effect of the merge).
+
+    Preserves the query string, so a post-save redirect that carries e.g. ?guests_saved=<ref>
+    through this still lands with its confirmation note intact. Uses the resolved view name, so it
+    returns the guest to the SAME section rather than dumping them on the hub landing page.
+
+    Only ever applies to a leg that genuinely belongs to a ReservationGroup with a reference - a
+    normal single-property booking is its own whole stay and is left completely alone."""
+    if len(bookings) != 1:
+        return None
+    booking = bookings[0]
+    if not booking.reservation_group_id:
+        return None
+    group_reference = booking.reservation_group.reference
+    if not group_reference or group_reference == booking.reference:
+        return None
+    url = reverse(request.resolver_match.view_name, kwargs={'reference': group_reference})
+    query = request.META.get('QUERY_STRING', '')
+    return redirect(f"{url}?{query}" if query else url)
+
+
+def resolve_stay(request, reference):
+    """(bookings, redirect_or_None) for a merged hub section - bookings_for_stay_reference() plus
+    the two checks every one of those sections needs before doing anything else: 404 if the
+    reference matches nothing at all, and redirect to the shared reference if the guest arrived via
+    a single leg of a grouped stay (see merged_stay_redirect()).
+
+    Deliberately NOT used by the genuinely per-apartment views (Edit Dates, Pay Balance, the
+    deposit/balance checkouts, supplementary payments) - those act on one booking's own calendar
+    slot or charge and are supposed to be reached by its own reference."""
+    bookings = bookings_for_stay_reference(reference)
+    if not bookings:
+        raise Http404("No booking found for this reference.")
+    return bookings, merged_stay_redirect(request, bookings)
+
+
 def _stay_transfers(booking):
     """Every AirportTransfer belonging to the STAY `booking` is part of, not just that one leg.
 
@@ -1571,9 +1616,9 @@ class BookingManageHubView(View):
     template_name = 'bookings/manage_hub.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         # Same "not paid yet -> go pay" gate as before, just checked across every leg - the first
         # still-unpaid one (order matches ReservationGroup's own guest-facing pay sequencing, see
         # next_unpaid_sibling_reference()) is where the guest actually needs to go next.
@@ -1613,9 +1658,9 @@ class BookingManageContactDetailsView(View):
     template_name = 'bookings/manage_contact_details.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -1630,9 +1675,9 @@ class BookingManageContactDetailsView(View):
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -1680,9 +1725,9 @@ class BookingManageGuestsView(BookingFormMixin, View):
     template_name = 'bookings/manage_guests.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -1696,9 +1741,9 @@ class BookingManageGuestsView(BookingFormMixin, View):
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -1919,9 +1964,9 @@ class BookingManageArrivalDepartureView(View):
     template_name = 'bookings/manage_arrival_departure.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -1937,9 +1982,9 @@ class BookingManageArrivalDepartureView(View):
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -2195,9 +2240,9 @@ class BookingManageGuestAddView(BookingFormMixin, View):
         return redirect('bookings:manage_guests', reference=reference)
 
     def post(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         booking = _leg_for_post(bookings, request.POST.get('leg_reference'))
         if booking is None or not is_fully_paid(booking):
             return redirect('bookings:manage_guests', reference=reference)
@@ -2290,9 +2335,9 @@ class BookingManageGuestRemoveView(View):
     booking out of sync with the guest list itself."""
 
     def post(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         booking = _leg_for_post(bookings, request.POST.get('leg_reference'))
         if booking is None or not is_fully_paid(booking):
             return redirect('bookings:manage_guests', reference=reference)
@@ -2388,9 +2433,9 @@ class BookingManageExtrasView(BookingFormMixin, View):
         return legs
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -2406,9 +2451,9 @@ class BookingManageExtrasView(BookingFormMixin, View):
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -2568,9 +2613,9 @@ class BookingManageGuestRegistrationsView(View):
         return context
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -2578,9 +2623,9 @@ class BookingManageGuestRegistrationsView(View):
         return render(request, self.template_name, self._merged_context(bookings))
 
     def post(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -2741,9 +2786,9 @@ class BookingManageTouristTaxView(View):
     template_name = 'bookings/manage_tourist_tax.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -2782,9 +2827,9 @@ class BookingManageTouristTaxPayView(View):
     template_name = 'bookings/tourist_tax_pay.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         # Deliberately 'bookings:pay' (that leg's own deposit checkout), not 'bookings:details' -
         # unlike the hub summary page (BookingManageTouristTaxView), this IS the checkout step
         # itself, matching BookingBalancePaymentView's own unpaid-deposit redirect target exactly.
@@ -2879,9 +2924,9 @@ class BookingManageDepositView(View):
         return details
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -2900,9 +2945,9 @@ class BookingManageDepositView(View):
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -3001,13 +3046,13 @@ class BookingCancelView(View):
     something genuinely still owed, and any excess is retained."""
     template_name = 'bookings/manage_cancel.html'
 
-    def _gate(self, reference):
+    def _gate(self, request, reference):
         """(bookings, cancellable_legs, redirect_or_None). `cancellable` excludes any leg that's
         already cancelled or otherwise not cancellable, reusing show_cancel_booking per leg rather
         than inventing a second rule."""
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return bookings, [], merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return bookings, [], redirect('bookings:details', reference=unpaid.reference)
@@ -3036,13 +3081,13 @@ class BookingCancelView(View):
         return context
 
     def get(self, request, reference, *args, **kwargs):
-        bookings, cancellable, redirect_response = self._gate(reference)
+        bookings, cancellable, redirect_response = self._gate(request, reference)
         if redirect_response is not None:
             return redirect_response
         return render(request, self.template_name, self._context(bookings, cancellable, reference))
 
     def post(self, request, reference, *args, **kwargs):
-        bookings, cancellable, redirect_response = self._gate(reference)
+        bookings, cancellable, redirect_response = self._gate(request, reference)
         if redirect_response is not None:
             return redirect_response
 
@@ -3117,9 +3162,9 @@ class BookingManageAmenitiesView(View):
     template_name = 'bookings/manage_amenities.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -3215,9 +3260,9 @@ class BookingManageLocationView(View):
     template_name = 'bookings/manage_location.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -3343,9 +3388,9 @@ class BookingManageLocalRulesView(View):
     template_name = 'bookings/manage_local_rules.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -3436,9 +3481,9 @@ class BookingManageLastDaysView(View):
     template_name = 'bookings/manage_last_days.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -3479,9 +3524,9 @@ class BookingManageFAQView(View):
     template_name = 'bookings/manage_faq.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)
@@ -3512,9 +3557,9 @@ class BookingManageLocalGuideView(View):
     template_name = 'bookings/manage_local_guide.html'
 
     def get(self, request, reference, *args, **kwargs):
-        bookings = bookings_for_stay_reference(reference)
-        if not bookings:
-            raise Http404("No booking found for this reference.")
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
         unpaid = _first_unpaid_leg(bookings)
         if unpaid is not None:
             return redirect('bookings:details', reference=unpaid.reference)

@@ -3108,11 +3108,42 @@ class BookingManageHubViewMultiPropertyTests(TestCase):
             fetch_redirect_response=False,
         )
 
-    def test_visiting_an_individual_leg_reference_still_shows_its_own_single_leg_hub(self):
+    def test_visiting_an_individual_leg_reference_redirects_to_the_merged_stay(self):
+        # Reversed 2026-09-15, per Thomas: reaching a per-apartment hub at all defeats the merge.
+        # These sections used to render in single-apartment mode at a leg's own reference, so an
+        # old bookmark or a pre-merge confirmation email showed a guest half their stay.
         response = self.client.get(reverse('bookings:manage_hub', kwargs={'reference': self.leg_a.reference}))
+        self.assertRedirects(
+            response, reverse('bookings:manage_hub', kwargs={'reference': self.group.reference}),
+            fetch_redirect_response=False,
+        )
+
+    def test_a_leg_reference_redirects_within_the_same_section_not_to_the_landing_page(self):
+        response = self.client.get(reverse('bookings:manage_guests', kwargs={'reference': self.leg_b.reference}))
+        self.assertRedirects(
+            response, reverse('bookings:manage_guests', kwargs={'reference': self.group.reference}),
+            fetch_redirect_response=False,
+        )
+
+    def test_the_redirect_keeps_the_query_string(self):
+        url = reverse('bookings:manage_guests', kwargs={'reference': self.leg_a.reference})
+        response = self.client.get(f"{url}?guests_saved={self.leg_a.reference}")
+        expected = reverse('bookings:manage_guests', kwargs={'reference': self.group.reference})
+        self.assertRedirects(
+            response, f"{expected}?guests_saved={self.leg_a.reference}", fetch_redirect_response=False,
+        )
+
+    def test_a_single_property_booking_is_left_alone(self):
+        solo_guest = Guest.objects.create(first_name='Solo', last_name='Hub', email='solo-hub@example.com')
+        solo = Booking.objects.create(
+            property=self.property_a, guest=solo_guest, arrival_date=self.start,
+            departure_date=self.end, is_owner=False, enquiry_status='Booking confirmed',
+            enquiry_source='Website', adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=solo, currency='EUR')
+        Payment.objects.create(booking=solo, provider='wise', status='paid')
+        response = self.client.get(reverse('bookings:manage_hub', kwargs={'reference': solo.reference}))
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn('legs', response.context)
-        self.assertEqual(response.context['booking'], self.leg_a)
 
 
 class ManageHubHolidayInfoMultiPropertyTests(TestCase):
@@ -4636,6 +4667,16 @@ class ManageHubCancelMultiPropertyTests(TestCase):
             'reference_confirm': self.group.reference,
             'cancel_leg': [leg.reference for leg in legs],
         })
+
+    def test_reaching_cancel_via_one_leg_reference_redirects_to_the_party_page(self):
+        # Regression guard: this view returns a 3-tuple from its own gate, so the merged-stay
+        # redirect has to be threaded through that shape rather than returned bare. Every other
+        # test here uses the group reference, which never exercises the redirect path - this 500'd
+        # live while the whole suite was green.
+        response = self.client.get(
+            reverse('bookings:manage_cancel', kwargs={'reference': self.leg_a.reference})
+        )
+        self.assertRedirects(response, self.url, fetch_redirect_response=False)
 
     def test_get_lists_every_apartment_as_a_separate_choice(self):
         response = self.client.get(self.url)
