@@ -14,10 +14,9 @@ switch), just grouped visually - see bookings.css's .manage-hub-nav-group-label.
 Multi-property merge (2026-09-14/15, staged - see project memory): a section that's been made
 group-aware links via `stay_reference` (the shared ReservationGroup reference once one exists,
 same as booking.reference otherwise) so it lands on the merged page covering every apartment.
-Every guest-facing *section* is merged as of Stage D6. What still links via `booking.reference`
-is the three actions that are per-apartment by nature, not merge leftovers: Edit Dates, Pay
-Balance and Cancel Booking each act on one booking's own calendar slot, charge or contract, and
-a real Revolut/Wise checkout redirect isn't something two apartments can share.
+Every guest-facing section is merged as of Stage D7 (Edit Dates was the last). The only link
+still keyed to a single leg is Pay Balance: a real Revolut/Wise checkout redirect isn't something
+two apartments can share, and each apartment's balance is its own owner's revenue.
 {% endcomment %}
 <nav class="manage-hub-nav">
     <span class="manage-hub-nav-group-label">Manage Your Stay</span>
@@ -31,7 +30,7 @@ a real Revolut/Wise checkout redirect isn't something two apartments can share.
        href="{% url 'bookings:manage_arrival_departure' reference=stay_reference %}">Arrival &amp; Departure</a>
     {% if show_edit_dates %}
     <a class="manage-hub-nav-link{% if active_section == 'dates' %} manage-hub-nav-link-active{% endif %}"
-       href="{% url 'bookings:manage_dates' reference=booking.reference %}">Edit Dates</a>
+       href="{% url 'bookings:manage_dates' reference=stay_reference %}">Edit Dates</a>
     {% endif %}
     <a class="manage-hub-nav-link{% if active_section == 'extras' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_extras' reference=stay_reference %}">Optional Extras</a>

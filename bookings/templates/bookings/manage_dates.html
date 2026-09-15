@@ -32,12 +32,19 @@
             <h1>Edit Dates</h1>
 
             <div class="confirmation-reference">
-                <span class="confirmation-reference-label">Booking Reference</span>
-                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+                <span class="confirmation-reference-label">{% if calendar_legs %}Party Reference{% else %}Booking Reference{% endif %}</span>
+                <span class="confirmation-reference-value">{{ stay_reference|default:booking.reference }}</span>
             </div>
 
             {% if request.GET.dates_updated %}
             <p class="details-note">Your dates have been updated.</p>
+            {% endif %}
+
+            {% if calendar_legs %}
+            <p class="details-note">
+                Your apartments move together, so these dates apply to both - they need to be free
+                in each one.
+            </p>
             {% endif %}
 
             <section class="details-section">
@@ -67,7 +74,7 @@
                         <div class="price-change-panel">
                             {% if price_increase %}
                             <p class="price-change-title">Your new dates cost more</p>
-                            <p class="price-change-body">Your balance is already paid, so the difference is payable online now - there's no cash-in-hand option for this. Nothing changes until it's paid.</p>
+                            <p class="price-change-body">Your balance is already paid, so the difference is payable online now - there's no cash-in-hand option for this. Nothing changes until it's paid{% if priced_legs %}, and both apartments move together{% endif %}.</p>
                             <div class="price-change-row price-change-new">
                                 <span>Amount to pay now</span>
                                 <span>&euro;{{ price_diff|floatformat:2 }}</span>
@@ -79,6 +86,14 @@
                             {% else %}
                             <p class="price-change-title">Your new dates change the price</p>
                             <p class="price-change-body">This only affects your remaining balance - any deposit already paid isn't affected.</p>
+                            {% if priced_legs %}
+                            {% for entry in priced_legs %}
+                            <div class="price-change-row{% if forloop.last %} price-change-new{% endif %}">
+                                <span>{{ entry.booking.property }}</span>
+                                <span>&euro;{{ entry.charge.due_at_balance|floatformat:2 }} &rarr; &euro;{{ entry.new_costs.due_at_balance|floatformat:2 }}</span>
+                            </div>
+                            {% endfor %}
+                            {% else %}
                             <div class="price-change-row">
                                 <span>Previously quoted balance</span>
                                 <span>&euro;{{ old_charge.due_at_balance|floatformat:2 }}</span>
@@ -87,6 +102,7 @@
                                 <span>Recalculated balance</span>
                                 <span>&euro;{{ new_costs.due_at_balance|floatformat:2 }}</span>
                             </div>
+                            {% endif %}
                             <div class="price-change-actions">
                                 <button type="submit" name="confirmed" value="1" class="reserve-form-submit">Save anyway</button>
                                 <button type="button" class="reserve-form-cancel" id="price-change-edit">Edit dates</button>
@@ -98,10 +114,19 @@
                 </form>
             </section>
 
+            {% if calendar_legs %}
+            {% for leg in calendar_legs %}
+            <section class="details-section">
+                <h2 class="details-section-title">Availability &mdash; {{ leg.booking.property }}</h2>
+                {% include 'availability/calendar.html' with calendar_months=leg.calendar_months mine_legend_label="Your stay" %}
+            </section>
+            {% endfor %}
+            {% else %}
             <section class="details-section">
                 <h2 class="details-section-title">Property Availability</h2>
                 {% include 'availability/calendar.html' with calendar_months=calendar_months mine_legend_label="Your stay" %}
             </section>
+            {% endif %}
         </div>
     </div>
 

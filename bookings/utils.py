@@ -554,18 +554,26 @@ def apply_supplementary_payment(payment, booking=None):
             booking.manual_override = True
             booking.save(update_fields=['arrival_date', 'departure_date', 'manual_override'])
 
-            # DjangoJSONEncoder (see the field's own definition) writes Decimal as plain JSON
-            # strings - JSONField's decoder doesn't know to convert them back, so this does.
-            fields = {key: Decimal(value) for key, value in payment.pending_charge_fields.items()}
-            charge = booking.charges
-            charge.basic_rental = fields['basic_rental']
-            charge.discount_total = fields['discount_total']
-            charge.extra_guest_total = fields['extra_guest_total']
-            charge.admin = fields['admin']
-            charge.due_at_balance = fields['due_at_balance']
-            charge.save(update_fields=[
-                'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'due_at_balance',
-            ])
+            # No pending_charge_fields means "move the dates, leave Charge alone" - a leg of a
+            # multi-property stay whose balance was already paid in full (2026-09-15). Its Charge
+            # must stay pinned to what was actually collected, exactly as
+            # BookingManageDatesView._apply_dates_only() does for the single-property equivalent:
+            # writing a cheaper price down here would erase the record of the unrefunded excess.
+            # Such a leg is still staged (at zero) so the party's dates move together - see
+            # BookingManageDatesView._stage_date_change().
+            if payment.pending_charge_fields:
+                # DjangoJSONEncoder (see the field's own definition) writes Decimal as plain JSON
+                # strings - JSONField's decoder doesn't know to convert them back, so this does.
+                fields = {key: Decimal(value) for key, value in payment.pending_charge_fields.items()}
+                charge = booking.charges
+                charge.basic_rental = fields['basic_rental']
+                charge.discount_total = fields['discount_total']
+                charge.extra_guest_total = fields['extra_guest_total']
+                charge.admin = fields['admin']
+                charge.due_at_balance = fields['due_at_balance']
+                charge.save(update_fields=[
+                    'basic_rental', 'discount_total', 'extra_guest_total', 'admin', 'due_at_balance',
+                ])
 
             payment.applied_at = timezone.now()
             payment.save(update_fields=['applied_at'])

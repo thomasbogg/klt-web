@@ -1341,18 +1341,25 @@ class BookingManageSupplementaryPaymentView(View):
         if payment is None:
             raise Http404("No supplementary payment found for this booking.")
 
+        siblings = self._siblings(payment)
         if payment.status == 'paid':
-            payment.apply()
+            for sibling in siblings:
+                sibling.apply()
             return redirect(self._success_url(payment))
 
+        # One charge for the whole party (Stage D7): a multi-property date change stages a row per
+        # apartment so each owner's revenue stays attributed to their own booking, but the guest
+        # pays once, for the sum - see BookingManageDatesView._stage_date_change().
+        pay_amount = sum((sibling.amount for sibling in siblings), Decimal('0'))
         context = {
             'booking': booking, 'payment': payment,
-            'pay_amount': payment.amount, 'pay_currency': payment.currency,
+            'pay_amount': pay_amount, 'pay_currency': payment.currency,
+            'payment_legs': siblings if len(siblings) > 1 else None,
         }
         context.update(_manage_nav_context(booking, 'dates' if payment.kind == 'date_change' else 'guests'))
 
         if payment.provider == 'revolut' and not payment.revolut_checkout_url:
-            self._create_revolut_order(payment)
+            self._create_revolut_order(payment, pay_amount=pay_amount, siblings=siblings)
 
         context['payment_error'] = payment.provider == 'revolut' and not payment.revolut_checkout_url
         context['wise_payment_link'] = env_settings.WISE_BASE_PAYMENT_LINK
@@ -1370,20 +1377,49 @@ class BookingManageSupplementaryPaymentView(View):
         )
         return f"{reverse('bookings:manage_guests', args=[stay_reference])}?guest_added={booking.reference}"
 
-    def _create_revolut_order(self, payment):
+    def _siblings(self, payment):
+        """Every SupplementaryPayment staged by the same request as `payment`. A single-property
+        booking's is always just itself; a multi-property date change stages one per apartment (so
+        each owner's revenue stays attributed to their own booking) but the guest pays once, for
+        the sum, against one shared Revolut order - see
+        BookingManageDatesView._stage_date_change(). Matched on the staged dates rather than a
+        grouping column: a stay only ever has one date change in flight at a time (that's enforced
+        in BookingManageDatesView.post), so the same kind + same held dates + same group is
+        unambiguous."""
         booking = payment.booking
+        if payment.kind != 'date_change' or not booking.reservation_group_id:
+            return [payment]
+        return list(
+            SupplementaryPayment.objects.filter(
+                booking__reservation_group_id=booking.reservation_group_id,
+                kind='date_change',
+                new_arrival_date=payment.new_arrival_date,
+                new_departure_date=payment.new_departure_date,
+            ).select_related('booking', 'booking__property').order_by('pk')
+        )
+
+    def _create_revolut_order(self, payment, pay_amount=None, siblings=None):
+        booking = payment.booking
+        siblings = siblings or [payment]
+        pay_amount = payment.amount if pay_amount is None else pay_amount
         order = Revolut(secretKey=env_settings.REVOLUT_API_SECRET_KEY).payment
-        order.amount = int(payment.amount * 100)  # Revolut wants minor units (cents/pence), not major units
+        order.amount = int(pay_amount * 100)  # Revolut wants minor units (cents/pence), not major units
         order.currency = payment.currency
-        order.description = f"{SUPPLEMENTARY_PAYMENT_DESCRIPTIONS[payment.kind]} for booking {booking.reference}"
+        references = ', '.join(sibling.booking.reference for sibling in siblings)
+        order.description = f"{SUPPLEMENTARY_PAYMENT_DESCRIPTIONS[payment.kind]} for booking {references}"
         order.customerEmail = booking.guest.email
         order.customerName = f"{booking.guest.first_name} {booking.guest.last_name}".strip()
         order.create()
 
         if order.id and order.has('checkout_url'):
-            payment.revolut_order_id = order.id
-            payment.revolut_checkout_url = order.checkoutUrl
-            payment.save()
+            # The SAME order id on every sibling: klt-hooks' mark_supplementary_payment_paid() does
+            # an unlimited `UPDATE ... WHERE revolut_order_id = %s`, so one guest payment marks
+            # them all paid and the hub's own sweep then applies every apartment's staged dates
+            # together - no klt-hooks change needed, same as Stage D4's tourist tax.
+            for sibling in siblings:
+                sibling.revolut_order_id = order.id
+                sibling.revolut_checkout_url = order.checkoutUrl
+                sibling.save()
         # else: order.create() already logged the failure via logerror(); leave revolut_checkout_url
         # unset so payment_error renders and the guest can retry on reload.
 
@@ -2028,46 +2064,53 @@ class BookingManageDatesView(View):
     management-side charge like this)."""
     template_name = 'bookings/manage_dates.html'
 
+    def _gate(self, request, reference):
+        """(bookings, redirect_or_None). Every leg has to qualify, not just the primary: the party
+        moves together, so a stay with any platform-sourced or Charge-less leg can't be date-edited
+        here at all."""
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return bookings, merged
+        blocked = any(
+            not is_paid(leg)
+            or leg.enquiry_source in env_settings.PLATFORMS
+            or not hasattr(leg, 'charges')
+            for leg in bookings
+        )
+        if blocked:
+            return bookings, redirect('bookings:manage_hub', reference=reference)
+        return bookings, None
+
     def get(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
-            raise Http404("No booking found for this reference.")
-        if (
-            not is_paid(booking)
-            or booking.enquiry_source in env_settings.PLATFORMS
-            or not hasattr(booking, 'charges')
-        ):
-            return redirect('bookings:manage_hub', reference=reference)
+        bookings, redirect_response = self._gate(request, reference)
+        if redirect_response is not None:
+            return redirect_response
+        booking = bookings[0]
 
         context = {
             'booking': booking,
             'arrival_value': booking.arrival_date.strftime('%d/%m/%Y'),
             'departure_value': booking.departure_date.strftime('%d/%m/%Y'),
         }
-        context.update(_manage_nav_context(booking, 'dates'))
-        context.update(self._calendar_context(booking))
+        context.update(_manage_nav_context(booking, 'dates', all_bookings=bookings))
+        context.update(self._calendar_context(booking, bookings))
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
-            raise Http404("No booking found for this reference.")
-        if (
-            not is_paid(booking)
-            or booking.enquiry_source in env_settings.PLATFORMS
-            or not hasattr(booking, 'charges')
-        ):
-            return redirect('bookings:manage_hub', reference=reference)
+        bookings, redirect_response = self._gate(request, reference)
+        if redirect_response is not None:
+            return redirect_response
+        booking = bookings[0]
 
         arrival_raw = request.POST.get('arrival', '').strip()
         departure_raw = request.POST.get('departure', '').strip()
 
         context = {'booking': booking, 'arrival_value': arrival_raw, 'departure_value': departure_raw}
-        context.update(_manage_nav_context(booking, 'dates'))
+        context.update(_manage_nav_context(booking, 'dates', all_bookings=bookings))
 
         def error(message):
             context['dates_error'] = message
-            context.update(self._calendar_context(booking))
+            context.update(self._calendar_context(booking, bookings))
             return render(request, self.template_name, context)
 
         try:
@@ -2085,91 +2128,157 @@ class BookingManageDatesView(View):
         # against this booking's own hold) - a booking only ever has one pending date_change at a
         # time; a second submission while one's already in flight goes straight back to paying for
         # it, not through a fresh availability check for (possibly overlapping) new dates.
+        # A stay only ever has one date change in flight at a time - a second submission while one
+        # is still being paid for goes straight back to paying it, not through a fresh availability
+        # check for (possibly overlapping) new dates. Checked across every leg and before the
+        # overlap check below, which would otherwise self-conflict against the stay's own hold.
         existing_payment = SupplementaryPayment.objects.filter(
-            booking=booking, kind='date_change', status__in=('pending', 'in_progress'),
+            booking__in=bookings, kind='date_change', status__in=('pending', 'in_progress'),
             hold_expires_at__gt=timezone.now(),
-        ).first()
+        ).order_by('pk').first()
         if existing_payment is not None:
             return redirect(
-                'bookings:manage_supplementary_pay', reference=booking.reference, payment_id=existing_payment.pk,
+                'bookings:manage_supplementary_pay',
+                reference=existing_payment.booking.reference, payment_id=existing_payment.pk,
             )
 
-        conflict = Booking.objects.overlapping(
-            booking.property, new_arrival, new_departure,
-        ).exclude(pk=booking.pk).exists() or SupplementaryPayment.objects.overlapping_dates(
-            booking.property, new_arrival, new_departure,
-        ).exists()
-        if conflict:
-            return error("Those dates aren't available for this property - please choose another range.")
+        # Every apartment has to be free on the new dates - the party moves together, so one
+        # unavailable apartment blocks the whole change. Named, so the guest knows which.
+        for leg in bookings:
+            conflict = Booking.objects.overlapping(
+                leg.property, new_arrival, new_departure,
+            ).exclude(pk__in=[b.pk for b in bookings]).exists() or SupplementaryPayment.objects.overlapping_dates(
+                leg.property, new_arrival, new_departure,
+            ).exists()
+            if conflict:
+                if len(bookings) > 1:
+                    return error(
+                        f"Those dates aren't available for {leg.property} - please choose another range. "
+                        f"Both apartments need to be free for the same dates."
+                    )
+                return error("Those dates aren't available for this property - please choose another range.")
 
-        new_costs, changed = recalculate_costs_for_dates(booking, new_arrival, new_departure)
-        if new_costs is None:
-            return error("These dates can no longer be priced automatically - please contact us to change them.")
+        priced = []
+        for leg in bookings:
+            new_costs, changed = recalculate_costs_for_dates(leg, new_arrival, new_departure)
+            if new_costs is None:
+                return error(
+                    "These dates can no longer be priced automatically - please contact us to change them."
+                )
+            priced.append({'booking': leg, 'charge': leg.charges, 'new_costs': new_costs, 'changed': changed})
 
-        charge = booking.charges
         confirmed = request.POST.get('confirmed') == '1'
+        any_changed = any(entry['changed'] for entry in priced)
 
-        if not is_balance_paid(booking):
-            if changed and not confirmed:
-                context['price_changed'] = True
-                context['old_charge'] = charge
-                context['new_costs'] = new_costs
-                context.update(self._calendar_context(booking))
-                return render(request, self.template_name, context)
+        # Split by each leg's OWN balance state - the two apartments of one party can genuinely be
+        # in different states at once, exactly as on the merged Guest List. A leg whose balance is
+        # still due just has that balance moved (up or down); a leg already paid in full can only
+        # ever be asked for MORE, never refunded - per Thomas, "no refunds, only smaller balance
+        # payments if applicable".
+        for entry in priced:
+            charge, new_costs = entry['charge'], entry['new_costs']
+            entry['balance_paid'] = is_balance_paid(entry['booking'])
+            entry['price_diff'] = (
+                (new_costs['rental_total'] + new_costs['admin_fee']) - (charge.total_rental + charge.admin)
+            )
+        amount_due_now = sum(
+            (entry['price_diff'] for entry in priced if entry['balance_paid'] and entry['price_diff'] > 0),
+            Decimal('0'),
+        )
 
-            with transaction.atomic():
-                self._apply_dates_and_charge(booking, charge, new_arrival, new_departure, new_costs)
+        # Confirm only when there's something for the guest to actually agree to: a balance that
+        # moves (either way) on a leg that hasn't paid it yet, or real money now owed. A leg whose
+        # balance is already paid getting CHEAPER is applied straight away with no interstitial and
+        # no refund - exactly as the single-property flow has always done.
+        pre_balance_changed = any(entry['changed'] for entry in priced if not entry['balance_paid'])
+        if (pre_balance_changed or amount_due_now > 0) and not confirmed:
+            context['price_changed'] = True
+            context['old_charge'] = priced[0]['charge']
+            context['new_costs'] = priced[0]['new_costs']
+            if amount_due_now > 0:
+                context['price_increase'] = True
+                context['price_diff'] = amount_due_now
+            if len(bookings) > 1:
+                context['priced_legs'] = priced
+            context.update(self._calendar_context(booking, bookings))
+            return render(request, self.template_name, context)
 
+        if amount_due_now > 0:
+            return self._stage_date_change(bookings, priced, new_arrival, new_departure, amount_due_now)
+
+        with transaction.atomic():
+            for entry in priced:
+                leg, charge, new_costs = entry['booking'], entry['charge'], entry['new_costs']
+                if entry['balance_paid']:
+                    # Dates only, never Charge - see _apply_dates_only()'s docstring for why
+                    # writing the cheaper price down here would be a real bug, not a cosmetic one.
+                    self._apply_dates_only(leg, new_arrival, new_departure)
+                    continue
+                self._apply_dates_and_charge(leg, charge, new_arrival, new_departure, new_costs)
                 # Same stale-checkout-URL guard as BookingBalanceDetailsView.post() - a guest who
                 # already generated a balance checkout link at the old amount must not be able to
                 # pay that stale amount after changing their dates.
-                balance_payment = getattr(booking, 'balance_payment', None)
-                if changed and balance_payment and balance_payment.revolut_checkout_url:
+                balance_payment = getattr(leg, 'balance_payment', None)
+                if entry['changed'] and balance_payment and balance_payment.revolut_checkout_url:
                     balance_payment.revolut_order_id = None
                     balance_payment.revolut_checkout_url = None
                     balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
 
-            return redirect(f"{reverse('bookings:manage_dates', args=[booking.reference])}?dates_updated=1")
+        url = reverse('bookings:manage_dates', args=[reference])
+        return redirect(f"{url}?dates_updated=1")
 
-        # Balance already paid - a lower/equal price applies immediately (no refund of the excess
-        # already collected); a higher price must be paid online first. Crucially, "applies
-        # immediately" only ever moves the dates, never charge.total_rental/admin - those must
-        # stay pinned to what was actually collected. Writing them down to the new, cheaper price
-        # here would erase the record of the (unrefunded) excess, so a later change back to - or
-        # towards - the original dates would wrongly look like a fresh price increase against the
-        # now-understated charge, asking the guest to pay again for nights they already paid for.
-        price_diff = (new_costs['rental_total'] + new_costs['admin_fee']) - (charge.total_rental + charge.admin)
+    def _stage_date_change(self, bookings, priced, new_arrival, new_departure, amount_due_now):
+        """Money is owed on at least one apartment, so NOTHING moves until it's paid.
 
-        if price_diff <= 0:
-            self._apply_dates_only(booking, new_arrival, new_departure)
-            return redirect(f"{reverse('bookings:manage_dates', args=[booking.reference])}?dates_updated=1")
+        A SupplementaryPayment is staged for EVERY leg, not just the ones with something to pay -
+        including zero-amount ones. That's what keeps the party's dates moving together: the whole
+        change is held, and the sweep applies every leg's staged dates/charge at once when the
+        payment lands. Moving the free legs immediately and leaving the paid-for one behind would
+        split one party across two date ranges if the guest never paid.
 
-        if not confirmed:
-            context['price_changed'] = True
-            context['price_increase'] = True
-            context['old_charge'] = charge
-            context['new_costs'] = new_costs
-            context['price_diff'] = price_diff
-            context.update(self._calendar_context(booking))
-            return render(request, self.template_name, context)
-
-        pay_amount, pay_currency = (
-            (charge.to_gbp(price_diff), 'GBP') if charge.currency == 'GBP' else (price_diff, 'EUR')
-        )
+        The legs share ONE Revolut order (created by BookingManageSupplementaryPaymentView for the
+        summed amount), the same trick Stage D4 uses for Tourist Tax: klt-hooks'
+        mark_supplementary_payment_paid() does an unlimited `UPDATE ... WHERE revolut_order_id`,
+        so one guest payment marks every row paid. Each leg still keeps its own row with its own
+        amount, so each apartment's owner revenue stays correctly attributed - the shared order is
+        only how the money is collected."""
+        primary_charge = priced[0]['charge']
+        currency = primary_charge.currency
         provider, hold_expires_at = compute_initial_hold_expiry(new_arrival, BookingSettings.load())
-        payment = SupplementaryPayment.objects.create(
-            booking=booking, kind='date_change', amount=pay_amount, currency=pay_currency,
-            provider=provider, hold_expires_at=hold_expires_at,
-            new_arrival_date=new_arrival, new_departure_date=new_departure,
-            pending_charge_fields={
-                'basic_rental': new_costs['basic_rental'],
-                'discount_total': new_costs['discount_total'],
-                'extra_guest_total': new_costs['extra_guest_total'],
-                'admin': new_costs['admin_fee'],
-                'due_at_balance': new_costs['due_at_balance'],
-            },
+
+        created = []
+        with transaction.atomic():
+            for entry in priced:
+                leg, charge, new_costs = entry['booking'], entry['charge'], entry['new_costs']
+                owed = entry['price_diff'] if entry['balance_paid'] and entry['price_diff'] > 0 else Decimal('0')
+                pay_amount = charge.to_gbp(owed) if currency == 'GBP' else owed
+                # Charge is restaged with the new price EXCEPT for an already-paid leg getting
+                # cheaper: there's no refund, so its Charge must stay pinned to what was actually
+                # collected. Writing the lower price down would erase the record of the unrefunded
+                # excess, making a later change back towards the original dates look like a fresh
+                # increase - see _apply_dates_only()'s docstring for the same reasoning applied to
+                # the immediate (nothing-owed) path.
+                dates_only = entry['balance_paid'] and entry['price_diff'] <= 0
+                created.append(SupplementaryPayment.objects.create(
+                    booking=leg, kind='date_change', amount=pay_amount,
+                    currency='GBP' if currency == 'GBP' else 'EUR',
+                    provider=provider, hold_expires_at=hold_expires_at,
+                    new_arrival_date=new_arrival, new_departure_date=new_departure,
+                    pending_charge_fields=None if dates_only else {
+                        'basic_rental': new_costs['basic_rental'],
+                        'discount_total': new_costs['discount_total'],
+                        'extra_guest_total': new_costs['extra_guest_total'],
+                        'admin': new_costs['admin_fee'],
+                        'due_at_balance': new_costs['due_at_balance'],
+                    },
+                ))
+
+        # The checkout page is reached via whichever row is first - it sums its own siblings and
+        # charges once for the party, so which one the guest lands on doesn't change what they pay.
+        first = created[0]
+        return redirect(
+            'bookings:manage_supplementary_pay', reference=first.booking.reference, payment_id=first.pk,
         )
-        return redirect('bookings:manage_supplementary_pay', reference=booking.reference, payment_id=payment.pk)
 
     def _apply_dates_and_charge(self, booking, charge, new_arrival, new_departure, new_costs):
         booking.arrival_date = new_arrival
@@ -2196,18 +2305,31 @@ class BookingManageDatesView(View):
         booking.manual_override = True
         booking.save(update_fields=['arrival_date', 'departure_date', 'manual_override'])
 
-    def _calendar_context(self, booking):
+    def _occupied_ranges(self, booking):
+        today = timezone.now().date()
+        return Booking.objects.holding().filter(
+            property=booking.property, departure_date__gte=today,
+        ).exclude(pk=booking.pk).values_list('arrival_date', 'departure_date')
+
+    def _calendar_context(self, booking, bookings=None):
         """occupied_ranges is inlined as JSON for manage_dates.js to feed straight into the date
         pickers' disabledRanges (see static/pickers/dates.js) - no separate endpoint, since the
         guest already has to reload this page to see fresh availability anyway (same server-
         rendered norm as the rest of this app, no live/SPA refresh anywhere else either).
         calendar_months reuses the same property-calendar builder the property page itself uses,
-        with this booking's own current stay highlighted as a distinct 'mine' status."""
-        today = timezone.now().date()
-        occupied = Booking.objects.holding().filter(
-            property=booking.property, departure_date__gte=today,
-        ).exclude(pk=booking.pk).values_list('arrival_date', 'departure_date')
-        return {
+        with this booking's own current stay highlighted as a distinct 'mine' status.
+
+        Multi-property (2026-09-15): the PICKERS get the UNION of every apartment's occupied
+        ranges, because the party moves together - a date that isn't free in both apartments isn't
+        offerable at all, so the guest simply can't pick it rather than picking it and being
+        refused. The visible month grids stay one PER APARTMENT (`calendar_legs`), since that's
+        what explains *why* a week is blocked; a single merged grid would show the same disabled
+        weeks with no way to tell which apartment caused them."""
+        legs = bookings or [booking]
+        occupied = []
+        for leg in legs:
+            occupied.extend(self._occupied_ranges(leg))
+        context = {
             'occupied_ranges_json': json.dumps([
                 [arrival.strftime('%d/%m/%Y'), departure.strftime('%d/%m/%Y')]
                 for arrival, departure in occupied
@@ -2216,6 +2338,17 @@ class BookingManageDatesView(View):
                 booking.property, mine_range=(booking.arrival_date, booking.departure_date),
             ),
         }
+        if len(legs) > 1:
+            context['calendar_legs'] = [
+                {
+                    'booking': leg,
+                    'calendar_months': get_property_calendar(
+                        leg.property, mine_range=(leg.arrival_date, leg.departure_date),
+                    ),
+                }
+                for leg in legs
+            ]
+        return context
 
 
 class BookingManageGuestAddView(BookingFormMixin, View):

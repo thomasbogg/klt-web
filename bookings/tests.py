@@ -4626,6 +4626,154 @@ class BookingManageDepositViewTests(TestCase):
         self.assertContains(response, 'Security Deposit')
 
 
+class ManageHubDatesMultiPropertyTests(TestCase):
+    """Stage D7 of the multi-property manage-hub merge (2026-09-15, see project memory) - Edit
+    Dates. The party moves together (per Thomas), so there's ONE date choice for the stay, every
+    apartment has to be free on the new dates, and nothing moves at all until anything owed is
+    paid - otherwise a guest who never paid would end up with their two apartments on different
+    dates."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Dates Merge Property A', short_title='DMPA')
+        self.property_b = Property.objects.create(title='Dates Merge Property B', short_title='DMPB')
+        self.guest = Guest.objects.create(first_name='Lena', last_name='Braga', email='lena-dm@example.com')
+        self.start = date.today() + timedelta(days=200)
+        self.end = self.start + timedelta(days=7)
+        for prop in (self.property_a, self.property_b):
+            Price.objects.create(
+                property=prop, start_date=self.start, end_date=self.start + timedelta(days=60),
+                rate=Decimal('100.00'), extra_adult_rate=Decimal('10.00'), extra_child_rate=Decimal('5.00'),
+            )
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a)
+        self.leg_b = self._make_booking(self.property_b)
+        self.url = reverse('bookings:manage_dates', kwargs={'reference': self.group.reference})
+
+    def _make_booking(self, prop):
+        booking = Booking.objects.create(
+            property=prop, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        Charge.objects.create(
+            booking=booking, basic_rental=Decimal('700.00'), admin=Decimal('38.50'),
+            due_at_booking=Decimal('184.63'), due_at_balance=Decimal('553.87'),
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+        )
+        Payment.objects.create(booking=booking, provider='revolut', status='paid')
+        BalancePayment.objects.create(booking=booking, provider='revolut')
+        return booking
+
+    def _post(self, new_start, new_end, confirmed=False):
+        data = {
+            'arrival': new_start.strftime('%d/%m/%Y'),
+            'departure': new_end.strftime('%d/%m/%Y'),
+        }
+        if confirmed:
+            data['confirmed'] = '1'
+        return self.client.post(self.url, data)
+
+    def test_get_shows_one_calendar_per_apartment(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['calendar_legs']), 2)
+        self.assertContains(response, 'Availability &mdash; Dates Merge Property A')
+        self.assertContains(response, 'Availability &mdash; Dates Merge Property B')
+
+    def test_the_pickers_disable_the_union_of_both_apartments_bookings(self):
+        # Something else occupies property B only - the guest still must not be able to pick it,
+        # because the party moves together.
+        blocker_guest = Guest.objects.create(first_name='Other', last_name='Guest', email='other-dm@example.com')
+        clash_start = self.start + timedelta(days=30)
+        Booking.objects.create(
+            property=self.property_b, guest=blocker_guest, arrival_date=clash_start,
+            departure_date=clash_start + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.get(self.url)
+        self.assertIn(clash_start.strftime('%d/%m/%Y'), response.context['occupied_ranges_json'])
+
+    def test_dates_unavailable_in_one_apartment_block_the_whole_change(self):
+        blocker_guest = Guest.objects.create(first_name='Other', last_name='Guest', email='other2-dm@example.com')
+        new_start = self.start + timedelta(days=30)
+        new_end = new_start + timedelta(days=7)
+        Booking.objects.create(
+            property=self.property_b, guest=blocker_guest, arrival_date=new_start,
+            departure_date=new_end, is_owner=False, enquiry_status='Booking confirmed',
+            enquiry_source='Website', adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self._post(new_start, new_end, confirmed=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Dates Merge Property B', response.context['dates_error'])
+        for leg in (self.leg_a, self.leg_b):
+            leg.refresh_from_db()
+            self.assertEqual(leg.arrival_date, self.start)
+
+    def test_a_confirmed_change_moves_both_apartments_together(self):
+        new_start = self.start + timedelta(days=30)
+        new_end = new_start + timedelta(days=7)
+        self._post(new_start, new_end, confirmed=True)
+        for leg in (self.leg_a, self.leg_b):
+            leg.refresh_from_db()
+            self.assertEqual(leg.arrival_date, new_start)
+            self.assertEqual(leg.departure_date, new_end)
+
+    def test_a_cheaper_change_shrinks_each_unpaid_balance_and_never_refunds(self):
+        new_start = self.start + timedelta(days=30)
+        new_end = new_start + timedelta(days=4)  # 4 nights instead of 7
+        self._post(new_start, new_end, confirmed=True)
+        for leg in (self.leg_a, self.leg_b):
+            charge = Charge.objects.get(booking=leg)
+            self.assertLess(charge.due_at_balance, Decimal('553.87'))
+            self.assertGreaterEqual(charge.due_at_balance, Decimal('0'))
+
+    def test_when_money_is_owed_nothing_moves_until_it_is_paid(self):
+        # Both balances paid, and the new dates are longer, so the party owes the difference.
+        for leg in (self.leg_a, self.leg_b):
+            leg.balance_payment.status = 'paid'
+            leg.balance_payment.save(update_fields=['status'])
+        new_start = self.start + timedelta(days=30)
+        new_end = new_start + timedelta(days=14)
+        response = self._post(new_start, new_end, confirmed=True)
+        self.assertEqual(response.status_code, 302)
+        # A row per apartment, so each owner's revenue stays on their own booking...
+        self.assertEqual(SupplementaryPayment.objects.filter(booking__in=[self.leg_a, self.leg_b]).count(), 2)
+        # ...and neither apartment has actually moved yet.
+        for leg in (self.leg_a, self.leg_b):
+            leg.refresh_from_db()
+            self.assertEqual(leg.arrival_date, self.start)
+
+    def test_one_payment_covers_the_party_and_applies_both_apartments(self):
+        for leg in (self.leg_a, self.leg_b):
+            leg.balance_payment.status = 'paid'
+            leg.balance_payment.save(update_fields=['status'])
+        new_start = self.start + timedelta(days=30)
+        new_end = new_start + timedelta(days=14)
+        self._post(new_start, new_end, confirmed=True)
+
+        payments = list(SupplementaryPayment.objects.filter(
+            booking__in=[self.leg_a, self.leg_b]).order_by('pk'))
+        self.assertEqual(len(payments), 2)
+        for payment in payments:
+            payment.status = 'paid'
+            payment.paid_at = timezone.now()
+            payment.save(update_fields=['status', 'paid_at'])
+
+        # Any hub page visit sweeps and applies them - see _sweep_supplementary_payments().
+        self.client.get(reverse('bookings:manage_hub', kwargs={'reference': self.group.reference}))
+        for leg in (self.leg_a, self.leg_b):
+            leg.refresh_from_db()
+            self.assertEqual(leg.arrival_date, new_start)
+            self.assertEqual(leg.departure_date, new_end)
+
+    def test_a_leg_reference_redirects_to_the_merged_dates_page(self):
+        response = self.client.get(
+            reverse('bookings:manage_dates', kwargs={'reference': self.leg_a.reference})
+        )
+        self.assertRedirects(response, self.url, fetch_redirect_response=False)
+
+
 class ManageHubCancelMultiPropertyTests(TestCase):
     """Stage D8 of the multi-property manage-hub merge (2026-09-15, see project memory) - a party
     can cancel ALL or SOME of their apartments, and (per Thomas) the deposits on the cancelled ones
