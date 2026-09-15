@@ -824,18 +824,48 @@ button.manage-hub-nav-link {
     cursor: pointer;
     margin-bottom: 0;
     list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid rgb(214, 226, 238);
+    border-radius: 6px;
+    background: rgb(247, 250, 253);
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.calendar-disclosure-summary:hover,
+.calendar-disclosure-summary:focus-visible {
+    background: rgb(238, 245, 251);
+    border-color: var(--primary-color);
 }
 
 .calendar-disclosure-summary::-webkit-details-marker {
     display: none;
 }
 
-/* Own marker, so it matches the site's own type rather than the browser's default triangle. */
+/* Own marker, so it matches the site's own type rather than the browser's default triangle.
+   A bordered circular badge rather than a bare '+' character (2026-09-15, per Thomas: the plain
+   glyph was too easy to miss next to the uppercase heading) - a round target reads as a control,
+   where a loose punctuation mark reads as decoration. flex-shrink guards the circle against being
+   squashed into an oval by a long property name on a narrow screen. */
 .calendar-disclosure-summary::before {
     content: '+';
-    display: inline-block;
-    width: 1em;
-    color: var(--secondary-color);
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: 1.5px solid currentColor;
+    border-radius: 50%;
+    font-size: 1.3rem;
+    font-weight: 400;
+    line-height: 1;
+    /* '+' has more ink below its crossbar than above in this face, so centring it by line-box
+       alone leaves it sitting low. Nudged up rather than letter-spaced. */
+    padding-bottom: 3px;
+    color: var(--primary-color);
 }
 
 .calendar-disclosure[open] > .calendar-disclosure-summary {
@@ -844,4 +874,5 @@ button.manage-hub-nav-link {
 
 .calendar-disclosure[open] > .calendar-disclosure-summary::before {
     content: '\2212';  /* minus */
+    padding-bottom: 2px;
 }
