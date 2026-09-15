@@ -1,3 +1,4 @@
+{% load static %}
 {% comment %}
 Manage Booking hub sidebar - shared by every hub section template. Expects `booking`,
 `active_section`, `show_pay_balance`, `show_tourist_tax`, `show_cancel_booking` and
@@ -76,3 +77,11 @@ balance stays attributed to its own owner; only the collection is shared.
     <a class="manage-hub-nav-link{% if active_section == 'local_guide' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_local_guide' reference=stay_reference %}">Local Guide</a>
 </nav>
+
+{% comment %}
+Loaded here rather than in each of the sixteen hub templates: this partial is the one thing every
+hub section already includes, so a section added later gets the unsaved-changes warning without
+having to remember to opt in. It no-ops on the read-only Holiday Info sections, which have no
+forms to be dirty. See unsaved_changes.js for how it decides.
+{% endcomment %}
+<script type="module" src="{% static 'bookings/unsaved_changes.js' %}"></script>
