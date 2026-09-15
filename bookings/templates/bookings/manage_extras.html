@@ -33,9 +33,39 @@
             <h1>Optional Extras</h1>
 
             <div class="confirmation-reference">
-                <span class="confirmation-reference-label">Booking Reference</span>
-                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+                <span class="confirmation-reference-label">{% if legs %}Party Reference{% else %}Booking Reference{% endif %}</span>
+                <span class="confirmation-reference-value">{{ stay_reference|default:booking.reference }}</span>
             </div>
+
+            {% if legs %}
+
+            <p class="details-note">Everything below is optional and paid in cash at check-in. Your airport transfer covers the whole party; the rest is chosen per apartment.</p>
+
+            <p class="extras-total-note">Total for Extras across your stay: <strong id="extras-total-value">&euro;0.00</strong></p>
+
+            {% comment %}
+            Airport Transfers: once for the whole party, in its own form - a party travelling
+            together needs one transfer, not one per apartment (per Thomas).
+            {% endcomment %}
+            {% if request.GET.extras_saved == 'transfers' %}
+            <p class="details-note">Your airport transfers have been saved.</p>
+            {% endif %}
+            <form method="post" action="{% url 'bookings:manage_extras' reference=stay_reference %}" class="details-form">
+                {% csrf_token %}
+                <input type="hidden" name="form" value="transfers">
+                {% include 'bookings/_extras_transfers.html' with due_phrase="any online payment" transfers_for_stay=True %}
+                {% if not extras_locked %}
+                <button type="submit" class="reserve-form-submit">Save Airport Transfers</button>
+                {% endif %}
+            </form>
+
+            {{ cot_high_chair_pricing_config|json_script:"cot-high-chair-pricing-config" }}
+
+            {% for leg in legs %}
+            {% include 'bookings/_manage_extras_leg.html' with leg=leg %}
+            {% endfor %}
+
+            {% else %}
 
             {% if request.GET.extras_saved %}
             <p class="details-note">Your Extras have been updated.</p>
@@ -57,6 +87,8 @@
                 <button type="submit" class="reserve-form-submit">Save Extras</button>
                 {% endif %}
             </form>
+
+            {% endif %}
         </div>
     </div>
 

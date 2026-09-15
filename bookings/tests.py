@@ -3191,12 +3191,15 @@ class ManageHubHolidayInfoMultiPropertyTests(TestCase):
             reverse('bookings:manage_guests', kwargs={'reference': self.leg_a.reference}), content,
         )
 
-    def test_sidebar_still_keys_unmerged_sections_off_the_primary_leg(self):
-        # Optional Extras is the remaining unmerged section - kept as an explicit guard so this
-        # flips deliberately when it's merged too, rather than silently.
+    def test_sidebar_still_keys_genuinely_per_leg_sections_off_the_primary_leg(self):
+        # Every guest-facing *section* is merged now (Optional Extras joined in Stage D6). What's
+        # left pointing at a single leg is the three actions that are per-apartment by nature -
+        # Edit Dates, Pay Balance and Cancel Booking each act on one booking's own calendar slot,
+        # charge or contract. Kept as an explicit guard so any of those flipping is deliberate.
         response = self.client.get(self._url('bookings:manage_hub'))
         content = response.content.decode()
-        self.assertIn(reverse('bookings:manage_extras', kwargs={'reference': self.leg_a.reference}), content)
+        self.assertIn(reverse('bookings:manage_extras', kwargs={'reference': self.group.reference}), content)
+        self.assertIn(reverse('bookings:manage_cancel', kwargs={'reference': self.leg_a.reference}), content)
 
 
 class ManageHubLocationMultiPropertyTests(TestCase):
@@ -3854,7 +3857,7 @@ class BookingManageExtrasViewTests(TestCase):
 
     def test_post_within_cutoff_persists_extras_without_touching_charge(self):
         response = self.client.post(self.url, {'late_checkout': 'on'})
-        self.assertRedirects(response, f"{self.url}?extras_saved=1", fetch_redirect_response=False)
+        self.assertRedirects(response, f"{self.url}?extras_saved={self.booking.reference}", fetch_redirect_response=False)
         self.booking.refresh_from_db()
         self.assertTrue(self.booking.extras.late_checkout)
         self.assertEqual(self.booking.extras.late_checkout_charge, Decimal('20.00'))
@@ -4586,6 +4589,113 @@ class BookingManageDepositViewTests(TestCase):
     def test_sidebar_link_shown_when_deposit_required(self):
         response = self.client.get(self.manage_hub_url)
         self.assertContains(response, 'Security Deposit')
+
+
+class ManageHubExtrasMultiPropertyTests(TestCase):
+    """Stage D6 of the multi-property manage-hub merge (2026-09-15, see project memory) - the last
+    section, and the only one deliberately NOT uniformly per-apartment: Airport Transfers is shared
+    across the whole party (one transfer, not one per apartment booked), everything else repeats
+    per apartment."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Extras Merge Property A', short_title='EMPA')
+        self.property_b = Property.objects.create(title='Extras Merge Property B', short_title='EMPB')
+        PropertySpec.objects.create(property=self.property_a, max_guests=4)
+        PropertySpec.objects.create(property=self.property_b, max_guests=4)
+        self.guest = Guest.objects.create(first_name='Ana', last_name='Marques', email='ana-em@example.com')
+        self.start = date.today() + timedelta(days=120)
+        self.end = self.start + timedelta(days=7)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a)
+        self.leg_b = self._make_booking(self.property_b)
+        self.url = reverse('bookings:manage_extras', kwargs={'reference': self.group.reference})
+
+    def _make_booking(self, prop):
+        booking = Booking.objects.create(
+            property=prop, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        Charge.objects.create(booking=booking, currency='EUR')
+        Payment.objects.create(booking=booking, provider='wise', status='paid')
+        return booking
+
+    def test_one_extras_form_per_apartment_plus_one_shared_transfers_form(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['legs']), 2)
+        content = response.content.decode()
+        # Airport Transfers exactly once, not once per apartment
+        self.assertEqual(content.count('Airport Transfers (Faro Airport only)'), 1)
+        self.assertEqual(content.count('id="transfer-rows"'), 1)
+        # ...and a duplicated json_script id would be invalid HTML
+        self.assertEqual(content.count('id="cot-high-chair-pricing-config"'), 1)
+        # every other extra repeats, labelled per apartment
+        self.assertIn('Welcome Pack &mdash; Extras Merge Property A', content)
+        self.assertIn('Welcome Pack &mdash; Extras Merge Property B', content)
+
+    def test_saving_one_apartments_extras_leaves_the_other_alone(self):
+        self.client.post(self.url, {'leg_reference': self.leg_b.reference, 'welcome_pack': 'on'})
+        self.assertFalse(getattr(self.leg_a, 'extras', None) and self.leg_a.extras.welcome_pack)
+        self.leg_b.refresh_from_db()
+        self.assertTrue(self.leg_b.extras.welcome_pack)
+
+    def test_extras_post_with_an_unrecognised_leg_reference_writes_nothing(self):
+        response = self.client.post(self.url, {'leg_reference': 'NOPE-NOPE', 'welcome_pack': 'on'})
+        self.assertRedirects(response, self.url, fetch_redirect_response=False)
+        for leg in (self.leg_a, self.leg_b):
+            self.assertFalse(getattr(leg, 'extras', None) and leg.extras.welcome_pack)
+
+    def test_shared_transfer_is_stored_once_never_duplicated_across_legs(self):
+        # Duplicating would double-charge via extras_summary() and double-count the staff report.
+        self.client.post(self.url, {
+            'form': 'transfers',
+            'transfer_direction[]': ['inbound'], 'transfer_airport[]': ['faro'],
+            'transfer_flight_number[]': ['TP1234'], 'transfer_time[]': ['14:00'],
+            'transfer_adults[]': ['2'], 'transfer_children[]': ['0'], 'transfer_infants[]': ['0'],
+            'transfer_child_seats[]': [''], 'transfer_excess_baggage[]': [''], 'transfer_notes[]': [''],
+        })
+        self.assertEqual(AirportTransfer.objects.filter(booking__reservation_group=self.group).count(), 1)
+        self.assertEqual(self.leg_a.airport_transfers.count(), 1)
+        self.assertEqual(self.leg_b.airport_transfers.count(), 0)
+
+    def test_both_apartments_location_pages_see_the_shared_transfer(self):
+        # The leg that doesn't hold the row must still tell its guest the transfer is booked,
+        # rather than "none booked" - see _stay_transfers().
+        AirportTransfer.objects.create(
+            booking=self.leg_a, direction=AirportTransferDirection.INBOUND, is_faro=True,
+            flight_number='TP1234', time=time(14, 0), adults=2, children=0, infants=0,
+        )
+        from bookings.views import _stay_transfers
+        self.assertEqual(_stay_transfers(self.leg_a).count(), 1)
+        self.assertEqual(_stay_transfers(self.leg_b).count(), 1)
+
+    def test_a_single_property_booking_still_sees_its_own_transfers_only(self):
+        other_guest = Guest.objects.create(first_name='Solo', last_name='Traveller', email='solo@example.com')
+        solo = Booking.objects.create(
+            property=self.property_a, guest=other_guest, arrival_date=self.start,
+            departure_date=self.end, is_owner=False, enquiry_status='Booking confirmed',
+            enquiry_source='Website', adults=1, children=0, babies=0, last_updated=timezone.now(),
+        )
+        AirportTransfer.objects.create(
+            booking=self.leg_a, direction=AirportTransferDirection.INBOUND, is_faro=True,
+            flight_number='TP1234', time=time(14, 0), adults=2, children=0, infants=0,
+        )
+        from bookings.views import _stay_transfers
+        self.assertEqual(_stay_transfers(solo).count(), 0)
+
+    def test_saved_note_names_the_apartment_it_applies_to(self):
+        response = self.client.get(f"{self.url}?extras_saved={self.leg_b.reference}")
+        self.assertContains(response, 'Extras Merge Property B have been saved')
+        self.assertNotContains(response, 'Extras Merge Property A have been saved')
+
+    def test_every_form_posts_to_the_shared_reference(self):
+        content = self.client.get(self.url).content.decode()
+        self.assertIn(f'action="{self.url}"', content)
+        for leg in (self.leg_a, self.leg_b):
+            self.assertNotIn(
+                f'action="{reverse("bookings:manage_extras", kwargs={"reference": leg.reference})}"', content,
+            )
 
 
 class ManageHubGuestsMultiPropertyTests(TestCase):

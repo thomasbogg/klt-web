@@ -105,6 +105,22 @@ def _first_unpaid_leg(bookings):
     return next((booking for booking in bookings if not is_paid(booking)), None)
 
 
+def _stay_transfers(booking):
+    """Every AirportTransfer belonging to the STAY `booking` is part of, not just that one leg.
+
+    A multi-property party's airport transfers are stored against a single leg on purpose - they
+    are one transfer for the whole party, and duplicating the row would double-charge the guest
+    via extras_summary() and double-count the staff monthly report (see
+    BookingManageExtrasView's docstring). So the places that read transfers to decide what a guest
+    is *told* have to look across the stay, otherwise the apartment that doesn't hold the row
+    would tell its guest no transfer is booked while the other says there is one.
+
+    Unchanged for a single-property booking, which is its own whole stay."""
+    if not booking.reservation_group_id:
+        return booking.airport_transfers.all()
+    return AirportTransfer.objects.filter(booking__reservation_group_id=booking.reservation_group_id)
+
+
 def _leg_for_post(bookings, leg_reference):
     """Which apartment a merged multi-property form's POST is acting on, from the hidden
     `leg_reference` field every duplicated form carries (see Stage D's dual-form pattern).
@@ -2311,16 +2327,24 @@ class BookingManageExtrasView(BookingFormMixin, View):
     Guest List and Arrival & Departure now (no balance-paid gate). Gated only by
     extras_edit_locked()'s fulfilment-lead-time cutoff, not by payment status, since Extras are
     cash-at-check-in and were never priced into Charge (see extras_summary()'s docstring). No
-    price-change interstitial needed here at all for the same reason."""
-    template_name = 'bookings/manage_extras.html'
+    price-change interstitial needed here at all for the same reason.
 
-    def _get_gated_booking(self, reference):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
-            raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return booking, redirect('bookings:details', reference=reference)
-        return booking, None
+    2026-09-15 (Stage D6 of the multi-property hub merge - see project memory): the last section to
+    be merged, and the only one that is deliberately NOT uniformly per-apartment. Per Thomas, a
+    party travelling together needs ONE airport transfer, not one per apartment they happen to have
+    booked - so Airport Transfers renders once for the whole stay in its own form, while every
+    other extra (Cot & High Chair, Late Checkout, Mid-stay Clean, Welcome Pack, Special Requests)
+    repeats per apartment under an "Extra - Property" heading, since those are genuinely consumed
+    in one specific apartment.
+
+    The shared transfer is stored against ONE leg (`_transfer_leg()`), never duplicated across
+    them: AirportTransfer rows are summed per booking by extras_summary() (what the guest pays at
+    check-in) and counted per booking by the staff monthly report, so duplicating one would both
+    double-charge the guest and double-count the report. The two places that *read* transfers to
+    decide what a guest is told - Location & Check-in and Last Days & Check-out - resolve them
+    across the whole stay instead (see _stay_transfers()), so the apartment that doesn't hold the
+    row still shows the party's transfer rather than "none booked"."""
+    template_name = 'bookings/manage_extras.html'
 
     def _show_cot_high_chair(self, booking):
         """Same infant-age check _any_infant_age() does for a freshly-typed guest-list form, but
@@ -2330,47 +2354,141 @@ class BookingManageExtrasView(BookingFormMixin, View):
         rows = [{'age': guest.age} for guest in booking.party.all()]
         return self._any_infant_age(rows, child_min_age)
 
-    def get(self, request, reference, *args, **kwargs):
-        booking, redirect_response = self._get_gated_booking(reference)
-        if redirect_response is not None:
-            return redirect_response
+    def _transfer_leg(self, bookings):
+        """The one leg a multi-property stay's shared airport transfers are stored against - the
+        primary (lowest-pk) leg, the same one every other part of the hub already treats as
+        primary. Arbitrary but stable; what matters is that it's exactly one, for the
+        double-charging reason in this class's docstring."""
+        return bookings[0]
 
-        context = {'booking': booking, 'extras_locked': extras_edit_locked(booking),
-                   'show_cot_high_chair': self._show_cot_high_chair(booking)}
-        context.update(_manage_nav_context(booking, 'extras'))
-        context.update(self._extras_context(booking))
-        context.update(self._transfer_context(booking))
+    def _extras_leg_context(self, booking, post_data=None, **overrides):
+        """One apartment's worth of per-apartment extras state, in the same shape the single-
+        property page has always used at top level."""
+        context = {
+            'booking': booking,
+            'show_cot_high_chair': self._show_cot_high_chair(booking),
+            'extras_locked': extras_edit_locked(booking),
+            'leg_id_suffix': f"-{booking.reference}",
+            'transfers_hoisted': True,
+        }
+        context.update(self._extras_context(booking, post_data=post_data))
+        context.update(overrides)
+        return context
+
+    def _merged_extras_legs(self, bookings, target=None, overrides=None):
+        """Every leg's _extras_leg_context(), with `overrides` merged into whichever one is
+        `target` - the "re-render the whole merged page but keep the submitting apartment's own
+        values and errors" path, same as Stage D5's guest-list equivalent."""
+        legs = []
+        for booking in bookings:
+            leg = self._extras_leg_context(booking)
+            if target is not None and booking.pk == target.pk and overrides:
+                leg.update(overrides)
+            legs.append(leg)
+        return legs
+
+    def get(self, request, reference, *args, **kwargs):
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
+            raise Http404("No booking found for this reference.")
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
+
+        primary = bookings[0]
+        context = {'booking': primary, 'extras_locked': extras_edit_locked(primary),
+                   'show_cot_high_chair': self._show_cot_high_chair(primary)}
+        context.update(_manage_nav_context(primary, 'extras', all_bookings=bookings))
+        context.update(self._extras_context(primary))
+        context.update(self._transfer_context(self._transfer_leg(bookings)))
+        if len(bookings) > 1:
+            context['legs'] = self._merged_extras_legs(bookings)
         return render(request, self.template_name, context)
 
     def post(self, request, reference, *args, **kwargs):
-        booking, redirect_response = self._get_gated_booking(reference)
-        if redirect_response is not None:
-            return redirect_response
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
+            raise Http404("No booking found for this reference.")
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
 
-        if extras_edit_locked(booking):
+        # Two kinds of form post here on a merged page: the single shared Airport Transfers form
+        # (no leg_reference - it belongs to the stay), and one per-apartment extras form.
+        if request.POST.get('form') == 'transfers':
+            return self._post_transfers(request, reference, bookings)
+        return self._post_extras(request, reference, bookings)
+
+    def _post_transfers(self, request, reference, bookings):
+        leg = self._transfer_leg(bookings)
+        if extras_edit_locked(leg):
             return redirect('bookings:manage_extras', reference=reference)
 
         transfer_rows, transfer_non_field_error = self._parse_transfer_rows(request.POST)
+        if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
+            primary = bookings[0]
+            context = {'booking': primary, 'extras_locked': False,
+                       'show_cot_high_chair': self._show_cot_high_chair(primary)}
+            context.update(_manage_nav_context(primary, 'extras', all_bookings=bookings))
+            context.update(self._extras_context(primary))
+            context.update(self._transfer_context(
+                leg, rows=transfer_rows, non_field_error=transfer_non_field_error,
+            ))
+            if len(bookings) > 1:
+                context['legs'] = self._merged_extras_legs(bookings)
+            return render(request, self.template_name, context)
+
+        with transaction.atomic():
+            self._save_transfers(leg, transfer_rows)
+
+        url = reverse('bookings:manage_extras', args=[reference])
+        return redirect(f"{url}?extras_saved=transfers")
+
+    def _post_extras(self, request, reference, bookings):
+        booking = _leg_for_post(bookings, request.POST.get('leg_reference'))
+        if booking is None:
+            return redirect('bookings:manage_extras', reference=reference)
+        if extras_edit_locked(booking):
+            return redirect('bookings:manage_extras', reference=reference)
+
+        # A single-property page still posts everything in one form, transfers included - the
+        # merged page splits those into their own form instead (see _post_transfers).
+        single = len(bookings) == 1
+        transfer_rows, transfer_non_field_error = (
+            self._parse_transfer_rows(request.POST) if single else ([], None)
+        )
         _, _, late_checkout_error = self._parse_late_checkout(booking, request.POST)
         _, _, mid_stay_clean_error = self._parse_mid_stay_clean(booking, request.POST)
-        context = {'booking': booking, 'extras_locked': False,
-                   'show_cot_high_chair': self._show_cot_high_chair(booking)}
-        context.update(_manage_nav_context(booking, 'extras'))
-        context.update(self._extras_context(booking, post_data=request.POST))
-        context.update(self._transfer_context(booking, rows=transfer_rows, non_field_error=transfer_non_field_error))
-        context['late_checkout_error'] = late_checkout_error
-        context['mid_stay_clean_error'] = mid_stay_clean_error
 
-        if transfer_non_field_error or any(row['errors'] for row in transfer_rows):
-            return render(request, self.template_name, context)
-        if late_checkout_error or mid_stay_clean_error:
+        if (transfer_non_field_error or any(row['errors'] for row in transfer_rows)
+                or late_checkout_error or mid_stay_clean_error):
+            leg_state = {
+                **self._extras_context(booking, post_data=request.POST),
+                'late_checkout_error': late_checkout_error,
+                'mid_stay_clean_error': mid_stay_clean_error,
+            }
+            context = {'booking': booking, 'extras_locked': False,
+                       'show_cot_high_chair': self._show_cot_high_chair(booking)}
+            context.update(_manage_nav_context(bookings[0], 'extras', all_bookings=bookings))
+            context.update(leg_state)
+            context.update(self._transfer_context(
+                self._transfer_leg(bookings),
+                rows=transfer_rows if single else None,
+                non_field_error=transfer_non_field_error,
+            ))
+            if not single:
+                context['legs'] = self._merged_extras_legs(
+                    bookings, target=booking, overrides=leg_state,
+                )
             return render(request, self.template_name, context)
 
         with transaction.atomic():
             self._save_extras(booking, request.POST)
-            self._save_transfers(booking, transfer_rows)
+            if single:
+                self._save_transfers(booking, transfer_rows)
 
-        return redirect(f"{reverse('bookings:manage_extras', args=[booking.reference])}?extras_saved=1")
+        url = reverse('bookings:manage_extras', args=[reference])
+        return redirect(f"{url}?extras_saved={booking.reference}")
 
 
 def _parsed_birth_date(raw):
@@ -3016,8 +3134,10 @@ def _location_context(booking):
     location = booking.property.location
     arrival = Arrival.objects.filter(booking=booking).first()
     self_check_in = bool(arrival and arrival.self_check_in)
-    inbound_transfer = booking.airport_transfers.filter(direction=AirportTransferDirection.INBOUND).first()
-    has_outbound_transfer = booking.airport_transfers.filter(direction=AirportTransferDirection.OUTBOUND).exists()
+    # Across the whole stay, not just this leg - see _stay_transfers().
+    stay_transfers = _stay_transfers(booking)
+    inbound_transfer = stay_transfers.filter(direction=AirportTransferDirection.INBOUND).first()
+    has_outbound_transfer = stay_transfers.filter(direction=AirportTransferDirection.OUTBOUND).exists()
     # A known meet-and-greet, distinct from "we don't know yet" (arrival is None) - only ever true
     # once an Arrival row exists and explicitly says self_check_in=False, never shown prematurely
     # before the guest's own arrival details (or a company policy) have actually settled which
@@ -3147,7 +3267,8 @@ def _last_days_context(booking):
         else cleaning_company.standard_checkout_time if cleaning_company
         else None
     )
-    outbound_transfer = booking.airport_transfers.filter(direction=AirportTransferDirection.OUTBOUND).first()
+    # Across the whole stay, not just this leg - see _stay_transfers().
+    outbound_transfer = _stay_transfers(booking).filter(direction=AirportTransferDirection.OUTBOUND).first()
     outbound_pickup_time = None
     if outbound_transfer is not None:
         pickup = (

@@ -1,0 +1,37 @@
+{% comment %}
+One apartment's Optional Extras on the merged multi-property Manage Booking hub
+(manage_extras.html, looped once per entry in `legs` - see
+bookings/views.py::BookingManageExtrasView._extras_leg_context()).
+
+Everything in here is genuinely consumed in ONE apartment - a cot goes in a specific bedroom, a
+welcome pack sits on a specific worktop, a late checkout applies to a specific key handover - so
+each repeats per apartment under an "Extra - Property" heading (per Thomas). Airport Transfers is
+the deliberate exception and is NOT in here: it belongs to the party, so manage_extras.html
+renders it once, outside this loop.
+
+Each apartment is its own <form> posting to the stay's shared reference with a hidden
+leg_reference, which also keeps the same-named radio groups (welcome_pack_food, late_checkout_time)
+independent between apartments - they would otherwise be one mutually-exclusive group.
+{% endcomment %}
+<div class="stay-leg-section">
+    {% if request.GET.extras_saved == leg.booking.reference %}
+    <p class="details-note details-note-left">Your extras for {{ leg.booking.property }} have been saved.</p>
+    {% endif %}
+
+    {% if leg.extras_locked %}
+    <p class="details-note details-note-left">
+        Extras for {{ leg.booking.property }} can no longer be changed online - please contact us directly.
+    </p>
+    {% endif %}
+
+    <form method="post" action="{% url 'bookings:manage_extras' reference=stay_reference %}" class="details-form">
+        {% csrf_token %}
+        <input type="hidden" name="leg_reference" value="{{ leg.booking.reference }}">
+
+        {% include 'bookings/_extras_form.html' with due_phrase="any online payment" extras_property=leg.booking.property show_cot_high_chair=leg.show_cot_high_chair extras_windows=leg.extras_windows transfers_hoisted=True leg_id_suffix=leg.leg_id_suffix cot=leg.cot high_chair=leg.high_chair cot_high_chair_pricing_config=leg.cot_high_chair_pricing_config late_checkout=leg.late_checkout late_checkout_time=leg.late_checkout_time late_checkout_price=leg.late_checkout_price late_checkout_unlimited=leg.late_checkout_unlimited late_checkout_available_times=leg.late_checkout_available_times late_checkout_offerable=leg.late_checkout_offerable late_checkout_error=leg.late_checkout_error mid_stay_clean=leg.mid_stay_clean mid_stay_clean_price=leg.mid_stay_clean_price show_mid_stay_clean=leg.show_mid_stay_clean mid_stay_clean_error=leg.mid_stay_clean_error welcome_pack=leg.welcome_pack welcome_pack_food=leg.welcome_pack_food welcome_pack_drinks=leg.welcome_pack_drinks welcome_pack_note=leg.welcome_pack_note welcome_pack_price=leg.welcome_pack_price welcome_pack_items=leg.welcome_pack_items request_rows=leg.request_rows all_request_types_open=leg.all_request_types_open %}
+
+        {% if not leg.extras_locked %}
+        <button type="submit" class="reserve-form-submit">Save Extras &mdash; {{ leg.booking.property }}</button>
+        {% endif %}
+    </form>
+</div>

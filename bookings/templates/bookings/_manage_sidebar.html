@@ -33,7 +33,7 @@ lands. All of "Holiday Info" has moved over as of this comment (Stage B); "Manag
        href="{% url 'bookings:manage_dates' reference=booking.reference %}">Edit Dates</a>
     {% endif %}
     <a class="manage-hub-nav-link{% if active_section == 'extras' %} manage-hub-nav-link-active{% endif %}"
-       href="{% url 'bookings:manage_extras' reference=booking.reference %}">Optional Extras</a>
+       href="{% url 'bookings:manage_extras' reference=stay_reference %}">Optional Extras</a>
     <a class="manage-hub-nav-link{% if active_section == 'guest_registrations' %} manage-hub-nav-link-active{% endif %}"
        href="{% url 'bookings:manage_guest_registrations' reference=stay_reference %}">Guest Registrations</a>
     {% if show_tourist_tax %}
