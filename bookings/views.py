@@ -368,11 +368,20 @@ class BookingFormMixin:
             update_fields += ['late_checkout', 'late_checkout_time', 'late_checkout_charge']
 
         if windows['mid_stay_clean']:
+            # Only marked dirty when the value actually changes (2026-09-16, after Thomas reported
+            # a slow Extras save) - staff/signals.py::_sync_cleaning_tasks_on_extra_save skips its
+            # cleaning-task/Freshen/Memo resync unless update_fields names one of these two fields,
+            # but this section's window is open on nearly every normal save regardless of whether
+            # the guest touched it, so without this comparison update_fields would include them
+            # (and re-trigger the resync) every time anyway.
+            previous = (extra.mid_stay_clean, extra.mid_stay_clean_date)
             extra.mid_stay_clean, extra.mid_stay_clean_date, _ = self._parse_mid_stay_clean(booking, post_data)
             extra.mid_stay_clean_charge = (
                 settings.compute_mid_stay_clean_price(booking.property) if extra.mid_stay_clean else None
             )
-            update_fields += ['mid_stay_clean', 'mid_stay_clean_date', 'mid_stay_clean_charge']
+            update_fields += ['mid_stay_clean_charge']
+            if (extra.mid_stay_clean, extra.mid_stay_clean_date) != previous:
+                update_fields += ['mid_stay_clean', 'mid_stay_clean_date']
 
         if update_fields:
             extra.save(update_fields=update_fields)

@@ -9,12 +9,43 @@ from staff.utils import (
 )
 
 
+def _sync_cleaning_tasks_and_related(booking):
+    sync_cleaning_tasks_for_booking(booking)
+    sync_freshen_tasks_for_property(booking.property)
+    sync_memo_for_turnover_task(booking)
+
+
 @receiver(post_save, sender=Departure)
+def _sync_cleaning_tasks_on_departure_save(sender, instance, **kwargs):
+    _sync_cleaning_tasks_and_related(instance.booking)
+
+
+# The only Extra fields sync_cleaning_tasks_for_booking() (staff/utils.py) actually reads off
+# Extra - verified against its own docstring/body, which creates/removes the mid-stay CleaningTask
+# off exactly these two and nothing else. late_checkout changes are already resynced directly by
+# grant_late_checkout()/revoke_late_checkout() (bookings/views.py::_apply_late_checkout_request,
+# which both call sync_cleaning_tasks_for_booking() themselves right after changing a grant), and
+# welcome_pack/cot/high_chair/request-type fields don't touch cleaning scheduling, Freshen, or the
+# turnover Memo at all.
+EXTRA_CLEANING_RELEVANT_FIELDS = frozenset({'mid_stay_clean', 'mid_stay_clean_date'})
+
+
 @receiver(post_save, sender=Extra)
-def _sync_cleaning_tasks_on_related_save(sender, instance, **kwargs):
-    sync_cleaning_tasks_for_booking(instance.booking)
-    sync_freshen_tasks_for_property(instance.booking.property)
-    sync_memo_for_turnover_task(instance.booking)
+def _sync_cleaning_tasks_on_extra_save(sender, instance, **kwargs):
+    # Skipped for a save that names its update_fields and touches neither field above
+    # (2026-09-16, after Thomas reported a slow Extras save). The Extras page saves one combined
+    # Extra row per apartment on every submit - Welcome Pack, Cot & High Chair, Late Checkout, and
+    # Mid-stay Clean together - so a guest just ticking a Welcome Pack option was still paying for
+    # a property-wide Freshen sweep and a Memo round trip neither of those touch, on top of the
+    # real remote-Postgres latency each already costs on its own (same reasoning as the Booking
+    # receiver below, after the same report against Guest List).
+    #
+    # update_fields is None for a plain .save(), which still runs everything - the conservative
+    # default. This narrows only saves that have already declared exactly what changed.
+    update_fields = kwargs.get('update_fields')
+    if update_fields is not None and not (set(update_fields) & EXTRA_CLEANING_RELEVANT_FIELDS):
+        return
+    _sync_cleaning_tasks_and_related(instance.booking)
 
 
 # The only Booking fields any of the resyncs below actually read (verified 2026-09-15 against

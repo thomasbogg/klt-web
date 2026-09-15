@@ -5152,6 +5152,74 @@ class BookingSaveResyncScopeTests(TestCase):
         self.assertEqual(gaps, 1)
 
 
+class ExtraSaveResyncScopeTests(TestCase):
+    """staff/signals.py::_sync_cleaning_tasks_on_extra_save only does the cleaning-task/Freshen/
+    Memo resync when the save could actually have changed their output (2026-09-16, after Thomas
+    reported a slow Extras save) - the same fix as BookingSaveResyncScopeTests above, for the
+    other model that drove the same three resyncs.
+
+    sync_cleaning_tasks_for_booking() only reads Extra.mid_stay_clean/mid_stay_clean_date off this
+    model - a Welcome Pack, Cot & High Chair, or Late Checkout save touches neither, but the
+    Extras page saves one combined Extra row per apartment on every submit regardless of which
+    section the guest actually changed, so without this guard every save paid for a property-wide
+    Freshen sweep and a Memo round trip that could never have anything to do."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Extra Resync Property', short_title='EXRESYNC')
+        self.guest = Guest.objects.create(
+            first_name='Sara', last_name='Resync', email='sara-resync@example.com',
+        )
+        self.start = date.today() + timedelta(days=30)
+        self.booking = Booking.objects.create(
+            property=self.property, guest=self.guest, arrival_date=self.start,
+            departure_date=self.start + timedelta(days=5), is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        self.extra, _ = Extra.objects.get_or_create(booking=self.booking)
+
+    def _save_and_count(self, **save_kwargs):
+        targets = (
+            'staff.signals.sync_cleaning_tasks_for_booking',
+            'staff.signals.sync_freshen_tasks_for_property',
+            'staff.signals.sync_memo_for_turnover_task',
+        )
+        with patch(targets[0]) as tasks, patch(targets[1]) as freshen, patch(targets[2]) as memo:
+            self.extra.save(**save_kwargs)
+        return tasks.call_count, freshen.call_count, memo.call_count
+
+    def test_a_welcome_pack_only_save_skips_the_resync(self):
+        counts = self._save_and_count(
+            update_fields=['welcome_pack', 'welcome_pack_food', 'welcome_pack_drinks', 'welcome_pack_note', 'welcome_pack_charge'],
+        )
+        self.assertEqual(counts, (0, 0, 0))
+
+    def test_a_cot_high_chair_only_save_skips_the_resync(self):
+        counts = self._save_and_count(update_fields=['cot', 'high_chair', 'cot_high_chair_charge'])
+        self.assertEqual(counts, (0, 0, 0))
+
+    def test_a_late_checkout_only_save_skips_the_resync(self):
+        """Already resynced directly by grant_late_checkout()/revoke_late_checkout() themselves -
+        this signal doesn't need to do it again."""
+        counts = self._save_and_count(update_fields=['late_checkout', 'late_checkout_time', 'late_checkout_charge'])
+        self.assertEqual(counts, (0, 0, 0))
+
+    def test_a_mid_stay_clean_change_still_resyncs(self):
+        counts = self._save_and_count(update_fields=['mid_stay_clean', 'mid_stay_clean_date'])
+        self.assertEqual(counts, (1, 1, 1))
+
+    def test_a_mid_stay_clean_charge_only_save_skips_the_resync(self):
+        """The price can be recomputed (a settings change) without mid_stay_clean/date themselves
+        changing - that alone can't affect what CleaningTask/Freshen/Memo compute."""
+        counts = self._save_and_count(update_fields=['mid_stay_clean_charge'])
+        self.assertEqual(counts, (0, 0, 0))
+
+    def test_a_plain_save_still_resyncs_everything(self):
+        """update_fields=None means the caller hasn't said what changed - assume the worst."""
+        counts = self._save_and_count()
+        self.assertEqual(counts, (1, 1, 1))
+
+
 class ApplyManualTaskDateTests(TestCase):
     """staff/utils.py::apply_manual_task_date() - the shared validate-and-override helper behind
     a calendar drag, the popup's save button, and the booking detail page's embedded planner."""

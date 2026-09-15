@@ -4352,6 +4352,41 @@ class BookingManageExtrasViewTests(TestCase):
         extra = Extra.objects.get(booking=self.booking)
         self.assertTrue(extra.welcome_pack)
 
+    def _resync_targets(self):
+        return (
+            'staff.signals.sync_cleaning_tasks_for_booking',
+            'staff.signals.sync_freshen_tasks_for_property',
+            'staff.signals.sync_memo_for_turnover_task',
+        )
+
+    def test_saving_extras_without_touching_mid_stay_clean_skips_the_cleaning_resync(self):
+        """A guest just ticking Welcome Pack shouldn't pay for a property-wide Freshen sweep and
+        a Memo round trip that can't have anything to do with it (2026-09-16, after Thomas
+        reported a slow Extras save) - see staff/signals.py::_sync_cleaning_tasks_on_extra_save
+        and its own ExtraSaveResyncScopeTests for the underlying signal-level coverage."""
+        t1, t2, t3 = self._resync_targets()
+        with patch(t1) as tasks, patch(t2) as freshen, patch(t3) as memo:
+            response = self.client.post(self.url, {'welcome_pack': 'on', 'welcome_pack_food': 'standard', 'welcome_pack_drinks': 'alcoholic'})
+        self.assertRedirects(response, f"{self.url}?extras_saved={self.booking.reference}", fetch_redirect_response=False)
+        self.assertEqual((tasks.call_count, freshen.call_count, memo.call_count), (0, 0, 0))
+
+    def test_toggling_mid_stay_clean_still_runs_the_cleaning_resync(self):
+        t1, t2, t3 = self._resync_targets()
+        with patch(t1) as tasks, patch(t2) as freshen, patch(t3) as memo:
+            response = self.client.post(self.url, {'mid_stay_clean': 'on'})
+        self.assertRedirects(response, f"{self.url}?extras_saved={self.booking.reference}", fetch_redirect_response=False)
+        self.assertEqual((tasks.call_count, freshen.call_count, memo.call_count), (1, 1, 1))
+
+    def test_resaving_the_same_mid_stay_clean_state_skips_the_resync(self):
+        """Every normal Extras submission carries the mid-stay-clean fields whenever that section
+        is open, whether or not the guest touched it - only a genuine change should count."""
+        self.client.post(self.url, {'mid_stay_clean': 'on'})
+        t1, t2, t3 = self._resync_targets()
+        with patch(t1) as tasks, patch(t2) as freshen, patch(t3) as memo:
+            response = self.client.post(self.url, {'mid_stay_clean': 'on', 'welcome_pack': 'on'})
+        self.assertRedirects(response, f"{self.url}?extras_saved={self.booking.reference}", fetch_redirect_response=False)
+        self.assertEqual((tasks.call_count, freshen.call_count, memo.call_count), (0, 0, 0))
+
 
 class BookingManageGuestRegistrationsViewTests(TestCase):
     def setUp(self):
