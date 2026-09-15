@@ -11,12 +11,13 @@ above. Same
 underlying plain-links mechanism as before (each item is a real page, not a client-side tab
 switch), just grouped visually - see bookings.css's .manage-hub-nav-group-label.
 
-Multi-property merge (2026-09-14, staged - see project memory): a section that's been made
+Multi-property merge (2026-09-14/15, staged - see project memory): a section that's been made
 group-aware links via `stay_reference` (the shared ReservationGroup reference once one exists,
-same as booking.reference otherwise) so it lands on the merged page covering every apartment; a
-section not yet merged still links via `booking.reference` (this leg only) until its own stage
-lands. All of "Holiday Info" has moved over as of this comment (Stage B); "Manage Your Stay"
-(Contact Details, Guest List, Extras, etc.) is still per-leg, later stages.
+same as booking.reference otherwise) so it lands on the merged page covering every apartment.
+Every guest-facing *section* is merged as of Stage D6. What still links via `booking.reference`
+is the three actions that are per-apartment by nature, not merge leftovers: Edit Dates, Pay
+Balance and Cancel Booking each act on one booking's own calendar slot, charge or contract, and
+a real Revolut/Wise checkout redirect isn't something two apartments can share.
 {% endcomment %}
 <nav class="manage-hub-nav">
     <span class="manage-hub-nav-group-label">Manage Your Stay</span>
