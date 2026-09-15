@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cancel Booking {{ booking.reference }} | Algarve Beach Apartments</title>
+    <title>Cancel Booking {{ stay_reference|default:booking.reference }} | Algarve Beach Apartments</title>
     <link rel="stylesheet" href="{% static 'header/header.css' %}">
     <link rel="stylesheet" href="{% static 'main/style.css' %}">
     <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
@@ -26,10 +26,11 @@
             <h1>Cancel Booking</h1>
 
             <div class="confirmation-reference">
-                <span class="confirmation-reference-label">Booking Reference</span>
-                <span class="confirmation-reference-value">{{ booking.reference }}</span>
+                <span class="confirmation-reference-label">{% if legs %}Party Reference{% else %}Booking Reference{% endif %}</span>
+                <span class="confirmation-reference-value">{{ stay_reference|default:booking.reference }}</span>
             </div>
 
+            {% if not legs %}
             <div class="confirmation-summary">
                 <div class="confirmation-chip">
                     <span class="confirmation-chip-label">Property</span>
@@ -47,12 +48,16 @@
                     <span class="confirmation-chip-value">{{ booking.departure_date|date:"D, d M Y" }}</span>
                 </div>
             </div>
+            {% endif %}
 
             <div class="cancel-warning">
                 <p class="cancel-warning-title">This cannot be undone</p>
-                <p>Cancelling releases your dates back to general availability - if you change your mind afterward, the property may no longer be free.</p>
-                <p><strong>No refund is issued for any amount already paid.</strong> Any deposit or balance you've paid on this booking is non-refundable, regardless of when you cancel.</p>
-                <p>If you're unsure, please <a href="{% url 'bookings:manage_hub' reference=booking.reference %}">go back</a> and contact us instead of cancelling.</p>
+                <p>Cancelling releases your dates back to general availability - if you change your mind afterward, the {% if legs %}apartment{% else %}property{% endif %} may no longer be free.</p>
+                <p><strong>No refund is issued for any amount already paid.</strong> Any deposit or balance you've paid is non-refundable, regardless of when you cancel.</p>
+                {% if legs %}
+                <p>If you cancel some of your apartments but keep others, the deposit you've paid on the cancelled ones will be put towards the balance still due on the ones you're keeping.</p>
+                {% endif %}
+                <p>If you're unsure, please <a href="{% url 'bookings:manage_hub' reference=stay_reference|default:booking.reference %}">go back</a> and contact us instead of cancelling.</p>
             </div>
 
             {% if reference_error %}
@@ -60,17 +65,43 @@
                 <p>{{ reference_error }}</p>
             </div>
             {% endif %}
+            {% if selection_error %}
+            <div class="reserve-form-errors">
+                <p>{{ selection_error }}</p>
+            </div>
+            {% endif %}
 
             <form method="post" class="details-form">
                 {% csrf_token %}
-                <div class="reserve-form-row">
-                    <label for="reference_confirm">Type your booking reference (<strong>{{ booking.reference }}</strong>) to confirm</label>
-                    <input type="text" name="reference_confirm" id="reference_confirm" class="reserve-input" autocomplete="off" data-reference="{{ booking.reference }}">
+
+                {% if legs %}
+                <div class="details-section">
+                    <h2 class="details-section-title">Which apartments are you cancelling?</h2>
+                    {% for leg in legs %}
+                    <label class="cancel-leg-option">
+                        <input type="checkbox" name="cancel_leg" value="{{ leg.booking.reference }}">
+                        <span class="cancel-leg-option-body">
+                            <span class="cancel-leg-option-property">{{ leg.booking.property }}</span>
+                            <span class="cancel-leg-option-dates">{{ leg.booking.arrival_date|date:"D, d M Y" }} &rarr; {{ leg.booking.departure_date|date:"D, d M Y" }}</span>
+                            {% if leg.balance_outstanding %}
+                            <span class="cancel-leg-option-note">Balance still to pay: {% if leg.charge.currency == 'GBP' %}&pound;{{ leg.charge.balance_payable|floatformat:2 }}{% else %}&euro;{{ leg.charge.balance_payable|floatformat:2 }}{% endif %}</span>
+                            {% else %}
+                            <span class="cancel-leg-option-note">Paid in full</span>
+                            {% endif %}
+                        </span>
+                    </label>
+                    {% endfor %}
                 </div>
-                <button type="submit" class="reserve-form-submit cancel-confirm-submit" id="cancel-confirm-submit" disabled>Cancel My Booking</button>
+                {% endif %}
+
+                <div class="reserve-form-row">
+                    <label for="reference_confirm">Type your {% if legs %}party{% else %}booking{% endif %} reference (<strong>{{ stay_reference|default:booking.reference }}</strong>) to confirm</label>
+                    <input type="text" name="reference_confirm" id="reference_confirm" class="reserve-input" autocomplete="off" data-reference="{{ stay_reference|default:booking.reference }}">
+                </div>
+                <button type="submit" class="reserve-form-submit cancel-confirm-submit" id="cancel-confirm-submit" disabled>{% if legs %}Cancel Selected Apartments{% else %}Cancel My Booking{% endif %}</button>
             </form>
 
-            <a class="reserve-back-link" href="{% url 'bookings:manage_hub' reference=booking.reference %}">&larr; Never mind, take me back</a>
+            <a class="reserve-back-link" href="{% url 'bookings:manage_hub' reference=stay_reference|default:booking.reference %}">&larr; Never mind, take me back</a>
         </div>
     </div>
 

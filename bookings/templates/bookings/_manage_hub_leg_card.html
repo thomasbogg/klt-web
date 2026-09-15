@@ -18,7 +18,10 @@ flow this whole merge exists to move away from).
         {% elif leg.balance_due %}
             Balance due by {{ leg.charge.balance_due_date|date:"d M Y" }}:
             {% if leg.charge.currency == 'GBP' %}&pound;{{ leg.costs_gbp.due_at_balance|floatformat:2 }}
-            {% else %}&euro;{{ leg.charge.due_at_balance|floatformat:2 }}{% endif %}
+            {% else %}&euro;{{ leg.charge.balance_payable|floatformat:2 }}{% endif %}
+            {% if leg.charge.sibling_cancellation_credit %}
+            <span class="stay-leg-card-credit">includes &euro;{{ leg.charge.sibling_cancellation_credit|floatformat:2 }} carried over from your cancelled apartment</span>
+            {% endif %}
         {% elif leg.show_cost_breakdown %}
             Fully paid
         {% else %}

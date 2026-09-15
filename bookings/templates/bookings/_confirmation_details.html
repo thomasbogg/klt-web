@@ -79,7 +79,7 @@ show_security_deposit_row both false), which would otherwise render as an empty 
     <div class="confirmation-breakdown-row">
         <span>Due by {{ charge.balance_due_date|date:"d M Y" }}</span>
         {% if charge.currency == 'GBP' %}<span>&pound;{{ costs_gbp.due_at_balance|floatformat:2 }}</span>
-        {% else %}<span>&euro;{{ charge.due_at_balance|floatformat:2 }}</span>{% endif %}
+        {% else %}<span>&euro;{{ charge.balance_payable|floatformat:2 }}</span>{% endif %}
     </div>
     {% endif %}
     {% endif %}

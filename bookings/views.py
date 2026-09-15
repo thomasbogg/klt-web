@@ -2929,6 +2929,59 @@ class BookingManageDepositView(View):
         return redirect(f"{url}?saved=1")
 
 
+def apply_sibling_cancellation_credit(cancelled, remaining):
+    """Carry the deposits of just-cancelled apartments over to whatever the guest still owes on
+    the apartments they're keeping (2026-09-15, per Thomas).
+
+    A cancelled booking's deposit is otherwise simply forfeit - this codebase has no refund path
+    anywhere (see BookingCancelView) - so when the same party is still staying with us, that money
+    reduces their remaining balance instead of being kept.
+
+    Only ever applied to a leg whose balance is genuinely still outstanding: a leg already paid in
+    full has nothing to credit against, and Thomas's rule is explicitly "if the balance has not
+    been paid at time of cancellation". Cancelling EVERY leg therefore credits nothing, which is
+    the intended no-op - there's nothing left to put it towards, so today's forfeit rule stands.
+
+    Credit lands on Charge.sibling_cancellation_credit, never on due_at_balance, so the remaining
+    apartment's owner is still paid in full on the stay they're actually providing - see that
+    field's own docstring. Spread in leg order, filling each leg's outstanding balance before
+    moving to the next; any excess is simply retained (per Thomas: no refund, matching the
+    existing no-refund-on-cancellation rule). Returns the total actually credited."""
+    available = sum(
+        (leg.charges.due_at_booking or Decimal('0'))
+        for leg in cancelled
+        if getattr(leg, 'charges', None) and is_paid(leg)
+    )
+    if available <= 0:
+        return Decimal('0')
+
+    credited = Decimal('0')
+    for leg in remaining:
+        if available <= 0:
+            break
+        charge = getattr(leg, 'charges', None)
+        if charge is None or charge.due_at_balance is None or is_balance_paid(leg):
+            continue
+        outstanding = charge.balance_payable()
+        if outstanding <= 0:
+            continue
+        applied = min(outstanding, available)
+        charge.sibling_cancellation_credit = (
+            charge.sibling_cancellation_credit or Decimal('0')
+        ) + applied
+        charge.save(update_fields=['sibling_cancellation_credit'])
+        # A stale checkout URL would otherwise have the guest paying the pre-credit amount - same
+        # reason the guest-list and date-change flows clear it when they move the balance.
+        balance_payment = getattr(leg, 'balance_payment', None)
+        if balance_payment is not None and balance_payment.revolut_checkout_url:
+            balance_payment.revolut_order_id = None
+            balance_payment.revolut_checkout_url = None
+            balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
+        available -= applied
+        credited += applied
+    return credited
+
+
 class BookingCancelView(View):
     """Self-service cancellation of an already-paid booking - genuinely different from
     cancel_booking_hold() (bookings/utils.py), which only ever acts on a not-yet-paid hold and is
@@ -2938,46 +2991,93 @@ class BookingCancelView(View):
     server-side) for platform-sourced bookings, an already-cancelled booking, and a booking whose
     stay has already started - see _manage_nav_context()'s show_cancel_booking, the single source
     of truth this view's own gate reuses. Type-to-confirm (the guest must retype their own
-    reference) rather than a single click, given how consequential and irreversible this is."""
+    reference) rather than a single click, given how consequential and irreversible this is.
+
+    2026-09-15 (Stage D8 of the multi-property hub merge - see project memory): a multi-property
+    stay can cancel ALL or SOME of its apartments, chosen by checkbox, rather than being an
+    all-or-nothing action on one leg. Cancelling some of them carries the cancelled apartments'
+    deposits over to the balance still owed on the ones being kept - see
+    apply_sibling_cancellation_credit(). Still no refund anywhere: a credit only ever reduces
+    something genuinely still owed, and any excess is retained."""
     template_name = 'bookings/manage_cancel.html'
 
-    def _get_gated_booking(self, reference):
-        booking = Booking.objects.filter(reference=reference).first()
-        if booking is None:
+    def _gate(self, reference):
+        """(bookings, cancellable_legs, redirect_or_None). `cancellable` excludes any leg that's
+        already cancelled or otherwise not cancellable, reusing show_cancel_booking per leg rather
+        than inventing a second rule."""
+        bookings = bookings_for_stay_reference(reference)
+        if not bookings:
             raise Http404("No booking found for this reference.")
-        if not is_paid(booking):
-            return booking, redirect('bookings:details', reference=reference)
-        nav = _manage_nav_context(booking, 'cancel')
-        if not nav['show_cancel_booking']:
-            return booking, redirect('bookings:manage_hub', reference=reference)
-        return booking, None
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return bookings, [], redirect('bookings:details', reference=unpaid.reference)
+        cancellable = [
+            leg for leg in bookings
+            if _manage_nav_context(leg, 'cancel')['show_cancel_booking']
+        ]
+        if not cancellable:
+            return bookings, [], redirect('bookings:manage_hub', reference=reference)
+        return bookings, cancellable, None
+
+    def _context(self, bookings, cancellable, reference, **extra):
+        primary = bookings[0]
+        context = {'booking': primary, 'reference_error': None, 'selection_error': None}
+        context.update(_manage_nav_context(primary, 'cancel', all_bookings=bookings))
+        if len(bookings) > 1:
+            context['legs'] = [
+                {'booking': leg, 'charge': getattr(leg, 'charges', None),
+                 'balance_outstanding': (
+                     not is_balance_paid(leg) and getattr(leg, 'charges', None) is not None
+                     and (leg.charges.balance_payable() or Decimal('0')) > 0
+                 )}
+                for leg in cancellable
+            ]
+        context.update(extra)
+        return context
 
     def get(self, request, reference, *args, **kwargs):
-        booking, redirect_response = self._get_gated_booking(reference)
+        bookings, cancellable, redirect_response = self._gate(reference)
         if redirect_response is not None:
             return redirect_response
-
-        context = {'booking': booking, 'reference_error': None}
-        context.update(_manage_nav_context(booking, 'cancel'))
-        return render(request, self.template_name, context)
+        return render(request, self.template_name, self._context(bookings, cancellable, reference))
 
     def post(self, request, reference, *args, **kwargs):
-        booking, redirect_response = self._get_gated_booking(reference)
+        bookings, cancellable, redirect_response = self._gate(reference)
         if redirect_response is not None:
             return redirect_response
 
+        # The guest confirms against whichever reference they're actually looking at - the shared
+        # party reference on a merged stay, their own booking reference otherwise.
         typed_reference = request.POST.get('reference_confirm', '').strip()
-        if typed_reference.upper() != booking.reference.upper():
-            context = {
-                'booking': booking,
-                'reference_error': "That doesn't match your booking reference - please try again.",
-            }
-            context.update(_manage_nav_context(booking, 'cancel'))
-            return render(request, self.template_name, context)
+        if typed_reference.upper() != reference.upper():
+            label = "party reference" if len(bookings) > 1 else "booking reference"
+            return render(request, self.template_name, self._context(
+                bookings, cancellable, reference,
+                reference_error=f"That doesn't match your {label} - please try again.",
+            ))
 
-        booking.enquiry_status = 'Cancelled by guest'
-        booking.save(update_fields=['enquiry_status'])
-        return redirect(f"{reverse('bookings:manage_hub', args=[booking.reference])}?cancelled=1")
+        if len(bookings) > 1:
+            selected_references = set(request.POST.getlist('cancel_leg'))
+            selected = [leg for leg in cancellable if leg.reference in selected_references]
+            if not selected:
+                return render(request, self.template_name, self._context(
+                    bookings, cancellable, reference,
+                    selection_error="Please choose at least one apartment to cancel.",
+                ))
+        else:
+            selected = cancellable
+
+        selected_pks = {leg.pk for leg in selected}
+        remaining = [leg for leg in bookings if leg.pk not in selected_pks and not is_cancelled(leg)]
+
+        with transaction.atomic():
+            for leg in selected:
+                leg.enquiry_status = 'Cancelled by guest'
+                leg.save(update_fields=['enquiry_status'])
+            apply_sibling_cancellation_credit(selected, remaining)
+
+        url = reverse('bookings:manage_hub', args=[reference])
+        return redirect(f"{url}?cancelled=1")
 
 
 def _amenities_context(booking):

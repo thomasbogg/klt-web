@@ -51,7 +51,7 @@ a real Revolut/Wise checkout redirect isn't something two apartments can share.
     {% endif %}
     {% if show_cancel_booking %}
     <a class="manage-hub-nav-link manage-hub-nav-link-danger{% if active_section == 'cancel' %} manage-hub-nav-link-active{% endif %}"
-       href="{% url 'bookings:manage_cancel' reference=booking.reference %}">Cancel Booking</a>
+       href="{% url 'bookings:manage_cancel' reference=stay_reference %}">Cancel Booking</a>
     {% endif %}
 
     <span class="manage-hub-nav-group-label">Holiday Info</span>

@@ -3191,15 +3191,19 @@ class ManageHubHolidayInfoMultiPropertyTests(TestCase):
             reverse('bookings:manage_guests', kwargs={'reference': self.leg_a.reference}), content,
         )
 
-    def test_sidebar_still_keys_genuinely_per_leg_sections_off_the_primary_leg(self):
-        # Every guest-facing *section* is merged now (Optional Extras joined in Stage D6). What's
-        # left pointing at a single leg is the three actions that are per-apartment by nature -
-        # Edit Dates, Pay Balance and Cancel Booking each act on one booking's own calendar slot,
-        # charge or contract. Kept as an explicit guard so any of those flipping is deliberate.
+    def test_sidebar_uses_the_shared_reference_for_every_merged_section(self):
+        # Cancel Booking joined the merged sections in Stage D8 (it can cancel all or some of the
+        # apartments). What's left pointing at a single leg is Edit Dates and Pay Balance, both
+        # per-apartment by nature - each acts on one booking's own calendar slot or charge, and a
+        # real Revolut/Wise checkout redirect isn't something two apartments can share. Kept as an
+        # explicit guard so either of those flipping is deliberate rather than silent.
         response = self.client.get(self._url('bookings:manage_hub'))
         content = response.content.decode()
         self.assertIn(reverse('bookings:manage_extras', kwargs={'reference': self.group.reference}), content)
-        self.assertIn(reverse('bookings:manage_cancel', kwargs={'reference': self.leg_a.reference}), content)
+        self.assertIn(reverse('bookings:manage_cancel', kwargs={'reference': self.group.reference}), content)
+        # (Edit Dates and Pay Balance aren't rendered at all for this fixture - show_edit_dates and
+        # show_pay_balance are both false here - so there's nothing to assert about them; they stay
+        # per-leg by nature, see the comment above.)
 
 
 class ManageHubLocationMultiPropertyTests(TestCase):
@@ -4589,6 +4593,143 @@ class BookingManageDepositViewTests(TestCase):
     def test_sidebar_link_shown_when_deposit_required(self):
         response = self.client.get(self.manage_hub_url)
         self.assertContains(response, 'Security Deposit')
+
+
+class ManageHubCancelMultiPropertyTests(TestCase):
+    """Stage D8 of the multi-property manage-hub merge (2026-09-15, see project memory) - a party
+    can cancel ALL or SOME of their apartments, and (per Thomas) the deposits on the cancelled ones
+    are carried over to the balance still owed on the ones they're keeping, rather than simply
+    forfeited as they would be on a single-property cancellation.
+
+    The money rules being pinned here: the credit never touches Charge.total_rental (so neither
+    owner's payout moves), never exceeds what's actually owed (no refund of the excess), and never
+    applies when there's no remaining balance to put it towards."""
+
+    def setUp(self):
+        self.property_a = Property.objects.create(title='Cancel Merge Property A', short_title='CMPA')
+        self.property_b = Property.objects.create(title='Cancel Merge Property B', short_title='CMPB')
+        self.guest = Guest.objects.create(first_name='Tomas', last_name='Reis', email='tomas-cm@example.com')
+        self.start = date.today() + timedelta(days=150)
+        self.end = self.start + timedelta(days=7)
+        self.group = ReservationGroup.objects.create()
+        self.leg_a = self._make_booking(self.property_a, deposit=Decimal('300.00'), balance=Decimal('900.00'))
+        self.leg_b = self._make_booking(self.property_b, deposit=Decimal('200.00'), balance=Decimal('600.00'))
+        self.url = reverse('bookings:manage_cancel', kwargs={'reference': self.group.reference})
+
+    def _make_booking(self, prop, deposit, balance):
+        booking = Booking.objects.create(
+            property=prop, guest=self.guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(), reservation_group=self.group,
+        )
+        Charge.objects.create(
+            booking=booking, basic_rental=Decimal('1100.00'), admin=Decimal('60.50'),
+            due_at_booking=deposit, due_at_balance=balance,
+            balance_due_date=self.start - timedelta(days=56), currency='EUR',
+        )
+        Payment.objects.create(booking=booking, provider='revolut', status='paid')
+        BalancePayment.objects.create(booking=booking, provider='revolut')
+        return booking
+
+    def _cancel(self, *legs):
+        return self.client.post(self.url, {
+            'reference_confirm': self.group.reference,
+            'cancel_leg': [leg.reference for leg in legs],
+        })
+
+    def test_get_lists_every_apartment_as_a_separate_choice(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['legs']), 2)
+        self.assertContains(response, 'Cancel Merge Property A')
+        self.assertContains(response, 'Cancel Merge Property B')
+
+    def test_cancelling_one_apartment_leaves_the_other_confirmed(self):
+        self._cancel(self.leg_b)
+        self.leg_a.refresh_from_db()
+        self.leg_b.refresh_from_db()
+        self.assertEqual(self.leg_a.enquiry_status, 'Booking confirmed')
+        self.assertEqual(self.leg_b.enquiry_status, 'Cancelled by guest')
+
+    def test_cancelled_deposit_credits_the_remaining_apartments_balance(self):
+        self._cancel(self.leg_b)
+        charge = Charge.objects.get(booking=self.leg_a)
+        self.assertEqual(charge.sibling_cancellation_credit, Decimal('200.00'))
+        # what the guest now actually pays
+        self.assertEqual(charge.balance_payable(), Decimal('700.00'))
+        # ...and the priced balance itself is untouched, so the owner's payout base doesn't move
+        self.assertEqual(charge.due_at_balance, Decimal('900.00'))
+
+    def test_the_credit_does_not_change_either_owners_payout_base(self):
+        before = Charge.objects.get(booking=self.leg_a).total_rental
+        self._cancel(self.leg_b)
+        after = Charge.objects.get(booking=self.leg_a).total_rental
+        self.assertEqual(before, after)
+
+    def test_credit_is_capped_at_what_is_owed_and_never_refunded(self):
+        # Cancel the expensive apartment: its 300 deposit exceeds leg_b's 600 balance? No - make
+        # the remaining balance smaller than the incoming deposit to exercise the cap.
+        charge_b = Charge.objects.get(booking=self.leg_b)
+        charge_b.due_at_balance = Decimal('120.00')
+        charge_b.save(update_fields=['due_at_balance'])
+        self._cancel(self.leg_a)
+        charge_b.refresh_from_db()
+        self.assertEqual(charge_b.sibling_cancellation_credit, Decimal('120.00'))
+        self.assertEqual(charge_b.balance_payable(), Decimal('0.00'))
+
+    def test_cancelling_every_apartment_credits_nothing(self):
+        self._cancel(self.leg_a, self.leg_b)
+        for leg in (self.leg_a, self.leg_b):
+            leg.refresh_from_db()
+            self.assertEqual(leg.enquiry_status, 'Cancelled by guest')
+            self.assertEqual(Charge.objects.get(booking=leg).sibling_cancellation_credit, Decimal('0'))
+
+    def test_no_credit_when_the_remaining_balance_is_already_paid(self):
+        self.leg_a.balance_payment.status = 'paid'
+        self.leg_a.balance_payment.save(update_fields=['status'])
+        self._cancel(self.leg_b)
+        self.assertEqual(Charge.objects.get(booking=self.leg_a).sibling_cancellation_credit, Decimal('0'))
+
+    def test_a_stale_balance_checkout_url_is_cleared_so_the_guest_pays_the_credited_amount(self):
+        self.leg_a.balance_payment.revolut_order_id = 'order-stale'
+        self.leg_a.balance_payment.revolut_checkout_url = 'https://checkout.revolut.com/pay/order-stale'
+        self.leg_a.balance_payment.save(update_fields=['revolut_order_id', 'revolut_checkout_url'])
+        self._cancel(self.leg_b)
+        self.leg_a.balance_payment.refresh_from_db()
+        self.assertIsNone(self.leg_a.balance_payment.revolut_checkout_url)
+
+    def test_the_actual_checkout_amount_is_net_of_the_credit(self):
+        self._cancel(self.leg_b)
+        charge = Charge.objects.get(booking=self.leg_a)
+        amount, currency = charge.due_at_balance_in_charge_currency()
+        self.assertEqual(amount, Decimal('700.00'))
+        self.assertEqual(currency, 'EUR')
+
+    def test_selecting_no_apartment_cancels_nothing(self):
+        response = self.client.post(self.url, {'reference_confirm': self.group.reference})
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.context['selection_error'])
+        for leg in (self.leg_a, self.leg_b):
+            leg.refresh_from_db()
+            self.assertEqual(leg.enquiry_status, 'Booking confirmed')
+
+    def test_a_wrong_typed_reference_cancels_nothing(self):
+        response = self.client.post(self.url, {
+            'reference_confirm': 'NOPE-NOPE', 'cancel_leg': [self.leg_b.reference],
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.context['reference_error'])
+        self.leg_b.refresh_from_db()
+        self.assertEqual(self.leg_b.enquiry_status, 'Booking confirmed')
+
+    def test_the_party_reference_is_what_the_guest_types_not_a_leg_reference(self):
+        response = self.client.post(self.url, {
+            'reference_confirm': self.leg_b.reference, 'cancel_leg': [self.leg_b.reference],
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.context['reference_error'])
+        self.leg_b.refresh_from_db()
+        self.assertEqual(self.leg_b.enquiry_status, 'Booking confirmed')
 
 
 class ManageHubExtrasMultiPropertyTests(TestCase):

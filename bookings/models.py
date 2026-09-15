@@ -889,6 +889,25 @@ class Charge(models.Model):
     due_at_balance = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     balance_due_date = models.DateField(blank=True, null=True)
 
+    # Deposit money carried over from a SIBLING apartment of the same multi-property reservation
+    # that the guest has since cancelled (2026-09-15, per Thomas - see BookingCancelView). A
+    # cancelled booking's deposit is otherwise simply forfeit (this codebase has no refund path
+    # anywhere), so rather than keep it when the same party is still staying with us, it reduces
+    # what they owe on whichever apartments they're keeping.
+    #
+    # Deliberately its OWN field rather than an adjustment to due_at_balance, because it must not
+    # look like rental revenue: bookings/payouts.py::compute_owner_payout() commissions
+    # Charge.total_rental, so discounting the balance directly would quietly cut the REMAINING
+    # apartment's owner's payout - and that owner is still providing the whole stay. Keeping it
+    # separate means the owner is paid in full on both sides and KLT absorbs the credit out of the
+    # deposit it was already retaining. Never negative, and never more than is actually owed: see
+    # balance_payable() below, which floors at zero (per Thomas: no refund of any excess, matching
+    # the existing "cancelling never refunds anything already paid" rule).
+    sibling_cancellation_credit = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0'),
+        help_text="Deposit carried over from a cancelled sibling apartment of the same reservation.",
+    )
+
     # Snapshot of BookingSettings.gbp_conversion_rate at booking time. A guest who saw/paid a GBP
     # quote at deposit time must see the same GBP total at balance time, even if the live rate has
     # since changed - so GBP display for an existing booking always uses this frozen rate, never
@@ -931,13 +950,26 @@ class Charge(models.Model):
             return self.to_gbp(self.due_at_booking), 'GBP'
         return self.due_at_booking, 'EUR'
 
+    def balance_payable(self):
+        """What the guest actually still has to pay at the balance stage - due_at_balance less any
+        sibling_cancellation_credit, floored at zero. Every guest-facing "balance due" figure and
+        the real checkout amount go through this, never due_at_balance directly, so a credit can't
+        show in one place and not another. due_at_balance itself stays untouched as the record of
+        what the stay was priced at (and is what a later repricing recomputes - a credit survives
+        that, correctly: it isn't part of the pricing)."""
+        if self.due_at_balance is None:
+            return None
+        return max(self.due_at_balance - (self.sibling_cancellation_credit or Decimal('0')), Decimal('0'))
+
     def due_at_balance_in_charge_currency(self):
         """Same as due_at_booking_in_charge_currency() but for the balance stage - same frozen
         currency/rate, since a guest who was quoted GBP at deposit time should keep seeing GBP at
-        balance time even if the live rate has moved on. See bookings/views.py::BookingBalancePaymentView."""
+        balance time even if the live rate has moved on. See bookings/views.py::BookingBalancePaymentView.
+        Net of any sibling cancellation credit (balance_payable) - this is the amount actually
+        charged, so the credit has to be applied here, not just displayed."""
         if self.currency == 'GBP':
-            return self.to_gbp(self.due_at_balance), 'GBP'
-        return self.due_at_balance, 'EUR'
+            return self.to_gbp(self.balance_payable()), 'GBP'
+        return self.balance_payable(), 'EUR'
 
     def costs_in_gbp(self):
         """GBP-converted view of the locked EUR charge amounts, using the rate frozen at booking time."""
@@ -948,7 +980,8 @@ class Charge(models.Model):
             'admin_fee': self.to_gbp(self.admin),
             'subtotal': self.to_gbp(self.total_rental + self.admin),
             'due_at_booking': self.to_gbp(self.due_at_booking),
-            'due_at_balance': self.to_gbp(self.due_at_balance),
+            # Net of any sibling cancellation credit, same as the EUR side - see balance_payable().
+            'due_at_balance': self.to_gbp(self.balance_payable()),
         }
 
     class Meta:
