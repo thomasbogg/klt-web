@@ -254,27 +254,19 @@
     color: rgb(100, 100, 100);
 }
 
+/* No margin-bottom: the status line is the card's last element now, so the card's own 16px
+   bottom padding is the whole gap. It used to carry 12px to separate itself from a
+   "Manage this apartment" link below it; once that link was removed (2026-09-14) the margin
+   survived as dead space, leaving the card visibly bottom-heavy - measured 17px above the
+   heading against 29px below the status text. */
 .stay-leg-card-status {
     font-size: 0.9rem;
     color: rgb(80, 80, 80);
-    margin-bottom: 12px;
 }
 
 .stay-leg-card-status-cancelled {
     color: var(--status-booked-color, #c1554f);
     font-weight: 600;
-}
-
-.stay-leg-card-link {
-    display: inline-block;
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--primary-color);
-    text-decoration: none;
-}
-
-.stay-leg-card-link:hover {
-    text-decoration: underline;
 }
 
 /* Multi-property Manage Booking hub - Holiday Info sections (Amenities, Last Days & Check-out,
