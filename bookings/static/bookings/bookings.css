@@ -431,17 +431,22 @@
     background: rgb(251, 253, 255);
 }
 
-/* margin-bottom carries the ENTIRE gap to whatever comes after (2026-09-16, per Thomas: matched
-   to the ~92px gap a real .details-section + .details-section boundary reads at, measured live -
-   see the rule below that zeroes every first section's own top spacing so nothing else can add to
-   or shrink this). Kept as one plain number here, rather than reconstructed from
+/* margin-bottom carries the ENTIRE gap to whatever comes after (2026-09-16, per Thomas) - see the
+   rule below that zeroes every first section's own top spacing so nothing else can add to or
+   shrink this. Kept as one plain number here, rather than reconstructed from
    collapsed-margin/border/padding-top the way an inter-extra boundary is, because the content
    directly after this header varies (an apartment panel's first section starts with a
-   .details-section-title, the Airport Transfers panel's own section has no title at all) - relying
-   on a title's own margin to help reach the target, as an earlier version of this rule did, only
-   worked for the titled case and left the untitled one ~12px short. */
+   .details-section-title, the Airport Transfers panel's own section has no title at all).
+
+   52px, not the ~92px an earlier version of this rule used - that number measured from the
+   PREVIOUS section's own bottom edge (Late Checkout's), which sits a further 40px of blank space
+   BEFORE the next section's divider line actually starts (its own margin-top, collapsed against
+   Late Checkout's margin-bottom) - not from the line itself. Measuring from the divider line
+   itself (the next section's own border-top) down to its heading is really only ~52px (1px border
+   + 40px padding-top + the title's own ~13.6px margin-top, all left un-zeroed there) - confirmed
+   live, per Thomas's question about exactly this after the 92px version still looked uneven. */
 .extras-group-header {
-    margin: 0 0 92px;
+    margin: 0 0 52px;
     padding: 16px 0 12px;
     border-bottom: 1px solid rgb(228, 236, 244);
 }
@@ -470,13 +475,13 @@
 
 /* The header's own margin-bottom above is the WHOLE gap - so the first section itself, and its
    title if it has one, must be zeroed here, or their own natural top margin (collapsing with the
-   header's) would only matter when it's LARGER than 92px, but would otherwise add nothing useful
-   and leaves the door open to it one day exceeding 92px and silently growing the gap again. */
+   header's) would only matter when it's LARGER than 52px, but would otherwise add nothing useful
+   and leaves the door open to it one day exceeding 52px and silently growing the gap again. */
 .extras-group > .details-section:first-of-type,
 .extras-group .details-form > .details-section:first-of-type,
 /* :first-of-type matches the HIDDEN Cot & High Chair section when it's hidden, so the first
    section the guest can actually see needs the same treatment - otherwise it keeps its own extra
-   40px on top of the header's 92px. */
+   40px on top of the header's 52px. */
 .extras-group .details-form > .details-section-hidden + .details-section {
     margin-top: 0;
 }
