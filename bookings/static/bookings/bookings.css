@@ -840,3 +840,32 @@ button.manage-hub-nav-link {
     font-size: 0.8rem;
     color: rgb(120, 120, 120);
 }
+
+/* Collapsible per-apartment availability on the merged Edit Dates page (2026-09-15). The summary
+   reuses .details-section-title, whose 16px margin-bottom would otherwise leave a gap under a
+   CLOSED disclosure - so it's zeroed on the summary itself and restored only once open. */
+.calendar-disclosure-summary {
+    cursor: pointer;
+    margin-bottom: 0;
+    list-style: none;
+}
+
+.calendar-disclosure-summary::-webkit-details-marker {
+    display: none;
+}
+
+/* Own marker, so it matches the site's own type rather than the browser's default triangle. */
+.calendar-disclosure-summary::before {
+    content: '+';
+    display: inline-block;
+    width: 1em;
+    color: var(--secondary-color);
+}
+
+.calendar-disclosure[open] > .calendar-disclosure-summary {
+    margin-bottom: 16px;
+}
+
+.calendar-disclosure[open] > .calendar-disclosure-summary::before {
+    content: '\2212';  /* minus */
+}

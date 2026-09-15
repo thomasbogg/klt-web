@@ -115,11 +115,18 @@
             </section>
 
             {% if calendar_legs %}
+            {% comment %}
+            Collapsed by default (2026-09-15, per Thomas): two 12-month grids made this page about
+            3,800px tall. The pickers above already enforce availability - a date that isn't free
+            in BOTH apartments can't be picked at all - so these grids are only needed when a guest
+            wants to know WHICH apartment is blocking the week they wanted. Native
+            <details>/<summary>, so it needs no JavaScript and stays keyboard-accessible.
+            {% endcomment %}
             {% for leg in calendar_legs %}
-            <section class="details-section">
-                <h2 class="details-section-title">Availability &mdash; {{ leg.booking.property }}</h2>
+            <details class="details-section calendar-disclosure">
+                <summary class="details-section-title calendar-disclosure-summary">Availability &mdash; {{ leg.booking.property }}</summary>
                 {% include 'availability/calendar.html' with calendar_months=leg.calendar_months mine_legend_label="Your stay" %}
-            </section>
+            </details>
             {% endfor %}
             {% else %}
             <section class="details-section">
