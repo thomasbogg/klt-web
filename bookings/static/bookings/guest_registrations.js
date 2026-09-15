@@ -1,15 +1,15 @@
-// Only the lead (first) guest is asked whether they have a Portuguese NIF - per Thomas, that
-// single answer governs the whole party: "yes" means nobody registers at all (not even the lead
-// guest's own full form), "no" reveals the lead guest's full form *and* every other guest's own
-// section. Same show/hide-and-disable pattern as arrival_departure.js's wireMethodSelect() - a
-// hidden field is also disabled, so it can neither block submission nor reach request.POST.
+// Only the lead (first) guest of the whole stay is asked whether they have a Portuguese NIF - per
+// Thomas, that single answer governs every guest across every apartment: "yes" means nobody
+// registers at all (not even the lead guest's own full form), "no" reveals the lead guest's full
+// form *and* every other guest's own section. Same show/hide-and-disable pattern as
+// arrival_departure.js's wireMethodSelect() - a hidden field is also disabled, so it can neither
+// block submission nor reach request.POST.
 //
-// Scoped per <form>, not per document (2026-09-14, multi-property hub merge): a merged stay's
-// page can hold two independent registration forms, one per apartment - each with its own guest
-// PKs, so field names never collide, but a page-wide querySelectorAll would still treat the
-// SECOND apartment's guest sections as "other guests in the first apartment's own party",
-// toggling them based on the wrong form's NIF answer. Iterating per form is a no-op change for
-// the single-property case (exactly one form, same behavior as before).
+// Scoped per <form>, not per document, purely so a page with more than one
+// form.guest-registrations-form (there isn't one today) would keep each independent - within a
+// form there is exactly ONE NIF question now (2026-09-16: a multi-property stay's guests read as
+// one continuous sequence with a single combined Save button, so `nifRadios[0]` is always the
+// true stay-wide lead, never a second apartment's own), so no further grouping is needed.
 document.querySelectorAll('form.guest-registrations-form').forEach((form) => {
     const nifRadios = form.querySelectorAll('.guest-registration-nif-radio');
     if (!nifRadios.length) return;

@@ -2987,7 +2987,7 @@ class BookingManageGuestRegistrationsView(View):
     whole submission re-renders with every guest's just-typed values preserved (via the in-memory
     GuestRegistration instances, not a separate raw-POST context var) and nothing is saved, rather
     than partially saving whichever guests happened to be valid this time. Only the lead (first)
-    guest is asked whether they have a Portuguese NIF - client-side toggle in
+    guest of the whole stay is asked whether they have a Portuguese NIF - client-side toggle in
     guest_registrations.js, mirroring arrival_departure.js's own show/hide-and-disable pattern -
     and that single answer governs the whole party (confirmed with Thomas, matches how this has
     always been handled operationally): a "yes" means nobody registers at all, not even the lead
@@ -2995,14 +2995,23 @@ class BookingManageGuestRegistrationsView(View):
     section, each with the same 7 fields, no individual NIF question of their own.
 
     2026-09-14 (Stage D of the multi-property hub merge - see project memory): each apartment's
-    party is entirely separate, so a multi-property stay shows one full, independently-submittable
-    form per leg (`legs`, via `_manage_guest_registrations_leg.html`) - same dual-duplicate-form
-    pattern as Security Deposit. Each form POSTs back to the STAY's own reference with a hidden
-    leg_reference field; BookingGuest primary keys are globally unique (not scoped per booking), so
-    the `guest_{pk}_...` field names this view already used never collide between two forms on one
-    page - no extra name-prefixing needed beyond what already existed. guest_registrations.js was
-    also made form-scoped (previously page-wide querySelectorAll, which would have toggled the
-    SECOND apartment's guest sections based on the FIRST apartment's NIF answer)."""
+    party is entirely separate, so a multi-property stay shows every leg's guests one after
+    another (`legs`, via `_manage_guest_registrations_leg.html`). BookingGuest primary keys are
+    globally unique (not scoped per booking), so the `guest_{pk}_...` field names this view
+    already used never collide between two apartments' guests - no extra name-prefixing needed.
+
+    2026-09-16, per Thomas: unified into ONE combined form/Save button (see post()) - unlike
+    Guest List, there's no fully-paid/add-remove split here to keep separate, so every leg can
+    always combine. Went a step further than Guest List's merge, too: the guests read as one
+    continuous sequence "as if they were all staying in one property" (each guest's own "Guest N -
+    Property" heading already distinguishes apartments, no boxed group per apartment needed), so
+    the lead-guest NIF question is no longer asked once per apartment either - only the very first
+    guest of the whole stay is asked, and that answer now governs every apartment's guests, not
+    just their own (`lead_guest_pk`, computed in _merged_context() and _validate_stay() identically
+    - the first row of the first apartment that actually has a named guest yet, since an apartment
+    whose Guest List is still empty must not silently steal or lose the lead). guest_registrations.js
+    no longer needs to group sections per apartment at all: with exactly one NIF question per page,
+    the pre-Stage-D single-lead-per-form logic is correct again unchanged."""
     template_name = 'bookings/manage_guest_registrations.html'
 
     def _rows(self, party):
@@ -3023,21 +3032,35 @@ class BookingManageGuestRegistrationsView(View):
         })
         return context
 
-    def _merged_context(self, bookings, target=None, target_rows=None):
+    def _merged_context(self, bookings, per_leg_rows=None):
         """get()'s context for either a single leg or a merged multi-leg stay, and post()'s
-        error-path re-render. Every leg's rows come fresh from the DB, EXCEPT `target` (if given),
-        which uses `target_rows` instead - the just-submitted, error-carrying rows from a failed
+        error-path re-render. Every leg's rows come fresh from the DB, EXCEPT one present in
+        `per_leg_rows` ({booking.pk: rows}) - the just-submitted, error-carrying rows from a failed
         POST, so that guest's own just-typed values and errors survive the re-render rather than
-        being silently overwritten by a fresh read."""
+        being silently overwritten by a fresh read. One combined submission now covers every leg at
+        once (2026-09-16, per Thomas: one continuous guest sequence with one Save button, matching
+        the Guest List merge), so a failed POST can populate more than one leg's entry here.
+
+        Also computes `lead_guest_pk` - the ONE guest asked about a Portuguese NIF now that a
+        multi-property stay reads as a single continuous sequence rather than one lead per
+        apartment (2026-09-16, per Thomas). Deliberately the first row of the first leg that
+        actually HAS a named guest yet, not always literally bookings[0]'s own first row: an
+        apartment whose Guest List is still empty contributes no rows at all, and the lead must
+        not silently vanish just because it happens to sit in that apartment's slot - matches
+        _validate_stay()'s own `all_rows[0]`, which the same flattening naturally skips past too."""
         def rows_for(booking):
-            if target is not None and booking.pk == target.pk and target_rows is not None:
-                return target_rows
+            if per_leg_rows is not None and booking.pk in per_leg_rows:
+                return per_leg_rows[booking.pk]
             return self._rows(list(booking.party.all()))
 
-        primary = bookings[0]
-        context = self._context(primary, rows_for(primary), bookings)
+        booking_rows = [(booking, rows_for(booking)) for booking in bookings]
+        lead_guest_pk = next((rows[0]['guest'].pk for _booking, rows in booking_rows if rows), None)
+
+        primary, primary_rows = booking_rows[0]
+        context = self._context(primary, primary_rows, bookings)
+        context['lead_guest_pk'] = lead_guest_pk
         if len(bookings) > 1:
-            context['legs'] = [self._context(booking, rows_for(booking), bookings) for booking in bookings]
+            context['legs'] = [self._context(booking, rows, bookings) for booking, rows in booking_rows]
         return context
 
     def get(self, request, reference, *args, **kwargs):
@@ -3050,26 +3073,22 @@ class BookingManageGuestRegistrationsView(View):
 
         return render(request, self.template_name, self._merged_context(bookings))
 
-    def post(self, request, reference, *args, **kwargs):
-        bookings, merged = resolve_stay(request, reference)
-        if merged is not None:
-            return merged
-        unpaid = _first_unpaid_leg(bookings)
-        if unpaid is not None:
-            return redirect('bookings:details', reference=unpaid.reference)
-
-        leg_reference = request.POST.get('leg_reference') or bookings[0].reference
-        booking = next((candidate for candidate in bookings if candidate.reference == leg_reference), bookings[0])
-
-        party = list(booking.party.all())
-        post = request.POST
-        rows = self._rows(party)
+    def _validate_stay(self, bookings, post):
+        """Every apartment's rows for one combined Guest Registrations submission, validated as a
+        single stay-wide unit rather than per apartment (2026-09-16, per Thomas: the guests read
+        as one continuous sequence "as if they were all staying in one property", so only the very
+        first guest of the whole stay is ever asked about a Portuguese NIF - not one lead per
+        apartment - and that single answer governs every guest across every apartment). Returns
+        (per_leg_rows, has_errors); per_leg_rows always has an entry (possibly []) for every
+        booking, so a failed submission can redisplay every apartment with its own typed values."""
+        per_leg_rows = {booking.pk: self._rows(list(booking.party.all())) for booking in bookings}
+        # Flattening skips past any apartment with no named guests yet, same as _merged_context's
+        # own lead_guest_pk - the lead is the first row of the first apartment that actually HAS
+        # one, not always literally bookings[0]'s own first row.
+        all_rows = [row for booking in bookings for row in per_leg_rows[booking.pk]]
         has_errors = False
 
-        # Only the lead (first) guest is asked whether they have a Portuguese NIF - per Thomas,
-        # that single answer governs the whole party: if they have one, nobody else registers
-        # either; if they don't, everyone (including the lead guest) fills in the full form.
-        lead_row = rows[0] if rows else None
+        lead_row = all_rows[0] if all_rows else None
         lead_has_nif = None
         if lead_row is not None:
             guest, registration = lead_row['guest'], lead_row['registration']
@@ -3087,7 +3106,7 @@ class BookingManageGuestRegistrationsView(View):
                 has_errors = True
 
         if lead_has_nif is False:
-            for row in rows:
+            for row in all_rows:
                 guest, registration = row['guest'], row['registration']
                 prefix = f'guest_{guest.pk}_'
                 raw_birth_date = post.get(f'{prefix}birth_date', '').strip()
@@ -3121,13 +3140,33 @@ class BookingManageGuestRegistrationsView(View):
                 if errors:
                     has_errors = True
 
+        return per_leg_rows, has_errors
+
+    def post(self, request, reference, *args, **kwargs):
+        """One combined submission covers every apartment at once (2026-09-16, per Thomas: the
+        guests already read as one continuous sequence, each headed by its own "Guest N -
+        Property", so a second Save button added nothing a shared one couldn't do - see the Guest
+        List merge for the precedent). All-or-nothing, same reasoning as that merge: a guest
+        editing more than one apartment's registrations thinks of it as one action, so a partial
+        save - apartment A written, apartment B rejected - would leave them unsure which half
+        landed. Unchanged for a single-property stay, which was always "every leg" of one."""
+        bookings, merged = resolve_stay(request, reference)
+        if merged is not None:
+            return merged
+        unpaid = _first_unpaid_leg(bookings)
+        if unpaid is not None:
+            return redirect('bookings:details', reference=unpaid.reference)
+
+        per_leg_rows, has_errors = self._validate_stay(bookings, request.POST)
+
         if has_errors:
-            context = self._merged_context(bookings, target=booking, target_rows=rows)
+            context = self._merged_context(bookings, per_leg_rows=per_leg_rows)
             return render(request, self.template_name, context)
 
         with transaction.atomic():
-            for row in rows:
-                row['registration'].save()
+            for rows in per_leg_rows.values():
+                for row in rows:
+                    row['registration'].save()
 
         url = reverse('bookings:manage_guest_registrations', kwargs={'reference': reference})
         return redirect(f"{url}?registrations_saved=1")

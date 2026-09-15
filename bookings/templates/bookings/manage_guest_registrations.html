@@ -38,9 +38,13 @@
             <p class="details-note details-note-left">Only guests currently on {% if legs %}each apartment's{% else %}your{% endif %} Guest List have a section below. To register an additional guest, add them to the Guest List first, then come back here.</p>
 
             {% if legs %}
-            {% for leg in legs %}
-            {% include 'bookings/_manage_guest_registrations_leg.html' with leg=leg %}
-            {% endfor %}
+            <form method="post" action="{% url 'bookings:manage_guest_registrations' reference=stay_reference %}" class="details-form guest-registrations-form">
+                {% csrf_token %}
+                {% for leg in legs %}
+                {% include 'bookings/_manage_guest_registrations_leg.html' with leg=leg %}
+                {% endfor %}
+                <button type="submit" class="reserve-form-submit">Save Guest Registrations</button>
+            </form>
             {% else %}
             {% if not rows %}
             <p class="details-note details-note-left">No guests are on your Guest List yet - <a href="{% url 'bookings:manage_guests' reference=booking.reference %}">add your party</a> to get started.</p>

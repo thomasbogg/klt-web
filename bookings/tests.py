@@ -4556,10 +4556,11 @@ class BookingManageGuestRegistrationsViewTests(TestCase):
 
 class ManageHubGuestRegistrationsMultiPropertyTests(TestCase):
     """Stage D of the multi-property manage-hub merge (2026-09-14, see project memory) - Guest
-    Registrations, the second "full duplicate form" section. BookingGuest primary keys are
-    globally unique, so the guest_{pk}_... field names never collide between the two apartments'
-    forms - verified below alongside the no-leakage and error-preservation cases a dual-form
-    section specifically needs to get right."""
+    Registrations, the second "full duplicate form" section, later folded into ONE combined
+    form/Save button (2026-09-16, per Thomas - see BookingManageGuestRegistrationsView.post()).
+    BookingGuest primary keys are globally unique, so the guest_{pk}_... field names never collide
+    between the two apartments' sections - verified below alongside the no-leakage and
+    error-preservation cases a combined multi-apartment submission specifically needs to get right."""
 
     def setUp(self):
         self.property_a = Property.objects.create(title='Registrations Merge Property A', short_title='RMPA')
@@ -4583,52 +4584,98 @@ class ManageHubGuestRegistrationsMultiPropertyTests(TestCase):
         Payment.objects.create(booking=booking, provider='revolut', status='paid')
         return booking
 
-    def _valid_post_data(self, leg_reference, lead):
+    def _guest_fields(self, guest):
         return {
-            'leg_reference': leg_reference,
-            f'guest_{lead.pk}_has_nif': 'no',
-            f'guest_{lead.pk}_birth_date': '1996-05-14',
-            f'guest_{lead.pk}_place_of_birth': 'PT',
-            f'guest_{lead.pk}_nationality': 'PT',
-            f'guest_{lead.pk}_country_of_residence': 'GB',
-            f'guest_{lead.pk}_id_type': 'passport',
-            f'guest_{lead.pk}_id_number': '552203480',
-            f'guest_{lead.pk}_issued_by': 'PT',
+            f'guest_{guest.pk}_birth_date': '1996-05-14',
+            f'guest_{guest.pk}_place_of_birth': 'PT',
+            f'guest_{guest.pk}_nationality': 'PT',
+            f'guest_{guest.pk}_country_of_residence': 'GB',
+            f'guest_{guest.pk}_id_type': 'passport',
+            f'guest_{guest.pk}_id_number': '552203480',
+            f'guest_{guest.pk}_issued_by': 'PT',
         }
 
-    def test_both_legs_show_independent_forms_with_no_field_collisions(self):
+    def _valid_post_data(self):
+        # Only leg_a's lead guest - the first guest of the WHOLE stay - is ever asked has_nif
+        # (2026-09-16, per Thomas: no more per-apartment lead, see BookingManageGuestRegistrationsView's
+        # docstring). A "no" from them means everyone, including leg_b's guests, fills in the full form.
+        data = {f'guest_{self.lead_a.pk}_has_nif': 'no'}
+        data.update(self._guest_fields(self.lead_a))
+        data.update(self._guest_fields(self.lead_b))
+        return data
+
+    def test_only_the_first_guest_of_the_whole_stay_is_asked_about_a_nif(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         legs = response.context['legs']
         self.assertEqual(len(legs), 2)
-        content = response.content.decode()
-        self.assertEqual(content.count(f'guest_{self.lead_a.pk}_has_nif'), 2)  # yes + no radios
-        self.assertEqual(content.count(f'guest_{self.lead_b.pk}_has_nif'), 2)
+        self.assertEqual(response.context['lead_guest_pk'], self.lead_a.pk)
 
-    def test_saving_one_legs_registration_never_touches_the_other(self):
-        response = self.client.post(self.url, self._valid_post_data(self.leg_a.reference, self.lead_a))
+        content = response.content.decode()
+        self.assertEqual(content.count('<form'), 1)
+        self.assertEqual(content.count('Save Guest Registrations'), 1)
+        self.assertEqual(content.count('Does this guest have a Portuguese NIF'), 1)
+        self.assertEqual(content.count(f'guest_{self.lead_a.pk}_has_nif'), 2)  # yes + no radios
+        self.assertEqual(content.count(f'guest_{self.lead_b.pk}_has_nif'), 0)
+
+    def test_saving_both_legs_at_once_saves_both(self):
+        response = self.client.post(self.url, self._valid_post_data())
         self.assertRedirects(response, f"{self.url}?registrations_saved=1", fetch_redirect_response=False)
 
         reg_a = GuestRegistration.objects.get(booking_guest=self.lead_a)
         self.assertFalse(reg_a.has_nif)
         self.assertEqual(reg_a.id_number, '552203480')
+        # leg_b's own lead was never asked has_nif - it stays unanswered even though the guest's
+        # full form (required once leg_a's lead said "no") was saved.
+        reg_b = GuestRegistration.objects.get(booking_guest=self.lead_b)
+        self.assertIsNone(reg_b.has_nif)
+        self.assertEqual(reg_b.id_number, '552203480')
+
+    def test_stay_wide_nif_yes_exempts_every_apartment(self):
+        response = self.client.post(self.url, {
+            f'guest_{self.lead_a.pk}_has_nif': 'yes',
+            f'guest_{self.lead_a.pk}_nif_number': '123456789',
+        })
+        self.assertRedirects(response, f"{self.url}?registrations_saved=1", fetch_redirect_response=False)
+
+        reg_a = GuestRegistration.objects.get(booking_guest=self.lead_a)
+        self.assertTrue(reg_a.has_nif)
+        self.assertEqual(reg_a.nif_number, '123456789')
         reg_b = GuestRegistration.objects.filter(booking_guest=self.lead_b).first()
-        self.assertTrue(reg_b is None or reg_b.has_nif is None)
+        self.assertTrue(reg_b is None or (reg_b.has_nif is None and not reg_b.id_number))
 
-    def test_validation_error_on_one_leg_preserves_the_others_state_and_this_legs_typed_values(self):
-        # leg_b already has a saved registration - must survive leg_a's own failed submission
-        # untouched, and leg_a's just-typed (invalid) values must survive the re-render too.
-        GuestRegistration.objects.create(booking_guest=self.lead_b, has_nif=True, nif_number='123456789')
+    def test_missing_field_on_one_leg_saves_nothing_for_either_leg(self):
+        data = self._valid_post_data()
+        data[f'guest_{self.lead_b.pk}_id_number'] = ''
+        response = self.client.post(self.url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(GuestRegistration.objects.filter(booking_guest=self.lead_a, birth_date__isnull=False).exists())
+        self.assertFalse(GuestRegistration.objects.filter(booking_guest=self.lead_b, birth_date__isnull=False).exists())
 
-        response = self.client.post(self.url, {'leg_reference': self.leg_a.reference})  # no has_nif answer at all
+        legs = response.context['legs']
+        leg_b_rows = next(leg for leg in legs if leg['booking'] == self.leg_b)['rows']
+        self.assertEqual(leg_b_rows[0]['errors'], {'id_number': "ID/Passport number is required."})
+        leg_a_rows = next(leg for leg in legs if leg['booking'] == self.leg_a)['rows']
+        self.assertEqual(leg_a_rows[0]['errors'], {})
+
+    def test_no_answer_from_the_stays_lead_blocks_the_whole_submission_but_preserves_saved_state(self):
+        """With only ONE NIF question for the whole stay, leaving it unanswered stops validation
+        (and saving) for every apartment, not just leg_a - leg_b's own pre-existing registration
+        must survive completely untouched."""
+        GuestRegistration.objects.create(booking_guest=self.lead_b, id_number='PRESAVED123')
+
+        response = self.client.post(self.url, {})  # no has_nif answer at all
         self.assertEqual(response.status_code, 200)
 
         legs = response.context['legs']
         leg_a_rows = next(leg for leg in legs if leg['booking'] == self.leg_a)['rows']
         self.assertEqual(leg_a_rows[0]['errors'].get('has_nif'), "Please tell us whether this guest has a Portuguese NIF.")
         leg_b_rows = next(leg for leg in legs if leg['booking'] == self.leg_b)['rows']
-        self.assertTrue(leg_b_rows[0]['registration'].has_nif)
+        self.assertFalse(leg_b_rows[0]['errors'])
+        self.assertEqual(leg_b_rows[0]['registration'].id_number, 'PRESAVED123')
+
         self.assertFalse(GuestRegistration.objects.filter(booking_guest=self.lead_a).exclude(has_nif=None).exists())
+        self.assertEqual(GuestRegistration.objects.get(booking_guest=self.lead_b).id_number, 'PRESAVED123')
 
 
 class ExtraRequestWindowTests(TestCase):
