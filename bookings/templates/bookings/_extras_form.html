@@ -19,15 +19,19 @@ Airport Transfers deliberately never gets one - it's hoisted out and shared.
 `leg_id_suffix`: appended to the one id/label-for pair in here, so the association still works
 when this renders more than once on a page. Empty everywhere else.
 
-`omit_transfers_cash_note`: set by callers (manage_extras.html, balance_details.html) whose
-page-level note already says extras are paid in cash at check-in, so the Airport Transfers
-section's own copy of that line isn't repeated right underneath it. details.html has no such
-page-level note, so it leaves this unset and keeps the line.
+`omit_cash_note`: set by callers (manage_extras.html, balance_details.html) whose page-level note
+already says extras are paid in cash at check-in, so no individual section repeats that line right
+underneath it - each keeps only whatever's actually unique to that section. details.html has no
+such page-level note, so it leaves this unset and every section keeps its own full line.
 {% endcomment %}
 <section class="details-section{% if not show_cot_high_chair %} details-section-hidden{% endif %}" data-cot-high-chair-section>
     <h2 class="details-section-title">Cot &amp; High Chair{% if extras_property %} &mdash; {{ extras_property }}{% endif %}</h2>
     {% if extras_windows.cot_high_chair %}
+    {% if omit_cash_note %}
+    <p class="details-note">Pricing depends on the length of your stay, and requesting both together gets a discount.</p>
+    {% else %}
     <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}. Pricing depends on the length of your stay, and requesting both together gets a discount.</p>
+    {% endif %}
     {% else %}
     <p class="details-note">{% include 'bookings/_extra_closed_note.html' %}</p>
     {% endif %}
@@ -91,7 +95,9 @@ page-level note, so it leaves this unset and keeps the line.
 <section class="details-section">
     <h2 class="details-section-title">Mid-stay Clean{% if extras_property %} &mdash; {{ extras_property }}{% endif %}</h2>
     {% if extras_windows.mid_stay_clean %}
+    {% if not omit_cash_note %}
     <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}.</p>
+    {% endif %}
     {% else %}
     <p class="details-note">{% include 'bookings/_extra_closed_note.html' %}</p>
     {% endif %}
@@ -114,7 +120,9 @@ page-level note, so it leaves this unset and keeps the line.
 <section class="details-section">
     <h2 class="details-section-title">Welcome Pack{% if extras_property %} &mdash; {{ extras_property }}{% endif %}</h2>
     {% if extras_windows.welcome_pack %}
+    {% if not omit_cash_note %}
     <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}.</p>
+    {% endif %}
     {% else %}
     <p class="details-note">{% include 'bookings/_extra_closed_note.html' %}</p>
     {% endif %}
@@ -157,7 +165,11 @@ page-level note, so it leaves this unset and keeps the line.
 {% if request_rows %}
 <section class="details-section">
     <h2 class="details-section-title">Special Requests{% if extras_property %} &mdash; {{ extras_property }}{% endif %}</h2>
+    {% if omit_cash_note %}
+    <p class="details-note">Anything else you'd like waiting for you?</p>
+    {% else %}
     <p class="details-note">Paid in cash at check-in - it isn't included in {{ due_phrase }}. Anything else you'd like waiting for you?</p>
+    {% endif %}
     {% if not all_request_types_open %}<p class="details-note">{% include 'bookings/_extra_closed_note.html' %}</p>{% endif %}
     <div class="request-rows">
         <div class="request-row request-row-header">

@@ -431,8 +431,17 @@
     background: rgb(251, 253, 255);
 }
 
+/* margin-bottom carries the ENTIRE gap to whatever comes after (2026-09-16, per Thomas: matched
+   to the ~92px gap a real .details-section + .details-section boundary reads at, measured live -
+   see the rule below that zeroes every first section's own top spacing so nothing else can add to
+   or shrink this). Kept as one plain number here, rather than reconstructed from
+   collapsed-margin/border/padding-top the way an inter-extra boundary is, because the content
+   directly after this header varies (an apartment panel's first section starts with a
+   .details-section-title, the Airport Transfers panel's own section has no title at all) - relying
+   on a title's own margin to help reach the target, as an earlier version of this rule did, only
+   worked for the titled case and left the untitled one ~12px short. */
 .extras-group-header {
-    margin: 0 0 4px;
+    margin: 0 0 92px;
     padding: 16px 0 12px;
     border-bottom: 1px solid rgb(228, 236, 244);
 }
@@ -459,22 +468,23 @@
     color: var(--secondary-color);
 }
 
-/* The header's own border-bottom is this boundary's divider (equivalent to the border-top a plain
-   .details-section + .details-section pair draws), but the header's own margin-bottom is only 4px
-   - left alone, the first section's natural 40px margin-top collapses against that 4px and the
-   title lands right under the divider, nowhere near the ~92px gap a real .details-section +
-   .details-section boundary reads at (40px collapsed margin + 1px border + 40px padding-top +
-   .details-section-title's own ~13.6px margin-top, all left un-zeroed there). Adding padding-top
-   here reproduces that same total without touching either margin, so the title keeps the same
-   natural margin-top every other section's title has (2026-09-16, per Thomas: matched to the
-   between-extras gap so the apartment title reads with the same breathing room below it). */
+/* The header's own margin-bottom above is the WHOLE gap - so the first section itself, and its
+   title if it has one, must be zeroed here, or their own natural top margin (collapsing with the
+   header's) would only matter when it's LARGER than 92px, but would otherwise add nothing useful
+   and leaves the door open to it one day exceeding 92px and silently growing the gap again. */
 .extras-group > .details-section:first-of-type,
 .extras-group .details-form > .details-section:first-of-type,
 /* :first-of-type matches the HIDDEN Cot & High Chair section when it's hidden, so the first
-   section the guest can actually see needs the same treatment - otherwise it keeps only the
-   header's 4px margin on top of the group header's boundary. */
+   section the guest can actually see needs the same treatment - otherwise it keeps its own extra
+   40px on top of the header's 92px. */
 .extras-group .details-form > .details-section-hidden + .details-section {
-    padding-top: 40px;
+    margin-top: 0;
+}
+
+.extras-group > .details-section:first-of-type > .details-section-title,
+.extras-group .details-form > .details-section:first-of-type > .details-section-title,
+.extras-group .details-form > .details-section-hidden + .details-section > .details-section-title {
+    margin-top: 0;
 }
 
 @media (max-width: 560px) {

@@ -374,13 +374,19 @@ class BookingFormMixin:
             # but this section's window is open on nearly every normal save regardless of whether
             # the guest touched it, so without this comparison update_fields would include them
             # (and re-trigger the resync) every time anyway.
-            previous = (extra.mid_stay_clean, extra.mid_stay_clean_date)
+            # bool(...) on both sides of the comparison - Extra.mid_stay_clean is nullable and
+            # defaults to None (unset) on a brand new row, never False, but _parse_mid_stay_clean
+            # returns the literal False for "not requested". Comparing raw values would read a
+            # fresh row's very first save as "changed" (None != False) even when the guest never
+            # touched this section, defeating the point of this comparison on exactly the case -
+            # a booking's first Extras save - it matters most for.
+            previous = (bool(extra.mid_stay_clean), extra.mid_stay_clean_date)
             extra.mid_stay_clean, extra.mid_stay_clean_date, _ = self._parse_mid_stay_clean(booking, post_data)
             extra.mid_stay_clean_charge = (
                 settings.compute_mid_stay_clean_price(booking.property) if extra.mid_stay_clean else None
             )
             update_fields += ['mid_stay_clean_charge']
-            if (extra.mid_stay_clean, extra.mid_stay_clean_date) != previous:
+            if (bool(extra.mid_stay_clean), extra.mid_stay_clean_date) != previous:
                 update_fields += ['mid_stay_clean', 'mid_stay_clean_date']
 
         if update_fields:

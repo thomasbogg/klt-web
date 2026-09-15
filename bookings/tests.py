@@ -4363,7 +4363,12 @@ class BookingManageExtrasViewTests(TestCase):
         """A guest just ticking Welcome Pack shouldn't pay for a property-wide Freshen sweep and
         a Memo round trip that can't have anything to do with it (2026-09-16, after Thomas
         reported a slow Extras save) - see staff/signals.py::_sync_cleaning_tasks_on_extra_save
-        and its own ExtraSaveResyncScopeTests for the underlying signal-level coverage."""
+        and its own ExtraSaveResyncScopeTests for the underlying signal-level coverage.
+
+        Extra.objects.get_or_create() pre-created here so the save under test is a genuine update
+        against an existing row - get_or_create's own creation save has no update_fields to give
+        (a plain save, which always resyncs), and that's not what this test is about."""
+        Extra.objects.create(booking=self.booking)
         t1, t2, t3 = self._resync_targets()
         with patch(t1) as tasks, patch(t2) as freshen, patch(t3) as memo:
             response = self.client.post(self.url, {'welcome_pack': 'on', 'welcome_pack_food': 'standard', 'welcome_pack_drinks': 'alcoholic'})
@@ -4371,6 +4376,7 @@ class BookingManageExtrasViewTests(TestCase):
         self.assertEqual((tasks.call_count, freshen.call_count, memo.call_count), (0, 0, 0))
 
     def test_toggling_mid_stay_clean_still_runs_the_cleaning_resync(self):
+        Extra.objects.create(booking=self.booking)
         t1, t2, t3 = self._resync_targets()
         with patch(t1) as tasks, patch(t2) as freshen, patch(t3) as memo:
             response = self.client.post(self.url, {'mid_stay_clean': 'on'})

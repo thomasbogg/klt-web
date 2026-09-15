@@ -16,7 +16,7 @@ every apartment's page still reflects the party's transfer.
     <h2 class="details-section-title">Airport Transfers (Faro Airport only)</h2>
 {% endif %}
 {% if extras_windows.airport_transfer %}
-    {% if not transfers_for_stay and not omit_transfers_cash_note %}
+    {% if not transfers_for_stay and not omit_cash_note %}
     <p class="details-note">Everything below is paid in cash at check-in - it isn't included in {{ due_phrase }}.</p>
     {% endif %}
     <p class="details-note">Prices shown are estimates based on total headcount and pickup/drop-off time; we'll confirm the final price with you.</p>
