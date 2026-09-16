@@ -33,9 +33,9 @@ from finance.payouts_revolut import send_owner_payout_via_revolut
 from finance.services import (
     backfill_memos_for_company, compute_regular_owner_payout, consolidate_informal_cleans_payment,
     deposits_due_in_range, dispatch_commission_receipt_for_payout, dispatch_owner_invoice_to_sage,
-    generate_non_regular_owner_invoice, generate_scenario_1_cleans_invoice, needs_informal_cleans_tracking,
-    open_memo_for_property, owner_ids_with_no_separate_cleans_payment, owner_outstanding_balance,
-    owner_settlements, owners_with_unconsolidated_cleans, payouts_due_in_range, sweep_unattached_ad_hoc_services,
+    generate_non_regular_owner_invoice, generate_scenario_1_cleans_invoice, informal_cleans_tracking_rows,
+    needs_informal_cleans_tracking, open_memo_for_property, owner_ids_with_no_separate_cleans_payment,
+    owner_outstanding_balance, owner_settlements, payouts_due_in_range, sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_deposit_waiver, compute_effective_self_check_in, create_booking,
@@ -4427,7 +4427,7 @@ class StaffFinanceSettlementsView(View):
             'period_start': period_start,
             'prev_month': previous_month_start(period_start),
             'next_month': first_of_next_month(period_start),
-            'consolidatable_owners': owners_with_unconsolidated_cleans(),
+            'consolidatable_rows': informal_cleans_tracking_rows(),
             'active_tab': 'settlements',
             'show_deposits_tab': BookingSettings.load().security_deposits_enabled,
         })
@@ -4695,7 +4695,7 @@ class StaffFinanceExpectedPaymentsView(View):
 class StaffFinanceConsolidateInformalCleansView(View):
     """The "Consolidate" action on the Settlements tab's own panel (moved there from Expected
     Payments 2026-09-11, per Thomas - see StaffFinanceSettlementsView/finance/services.py::
-    owners_with_unconsolidated_cleans) - bundles one owner's currently-unpaid, never-yet-bundled
+    informal_cleans_tracking_rows) - bundles one owner's currently-unpaid, never-yet-bundled
     Memos into one OwnerInvoice(kind=CLEANS_INFORMAL_MONTHLY) via finance/services.py::
     consolidate_informal_cleans_payment (2026-09-10). Redirects back to whichever month of
     Settlements the staffer was viewing, same hidden-field convention as

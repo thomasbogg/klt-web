@@ -1621,10 +1621,12 @@ class StaffOwnerSettlementViewsTests(FinanceTestCase):
         (same hidden-field convention as StaffFinanceOwnerInvoiceMarkPaidView)."""
         self.owner.is_paid_regularly = True
         self.owner.save()
-        self._sent_memo_on(date(2026, 2, 1))
+        memo = self._sent_memo_on(date(2026, 2, 1))
 
         response = self.client.get(reverse('staff:finance_settlements'), {'month': '2026-03'})
-        self.assertIn(self.owner, response.context['consolidatable_owners'])
+        row = next(row for row in response.context['consolidatable_rows'] if row['owner'] == self.owner)
+        self.assertEqual(row['amount_owed'], memo.total())
+        self.assertIsNone(row['last_invoice'])
 
         response = self.client.post(
             reverse('staff:finance_consolidate_informal_cleans', kwargs={'owner_id': self.owner.pk}),
@@ -1642,7 +1644,7 @@ class StaffOwnerSettlementViewsTests(FinanceTestCase):
         exclusion the old Expected Payments-hosted version already had)."""
         self._sent_memo_on(date(2026, 2, 1))
         response = self.client.get(reverse('staff:finance_settlements'), {'month': '2026-03'})
-        self.assertEqual(response.context['consolidatable_owners'], [])
+        self.assertEqual(response.context['consolidatable_rows'], [])
 
     def test_cleans_invoiced_owner_excluded_from_consolidatable_owners(self):
         self.owner.is_paid_regularly = True
@@ -1650,7 +1652,28 @@ class StaffOwnerSettlementViewsTests(FinanceTestCase):
         self.owner.save()
         self._sent_memo_on(date(2026, 2, 1))
         response = self.client.get(reverse('staff:finance_settlements'), {'month': '2026-03'})
-        self.assertEqual(response.context['consolidatable_owners'], [])
+        self.assertEqual(response.context['consolidatable_rows'], [])
+
+    def test_consolidatable_row_shows_last_invoice_status_after_consolidating(self):
+        """A second consolidate pass, after the first invoice was marked paid, should surface that
+        prior invoice as last_invoice rather than leaving staff to guess whether a previous request
+        was ever settled - the whole reason this panel grew real columns (2026-09-16)."""
+        self.owner.is_paid_regularly = True
+        self.owner.save()
+        self._sent_memo_on(date(2026, 2, 1))
+        self.client.post(
+            reverse('staff:finance_consolidate_informal_cleans', kwargs={'owner_id': self.owner.pk}),
+            {'month': '2026-03'},
+        )
+        invoice = OwnerInvoice.objects.get(owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY)
+        invoice.status = 'paid'
+        invoice.paid_at = timezone.now()
+        invoice.save(update_fields=['status', 'paid_at'])
+
+        self._sent_memo_on(date(2026, 2, 2))
+        response = self.client.get(reverse('staff:finance_settlements'), {'month': '2026-03'})
+        row = next(row for row in response.context['consolidatable_rows'] if row['owner'] == self.owner)
+        self.assertEqual(row['last_invoice'], invoice)
 
 
 class OwnerOutstandingBalanceTests(TestCase):

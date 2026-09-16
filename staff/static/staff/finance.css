@@ -236,14 +236,6 @@
     margin-bottom: 12px;
 }
 
-/* Expected Payments tab's "Consolidate" panel (2026-09-10) - one row per owner, name + button. */
-.staff-finance-consolidate-form {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 4px 0;
-}
-
 /* Memo detail page: the management-fee-payment panel sits directly under the clean-details panel
    with no wrapping container - .staff-panel itself carries no margin (booking_detail.css), so
    without this they render back-to-back with no breathing room (2026-09-10). Scoped to this one

@@ -841,26 +841,58 @@ def owner_ids_with_no_separate_cleans_payment():
     ).values_list('pk', flat=True).distinct()
 
 
-def owners_with_unconsolidated_cleans():
+def informal_cleans_tracking_rows():
     """Owners with at least one currently-unpaid, never-yet-bundled sent Memo eligible for
     consolidate_informal_cleans_payment() - the population behind the Settlements tab's
-    "Consolidate unpaid cleans/meet-greet" action (2026-09-11, per Thomas: moved here from
+    "Informal Cleans & Meet-Greet Tracking" panel (2026-09-11, per Thomas: moved here from
     Expected Payments - a batch action a manager needs to remember every month-end kept getting
     missed split across two tabs from the genuinely month-scoped settlement work. Not itself
     month-scoped - an owner's bundle can include older unpaid Memos too - so this ignores
     whatever month Settlements happens to be showing and always covers everything outstanding,
     same as it did on Expected Payments. Expected Payments keeps the resulting OwnerInvoice(kind=
     CLEANS_INFORMAL_MONTHLY) visible in its own unpaid/recent/historic tracking once created -
-    only the batch trigger moved, not the record."""
+    only the batch trigger moved, not the record.
+
+    Renamed from owners_with_unconsolidated_cleans and given a real row shape (2026-09-16, per
+    Thomas) - the panel used to be a bare owner-name list with no figures at all, inconsistent
+    with the fuller Settlements table right below it. Each row now also carries amount_owed (the
+    total this owner's Consolidate click would bundle) and last_invoice (their most recent
+    CLEANS_INFORMAL_MONTHLY OwnerInvoice, whatever its status) so staff can see at a glance
+    whether a previous consolidated request is still sitting unpaid."""
     memos = Memo.objects.filter(
         sent_at__isnull=False, owner_invoices__isnull=True, management_fee_paid_at__isnull=True,
     ).exclude(
         property__owner_id__in=owner_ids_with_no_separate_cleans_payment(),
     ).exclude(
         property__owner__cleans_are_invoiced=True,
-    )
-    owner_ids = sorted(set(memos.values_list('property__owner_id', flat=True)))
-    return [owner for owner in Owner.objects.filter(pk__in=owner_ids) if needs_informal_cleans_tracking(owner)]
+    ).select_related('property').prefetch_related('ad_hoc_services')
+
+    amount_by_owner = {}
+    for memo in memos:
+        owner_id = memo.property.owner_id
+        amount_by_owner[owner_id] = amount_by_owner.get(owner_id, ZERO) + memo.total()
+
+    owners = [
+        owner for owner in Owner.objects.filter(pk__in=amount_by_owner.keys())
+        if needs_informal_cleans_tracking(owner)
+    ]
+
+    # OwnerInvoice's default ordering is -created_at, so the first row seen per owner in this loop
+    # is always their most recent CLEANS_INFORMAL_MONTHLY bundle.
+    last_invoice_by_owner = {}
+    for invoice in OwnerInvoice.objects.filter(
+        owner_id__in=[owner.pk for owner in owners], kind=OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY,
+    ):
+        last_invoice_by_owner.setdefault(invoice.owner_id, invoice)
+
+    return [
+        {
+            'owner': owner,
+            'amount_owed': amount_by_owner[owner.pk],
+            'last_invoice': last_invoice_by_owner.get(owner.pk),
+        }
+        for owner in sorted(owners, key=lambda owner: owner.name)
+    ]
 
 
 def consolidate_informal_cleans_payment(owner):

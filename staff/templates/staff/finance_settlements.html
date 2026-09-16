@@ -38,20 +38,50 @@
             <a href="?month={{ next_month|date:'Y-m' }}" class="staff-button staff-button-small">Next month &rarr;</a>
         </div>
 
-        {% if consolidatable_owners %}
+        {% if consolidatable_rows %}
         <details class="staff-panel staff-finance-consolidate-panel">
-            <summary class="staff-panel-title staff-finance-consolidate-summary">Consolidate unpaid cleans/meet-greet ({{ consolidatable_owners|length }})</summary>
+            <summary class="staff-panel-title staff-finance-consolidate-summary">Informal Cleans &amp; Meet-Greet Tracking ({{ consolidatable_rows|length }})</summary>
             <p class="staff-finance-statement-note">
                 Bundles each owner's individually-unpaid Memos (not just this month's - any older too) into one markable-paid request. Once created, the bundle shows on Expected Payments like any other invoice.
             </p>
-            {% for consolidatable_owner in consolidatable_owners %}
-            <form method="post" action="{% url 'staff:finance_consolidate_informal_cleans' owner_id=consolidatable_owner.pk %}" class="staff-finance-consolidate-form">
-                {% csrf_token %}
-                <input type="hidden" name="month" value="{{ period_start|date:'Y-m' }}">
-                <span>{{ consolidatable_owner }}</span>
-                <button type="submit" class="staff-button staff-button-small">Consolidate</button>
-            </form>
-            {% endfor %}
+            <div class="staff-table-scroll">
+            <table class="staff-price-table">
+                <thead>
+                    <tr>
+                        <th>Owner</th>
+                        <th>Amount owed</th>
+                        <th>Last request</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in consolidatable_rows %}
+                    <tr>
+                        <td>{{ row.owner }}</td>
+                        <td>&euro;{{ row.amount_owed }}</td>
+                        <td>
+                            {% if row.last_invoice %}
+                            {% if row.last_invoice.status == 'paid' %}
+                            <span class="staff-finance-sent-note">Paid{% if row.last_invoice.paid_at %} {{ row.last_invoice.paid_at|date:'j M Y' }}{% endif %}</span>
+                            {% else %}
+                            Unpaid ({{ row.last_invoice.created_at|date:'j M Y' }})
+                            {% endif %}
+                            {% else %}
+                            <span class="staff-empty">None yet</span>
+                            {% endif %}
+                        </td>
+                        <td class="staff-finance-actions-cell">
+                            <form method="post" action="{% url 'staff:finance_consolidate_informal_cleans' owner_id=row.owner.pk %}">
+                                {% csrf_token %}
+                                <input type="hidden" name="month" value="{{ period_start|date:'Y-m' }}">
+                                <button type="submit" class="staff-button staff-button-small">Consolidate</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            </div>
         </details>
         {% endif %}
 
