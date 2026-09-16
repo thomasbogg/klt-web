@@ -42,7 +42,7 @@
         <details class="staff-panel staff-finance-consolidate-panel">
             <summary class="staff-panel-title staff-finance-consolidate-summary">Informal Cleans &amp; Meet-Greet Tracking ({{ consolidatable_rows|length }})</summary>
             <p class="staff-finance-statement-note">
-                Bundles each owner's individually-unpaid Memos (not just this month's - any older too) into one markable-paid request. Once created, the bundle shows on Expected Payments like any other invoice.
+                Send statement bundles each owner's individually-unpaid Memos (not just this month's - any older too) into one markable-paid request and emails them the itemized breakdown. Once created, the bundle shows on Expected Payments like any other invoice.
             </p>
             <div class="staff-table-scroll">
             <table class="staff-price-table">
@@ -71,10 +71,10 @@
                             {% endif %}
                         </td>
                         <td class="staff-finance-actions-cell">
-                            <form method="post" action="{% url 'staff:finance_consolidate_informal_cleans' owner_id=row.owner.pk %}">
+                            <form method="post" action="{% url 'staff:finance_owner_statement_send' owner_id=row.owner.pk %}">
                                 {% csrf_token %}
                                 <input type="hidden" name="month" value="{{ period_start|date:'Y-m' }}">
-                                <button type="submit" class="staff-button staff-button-small">Consolidate</button>
+                                <button type="submit" class="staff-button staff-button-small">Send statement</button>
                             </form>
                         </td>
                     </tr>
@@ -126,14 +126,6 @@
                         </td>
                         <td class="staff-finance-actions-cell">
                             <div class="staff-finance-actions-inner">
-                                {% if row.total > 0 %}
-                                <form method="post" action="{% url 'staff:finance_owner_statement_send' owner_id=row.owner.pk %}">
-                                    {% csrf_token %}
-                                    <input type="hidden" name="period_start" value="{{ period_start|date:'Y-m-d' }}">
-                                    <input type="hidden" name="month" value="{{ period_start|date:'Y-m' }}">
-                                    <button type="submit" class="staff-button staff-button-small">Send statement</button>
-                                </form>
-                                {% endif %}
                                 {% if row.invoice %}
                                 {% if row.invoice.status == 'paid' %}
                                 <span class="staff-finance-sent-note">Paid{% if row.invoice.paid_at %} {{ row.invoice.paid_at|date:'j M Y' }}{% endif %}</span>

@@ -262,3 +262,39 @@
 .staff-finance-consolidate-summary {
     cursor: pointer;
 }
+
+/* This panel's table only has 4 columns against the Settlements table's 8 below it - left to
+   auto-size, the browser gives the Owner column far more width than its content needs and leaves
+   a wide dead gap after the lone Send statement button, so the two stacked panels read as
+   misaligned even though both tables are already the same overall width (2026-09-16, per Thomas:
+   "looks asymmetrical with the lower panel"). table-layout: fixed plus explicit percentages spans
+   the same full width intentionally instead of leaving it to auto-sizing - the 30/20/30/20 split
+   was measured (getBoundingClientRect on both tables' actual rendered buttons) to land the action
+   column's left edge within ~7px of where the Settlements table's own auto-sized action column
+   happens to start, so the two buttons' left edges read as aligned - don't add text-align: right
+   to the last column here, it was tried and undid exactly that alignment (per Thomas: some empty
+   space to the right of Send statement, this column's own content being shorter, is fine - the
+   left edges lining up is what matters). */
+.staff-finance-consolidate-panel .staff-price-table {
+    table-layout: fixed;
+}
+
+.staff-finance-consolidate-panel .staff-price-table th:nth-child(1),
+.staff-finance-consolidate-panel .staff-price-table td:nth-child(1) {
+    width: 30%;
+}
+
+.staff-finance-consolidate-panel .staff-price-table th:nth-child(2),
+.staff-finance-consolidate-panel .staff-price-table td:nth-child(2) {
+    width: 20%;
+}
+
+.staff-finance-consolidate-panel .staff-price-table th:nth-child(3),
+.staff-finance-consolidate-panel .staff-price-table td:nth-child(3) {
+    width: 30%;
+}
+
+.staff-finance-consolidate-panel .staff-price-table th:nth-child(4),
+.staff-finance-consolidate-panel .staff-price-table td:nth-child(4) {
+    width: 20%;
+}

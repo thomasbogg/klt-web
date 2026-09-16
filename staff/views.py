@@ -31,7 +31,7 @@ from bookings.payouts import compute_owner_payout
 from finance.models import AdHocService, DepositReturn, Memo, OwnerInvoice, PayoutRecord, SageSettings
 from finance.payouts_revolut import send_owner_payout_via_revolut
 from finance.services import (
-    backfill_memos_for_company, compute_regular_owner_payout, consolidate_informal_cleans_payment,
+    backfill_memos_for_company, compute_regular_owner_payout,
     deposits_due_in_range, dispatch_commission_receipt_for_payout, dispatch_owner_invoice_to_sage,
     generate_non_regular_owner_invoice, generate_scenario_1_cleans_invoice, informal_cleans_tracking_rows,
     needs_informal_cleans_tracking, open_memo_for_property, owner_ids_with_no_separate_cleans_payment,
@@ -4394,13 +4394,15 @@ class StaffFinanceOwnerPayoutGenerateView(View):
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')
 class StaffFinanceOwnerStatementSendView(View):
-    """The Settlements tab's 'Send statement' button for one owner's row (2026-09-16, per Thomas) -
-    emails that owner a full itemized breakdown of the month's commission/cleans-meet-greet via
-    finance/services.py::send_owner_statement. Recomputes owner_settlements() for the month fresh
-    (owner count here is small - see that function's own docstring on why this is fine at this
-    business's scale) rather than trusting anything posted from the page, so a stale/tampered total
-    can never reach the email. Safe to click more than once - it's just an email, not a Sage/
-    Revolut dispatch with its own idempotency to worry about."""
+    """The Informal Cleans & Meet-Greet Tracking panel's single 'Send statement' button for one
+    owner (2026-09-16, per Thomas) - bundles their currently-unpaid Memos into an OwnerInvoice AND
+    emails them a full itemized breakdown, both via finance/services.py::send_owner_statement.
+    Replaces what used to be two separate buttons/views (this one plus a standalone Consolidate) -
+    Thomas felt a manager shouldn't need two clicks for what's really one task once the panel
+    already shows the figures either click would need. Only ever relevant for
+    needs_informal_cleans_tracking owners (send_owner_statement re-checks this itself) - a
+    formally-invoiced owner already gets a real Sage invoice via 'Generate & send invoice' on the
+    Settlements table below, so this button doesn't appear there."""
 
     def post(self, request, owner_id, *args, **kwargs):
         owner = Owner.objects.filter(pk=owner_id).first()
@@ -4408,20 +4410,8 @@ class StaffFinanceOwnerStatementSendView(View):
             messages.error(request, "That owner no longer exists.")
             return self._redirect(request)
 
-        period_start = _parsed_date(request.POST.get('period_start'))
-        if period_start is None:
-            messages.error(request, "Missing or invalid period.")
-            return self._redirect(request)
-        period_end = _last_day_of_month(period_start)
-
-        rows = owner_settlements(period_start, period_end)
-        row = next((row for row in rows if row['owner'].pk == owner.pk), None)
-        if row is None or row['total'] <= 0:
-            messages.error(request, f"Nothing to send {owner} a statement for this month.")
-            return self._redirect(request)
-
         try:
-            send_owner_statement(owner, row, period_start, actor=request.user)
+            send_owner_statement(owner, actor=request.user)
         except ValueError as error:
             messages.error(request, str(error))
             return self._redirect(request)
@@ -4735,36 +4725,6 @@ class StaffFinanceExpectedPaymentsView(View):
             for memo in memos
         ]
         return rows
-
-
-@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
-class StaffFinanceConsolidateInformalCleansView(View):
-    """The "Consolidate" action on the Settlements tab's own panel (moved there from Expected
-    Payments 2026-09-11, per Thomas - see StaffFinanceSettlementsView/finance/services.py::
-    informal_cleans_tracking_rows) - bundles one owner's currently-unpaid, never-yet-bundled
-    Memos into one OwnerInvoice(kind=CLEANS_INFORMAL_MONTHLY) via finance/services.py::
-    consolidate_informal_cleans_payment (2026-09-10). Redirects back to whichever month of
-    Settlements the staffer was viewing, same hidden-field convention as
-    StaffFinanceOwnerInvoiceMarkPaidView._redirect."""
-
-    def post(self, request, owner_id, *args, **kwargs):
-        owner = Owner.objects.filter(pk=owner_id).first()
-        if owner is None:
-            messages.error(request, "That owner no longer exists.")
-            return self._redirect(request)
-
-        invoice = consolidate_informal_cleans_payment(owner)
-        if invoice is None:
-            messages.error(request, f"Nothing to consolidate for {owner}.")
-        else:
-            messages.success(request, f"Consolidated {owner}'s unpaid cleans/meet-greet into one €{invoice.total()} request.")
-        return self._redirect(request)
-
-    def _redirect(self, request):
-        redirect_month = request.POST.get('month', '').strip()
-        if redirect_month:
-            return redirect(f"{reverse('staff:finance_settlements')}?month={redirect_month}")
-        return redirect('staff:finance_settlements')
 
 
 @method_decorator(staff_page_required('can_view_finance'), name='dispatch')

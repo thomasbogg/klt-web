@@ -1597,15 +1597,20 @@ class StaffOwnerSettlementViewsTests(FinanceTestCase):
 
     @patch('communications.services.sending.send_plain_email')
     def test_send_statement_button_emails_owner_an_itemized_breakdown(self, send_plain_email):
-        """The Settlements tab's 'Send statement' button (2026-09-16, per Thomas) - patches
-        send_plain_email itself (the one function that would actually reach Gmail, see its own
-        docstring) rather than relying on COMMS_DRY_RUN's print output, so the rendered
-        subject/body can be asserted on directly."""
-        self._make_booking_on(date(2026, 2, 1))
+        """The Informal Cleans & Meet-Greet Tracking panel's 'Send statement' button (2026-09-16,
+        per Thomas) - only ever relevant for needs_informal_cleans_tracking owners (self.owner
+        needs is_paid_regularly=True here, same as this class's own consolidate tests, to become
+        scenario 4 rather than the default scenario-3 fixture). Patches send_plain_email itself
+        (the one function that would actually reach Gmail, see its own docstring) rather than
+        relying on COMMS_DRY_RUN's print output, so the rendered subject/body can be asserted on
+        directly."""
+        self.owner.is_paid_regularly = True
+        self.owner.save()
+        self._sent_memo_on(date(2026, 2, 1))
 
         response = self.client.post(
             reverse('staff:finance_owner_statement_send', kwargs={'owner_id': self.owner.pk}),
-            {'period_start': '2026-02-01', 'month': '2026-02'},
+            {'month': '2026-02'},
         )
         self.assertRedirects(response, f"{reverse('staff:finance_settlements')}?month=2026-02")
         messages = [str(m) for m in get_messages(response.wsgi_request)]
@@ -1615,32 +1620,51 @@ class StaffOwnerSettlementViewsTests(FinanceTestCase):
         args = send_plain_email.call_args.args
         self.assertEqual(args[3], self.owner.email)
         subject, body = args[4], args[5]
-        self.assertIn('February 2026', subject)
-        self.assertIn('Rental commission - Finance Property', body)
+        self.assertIn('statement', subject.lower())
+        self.assertIn('Cleaning/meet-greet - Finance Property', body)
         self.assertIn(self.owner.name, body)
 
     @patch('communications.services.sending.send_plain_email')
     def test_send_statement_refuses_owner_with_no_email(self, send_plain_email):
-        self._make_booking_on(date(2026, 2, 1))
+        self.owner.is_paid_regularly = True
         self.owner.email = ''
-        self.owner.save(update_fields=['email'])
+        self.owner.save()
+        self._sent_memo_on(date(2026, 2, 1))
 
         response = self.client.post(
             reverse('staff:finance_owner_statement_send', kwargs={'owner_id': self.owner.pk}),
-            {'period_start': '2026-02-01', 'month': '2026-02'},
+            {'month': '2026-02'},
         )
         messages = [str(m) for m in get_messages(response.wsgi_request)]
         self.assertIn(f"{self.owner} has no email on file.", messages)
         send_plain_email.assert_not_called()
 
     @patch('communications.services.sending.send_plain_email')
-    def test_send_statement_refuses_nothing_to_bill(self, send_plain_email):
+    def test_send_statement_refuses_owner_not_on_informal_tracking(self, send_plain_email):
+        """self.owner (FinanceTestCase.setUp) is a real scenario-3 owner by default - their
+        management fee is already netted into owner_balance at payout time, so they're never on
+        informal tracking at all (same exclusion the panel itself uses) even with a sent Memo."""
+        self._sent_memo_on(date(2026, 2, 1))
+
         response = self.client.post(
             reverse('staff:finance_owner_statement_send', kwargs={'owner_id': self.owner.pk}),
-            {'period_start': '2026-02-01', 'month': '2026-02'},
+            {'month': '2026-02'},
         )
         messages = [str(m) for m in get_messages(response.wsgi_request)]
-        self.assertIn(f"Nothing to send {self.owner} a statement for this month.", messages)
+        self.assertIn(f"{self.owner} isn't on informal cleans/meet-greet tracking.", messages)
+        send_plain_email.assert_not_called()
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_send_statement_refuses_nothing_to_bill(self, send_plain_email):
+        self.owner.is_paid_regularly = True
+        self.owner.save()
+
+        response = self.client.post(
+            reverse('staff:finance_owner_statement_send', kwargs={'owner_id': self.owner.pk}),
+            {'month': '2026-02'},
+        )
+        messages = [str(m) for m in get_messages(response.wsgi_request)]
+        self.assertIn(f"Nothing to send {self.owner} a statement for.", messages)
         send_plain_email.assert_not_called()
 
     def _make_booking_on(self, arrival_date):
@@ -1661,12 +1685,15 @@ class StaffOwnerSettlementViewsTests(FinanceTestCase):
         memo.save(update_fields=['sent_at'])
         return memo
 
-    def test_consolidatable_owners_appear_and_action_redirects_back_to_same_month(self):
+    @patch('communications.services.sending.send_plain_email')
+    def test_consolidatable_owners_appear_and_action_redirects_back_to_same_month(self, send_plain_email):
         """The "Consolidate unpaid cleans/meet-greet" batch action moved here from Expected
         Payments (2026-09-11, per Thomas: it's a genuine end-of-month task that kept getting
-        missed split across two tabs from the rest of that month-end work) - covers both that it
-        shows up on Settlements and that the redirect preserves whichever month was being viewed
-        (same hidden-field convention as StaffFinanceOwnerInvoiceMarkPaidView)."""
+        missed split across two tabs from the rest of that month-end work), then merged into the
+        single 'Send statement' button (2026-09-16, per Thomas: one click for what's really one
+        task) - covers both that the owner shows up on Settlements and that a Send statement click
+        both bundles the invoice and preserves whichever month was being viewed (same hidden-field
+        convention as StaffFinanceOwnerInvoiceMarkPaidView)."""
         self.owner.is_paid_regularly = True
         self.owner.save()
         memo = self._sent_memo_on(date(2026, 2, 1))
@@ -1677,13 +1704,14 @@ class StaffOwnerSettlementViewsTests(FinanceTestCase):
         self.assertIsNone(row['last_invoice'])
 
         response = self.client.post(
-            reverse('staff:finance_consolidate_informal_cleans', kwargs={'owner_id': self.owner.pk}),
+            reverse('staff:finance_owner_statement_send', kwargs={'owner_id': self.owner.pk}),
             {'month': '2026-03'},
         )
         self.assertRedirects(response, f"{reverse('staff:finance_settlements')}?month=2026-03")
         self.assertTrue(
             OwnerInvoice.objects.filter(owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY).exists()
         )
+        send_plain_email.assert_called_once()
 
     def test_scenario_3_owner_excluded_from_consolidatable_owners(self):
         """self.owner (FinanceTestCase.setUp) is already a real scenario-3 owner by default - not
@@ -1702,15 +1730,16 @@ class StaffOwnerSettlementViewsTests(FinanceTestCase):
         response = self.client.get(reverse('staff:finance_settlements'), {'month': '2026-03'})
         self.assertEqual(response.context['consolidatable_rows'], [])
 
-    def test_consolidatable_row_shows_last_invoice_status_after_consolidating(self):
-        """A second consolidate pass, after the first invoice was marked paid, should surface that
-        prior invoice as last_invoice rather than leaving staff to guess whether a previous request
-        was ever settled - the whole reason this panel grew real columns (2026-09-16)."""
+    @patch('communications.services.sending.send_plain_email')
+    def test_consolidatable_row_shows_last_invoice_status_after_consolidating(self, send_plain_email):
+        """A second Send statement click, after the first invoice was marked paid, should surface
+        that prior invoice as last_invoice rather than leaving staff to guess whether a previous
+        request was ever settled - the whole reason this panel grew real columns (2026-09-16)."""
         self.owner.is_paid_regularly = True
         self.owner.save()
         self._sent_memo_on(date(2026, 2, 1))
         self.client.post(
-            reverse('staff:finance_consolidate_informal_cleans', kwargs={'owner_id': self.owner.pk}),
+            reverse('staff:finance_owner_statement_send', kwargs={'owner_id': self.owner.pk}),
             {'month': '2026-03'},
         )
         invoice = OwnerInvoice.objects.get(owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY)
@@ -1995,12 +2024,15 @@ class StaffFinanceExpectedPaymentsViewTests(FinanceTestCase):
         self.assertNotIn('consolidatable_owners', response.context)
 
     def test_consolidate_then_mark_paid_moves_memo_to_recent(self):
+        """Consolidating itself now only happens via the merged Settlements 'Send statement'
+        button (StaffOwnerSettlementViewsTests) - calls the service function directly here since
+        this test's own focus is Expected Payments' display, not that button."""
         self.property.owner.is_paid_regularly = True
         self.property.owner.cleans_are_invoiced = False
         self.property.owner.save()
         memo = self._sent_memo_for(self.property, self.guest, self.today - timedelta(days=5))
 
-        self.client.post(reverse('staff:finance_consolidate_informal_cleans', kwargs={'owner_id': self.property.owner.pk}))
+        consolidate_informal_cleans_payment(self.property.owner)
         invoice = OwnerInvoice.objects.get(owner=self.property.owner, kind=OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY)
         self.assertIn(memo, invoice.memos.all())
 

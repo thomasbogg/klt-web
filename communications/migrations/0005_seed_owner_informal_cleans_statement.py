@@ -7,17 +7,15 @@ from django.db import migrations
 # event-triggered template.
 TEMPLATES = [
     {
-        'slug': 'owner_monthly_statement',
-        'name': 'Owner monthly statement',
+        'slug': 'owner_informal_cleans_statement',
+        'name': 'Owner informal cleans/meet-greet statement',
         'audience': 'owner',
         'offset_days': 0,
-        'subject': 'Your statement for {{ period_label }}',
+        'subject': 'Your cleans/meet-greet statement',
         'body': (
             'Hi {{ owner_name }},\n\n'
-            "Here's your statement for {{ period_label }}:\n\n"
+            "Here's your current outstanding cleans/meet-greet balance:\n\n"
             '{{ line_items }}\n\n'
-            'Rental commission: €{{ commission_amount }}\n'
-            'Cleans/meet-greet: €{{ cleans_amount }}\n'
             'Total: €{{ total }}\n\n'
             '{% if wise_payment_link %}You can pay this here: {{ wise_payment_link }}{% endif %}'
         ),

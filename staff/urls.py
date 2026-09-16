@@ -115,10 +115,6 @@ urlpatterns = [
         views.StaffFinanceExpectedPaymentsView.as_view(), name='finance_expected_payments',
     ),
     path(
-        'finance/expected-payments/<int:owner_id>/consolidate/',
-        views.StaffFinanceConsolidateInformalCleansView.as_view(), name='finance_consolidate_informal_cleans',
-    ),
-    path(
         'finance/owner-invoices/<int:pk>/retry/',
         views.StaffFinanceOwnerInvoiceRetryView.as_view(), name='finance_owner_invoice_retry',
     ),
