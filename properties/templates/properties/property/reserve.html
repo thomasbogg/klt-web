@@ -46,7 +46,12 @@
         </div>
 
         {% if not is_available %}
-        {% if own_pending_booking %}
+        {% if too_far_ahead %}
+        <p class="reserve-message reserve-unavailable">
+            Sorry, we can only take reservations up to {{ booking_settings.max_advance_booking_months }} months in advance. Please choose an earlier arrival date.
+        </p>
+        <a class="reserve-back-link" href="{% url 'properties:property/page' location=location.slug title=property.short_title|slugify %}">&larr; Back to {{ property }}</a>
+        {% elif own_pending_booking %}
         <p class="reserve-message">
             You already started a reservation for these dates (reference <strong>{{ own_pending_booking.reference }}</strong>) that's still awaiting payment.
         </p>

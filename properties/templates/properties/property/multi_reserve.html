@@ -20,7 +20,13 @@
     <div class="reserve-page multi-reserve-page">
         <h1>{{ properties.0 }} + {{ properties.1 }}</h1>
 
-        {% if unavailable_properties %}
+        {% if too_far_ahead %}
+        <p class="reserve-message reserve-unavailable">
+            Sorry, we can only take reservations up to {{ booking_settings.max_advance_booking_months }} months in advance. Please choose an earlier arrival date.
+        </p>
+        <a class="reserve-back-link" href="{% url 'availability:search' %}?start={{ start_query|urlencode }}&end={{ end_query|urlencode }}&guests={{ guests_query|urlencode }}">&larr; Back to search</a>
+
+        {% elif unavailable_properties %}
         <p class="reserve-message reserve-unavailable">
             Sorry, {% for property in unavailable_properties %}{{ property }}{% if not forloop.last %} and {% endif %}{% endfor %}
             {{ unavailable_properties|length|pluralize:"is,are" }} no longer available for these dates. Please try a different search.

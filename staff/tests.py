@@ -29,8 +29,8 @@ from properties.models import (
     PropertyPlatformID, PropertySpec, SEFDetail, WashingMaterial, iCalLink,
 )
 from staff.models import (
-    Checkin, CleaningGapBlock, CleaningTask, Deduction, LateCheckoutGrant, OwnerPayment, StaffProfile,
-    StaffRole, TaskHistoryEntry,
+    Checkin, CleaningGapBlock, CleaningTask, Deduction, LateCheckoutGrant, OwnerPayment, PropertyBlock,
+    StaffProfile, StaffRole, TaskHistoryEntry,
 )
 from staff.monthly_reports import (
     bookings_trend_rows, commissions_trend_rows, extras_trend_rows, location_groups,
@@ -2022,6 +2022,90 @@ class StaffOwnerBookingCreateViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         page_messages = [str(m) for m in response.context['messages']]
         self.assertTrue(any('choose a property' in m.lower() for m in page_messages))
+
+
+class StaffPropertyBlockCreateViewTests(TestCase):
+    """staff/bookings/new/block/ - the Reserve nav's 'Block dates' option (2026-09-16, per
+    Thomas), reusing bookings/utils.py::create_property_block()."""
+
+    def setUp(self):
+        User.objects.create_user(username='staffblockcreator', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='staffblockcreator', password='pw')
+        self.property = Property.objects.create(title='Staff Block Create Property', short_title='STAFFBLOCK')
+        self.url = reverse('staff:booking_create_block')
+
+    def test_requires_can_view_bookings(self):
+        User.objects.create_user(username='roleless_block_create', password='pw', is_staff=True)
+        self.client.login(username='roleless_block_create', password='pw')
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 403)
+
+    def test_get_renders_the_empty_form(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, str(self.property))
+
+    def test_creates_a_block_and_redirects_to_its_booking_detail(self):
+        arrival = date.today() + timedelta(days=90)
+        departure = arrival + timedelta(days=5)
+        response = self.client.post(self.url, {
+            'property_id': self.property.pk,
+            'arrival_date': arrival.isoformat(), 'departure_date': departure.isoformat(),
+            'reason': PropertyBlock.Reason.MAINTENANCE, 'note': 'Repainting.',
+        })
+        booking = Booking.objects.get(property=self.property, arrival_date=arrival)
+        self.assertRedirects(response, reverse('staff:booking_detail', kwargs={'reference': booking.reference}))
+        self.assertFalse(booking.is_owner)
+        self.assertEqual(booking.guest.last_name, BLOCK_UNBOOKABLE_LAST_NAME)
+        block = PropertyBlock.objects.get(booking=booking)
+        self.assertEqual(block.reason, PropertyBlock.Reason.MAINTENANCE)
+        self.assertEqual(block.note, 'Repainting.')
+
+    def test_missing_property_shows_error(self):
+        response = self.client.post(self.url, {
+            'property_id': '', 'arrival_date': '2028-01-01', 'departure_date': '2028-01-05',
+            'reason': PropertyBlock.Reason.OTHER,
+        })
+        self.assertEqual(response.status_code, 200)
+        page_messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('choose a property' in m.lower() for m in page_messages))
+        self.assertFalse(Booking.objects.filter(property=self.property).exists())
+
+    def test_missing_reason_shows_error(self):
+        response = self.client.post(self.url, {
+            'property_id': self.property.pk, 'arrival_date': '2028-01-01', 'departure_date': '2028-01-05',
+            'reason': '',
+        })
+        self.assertEqual(response.status_code, 200)
+        page_messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('choose a reason' in m.lower() for m in page_messages))
+        self.assertFalse(Booking.objects.filter(property=self.property).exists())
+
+    def test_end_date_not_after_start_date_shows_error(self):
+        response = self.client.post(self.url, {
+            'property_id': self.property.pk, 'arrival_date': '2028-01-05', 'departure_date': '2028-01-05',
+            'reason': PropertyBlock.Reason.OTHER,
+        })
+        self.assertEqual(response.status_code, 200)
+        page_messages = [str(m) for m in response.context['messages']]
+        self.assertTrue(any('after the start date' in m.lower() for m in page_messages))
+
+    def test_rejects_overlapping_dates(self):
+        arrival = date.today() + timedelta(days=90)
+        departure = arrival + timedelta(days=5)
+        Booking.objects.create(
+            property=self.property, guest=Guest.objects.create(last_name='Existing', email='staff-block-existing@example.com'),
+            arrival_date=arrival, departure_date=departure, is_owner=False,
+            enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        response = self.client.post(self.url, {
+            'property_id': self.property.pk,
+            'arrival_date': arrival.isoformat(), 'departure_date': departure.isoformat(),
+            'reason': PropertyBlock.Reason.OTHER,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(list(response.context['messages']))
 
 
 class StaffGuestOfferCreateViewTests(TestCase):
@@ -4426,6 +4510,13 @@ class StaffSettingsViewTests(TestCase):
         })
         self.assertRedirects(response, f'{self.url}?panel=bookings')
         self.assertEqual(BookingSettings.load().cleaning_gap_nights_per_block_day, 14)
+
+    def test_update_booking_settings_saves_max_advance_booking_months(self):
+        response = self.client.post(self.url, {
+            'action': 'update_booking_settings', 'max_advance_booking_months': '24',
+        })
+        self.assertRedirects(response, f'{self.url}?panel=bookings')
+        self.assertEqual(BookingSettings.load().max_advance_booking_months, 24)
 
 
 class StaffSageViewsTests(TestCase):

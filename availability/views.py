@@ -36,9 +36,11 @@ class SearchView(View):
         context['guests'] = guests
         context['has_search'] = bool(start_date and end_date)
         context['combo_suggestions'] = []
-        if context['has_search']:
+        booking_settings = BookingSettings.load()
+        context['booking_settings'] = booking_settings
+        context['too_far_ahead'] = context['has_search'] and start_date > booking_settings.max_bookable_date()
+        if context['has_search'] and not context['too_far_ahead']:
             available_properties = list(self.get_available_properties(start_date, end_date, guests))
-            booking_settings = BookingSettings.load()
             for property in available_properties:
                 pricing = get_stay_total_price(
                     property, start_date, end_date, guests,

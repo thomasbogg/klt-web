@@ -319,6 +319,54 @@ class CleaningGapBlock(models.Model):
         return f"{self.booking} - cleaning gap block until {self.block_booking.departure_date}"
 
 
+class PropertyBlock(models.Model):
+    """A manually staff-created calendar block on a property - unbookable for a reason, not a
+    guest or owner stay (2026-09-16, per Thomas: maintenance work, a pending sale, or a question
+    over who currently holds booking responsibility for a property). Reachable from the Reserve
+    nav's 'Block dates' option (staff/views.py::StaffPropertyBlockCreateView).
+
+    Reuses the exact same sentinel-guest placeholder-Booking mechanism the automatic gap-block/
+    late-checkout machinery already established (CleaningGapBlock above, LateCheckoutGrant below)
+    rather than inventing a second one - BookingQuerySet.holding()/.overlapping() is the only thing
+    anything in this codebase actually consults to decide "is this date range free" (guest search,
+    both calendars, iCal export), so a real placeholder Booking is the only way to genuinely block
+    all of them at once. See bookings/utils.py::create_property_block() for where that Booking
+    (guest.last_name=BLOCK_UNBOOKABLE_LAST_NAME, is_owner=False) actually gets created - already
+    excluded from cleaning-task generation, check-in generation, and every booking report/count by
+    the existing is_unbookable_block_booking()/exclude_block_bookings() machinery, same as the
+    automatic gap-block placeholders. This model is the thin bookkeeping row recording WHY, by
+    WHOM, and (optionally) what note, since the placeholder Booking/Guest pair carries no such
+    fields of their own.
+
+    No separate "unblock" action: the placeholder Booking is a real Booking, so staff release a
+    block the same way they'd cancel any other booking (the existing "Cancel booking" action on
+    its own booking detail page), which frees the calendar the same way.
+
+    CASCADE on booking, same reasoning as CleaningGapBlock/LateCheckoutGrant above: this row has no
+    meaning independent of the calendar block that's its entire real-world effect."""
+    class Reason(models.TextChoices):
+        MAINTENANCE = 'maintenance', 'Maintenance work'
+        SALE_OR_OWNERSHIP = 'sale_or_ownership', 'Potential sale or ownership change'
+        OTHER = 'other', 'Other'
+
+    booking = models.OneToOneField('bookings.Booking', on_delete=models.CASCADE, related_name='property_block')
+    reason = models.CharField(max_length=20, choices=Reason.choices)
+    note = models.CharField(max_length=500, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'staff_property_blocks'
+        verbose_name = 'Property Block'
+        verbose_name_plural = 'Property Blocks'
+        ordering = ('-created_at',)
+
+    def __str__(self):
+        return f"{self.booking.property} blocked ({self.get_reason_display()})"
+
+
 class Checkin(models.Model):
     """A check-in task for one booking's arrival - either the arrival itself (task_type='arrival',
     always exactly one per booking, though see below) or, for a self-check-in booking, two

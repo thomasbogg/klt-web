@@ -1,0 +1,88 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Block dates | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/vendor/flatpickr/flatpickr.min.css' %}">
+    <script src="{% static 'staff/vendor/flatpickr/flatpickr.min.js' %}" defer></script>
+    <script src="{% static 'staff/date_range_pair.js' %}" defer></script>
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Block dates</h1>
+            <a href="{% url 'staff:home' %}" class="staff-header-link">&larr; Home</a>
+        </header>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="staff-panel">
+            <p>Marks a property unbookable for a date range - not a guest booking or an owner
+                stay. Use this for maintenance work, a pending sale, or a question over who
+                currently holds booking responsibility for a property. To release a block early,
+                open its booking detail page afterwards and cancel it, same as any other booking.</p>
+
+            <form method="post" class="staff-form">
+                {% csrf_token %}
+
+                <div class="staff-field">
+                    <label>Property
+                        <select name="property_id" class="staff-input">
+                            <option value="">Select a property&hellip;</option>
+                            {% for location_label, location_properties in property_groups %}
+                            <optgroup label="{{ location_label }}">
+                                {% for property in location_properties %}
+                                <option value="{{ property.pk }}" {% if selected_property_id == property.pk|stringformat:'s' %}selected{% endif %}>
+                                    {{ property }}
+                                </option>
+                                {% endfor %}
+                            </optgroup>
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+
+                <div class="staff-field-row staff-date-future-only">
+                    <label class="staff-field">Start date
+                        <input type="text" name="arrival_date" class="staff-input staff-date-input staff-date-start" autocomplete="off" value="{{ arrival_date }}">
+                    </label>
+                    <label class="staff-field">End date
+                        <input type="text" name="departure_date" class="staff-input staff-date-input staff-date-end" autocomplete="off" value="{{ departure_date }}">
+                    </label>
+                </div>
+
+                <div class="staff-field">
+                    <label>Reason
+                        <select name="reason" class="staff-input">
+                            <option value="">Select a reason&hellip;</option>
+                            {% for value, label in reason_choices %}
+                            <option value="{{ value }}" {% if reason == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                </div>
+
+                <div class="staff-field">
+                    <label>Note (optional)
+                        <textarea name="note" class="staff-input" rows="3">{{ note }}</textarea>
+                    </label>
+                </div>
+
+                <button type="submit" class="staff-button">Block dates</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

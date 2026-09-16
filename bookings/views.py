@@ -2515,6 +2515,12 @@ class BookingManageDatesView(View):
             return error("Check-out must be after check-in.")
         if new_arrival < timezone.now().date():
             return error("Check-in can't be in the past.")
+        booking_settings = BookingSettings.load()
+        if new_arrival > booking_settings.max_bookable_date():
+            return error(
+                f"We can only take reservations up to {booking_settings.max_advance_booking_months} "
+                f"months in advance - please choose an earlier check-in date."
+            )
 
         # Checked before the overlap conflict check below (which would otherwise self-conflict
         # against this booking's own hold) - a booking only ever has one pending date_change at a

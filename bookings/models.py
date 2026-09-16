@@ -2,6 +2,8 @@ import calendar
 from datetime import date, time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
+from dateutil.relativedelta import relativedelta
+
 from django.core.exceptions import ValidationError
 from django.core.serializers.json import DjangoJSONEncoder
 from django.core.validators import EmailValidator, MinValueValidator, MaxValueValidator
@@ -160,6 +162,18 @@ class BookingSettings(models.Model):
                   "arrival, capped at that gap) so the cleaning crew gets more time on long "
                   "stays. 0 disables this."
     )
+    # 2026-09-16, per Thomas: guest-facing search/reservation only - staff creating an Owner
+    # Booking, a Guest Offer, or a property block (see bookings/utils.py::create_property_block)
+    # are deliberately not capped by this at all, since those are staff exercising judgement, not
+    # the public search/booking flow this exists to bound. See max_bookable_date() below for the
+    # actual date arithmetic every enforcement point (SearchView, ReserveView,
+    # MultiPropertyReserveView, BookingManageDatesView) shares.
+    max_advance_booking_months = models.PositiveIntegerField(
+        default=18,
+        help_text="How far in advance (in months, from today) the public site accepts a guest "
+                  "search or reservation. Doesn't affect staff-created owner bookings, guest "
+                  "offers, or property blocks."
+    )
 
     # Cost dict keys from compute_costs() that represent a money amount and are shown converted to
     # GBP when a guest toggles the currency display. security_deposit is deliberately excluded: it's
@@ -185,6 +199,15 @@ class BookingSettings(models.Model):
     def load(cls):
         settings, _ = cls.objects.get_or_create(pk=1)
         return settings
+
+    def max_bookable_date(self, today=None):
+        """The furthest-out arrival date the public site currently accepts a guest search or
+        reservation for - shared by every guest-facing enforcement point (SearchView, ReserveView,
+        MultiPropertyReserveView, BookingManageDatesView) so they can never disagree with each
+        other or with max_advance_booking_months's own value. `today` param mirrors compute_costs'
+        own signature, for the same testability reason."""
+        today = today or date.today()
+        return today + relativedelta(months=self.max_advance_booking_months)
 
     def compute_costs(self, rental_total, arrival_date=None, today=None):
         """Cost breakdown for a stay's final rental total (already net of any discount, plus any

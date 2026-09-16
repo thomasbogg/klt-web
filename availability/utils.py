@@ -102,6 +102,10 @@ def full_toolbar_context(start_date=None, end_date=None, guests=None):
         'toolbar_location_picker_list': Location.objects.order_by('title'),
         'toolbar_bedrooms_picker_name': 'bedrooms',
         'toolbar_bedrooms_picker_list': PropertySpec.objects.order_by('bedrooms').values_list('bedrooms', flat=True).distinct(),
+        # ISO format, not '%d/%m/%Y' like the value fields above - flatpickr's maxDate option
+        # parses ISO natively regardless of the picker's own dateFormat, so this doesn't need to
+        # match toolbar_date_picker_start_value's format.
+        'toolbar_date_picker_max_date': booking_settings.max_bookable_date().isoformat(),
     }
 
 

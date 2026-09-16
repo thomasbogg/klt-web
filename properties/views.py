@@ -139,14 +139,17 @@ class ReserveView(generic.DetailView):
             return context
 
         context['nights'] = (end_date - start_date).days
-        context['is_available'] = self.is_still_available(self.object, start_date, end_date)
+        booking_settings = BookingSettings.load()
+        context['booking_settings'] = booking_settings
+        context['too_far_ahead'] = start_date > booking_settings.max_bookable_date()
+        context['is_available'] = (
+            not context['too_far_ahead'] and self.is_still_available(self.object, start_date, end_date)
+        )
 
-        if not context['is_available']:
+        if not context['is_available'] and not context['too_far_ahead']:
             context['own_pending_booking'] = self._own_pending_booking(start_date, end_date)
 
         if context['is_available']:
-            booking_settings = BookingSettings.load()
-            context['booking_settings'] = booking_settings
             pricing = get_stay_total_price(
                 self.object, start_date, end_date, guests,
                 monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
@@ -269,7 +272,9 @@ class MultiPropertyReserveView(View):
         return {'legs': legs, 'combined_due_now': combined_due_now, 'combined_total': combined_total}
 
     def _context(self, request, properties, start_date, end_date, guests, form, contact_form=None):
-        unavailable = [
+        booking_settings = BookingSettings.load()
+        too_far_ahead = start_date > booking_settings.max_bookable_date()
+        unavailable = [] if too_far_ahead else [
             property for property in properties
             if Booking.objects.overlapping(property, start_date, end_date).exists()
         ]
@@ -281,16 +286,16 @@ class MultiPropertyReserveView(View):
             'nights': (end_date - start_date).days,
             'guests': guests,
             'unavailable_properties': unavailable,
+            'too_far_ahead': too_far_ahead,
+            'booking_settings': booking_settings,
             'form': form,
             'start_query': request.GET.get('start', ''),
             'end_query': request.GET.get('end', ''),
             'guests_query': request.GET.get('guests', ''),
         }
-        if not unavailable and form.is_bound and form.is_valid():
+        if not too_far_ahead and not unavailable and form.is_bound and form.is_valid():
             context['breakdown'] = self._price_breakdown(properties, start_date, end_date, form.cleaned_data['splits'])
             if context['breakdown'] is not None:
-                booking_settings = BookingSettings.load()
-                context['booking_settings'] = booking_settings
                 context['contact_form'] = contact_form or ReservationForm(
                     initial={
                         'start': context['start_query'],
@@ -332,7 +337,7 @@ class MultiPropertyReserveView(View):
             request.POST, security_deposits_enabled=BookingSettings.load().security_deposits_enabled,
         )
         context = self._context(request, properties, start_date, end_date, guests, split_form, contact_form)
-        if context['unavailable_properties'] or not split_form.is_valid() or not contact_form.is_valid():
+        if context['too_far_ahead'] or context['unavailable_properties'] or not split_form.is_valid() or not contact_form.is_valid():
             return render(request, self.template_name, context)
 
         try:

@@ -1,5 +1,6 @@
 from django.http import HttpResponse
 from django.views import generic
+from bookings.models import BookingSettings
 from properties.models import Location, Property
 from libraries.dates import dates
 
@@ -24,7 +25,8 @@ class IndexView(generic.ListView):
         # Date Picker Settings
         context['datepicker_start_name'] = 'start'
         context['datepicker_end_name'] = 'end'
-   
+        context['datepicker_max_date'] = BookingSettings.load().max_bookable_date().isoformat()
+
         # Group Picker Settings
         context['grouppicker_name'] = 'guests'
         context['grouppicker_groups'] = [

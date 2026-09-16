@@ -64,6 +64,58 @@ class SearchViewFilteringTests(TestCase):
         self.assertNotIn(property, response.context['available_properties'])
 
 
+class SearchViewAdvanceBookingWindowTests(TestCase):
+    """BookingSettings.max_advance_booking_months (2026-09-16, per Thomas) - a search beyond the
+    window shows a distinct message instead of silently running an always-empty availability
+    query."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Window Test Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.management_company = ManagementCompany.objects.create(name='Window Test Management Co')
+        self.url = reverse('availability:search')
+        from bookings.models import BookingSettings
+        settings = BookingSettings.load()
+        settings.max_advance_booking_months = 18
+        settings.save()
+
+    def _make_property(self, end_date_for_pricing):
+        property = Property.objects.create(
+            title='Window Test Property', short_title='WINDOWTST',
+            location=self.location, booking_company=self.management_company,
+        )
+        PropertySpec.objects.create(property=property, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        Price.objects.create(
+            property=property, start_date=date.today(), end_date=end_date_for_pricing, rate=100,
+        )
+        return property
+
+    def test_search_beyond_the_window_shows_too_far_ahead_and_no_results(self):
+        from dateutil.relativedelta import relativedelta
+        start = date.today() + relativedelta(months=19)
+        end = start + timedelta(days=5)
+        self._make_property(end + timedelta(days=30))
+        response = self.client.get(self.url, {
+            'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y'),
+            'guests': '2 adults,0 children,0 infants',
+        })
+        self.assertTrue(response.context['too_far_ahead'])
+        self.assertNotIn('available_properties', response.context)
+
+    def test_search_within_the_window_is_unaffected(self):
+        start = date.today() + timedelta(days=330)
+        end = start + timedelta(days=5)
+        property = self._make_property(end + timedelta(days=30))
+        response = self.client.get(self.url, {
+            'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y'),
+            'guests': '2 adults,0 children,0 infants',
+        })
+        self.assertFalse(response.context['too_far_ahead'])
+        self.assertIn(property, response.context['available_properties'])
+
+
 class FindPropertyComboSuggestionsTests(TestCase):
     """A party too big for any single property (see MultiPropertyReserveView, ReservationGroup)
     should still be offered a pair of properties at the same location that together fit -

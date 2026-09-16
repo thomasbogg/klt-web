@@ -2,6 +2,9 @@ from datetime import date, time, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
+from dateutil.relativedelta import relativedelta
+
+from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
@@ -17,15 +20,17 @@ from bookings.models import (
 )
 from bookings.payouts import compute_owner_payout
 from bookings.views import next_unpaid_sibling_reference
-from staff.models import LateCheckoutGrant, OwnerPayment
+from staff.models import LateCheckoutGrant, OwnerPayment, PropertyBlock
+from staff.utils import is_unbookable_block_booking
 from bookings.utils import (
-    add_business_days, adopt_revolut_provider, apply_supplementary_payment, compute_deposit_waiver,
-    compute_effective_self_check_in, compute_eta_from_given_time, compute_initial_hold_expiry,
-    compute_tourist_tax, create_booking, extra_request_window_open, extras_request_windows,
-    create_owner_booking, determine_payment_provider, expire_stale_holds, extras_summary,
-    guest_counts_by_age, guest_for_owner, has_completed_previous_stay, payment_clearing_expiry,
-    recalculate_balance_for_party, recalculate_costs_for_dates, recalculate_costs_for_party,
-    resolve_shared_postbox_path, sync_ical_link, tourist_tax_in_season,
+    BLOCK_UNBOOKABLE_LAST_NAME, add_business_days, adopt_revolut_provider, apply_supplementary_payment,
+    compute_deposit_waiver, compute_effective_self_check_in, compute_eta_from_given_time,
+    compute_initial_hold_expiry, compute_tourist_tax, create_booking, extra_request_window_open,
+    extras_request_windows, create_owner_booking, create_property_block, determine_payment_provider,
+    exclude_block_bookings, expire_stale_holds, extras_summary, guest_counts_by_age, guest_for_owner,
+    has_completed_previous_stay, payment_clearing_expiry, recalculate_balance_for_party,
+    recalculate_costs_for_dates, recalculate_costs_for_party, resolve_shared_postbox_path,
+    sync_ical_link, tourist_tax_in_season,
 )
 from bookings.templatetags.bookings_extras import linkify, split_lines
 from availability.utils import get_property_calendar
@@ -566,6 +571,31 @@ class ComputeCostsTests(TestCase):
         costs_gbp = settings.costs_in_gbp(costs)
         self.assertEqual(costs_gbp['due_at_booking'], settings.to_gbp(costs['due_at_booking']))
         self.assertEqual(costs_gbp['due_at_balance'], Decimal('0.00'))
+
+
+class MaxBookableDateTests(TestCase):
+    """BookingSettings.max_bookable_date() (2026-09-16, per Thomas) - the single date-arithmetic
+    source every enforcement point (SearchView, ReserveView, MultiPropertyReserveView,
+    BookingManageDatesView, create_booking()) shares."""
+
+    def test_adds_the_configured_number_of_months(self):
+        settings = BookingSettings.load()
+        settings.max_advance_booking_months = 18
+        settings.save()
+        today = date(2026, 3, 15)
+        self.assertEqual(settings.max_bookable_date(today=today), date(2027, 9, 15))
+
+    def test_defaults_to_eighteen_months(self):
+        settings = BookingSettings.load()
+        today = date(2026, 1, 1)
+        self.assertEqual(settings.max_bookable_date(today=today), date(2027, 7, 1))
+
+    def test_zero_months_means_today_only(self):
+        settings = BookingSettings.load()
+        settings.max_advance_booking_months = 0
+        settings.save()
+        today = date(2026, 3, 15)
+        self.assertEqual(settings.max_bookable_date(today=today), today)
 
 
 class BookingCleanMaxGuestsTests(TestCase):
@@ -1261,6 +1291,45 @@ class CreateBookingTests(TestCase):
         )
         self.assertEqual(booking.enquiry_source, 'Staff offer')
 
+    def test_refuses_a_start_date_beyond_the_advance_booking_window(self):
+        settings = BookingSettings.load()
+        settings.max_advance_booking_months = 18
+        settings.save()
+        start = date.today() + relativedelta(months=19)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        with self.assertRaises(ValidationError):
+            create_booking(
+                self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+            )
+
+    def test_allows_a_start_date_beyond_the_window_when_enforcement_is_off(self):
+        """StaffGuestOfferCreateView passes enforce_advance_booking_window=False - the cap only
+        bounds the public guest-facing flow, per Thomas (2026-09-16)."""
+        settings = BookingSettings.load()
+        settings.max_advance_booking_months = 18
+        settings.save()
+        start = date.today() + relativedelta(months=19)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+            enforce_advance_booking_window=False,
+        )
+        self.assertEqual(booking.arrival_date, start)
+
+    def test_allows_a_start_date_exactly_at_the_window_edge(self):
+        settings = BookingSettings.load()
+        settings.max_advance_booking_months = 18
+        settings.save()
+        start = date.today() + relativedelta(months=18)
+        end = start + timedelta(days=5)
+        self._make_price(start, end)
+        booking = create_booking(
+            self.property, self.guest_data, start, end, {'adults': 2, 'children': 0, 'infants': 0},
+        )
+        self.assertEqual(booking.arrival_date, start)
+
 
 class BookingOfferOpenViewTests(TestCase):
     """bookings:offer_open - staff/views.py::StaffGuestOfferCreateView's activation link. Scoped
@@ -1414,6 +1483,75 @@ class CreateOwnerBookingTests(TestCase):
         end = date.today() + timedelta(days=4)
         with self.assertRaises(ValidationError):
             create_owner_booking(self.property, self.owner, start, end, adults=2, children=0, babies=0)
+
+
+class CreatePropertyBlockTests(TestCase):
+    """bookings/utils.py::create_property_block() - the Reserve nav's 'Block dates' option
+    (staff/views.py::StaffPropertyBlockCreateView), 2026-09-16 per Thomas."""
+
+    def setUp(self):
+        self.property = Property.objects.create(title='Block Test Property', short_title='BLOCKTST')
+        self.staff_user = User.objects.create_user(username='blockstaff', password='pw')
+
+    def test_creates_an_unbookable_placeholder_booking(self):
+        start = date.today() + timedelta(days=30)
+        end = start + timedelta(days=10)
+        booking = create_property_block(
+            self.property, start, end, PropertyBlock.Reason.MAINTENANCE, created_by=self.staff_user,
+            note='Re-tiling the bathroom.',
+        )
+        self.assertFalse(booking.is_owner)
+        self.assertEqual(booking.enquiry_status, 'Booking confirmed')
+        self.assertEqual(booking.enquiry_source, 'Staff block')
+        self.assertEqual(booking.guest.last_name, BLOCK_UNBOOKABLE_LAST_NAME)
+        self.assertEqual(booking.adults, 0)
+        self.assertTrue(is_unbookable_block_booking(booking))
+
+        block = PropertyBlock.objects.get(booking=booking)
+        self.assertEqual(block.reason, PropertyBlock.Reason.MAINTENANCE)
+        self.assertEqual(block.note, 'Re-tiling the bathroom.')
+        self.assertEqual(block.created_by, self.staff_user)
+
+    def test_reuses_the_same_sentinel_guest_as_the_automatic_gap_block(self):
+        start = date.today() + timedelta(days=30)
+        end = start + timedelta(days=10)
+        first = create_property_block(
+            self.property, start, end, PropertyBlock.Reason.MAINTENANCE, created_by=self.staff_user,
+        )
+        other_property = Property.objects.create(title='Block Test Property Two', short_title='BLOCKTST2')
+        second = create_property_block(
+            other_property, start, end, PropertyBlock.Reason.OTHER, created_by=self.staff_user,
+        )
+        self.assertEqual(first.guest_id, second.guest_id)
+
+    def test_rejects_overlapping_dates(self):
+        start = date.today() + timedelta(days=30)
+        end = start + timedelta(days=10)
+        create_property_block(self.property, start, end, PropertyBlock.Reason.MAINTENANCE, created_by=self.staff_user)
+        with self.assertRaises(ValidationError):
+            create_property_block(
+                self.property, start + timedelta(days=1), end + timedelta(days=1),
+                PropertyBlock.Reason.OTHER, created_by=self.staff_user,
+            )
+
+    def test_excluded_from_booking_reports_via_exclude_block_bookings(self):
+        start = date.today() + timedelta(days=30)
+        end = start + timedelta(days=10)
+        booking = create_property_block(
+            self.property, start, end, PropertyBlock.Reason.SALE_OR_OWNERSHIP, created_by=self.staff_user,
+        )
+        self.assertNotIn(booking, exclude_block_bookings(Booking.objects.all()))
+
+    def test_not_bound_by_the_advance_booking_window(self):
+        settings = BookingSettings.load()
+        settings.max_advance_booking_months = 18
+        settings.save()
+        start = date.today() + relativedelta(months=30)
+        end = start + timedelta(days=10)
+        booking = create_property_block(
+            self.property, start, end, PropertyBlock.Reason.OTHER, created_by=self.staff_user,
+        )
+        self.assertEqual(booking.arrival_date, start)
 
 
 class BookingDetailsViewTests(TestCase):
@@ -8342,6 +8480,19 @@ class BookingManageDatesViewTests(TestCase):
         response = self._post(date.today() - timedelta(days=1), date.today() + timedelta(days=5), confirmed=True)
         self.assertEqual(response.status_code, 200)
         self.assertIn('past', response.context['dates_error'])
+
+    def test_checkin_cannot_be_beyond_the_advance_booking_window(self):
+        """BookingSettings.max_advance_booking_months (2026-09-16, per Thomas) - guest self-serve
+        Edit Dates is still the public flow accepting a new stay, so the same cap applies here."""
+        settings = BookingSettings.load()
+        settings.max_advance_booking_months = 18
+        settings.save()
+        new_start = date.today() + relativedelta(months=19)
+        response = self._post(new_start, new_start + timedelta(days=5), confirmed=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('months in advance', response.context['dates_error'])
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.arrival_date, self.start)
 
     def test_overlapping_dates_are_rejected(self):
         other_guest = Guest.objects.create(first_name='Other', last_name='Guest', email='other-md@example.com')

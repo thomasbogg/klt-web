@@ -130,6 +130,68 @@ class ReserveOwnPendingBookingTests(TestCase):
         self.assertEqual(booking.enquiry_status, 'Awaiting payment')
 
 
+class ReserveViewAdvanceBookingWindowTests(TestCase):
+    """BookingSettings.max_advance_booking_months (2026-09-16, per Thomas) - guest-facing only,
+    see that field's own docstring."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Window Reserve Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.management_company = ManagementCompany.objects.create(name='Window Reserve Management Co')
+        self.property = Property.objects.create(
+            title=f'{self.location} - WINRES', short_title='WINRES',
+            location=self.location, booking_company=self.management_company,
+        )
+        PropertySpec.objects.create(property=self.property, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        settings = BookingSettings.load()
+        settings.max_advance_booking_months = 18
+        settings.save()
+        self.reserve_url = f'/properties/{self.location.slug}/winres/reserve/'
+
+    def _query(self, start, end):
+        return {
+            'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y'),
+            'guests': '2 adults,0 children,0 infants',
+        }
+
+    def test_dates_beyond_the_window_show_too_far_ahead_message(self):
+        from dateutil.relativedelta import relativedelta
+        start = date.today() + relativedelta(months=19)
+        end = start + timedelta(days=5)
+        Price.objects.create(property=self.property, start_date=date.today(), end_date=end + timedelta(days=30), rate=100)
+
+        response = self.client.get(self.reserve_url, self._query(start, end))
+        self.assertFalse(response.context['is_available'])
+        self.assertTrue(response.context['too_far_ahead'])
+        self.assertContains(response, 'months in advance')
+
+    def test_post_beyond_the_window_is_rejected_server_side(self):
+        """Defense-in-depth even if the client-side flatpickr maxDate is bypassed."""
+        from dateutil.relativedelta import relativedelta
+        start = date.today() + relativedelta(months=19)
+        end = start + timedelta(days=5)
+        Price.objects.create(property=self.property, start_date=date.today(), end_date=end + timedelta(days=30), rate=100)
+
+        response = self.client.post(self.reserve_url, {
+            **self._query(start, end),
+            'currency': 'EUR', 'first_name': 'Test', 'last_name': 'Guest',
+            'email': 'window-reserve@example.com', 'phone': '', 'country': 'GB', 'terms_accepted': 'on',
+        })
+        self.assertEqual(response.status_code, 200)  # re-rendered with a form error, not redirected
+        self.assertFalse(Booking.objects.filter(property=self.property).exists())
+
+    def test_dates_within_the_window_are_unaffected(self):
+        start = date.today() + timedelta(days=330)
+        end = start + timedelta(days=5)
+        Price.objects.create(property=self.property, start_date=date.today(), end_date=end + timedelta(days=30), rate=100)
+
+        response = self.client.get(self.reserve_url, self._query(start, end))
+        self.assertTrue(response.context['is_available'])
+        self.assertFalse(response.context['too_far_ahead'])
+
+
 class MultiPropertyReserveViewTests(TestCase):
     """Stage 2 of multi-property booking (see bookings/models.py::ReservationGroup) - a guest
     reaching this page from a SearchView combo suggestion should be able to split their party

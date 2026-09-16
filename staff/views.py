@@ -40,8 +40,8 @@ from finance.services import (
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_deposit_waiver, compute_effective_self_check_in, create_booking,
-    create_owner_booking, exclude_block_bookings, extras_summary, parsed_arrival_departure_time,
-    parsed_travel_method, sync_ical_link, valid_flight_number,
+    create_owner_booking, create_property_block, exclude_block_bookings, extras_summary,
+    parsed_arrival_departure_time, parsed_travel_method, sync_ical_link, valid_flight_number,
 )
 from bookings.views import is_paid
 from communications.models import EmailTemplate, ScheduledEmail
@@ -59,7 +59,9 @@ from properties.models import (
 from properties.utils import (
     apply_price_bulk_plan, build_price_bulk_plan, get_stay_total_price, gross_up_for_commission,
 )
-from staff.models import Checkin, CleaningTask, Deduction, OwnerPayment, StaffProfile, StaffRole, TaskHistoryEntry
+from staff.models import (
+    Checkin, CleaningTask, Deduction, OwnerPayment, PropertyBlock, StaffProfile, StaffRole, TaskHistoryEntry,
+)
 from staff.monthly_reports import (
     EXTRAS_METRICS, REVENUE_GROUPS, bookings_trend_rows, commissions_trend_rows, extras_trend_rows,
     location_groups, management_trend_rows, monthly_bookings_rows, monthly_commissions_rows,
@@ -362,6 +364,76 @@ class StaffOwnerBookingCreateView(View):
 
 
 @method_decorator(staff_page_required('can_view_bookings'), name='dispatch')
+class StaffPropertyBlockCreateView(View):
+    """The Reserve nav's third option, 'Block dates' (2026-09-16, per Thomas) - marks a property
+    unbookable for a date range that's neither a guest booking nor an owner one (maintenance work,
+    a pending sale, or a question over who currently holds booking responsibility for a property).
+    Same unrestricted property picker as StaffOwnerBookingCreateView. All the actual mechanics
+    (placeholder Booking + PropertyBlock bookkeeping row) live in bookings/utils.py::
+    create_property_block - this view is just the form."""
+    template_name = 'staff/booking_create_block.html'
+
+    def get(self, request, *args, **kwargs):
+        context = self._context()
+        context.update({'arrival_date': '', 'departure_date': '', 'reason': '', 'note': ''})
+        return render(request, self.template_name, context)
+
+    def post(self, request, *args, **kwargs):
+        post = request.POST
+        context = self._context()
+        context.update({
+            'selected_property_id': post.get('property_id', ''),
+            'arrival_date': post.get('arrival_date', ''),
+            'departure_date': post.get('departure_date', ''),
+            'reason': post.get('reason', ''),
+            'note': post.get('note', ''),
+        })
+
+        property_id = post.get('property_id', '')
+        property = Property.objects.filter(pk=property_id).first() if property_id.isdigit() else None
+        if property is None:
+            messages.error(request, "Please choose a property.")
+            return render(request, self.template_name, context)
+
+        reason = post.get('reason', '')
+        if reason not in PropertyBlock.Reason.values:
+            messages.error(request, "Please choose a reason.")
+            return render(request, self.template_name, context)
+
+        arrival_date = _parsed_date(post.get('arrival_date'))
+        departure_date = _parsed_date(post.get('departure_date'))
+        if not arrival_date or not departure_date:
+            messages.error(request, "Please provide both a start and end date.")
+            return render(request, self.template_name, context)
+        if departure_date <= arrival_date:
+            messages.error(request, "The end date must be after the start date.")
+            return render(request, self.template_name, context)
+
+        try:
+            booking = create_property_block(
+                property, arrival_date, departure_date, reason,
+                created_by=request.user, note=post.get('note', '').strip(),
+            )
+        except ValidationError as error:
+            message = " ".join(error.messages) if hasattr(error, 'messages') else str(error)
+            messages.error(request, message)
+            return render(request, self.template_name, context)
+
+        messages.success(
+            request,
+            f"{property} blocked from {arrival_date:%d %b %Y} to {departure_date:%d %b %Y}. "
+            f"To release it early, cancel this booking from its detail page."
+        )
+        return redirect('staff:booking_detail', reference=booking.reference)
+
+    def _context(self):
+        return {
+            'property_groups': properties_grouped_by_location(Property.objects.select_related('location').all()),
+            'reason_choices': PropertyBlock.Reason.choices,
+        }
+
+
+@method_decorator(staff_page_required('can_view_bookings'), name='dispatch')
 class StaffGuestOfferCreateView(View):
     """Staff picks property/dates/guests, sees the normally-calculated price with an optional
     one-click % discount layered on top (Thomas: percent + a reason, not a flat amount), then gets
@@ -411,6 +483,7 @@ class StaffGuestOfferCreateView(View):
                 context['guests'], enquiry_source='Staff offer',
                 manual_discount_percent=context['discount_percent'],
                 manual_discount_reason=request.POST.get('discount_reason', '').strip(),
+                enforce_advance_booking_window=False,
             )
         except ValidationError as error:
             message = " ".join(error.messages) if hasattr(error, 'messages') else str(error)
@@ -1198,7 +1271,7 @@ class StaffSettingsView(View):
             'payment_clearing_business_days', 'adult_min_age', 'child_min_age',
             'self_check_in_code_reveal_days', 'tourist_tax_min_age', 'tourist_tax_max_nights',
             'tourist_tax_season_start_month', 'tourist_tax_season_end_month',
-            'cleaning_gap_nights_per_block_day',
+            'cleaning_gap_nights_per_block_day', 'max_advance_booking_months',
         ):
             value = _parsed_int(post.get(field))
             if value is not None:

@@ -167,7 +167,7 @@ def compute_initial_hold_expiry(arrival_date, booking_settings, now=None):
 
 def create_booking(property, guest_data, start_date, end_date, guests, currency='EUR',
                     enquiry_source='Website', manual_discount_percent=None, manual_discount_reason='',
-                    terms_accepted_at=None, reservation_group=None):
+                    terms_accepted_at=None, reservation_group=None, enforce_advance_booking_window=True):
     """Create the Guest (if new), Booking, and locked-in Charge for a reservation, all-or-nothing.
 
     guest_data: dict with first_name, last_name, email, phone, country.
@@ -190,12 +190,26 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
     the same group - each leg still gets its own independent Guest/Booking/Charge/Payment exactly
     as a normal single-property booking would, this just tags which group it belongs to.
 
-    Raises django.core.exceptions.ValidationError (from Booking.full_clean()) if the dates are no
-    longer available. Returns the created Booking.
+    enforce_advance_booking_window (2026-09-16, per Thomas): BookingSettings.
+    max_advance_booking_months only bounds the public guest-facing search/reservation flow
+    (ReserveView, MultiPropertyReserveView, both default True) - staff creating a booking via
+    StaffGuestOfferCreateView pass False, since a staff member using deliberate judgement isn't
+    the thing this setting exists to bound. Raises ValidationError the same way the overlap check
+    below does, so callers already catching that don't need a second except clause.
+
+    Raises django.core.exceptions.ValidationError (from Booking.full_clean(), or this window check)
+    if the dates are no longer available. Returns the created Booking.
     """
     from bookings.models import BalancePayment, Booking, BookingSettings, Charge, Departure, Payment
     from guests.models import Guest
     from properties.utils import get_stay_total_price
+
+    booking_settings = BookingSettings.load()
+    if enforce_advance_booking_window and start_date > booking_settings.max_bookable_date():
+        raise ValidationError(
+            f"We can only take reservations up to {booking_settings.max_advance_booking_months} "
+            f"months in advance - please choose an earlier arrival date."
+        )
 
     with transaction.atomic():
         # filter-then-create, not get_or_create: email__iexact isn't a settable field kwarg for the
@@ -211,7 +225,6 @@ def create_booking(property, guest_data, start_date, end_date, guests, currency=
                 country=guest_data.get('country') or None,
             )
 
-        booking_settings = BookingSettings.load()
         pricing = get_stay_total_price(
             property, start_date, end_date, guests,
             monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
@@ -341,6 +354,56 @@ def create_owner_booking(property, owner, start_date, end_date, adults, children
     booking.save()
     Departure.objects.create(booking=booking, clean=clean)
     Arrival.objects.create(booking=booking, meet_greet=meet_greet)
+    return booking
+
+
+def create_property_block(property, start_date, end_date, reason, created_by, note=''):
+    """Creates a manually staff-triggered 'unbookable' block on `property` for [start_date,
+    end_date) - the Reserve nav's 'Block dates' option (staff/views.py::
+    StaffPropertyBlockCreateView, 2026-09-16 per Thomas: maintenance work, a pending sale, or a
+    question over who currently holds booking responsibility for a property). Reuses the exact
+    same sentinel-guest placeholder-Booking mechanism the automatic gap-block/late-checkout
+    machinery already established (staff/utils.py::_create_cleaning_gap_block_booking) rather than
+    inventing a second one - see staff.models.PropertyBlock's own docstring for why a real Booking
+    row is the only thing that actually blocks guest search, both calendars, and iCal export at
+    once. is_owner=False, enquiry_source='Staff block', adults/children/babies=0 - already
+    excluded from cleaning-task generation, check-in generation, and every booking report/count by
+    the existing is_unbookable_block_booking()/exclude_block_bookings() machinery.
+
+    Unlike the automatic gap-block helpers (which never call full_clean() because the caller has
+    already computed a mathematically-guaranteed-free gap), this DOES - a human is typing
+    arbitrary dates into a form here, so the ordinary overlap validation every other booking-
+    creation path already gets (Booking.clean()) is what actually protects against blocking dates
+    that already have a real booking. Raises ValidationError on overlap, same as create_booking()/
+    create_owner_booking(). Not gated by BookingSettings.max_advance_booking_months - see that
+    field's own docstring, staff creating a block is exercising judgement, not the public flow the
+    cap exists to bound."""
+    from bookings.models import Booking
+    from guests.models import Guest
+
+    guest = Guest.objects.filter(last_name__iexact=BLOCK_UNBOOKABLE_LAST_NAME).order_by('pk').first()
+    if guest is None:
+        guest = Guest.objects.create(last_name=BLOCK_UNBOOKABLE_LAST_NAME, first_name=None)
+
+    booking = Booking(
+        property=property,
+        guest=guest,
+        arrival_date=start_date,
+        departure_date=end_date,
+        is_owner=False,
+        enquiry_status='Booking confirmed',
+        enquiry_date=date.today(),
+        enquiry_source='Staff block',
+        adults=0,
+        children=0,
+        babies=0,
+        last_updated=timezone.now(),
+    )
+    booking.full_clean()
+    booking.save()
+
+    from staff.models import PropertyBlock
+    PropertyBlock.objects.create(booking=booking, reason=reason, note=note, created_by=created_by)
     return booking
 
 

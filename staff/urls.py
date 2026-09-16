@@ -15,6 +15,7 @@ urlpatterns = [
     path('', views.StaffHomeView.as_view(), name='home'),
     path('bookings/', views.StaffBookingLookupView.as_view(), name='booking_lookup'),
     path('bookings/new/owner/', views.StaffOwnerBookingCreateView.as_view(), name='booking_create_owner'),
+    path('bookings/new/block/', views.StaffPropertyBlockCreateView.as_view(), name='booking_create_block'),
     path('bookings/new/offer/', views.StaffGuestOfferCreateView.as_view(), name='booking_create_offer'),
     path('bookings/new/offer/guest-search/', views.StaffGuestSearchView.as_view(), name='booking_guest_search'),
     path('guests/', views.StaffGuestListView.as_view(), name='guest_list'),
