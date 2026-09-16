@@ -361,7 +361,10 @@ class StaffOwnerBookingCreateView(View):
         return redirect('staff:booking_detail', reference=booking.reference)
 
     def _context(self):
-        return {'property_groups': properties_grouped_by_location(Property.objects.select_related('location').all())}
+        return {
+            'property_groups': properties_grouped_by_location(Property.objects.select_related('location').all()),
+            'active_tab': 'owner',
+        }
 
 
 @method_decorator(staff_page_required('can_view_bookings'), name='dispatch')
@@ -431,6 +434,7 @@ class StaffPropertyBlockCreateView(View):
         return {
             'property_groups': properties_grouped_by_location(Property.objects.select_related('location').all()),
             'reason_choices': PropertyBlock.Reason.choices,
+            'active_tab': 'block',
         }
 
 
@@ -534,6 +538,7 @@ class StaffGuestOfferCreateView(View):
         return {
             'property_groups': properties_grouped_by_location(Property.objects.select_related('location').all()),
             'countries': country_choices,
+            'active_tab': 'offer',
             'selected_property_id': property_id,
             'property': property,
             'start_date': start_date, 'end_date': end_date,
@@ -569,6 +574,7 @@ class StaffNotifyOnSaleListView(View):
             'requests': requests,
             'status': status,
             'status_choices': NotifyOnSaleRequest.STATUS_CHOICES,
+            'active_tab': 'not_on_sale',
         }
         return render(request, self.template_name, context)
 

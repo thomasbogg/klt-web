@@ -20,6 +20,8 @@
             <a href="{% url 'staff:home' %}" class="staff-header-link">&larr; Home</a>
         </header>
 
+        {% include 'staff/_reserve_nav.html' %}
+
         {% if messages %}
         <div class="staff-messages">
             {% for message in messages %}

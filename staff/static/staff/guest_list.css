@@ -18,6 +18,22 @@
     border-bottom: 1px solid #e5e5e5;
 }
 
+.staff-subtabs-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+.staff-subtabs-row .staff-guest-letters {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
 .staff-guest-letter {
     font-family: var(--secondary-font);
     font-size: 0.8rem;

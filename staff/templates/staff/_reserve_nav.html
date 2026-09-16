@@ -1,0 +1,6 @@
+<div class="staff-reserve-subnav">
+    <a href="{% url 'staff:booking_create_offer' %}" class="staff-reserve-subnav-link{% if active_tab == 'offer' %} staff-reserve-subnav-link-active{% endif %}">Guest offer</a>
+    <a href="{% url 'staff:booking_create_owner' %}" class="staff-reserve-subnav-link{% if active_tab == 'owner' %} staff-reserve-subnav-link-active{% endif %}">Owner booking</a>
+    <a href="{% url 'staff:booking_create_block' %}" class="staff-reserve-subnav-link{% if active_tab == 'block' %} staff-reserve-subnav-link-active{% endif %}">Block dates</a>
+    <a href="{% url 'staff:notify_on_sale_list' %}" class="staff-reserve-subnav-link{% if active_tab == 'not_on_sale' %} staff-reserve-subnav-link-active{% endif %}">Not on sale yet</a>
+</div>

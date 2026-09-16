@@ -7,8 +7,10 @@ body {
 
 .staff-page {
     max-width: 1400px;
+    width: 100%;
     margin: 0 auto;
     padding: 24px 32px 60px;
+    box-sizing: border-box;
 }
 
 .staff-lookup-page {
@@ -17,6 +19,33 @@ body {
 
 .staff-lookup-page .staff-page-title {
     margin-top: 40px;
+}
+
+.staff-reserve-subnav {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #e0e0e0;
+    padding-bottom: 8px;
+}
+
+.staff-reserve-subnav-link {
+    font-family: var(--secondary-font);
+    font-weight: 700;
+    font-size: 0.85rem;
+    padding: 6px 12px;
+    border-radius: 6px;
+    color: #666;
+    text-decoration: none;
+}
+
+.staff-reserve-subnav-link:hover {
+    background: #f2f2f2;
+}
+
+.staff-reserve-subnav-link-active {
+    color: var(--secondary-color);
+    background: var(--secondary-color-soft-dark, #f2f2f2);
 }
 
 .staff-nav {

@@ -17,6 +17,8 @@
             <h1 class="staff-page-title">Not On Sale Yet</h1>
         </header>
 
+        {% include 'staff/_reserve_nav.html' %}
+
         {% if messages %}
         <div class="staff-messages">
             {% for message in messages %}
@@ -32,17 +34,19 @@
             the meantime.
         </p>
 
-        <form method="post" class="staff-notify-on-sale-check">
-            {% csrf_token %}
-            <button type="submit" class="staff-button">Check now</button>
-        </form>
+        <div class="staff-subtabs-row">
+            <nav class="staff-guest-letters">
+                <a href="?status=pending" class="staff-guest-letter{% if status == 'pending' %} staff-guest-letter-active{% endif %}">Pending</a>
+                <a href="?status=notified" class="staff-guest-letter{% if status == 'notified' %} staff-guest-letter-active{% endif %}">Notified</a>
+                <a href="?status=unavailable" class="staff-guest-letter{% if status == 'unavailable' %} staff-guest-letter-active{% endif %}">No longer available</a>
+                <a href="?status=all" class="staff-guest-letter{% if status == 'all' %} staff-guest-letter-active{% endif %}">All</a>
+            </nav>
 
-        <nav class="staff-guest-letters">
-            <a href="?status=pending" class="staff-guest-letter{% if status == 'pending' %} staff-guest-letter-active{% endif %}">Pending</a>
-            <a href="?status=notified" class="staff-guest-letter{% if status == 'notified' %} staff-guest-letter-active{% endif %}">Notified</a>
-            <a href="?status=unavailable" class="staff-guest-letter{% if status == 'unavailable' %} staff-guest-letter-active{% endif %}">No longer available</a>
-            <a href="?status=all" class="staff-guest-letter{% if status == 'all' %} staff-guest-letter-active{% endif %}">All</a>
-        </nav>
+            <form method="post" class="staff-notify-on-sale-check">
+                {% csrf_token %}
+                <button type="submit" class="staff-button">Check now</button>
+            </form>
+        </div>
 
         <table class="staff-guest-table">
             <thead>
