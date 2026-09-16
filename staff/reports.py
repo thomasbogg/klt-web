@@ -92,11 +92,19 @@ def booking_report_rows(start, end, properties=None):
     Check-out" on both the staff Reports page and, worse, the owner-facing one (OwnerReportView) -
     confusing either way, and not something an owner should ever see on their own report."""
     payment_settings = PaymentSettings.load()
+    # prefetch_related('date_adjustments', 'party'): compute_owner_payout()'s _off_platform_cash()
+    # sums booking.date_adjustments.all() and clean_fee()'s total_guests() sums booking.party.all()
+    # - both deliberately iterate the prefetch cache in Python rather than .aggregate()/.count()
+    # (see each one's own docstring) specifically so a bulk caller like this can prefetch once
+    # instead of paying one query per booking per relation (2026-09-16, per Thomas - this was most
+    # of the Reports page's 15s+ load: ~2 extra queries per booking on top of the base row, unlike
+    # finance/services.py::owner_settlements, which already prefetches all three for the same
+    # reason).
     bookings_qs = exclude_block_bookings(Booking.objects.filter(
         enquiry_status__in=VALID_BOOKING_STATUSES, arrival_date__range=(start, end),
     )).select_related(
         'property__owner', 'property__specs', 'guest', 'charges', 'platform_payout', 'departure', 'arrival',
-    ).prefetch_related('owner_payments').order_by('arrival_date', 'property__title')
+    ).prefetch_related('owner_payments', 'date_adjustments', 'party').order_by('arrival_date', 'property__title')
     if properties is not None:
         bookings_qs = bookings_qs.filter(property__in=properties)
     bookings = list(bookings_qs)

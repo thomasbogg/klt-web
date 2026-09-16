@@ -1,7 +1,9 @@
+from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 
-from django.db.models import Max, Min, Q
+from django.db.models import Count, Max, Min, Q
+from django.db.models.functions import TruncMonth
 
 import env_settings
 from bookings.models import AirportTransfer, Booking, Extra, PaymentSettings
@@ -29,13 +31,47 @@ def _group_for_booking(booking):
     return booking.enquiry_source if booking.enquiry_source in env_settings.PLATFORMS else 'Direct'
 
 
-def _revenue_totals_for_month(year, month):
-    """{group: {'paid_by_guest': Decimal, 'rcvd_by_klt': Decimal}} for every REVENUE_GROUPS entry,
-    summed across every real guest booking (is_owner=False) arriving in this month. Owner stays
-    are excluded entirely - they generate no rental revenue by definition (same reasoning as
-    bookings/payouts.py::compute_owner_payout's own owner-stay short-circuit), matching the
-    reference workbook's own Revenue sheet, which has no Owner-stay column at all (unlike the
-    Stays sheet below, which does support an owner-stay toggle).
+def _percent(part, whole):
+    """Works for both Decimal (money) and plain int (counts) inputs - always via Decimal division
+    rather than Python's own `/`, which would return a float for two ints and risks the usual
+    binary-float-imprecision artifacts once that float is fed into Decimal.quantize()."""
+    return _round(Decimal(part) / Decimal(whole) * 100) if whole else ZERO
+
+
+def _month_range(start_date, end_date):
+    """Yields (year, month) from start_date's month through end_date's month, inclusive."""
+    year, month = start_date.year, start_date.month
+    while (year, month) <= (end_date.year, end_date.month):
+        yield year, month
+        month += 1
+        if month > 12:
+            year, month = year + 1, 1
+
+
+def _table_bounds(year):
+    """(start, end) spanning 1 Jan of `year - 1` through 31 Dec of `year` - the one date range
+    every monthly_X_rows() table needs (this year's 12 months plus last year's, for the
+    year-over-year delta column), so its _X_totals_by_month() companion can fetch both years in a
+    single query instead of 24 separate ones."""
+    return date(year - 1, 1, 1), last_day_of_month(date(year, 12, 1))
+
+
+# Every _X_totals_by_month() below replaces what used to be a _X_totals_for_month(year, month)
+# helper called once per calendar month (2026-09-16, per Thomas: this was almost all of the
+# Monthly-tab pages' 15s+ load times) - each now runs ONE query (or a small fixed number) across
+# an entire multi-year range and buckets the results by (year, month) in Python, instead of one
+# round trip per month. monthly_X_rows(year) calls it once for the two years it displays;
+# X_trend_rows() calls it once for the full "since records began" range - so a full page load is
+# now 2 queries total for that report type, not up to 90.
+
+
+def _revenue_totals_by_month(start, end):
+    """{(year, month): {group: {'paid_by_guest': Decimal, 'rcvd_by_klt': Decimal}}} for every
+    REVENUE_GROUPS entry, summed across every real guest booking (is_owner=False) arriving in
+    [start, end]. Owner stays are excluded entirely - they generate no rental revenue by
+    definition (same reasoning as bookings/payouts.py::compute_owner_payout's own owner-stay
+    short-circuit), matching the reference workbook's own Revenue sheet, which has no Owner-stay
+    column at all (unlike the Stays sheet below, which does support an owner-stay toggle).
 
     Direct bookings: 'paid by guest' and 'received by KLT' are identical - the guest pays KLT
     directly, no platform intermediary (Charge.total_rental for both). Platform bookings: sourced
@@ -44,37 +80,29 @@ def _revenue_totals_for_month(year, month):
     booking missing the relevant money record yet (no Charge, or a PlatformPayout row with a null
     figure) is skipped for whichever side of paid/received it's missing, same
     "not yet available, don't guess" convention as compute_owner_payout()."""
-    start = date(year, month, 1)
-    end = last_day_of_month(start)
     bookings = Booking.objects.filter(
         is_owner=False, enquiry_status__in=VALID_BOOKING_STATUSES, arrival_date__range=(start, end),
     ).select_related('charges', 'platform_payout')
 
-    totals = {group: {'paid_by_guest': ZERO, 'rcvd_by_klt': ZERO} for group in REVENUE_GROUPS}
+    totals = defaultdict(lambda: {group: {'paid_by_guest': ZERO, 'rcvd_by_klt': ZERO} for group in REVENUE_GROUPS})
     for booking in bookings:
+        key = (booking.arrival_date.year, booking.arrival_date.month)
         group = _group_for_booking(booking)
         if group == 'Direct':
             charge = getattr(booking, 'charges', None)
             if charge is None or charge.basic_rental is None:
                 continue
-            totals[group]['paid_by_guest'] += charge.total_rental
-            totals[group]['rcvd_by_klt'] += charge.total_rental
+            totals[key][group]['paid_by_guest'] += charge.total_rental
+            totals[key][group]['rcvd_by_klt'] += charge.total_rental
         else:
             payout = getattr(booking, 'platform_payout', None)
             if payout is None:
                 continue
             if payout.gross_amount is not None:
-                totals[group]['paid_by_guest'] += payout.gross_amount
+                totals[key][group]['paid_by_guest'] += payout.gross_amount
             if payout.payout_amount is not None:
-                totals[group]['rcvd_by_klt'] += payout.payout_amount
+                totals[key][group]['rcvd_by_klt'] += payout.payout_amount
     return totals
-
-
-def _percent(part, whole):
-    """Works for both Decimal (money) and plain int (counts) inputs - always via Decimal division
-    rather than Python's own `/`, which would return a float for two ints and risks the usual
-    binary-float-imprecision artifacts once that float is fed into Decimal.quantize()."""
-    return _round(Decimal(part) / Decimal(whole) * 100) if whole else ZERO
 
 
 def monthly_revenue_rows(year):
@@ -84,10 +112,11 @@ def monthly_revenue_rows(year):
     mirrors the reference workbook's Revenue sheet exactly (Tot/%/Lst Yr per money column, per
     group). 'Lst Yr' is a genuine delta (can be negative), not the prior year's raw figure, same
     as the workbook."""
+    all_totals = _revenue_totals_by_month(*_table_bounds(year))
     rows = []
     for month in range(1, 13):
-        this_year = _revenue_totals_for_month(year, month)
-        last_year = _revenue_totals_for_month(year - 1, month)
+        this_year = all_totals[(year, month)]
+        last_year = all_totals[(year - 1, month)]
 
         this_year['Total'] = {
             'paid_by_guest': sum((v['paid_by_guest'] for v in this_year.values()), ZERO),
@@ -116,26 +145,50 @@ def monthly_revenue_rows(year):
     return rows
 
 
-def _stays_totals_for_month(year, month):
-    """{group: {'arrivals': int, 'nights': int}} for every REVENUE_GROUPS entry (guest stays, by
-    platform) plus 'Owner' (every owner stay that month, ungrouped by platform - an owner stay
-    isn't sourced from a booking platform, so there's nothing to split it by) - unlike
-    _revenue_totals_for_month, owner stays are NOT excluded here, since this sheet covers both
-    (see monthly_stays_rows()'s own docstring for how the two get combined). Nights =
-    departure_date - arrival_date in days, same convention as staff.reports.py's own per-booking
-    'nights' figure - counted regardless of whether Charge/PlatformPayout money records exist
-    yet, unlike the revenue figures above, since a stay happened (and used a night)
-    independently of whether it's been priced/reconciled yet (owner stays never have either)."""
-    start = date(year, month, 1)
-    end = last_day_of_month(start)
+def revenue_trend_rows():
+    """One row per calendar month from the earliest to the latest real guest booking's arrival
+    date on record (inclusive, spans into already-booked future months too, not capped at
+    today) - Total paid_by_guest/rcvd_by_klt only, no group breakdown or year-over-year delta
+    (those stay table-only concepts on the Revenue tab itself) - a single continuous
+    "since records began" series for the growth-over-time chart, per Thomas 2026-08-30. Empty
+    list if there's no guest booking data at all yet."""
+    bounds = Booking.objects.filter(
+        is_owner=False, enquiry_status__in=VALID_BOOKING_STATUSES,
+    ).aggregate(earliest=Min('arrival_date'), latest=Max('arrival_date'))
+    if bounds['earliest'] is None:
+        return []
+
+    all_totals = _revenue_totals_by_month(bounds['earliest'], bounds['latest'])
+    rows = []
+    for year, month in _month_range(bounds['earliest'], bounds['latest']):
+        totals = all_totals[(year, month)]
+        rows.append({
+            'month': date(year, month, 1),
+            'paid_by_guest': sum((v['paid_by_guest'] for v in totals.values()), ZERO),
+            'rcvd_by_klt': sum((v['rcvd_by_klt'] for v in totals.values()), ZERO),
+        })
+    return rows
+
+
+def _stays_totals_by_month(start, end):
+    """{(year, month): {group: {'arrivals': int, 'nights': int}}} for every REVENUE_GROUPS entry
+    (guest stays, by platform) plus 'Owner' (every owner stay, ungrouped by platform - an owner
+    stay isn't sourced from a booking platform, so there's nothing to split it by) - unlike
+    _revenue_totals_by_month, owner stays are NOT excluded here, since this sheet covers both (see
+    monthly_stays_rows()'s own docstring for how the two get combined). Nights = departure_date -
+    arrival_date in days, same convention as staff.reports.py's own per-booking 'nights' figure -
+    counted regardless of whether Charge/PlatformPayout money records exist yet, unlike the
+    revenue figures above, since a stay happened (and used a night) independently of whether it's
+    been priced/reconciled yet (owner stays never have either)."""
     bookings = _exclude_block_bookings(
         Booking.objects.filter(enquiry_status__in=VALID_BOOKING_STATUSES, arrival_date__range=(start, end))
     )
-    totals = {group: {'arrivals': 0, 'nights': 0} for group in REVENUE_GROUPS + ('Owner',)}
+    totals = defaultdict(lambda: {group: {'arrivals': 0, 'nights': 0} for group in REVENUE_GROUPS + ('Owner',)})
     for booking in bookings:
+        key = (booking.arrival_date.year, booking.arrival_date.month)
         group = 'Owner' if booking.is_owner else _group_for_booking(booking)
-        totals[group]['arrivals'] += 1
-        totals[group]['nights'] += (booking.departure_date - booking.arrival_date).days
+        totals[key][group]['arrivals'] += 1
+        totals[key][group]['nights'] += (booking.departure_date - booking.arrival_date).days
     return totals
 
 
@@ -151,10 +204,11 @@ def monthly_stays_rows(year, include_owner=False):
     summed into Total regardless of which of those four columns a caller chooses to *display*,
     the Owner toggle genuinely changes what Total means, not just what's shown - unifying the two
     reference sheets was only possible because Owner has nowhere else to be split by."""
+    all_totals = _stays_totals_by_month(*_table_bounds(year))
     rows = []
     for month in range(1, 13):
-        this_year = _stays_totals_for_month(year, month)
-        last_year = _stays_totals_for_month(year - 1, month)
+        this_year = all_totals[(year, month)]
+        last_year = all_totals[(year - 1, month)]
 
         total_groups = REVENUE_GROUPS + (('Owner',) if include_owner else ())
         this_year['Total'] = {
@@ -185,40 +239,6 @@ def monthly_stays_rows(year, include_owner=False):
     return rows
 
 
-def _month_range(start_date, end_date):
-    """Yields (year, month) from start_date's month through end_date's month, inclusive."""
-    year, month = start_date.year, start_date.month
-    while (year, month) <= (end_date.year, end_date.month):
-        yield year, month
-        month += 1
-        if month > 12:
-            year, month = year + 1, 1
-
-
-def revenue_trend_rows():
-    """One row per calendar month from the earliest to the latest real guest booking's arrival
-    date on record (inclusive, spans into already-booked future months too, not capped at
-    today) - Total paid_by_guest/rcvd_by_klt only, no group breakdown or year-over-year delta
-    (those stay table-only concepts on the Revenue tab itself) - a single continuous
-    "since records began" series for the growth-over-time chart, per Thomas 2026-08-30. Empty
-    list if there's no guest booking data at all yet."""
-    bounds = Booking.objects.filter(
-        is_owner=False, enquiry_status__in=VALID_BOOKING_STATUSES,
-    ).aggregate(earliest=Min('arrival_date'), latest=Max('arrival_date'))
-    if bounds['earliest'] is None:
-        return []
-
-    rows = []
-    for year, month in _month_range(bounds['earliest'], bounds['latest']):
-        totals = _revenue_totals_for_month(year, month)
-        rows.append({
-            'month': date(year, month, 1),
-            'paid_by_guest': sum((v['paid_by_guest'] for v in totals.values()), ZERO),
-            'rcvd_by_klt': sum((v['rcvd_by_klt'] for v in totals.values()), ZERO),
-        })
-    return rows
-
-
 def stays_trend_rows(include_owner=False):
     """Same shape as revenue_trend_rows() above but Arrivals/Nights, honouring the Stays tab's
     own include_owner toggle so the trend chart never shows a different scope than the table
@@ -233,9 +253,10 @@ def stays_trend_rows(include_owner=False):
         return []
 
     groups = REVENUE_GROUPS + (('Owner',) if include_owner else ())
+    all_totals = _stays_totals_by_month(bounds['earliest'], bounds['latest'])
     rows = []
     for year, month in _month_range(bounds['earliest'], bounds['latest']):
-        totals = _stays_totals_for_month(year, month)
+        totals = all_totals[(year, month)]
         rows.append({
             'month': date(year, month, 1),
             'arrivals': sum(totals[g]['arrivals'] for g in groups),
@@ -244,29 +265,28 @@ def stays_trend_rows(include_owner=False):
     return rows
 
 
-def _bookings_totals_for_month(year, month):
-    """{group: {'bookings': int, 'enquiries': int}} for every REVENUE_GROUPS entry, counted
-    across every real guest Booking row (is_owner=False) arriving in this month, mirroring the
-    reference workbook's Bookings sheet. 'enquiries' = every such row regardless of status (no
-    status filter at all); 'bookings' = only the confirmed subset (VALID_BOOKING_STATUSES). The
-    two genuinely diverge for both direct and platform sources, just via different routes: an
-    abandoned/expired/failed direct reservation attempt still created a real Booking row that
-    never reached 'Booking confirmed' (see env_settings.py's own status-tuple docstrings for the
-    full list), and a platform reservation that was later cancelled on the platform itself still
-    has its row here too, as 'Cancelled by platform' (bookings/utils.py::sync_ical_link(), when a
-    previously-imported UID disappears from that platform's feed) - counting toward Enquiries but
-    not Bookings, same as the direct case. Per Thomas 2026-08-30: only a platform enquiry that
-    never became a reservation at all (no booking ever made) leaves no row here - that's the one
-    genuine invisible case, not cancellations."""
-    start = date(year, month, 1)
-    end = last_day_of_month(start)
+def _bookings_totals_by_month(start, end):
+    """{(year, month): {group: {'bookings': int, 'enquiries': int}}} for every REVENUE_GROUPS
+    entry, counted across every real guest Booking row (is_owner=False) arriving in [start, end],
+    mirroring the reference workbook's Bookings sheet. 'enquiries' = every such row regardless of
+    status (no status filter at all); 'bookings' = only the confirmed subset
+    (VALID_BOOKING_STATUSES). The two genuinely diverge for both direct and platform sources, just
+    via different routes: an abandoned/expired/failed direct reservation attempt still created a
+    real Booking row that never reached 'Booking confirmed' (see env_settings.py's own
+    status-tuple docstrings for the full list), and a platform reservation that was later
+    cancelled on the platform itself still has its row here too, as 'Cancelled by platform'
+    (bookings/utils.py::sync_ical_link(), when a previously-imported UID disappears from that
+    platform's feed) - counting toward Enquiries but not Bookings, same as the direct case. Per
+    Thomas 2026-08-30: only a platform enquiry that never became a reservation at all (no booking
+    ever made) leaves no row here - that's the one genuine invisible case, not cancellations."""
     bookings = _exclude_block_bookings(Booking.objects.filter(is_owner=False, arrival_date__range=(start, end)))
-    totals = {group: {'bookings': 0, 'enquiries': 0} for group in REVENUE_GROUPS}
+    totals = defaultdict(lambda: {group: {'bookings': 0, 'enquiries': 0} for group in REVENUE_GROUPS})
     for booking in bookings:
+        key = (booking.arrival_date.year, booking.arrival_date.month)
         group = _group_for_booking(booking)
-        totals[group]['enquiries'] += 1
+        totals[key][group]['enquiries'] += 1
         if booking.enquiry_status in VALID_BOOKING_STATUSES:
-            totals[group]['bookings'] += 1
+            totals[key][group]['bookings'] += 1
     return totals
 
 
@@ -275,10 +295,11 @@ def monthly_bookings_rows(year):
     Bookings/Enquiries counts, that group's % share of the month's Total, and a year-over-year
     delta - same shape as monthly_revenue_rows()/monthly_stays_rows() above, mirroring the
     reference workbook's Bookings sheet."""
+    all_totals = _bookings_totals_by_month(*_table_bounds(year))
     rows = []
     for month in range(1, 13):
-        this_year = _bookings_totals_for_month(year, month)
-        last_year = _bookings_totals_for_month(year - 1, month)
+        this_year = all_totals[(year, month)]
+        last_year = all_totals[(year - 1, month)]
 
         this_year['Total'] = {
             'bookings': sum(v['bookings'] for v in this_year.values()),
@@ -317,9 +338,10 @@ def bookings_trend_rows():
     if bounds['earliest'] is None:
         return []
 
+    all_totals = _bookings_totals_by_month(bounds['earliest'], bounds['latest'])
     rows = []
     for year, month in _month_range(bounds['earliest'], bounds['latest']):
-        totals = _bookings_totals_for_month(year, month)
+        totals = all_totals[(year, month)]
         rows.append({
             'month': date(year, month, 1),
             'bookings': sum(v['bookings'] for v in totals.values()),
@@ -339,25 +361,50 @@ EXTRAS_METRICS = (
 )
 
 
-def _extras_totals_for_month(year, month):
-    """{metric_key: int} for every EXTRAS_METRICS entry, counted across every booking (owner
-    stays included this time - unlike Revenue/Stays/Bookings, extras are relevant regardless of
-    who's staying, and the reference workbook's own Extras sheet has no Direct/Airbnb/etc split
-    to exclude them from) whose ARRIVAL falls in this month and whose status is confirmed
-    (VALID_BOOKING_STATUSES). Airport Transfers count by the row itself (many per booking);
-    every other metric is a single boolean on that booking's one-to-one Extra, so counting
-    Extra rows with that flag set is equivalent to counting bookings with it requested."""
-    start = date(year, month, 1)
-    end = last_day_of_month(start)
-    booking_scope = Q(booking__enquiry_status__in=VALID_BOOKING_STATUSES, booking__arrival_date__range=(start, end))
-    return {
-        'airport_transfers': AirportTransfer.objects.filter(booking_scope).count(),
-        'welcome_packs': Extra.objects.filter(booking_scope, welcome_pack=True).count(),
-        'cots': Extra.objects.filter(booking_scope, cot=True).count(),
-        'high_chairs': Extra.objects.filter(booking_scope, high_chair=True).count(),
-        'mid_stay_cleans': Extra.objects.filter(booking_scope, mid_stay_clean=True).count(),
-        'late_checkouts': Extra.objects.filter(booking_scope, late_checkout=True).count(),
-    }
+def _extras_totals_by_month(start, end):
+    """{(year, month): {metric_key: int}} for every EXTRAS_METRICS entry, counted across every
+    booking (owner stays included this time - unlike Revenue/Stays/Bookings, extras are relevant
+    regardless of who's staying, and the reference workbook's own Extras sheet has no
+    Direct/Airbnb/etc split to exclude them from) whose ARRIVAL falls in [start, end] and whose
+    status is confirmed (VALID_BOOKING_STATUSES). Airport Transfers count by the row itself (many
+    per booking); every other metric is a single boolean on that booking's one-to-one Extra, so
+    counting Extra rows with that flag set is equivalent to counting bookings with it requested.
+
+    Two grouped queries total (one per underlying table, each with a TruncMonth('...arrival_date')
+    group-by) rather than a query - or, before 2026-09-16, six queries - per calendar month:
+    AirportTransfer isn't foldable into the same aggregate as Extra (a different table), but every
+    Extra metric is a boolean column on the same row, so all five become one conditional Count
+    each in a single .values('month').annotate(...) call."""
+    transfer_scope = Q(booking__enquiry_status__in=VALID_BOOKING_STATUSES, booking__arrival_date__range=(start, end))
+    totals = defaultdict(lambda: {key: 0 for key, _label in EXTRAS_METRICS})
+
+    transfer_rows = (
+        AirportTransfer.objects.filter(transfer_scope)
+        .annotate(month=TruncMonth('booking__arrival_date'))
+        .values('month').annotate(total=Count('pk'))
+    )
+    for row in transfer_rows:
+        totals[(row['month'].year, row['month'].month)]['airport_transfers'] = row['total']
+
+    extra_rows = (
+        Extra.objects.filter(transfer_scope)
+        .annotate(month=TruncMonth('booking__arrival_date'))
+        .values('month')
+        .annotate(
+            welcome_packs=Count('pk', filter=Q(welcome_pack=True)),
+            cots=Count('pk', filter=Q(cot=True)),
+            high_chairs=Count('pk', filter=Q(high_chair=True)),
+            mid_stay_cleans=Count('pk', filter=Q(mid_stay_clean=True)),
+            late_checkouts=Count('pk', filter=Q(late_checkout=True)),
+        )
+    )
+    for row in extra_rows:
+        key = (row['month'].year, row['month'].month)
+        for metric_key, _label in EXTRAS_METRICS:
+            if metric_key == 'airport_transfers':
+                continue
+            totals[key][metric_key] = row[metric_key]
+    return totals
 
 
 def monthly_extras_rows(year):
@@ -365,10 +412,11 @@ def monthly_extras_rows(year):
     a year-over-year Lst Yr delta only, no % column - unlike every other Monthly-tab sheet, there
     is no Total-vs-group breakdown here to take a share of, just six independent counts side by
     side, matching the reference workbook's own Extras sheet exactly."""
+    all_totals = _extras_totals_by_month(*_table_bounds(year))
     rows = []
     for month in range(1, 13):
-        this_year = _extras_totals_for_month(year, month)
-        last_year = _extras_totals_for_month(year - 1, month)
+        this_year = all_totals[(year, month)]
+        last_year = all_totals[(year - 1, month)]
         metrics = {
             key: {'total': this_year[key], 'delta': this_year[key] - last_year[key]}
             for key, _label in EXTRAS_METRICS
@@ -388,40 +436,52 @@ def extras_trend_rows():
     if bounds['earliest'] is None:
         return []
 
+    all_totals = _extras_totals_by_month(bounds['earliest'], bounds['latest'])
     rows = []
     for year, month in _month_range(bounds['earliest'], bounds['latest']):
-        totals = _extras_totals_for_month(year, month)
+        totals = all_totals[(year, month)]
         row = {'month': date(year, month, 1)}
         row.update(totals)
         rows.append(row)
     return rows
 
 
-def _commissions_totals_for_month(year, month, payment_settings):
-    """{group: {'pre_iva': Decimal, 'post_iva': Decimal}} for every REVENUE_GROUPS entry, summed
-    across every real guest booking (is_owner=False) arriving in this month - KLT's own
-    commission only. The reference workbook's own Commissions sheet also had a second recipient
-    ("Maria") alongside KLT; dropped here per Thomas 2026-08-30 as a legacy item documented
-    elsewhere, out of scope for this rebuild. Reuses bookings/payouts.py::compute_owner_payout()
-    directly (the same function the Bookings tab's own Commission/KLT Net Commission columns are
-    built from - see staff/reports.py) rather than recomputing the formula a second time.
-    pre_iva = payout['commission']; post_iva = commission minus whatever VAT the agency has to
-    remit on it (payout['commission_vat']) - see compute_owner_payout()'s own docstring on why
-    that VAT is "agency-absorbed, not deducted" from the owner's side."""
-    start = date(year, month, 1)
-    end = last_day_of_month(start)
+def _commissions_totals_by_month(start, end, payment_settings):
+    """{(year, month): {group: {'pre_iva': Decimal, 'post_iva': Decimal}}} for every
+    REVENUE_GROUPS entry, summed across every real guest booking (is_owner=False) arriving in
+    [start, end] - KLT's own commission only. The reference workbook's own Commissions sheet also
+    had a second recipient ("Maria") alongside KLT; dropped here per Thomas 2026-08-30 as a legacy
+    item documented elsewhere, out of scope for this rebuild. Reuses bookings/payouts.py::
+    compute_owner_payout() directly (the same function the Bookings tab's own Commission/KLT Net
+    Commission columns are built from - see staff/reports.py) rather than recomputing the formula
+    a second time. pre_iva = payout['commission']; post_iva = commission minus whatever VAT the
+    agency has to remit on it (payout['commission_vat']) - see compute_owner_payout()'s own
+    docstring on why that VAT is "agency-absorbed, not deducted" from the owner's side.
+
+    compute_owner_payout() touches property.specs/departure/arrival (clean_fee/meet_greet_fee)
+    and iterates booking.date_adjustments.all()/owner_payments.all()/party.all() in Python
+    (_off_platform_cash, the ad-hoc-payments total, and total_guests() respectively) - every one
+    of those deliberately reads a prefetch cache instead of re-querying (see each function's own
+    docstring), so this queryset needs the full same select_related/prefetch_related set
+    staff/reports.py::booking_report_rows already uses for the same reason. Missing all but
+    charges/platform_payout/property__owner here (until 2026-09-16) made this function issue ~10
+    extra queries per booking, and running it once per calendar month on top of that turned the
+    Commissions tab's full page load into several thousand queries and 15+ minutes."""
     bookings = Booking.objects.filter(
         is_owner=False, enquiry_status__in=VALID_BOOKING_STATUSES, arrival_date__range=(start, end),
-    ).select_related('charges', 'platform_payout', 'property__owner')
+    ).select_related(
+        'charges', 'platform_payout', 'property__owner', 'property__specs', 'departure', 'arrival',
+    ).prefetch_related('date_adjustments', 'owner_payments', 'party')
 
-    totals = {group: {'pre_iva': ZERO, 'post_iva': ZERO} for group in REVENUE_GROUPS}
+    totals = defaultdict(lambda: {group: {'pre_iva': ZERO, 'post_iva': ZERO} for group in REVENUE_GROUPS})
     for booking in bookings:
         payout = compute_owner_payout(booking, payment_settings)
         if not payout['available']:
             continue
+        key = (booking.arrival_date.year, booking.arrival_date.month)
         group = _group_for_booking(booking)
-        totals[group]['pre_iva'] += payout['commission']
-        totals[group]['post_iva'] += payout['commission'] - payout['commission_vat']
+        totals[key][group]['pre_iva'] += payout['commission']
+        totals[key][group]['post_iva'] += payout['commission'] - payout['commission_vat']
     return totals
 
 
@@ -430,12 +490,13 @@ def monthly_commissions_rows(year):
     Pre-IVA/Post-IVA commission totals, that group's % share of the month's Total, and a
     year-over-year delta - same shape as monthly_revenue_rows() above (Pre-IVA/Post-IVA in place
     of Paid by Guest/Rcvd by KLT), mirroring the reference workbook's Commissions sheet (minus its
-    "Maria" column - see _commissions_totals_for_month()'s own docstring)."""
+    "Maria" column - see _commissions_totals_by_month()'s own docstring)."""
     payment_settings = PaymentSettings.load()
+    all_totals = _commissions_totals_by_month(*_table_bounds(year), payment_settings)
     rows = []
     for month in range(1, 13):
-        this_year = _commissions_totals_for_month(year, month, payment_settings)
-        last_year = _commissions_totals_for_month(year - 1, month, payment_settings)
+        this_year = all_totals[(year, month)]
+        last_year = all_totals[(year - 1, month)]
 
         this_year['Total'] = {
             'pre_iva': sum((v['pre_iva'] for v in this_year.values()), ZERO),
@@ -474,9 +535,10 @@ def commissions_trend_rows():
     if bounds['earliest'] is None:
         return []
 
+    all_totals = _commissions_totals_by_month(bounds['earliest'], bounds['latest'], payment_settings)
     rows = []
     for year, month in _month_range(bounds['earliest'], bounds['latest']):
-        totals = _commissions_totals_for_month(year, month, payment_settings)
+        totals = all_totals[(year, month)]
         rows.append({
             'month': date(year, month, 1),
             'pre_iva': sum((v['pre_iva'] for v in totals.values()), ZERO),
@@ -503,35 +565,35 @@ def location_groups():
     return groups
 
 
-def _management_totals_for_month(year, month, groups):
-    """{group_key: {'cleans': int, 'meet_greets': int}} for every `groups` entry (see
-    location_groups()), counted across every confirmed booking (owner stays included - this is a
-    pure operational headcount of KLT's own workload, not a financial figure, so there's no
-    reason to exclude them the way Revenue/Stays/Bookings do) whose ARRIVAL falls in this month.
+def _management_totals_by_month(start, end, groups):
+    """{(year, month): {group_key: {'cleans': int, 'meet_greets': int}}} for every `groups` entry
+    (see location_groups()), counted across every confirmed booking (owner stays included - this
+    is a pure operational headcount of KLT's own workload, not a financial figure, so there's no
+    reason to exclude them the way Revenue/Stays/Bookings do) whose ARRIVAL falls in [start, end].
     'cleans' = Departure.clean True; 'meet_greets' = Arrival.meet_greet True - counted regardless
     of cleaning_company.finances_managed_internally, since this counts real work done/scheduled,
     not billable fees (see clean_fee()/meet_greet_fee() for the financial version, used
     elsewhere)."""
-    start = date(year, month, 1)
-    end = last_day_of_month(start)
     bookings = Booking.objects.filter(
         enquiry_status__in=VALID_BOOKING_STATUSES, arrival_date__range=(start, end),
     ).select_related('property__location', 'departure', 'arrival')
 
-    totals = {key: {'cleans': 0, 'meet_greets': 0} for key, _label in groups}
+    totals = defaultdict(lambda: {key: {'cleans': 0, 'meet_greets': 0} for key, _label in groups})
     for booking in bookings:
+        month_key = (booking.arrival_date.year, booking.arrival_date.month)
+        month_totals = totals[month_key]
         # location_groups() keys are strings (str(pk)) - location_id here is the raw int PK (or
         # None), so it must be stringified before the lookup or it never matches a real location
         # and every booking silently falls into Unassigned instead (caught live by a test
         # assertion 2026-08-30, not assumed).
         location_key = str(booking.property.location_id)
-        key = location_key if location_key in totals else UNASSIGNED_LOCATION_KEY
+        key = location_key if location_key in month_totals else UNASSIGNED_LOCATION_KEY
         departure = getattr(booking, 'departure', None)
         if departure is not None and departure.clean:
-            totals[key]['cleans'] += 1
+            month_totals[key]['cleans'] += 1
         arrival = getattr(booking, 'arrival', None)
         if arrival is not None and arrival.meet_greet:
-            totals[key]['meet_greets'] += 1
+            month_totals[key]['meet_greets'] += 1
     return totals
 
 
@@ -541,10 +603,11 @@ def monthly_management_rows(year, groups):
     month's Total, and a year-over-year delta - same shape as monthly_revenue_rows()/
     monthly_stays_rows() above, mirroring the reference workbook's Management sheet (grouped by
     location rather than property - see location_groups()'s own docstring)."""
+    all_totals = _management_totals_by_month(*_table_bounds(year), groups)
     rows = []
     for month in range(1, 13):
-        this_year = _management_totals_for_month(year, month, groups)
-        last_year = _management_totals_for_month(year - 1, month, groups)
+        this_year = all_totals[(year, month)]
+        last_year = all_totals[(year - 1, month)]
 
         this_year['Total'] = {
             'cleans': sum(v['cleans'] for v in this_year.values()),
@@ -583,9 +646,10 @@ def management_trend_rows(groups):
     if bounds['earliest'] is None:
         return []
 
+    all_totals = _management_totals_by_month(bounds['earliest'], bounds['latest'], groups)
     rows = []
     for year, month in _month_range(bounds['earliest'], bounds['latest']):
-        totals = _management_totals_for_month(year, month, groups)
+        totals = all_totals[(year, month)]
         rows.append({
             'month': date(year, month, 1),
             'cleans': sum(v['cleans'] for v in totals.values()),
