@@ -18,7 +18,12 @@ class SearchView(View):
     template_name = 'availability/search.html'
 
     def get(self, request, *args, **kwargs):
-        context = full_toolbar_context()
+        # Not full_toolbar_context() here (2026-09-16, per Thomas) - the GET-params loop below
+        # only needs a plain dict to write start_date/end_date/guests into before the one real
+        # full_toolbar_context(start_date, end_date, guests) call further down; calling it twice
+        # just to have every key immediately overwritten was one of the redundant BookingSettings
+        # queries behind the search page's ~6s latency.
+        context = {}
         for key, value in request.GET.items():
             if 'start' in key:
                 context['start_date'] = date_string_to_date(value)
@@ -32,11 +37,11 @@ class SearchView(View):
         start_date = context.get('start_date')
         end_date = context.get('end_date')
         guests = context.get('guests', {})
-        context.update(full_toolbar_context(start_date, end_date, guests))
+        booking_settings = BookingSettings.load()
+        context.update(full_toolbar_context(start_date, end_date, guests, booking_settings=booking_settings))
         context['guests'] = guests
         context['has_search'] = bool(start_date and end_date)
         context['combo_suggestions'] = []
-        booking_settings = BookingSettings.load()
         context['booking_settings'] = booking_settings
         context['too_far_ahead'] = context['has_search'] and start_date > booking_settings.max_bookable_date()
         if context['has_search']:
@@ -96,10 +101,14 @@ class SearchView(View):
 
     def get_available_properties(self, start_date, end_date, guests):
 
-        # select_related('specs'): the pricing loop below reads property.specs.bedrooms for each
-        # result (extra-guest allowance, see properties/utils.py::free_guest_allowance), which
-        # would otherwise be one extra query per property.
-        properties = Property.objects.bookable_on_website().select_related('specs').filter(
+        # select_related('specs', 'location'): the pricing loop below reads property.specs.bedrooms
+        # (extra-guest allowance, see properties/utils.py::free_guest_allowance), and tile.html
+        # reads property.location.* for every card - either would otherwise be one extra query per
+        # property. prefetch_related('images'): tile.html's card thumbnail (2026-09-16, per Thomas
+        # - these three N+1s plus the per-property availability check below were what made the
+        # search page take ~6s against the remote DB) - one query for all properties' images up
+        # front instead of one round trip per card via property.images.first.
+        properties = Property.objects.bookable_on_website().select_related('specs', 'location').prefetch_related('images').filter(
             #specs__bedrooms__gte=guests.get('adults', 0) - 1 + guests.get('children', 0) - 1, # Assuming 1 bedroom can accommodate 2 adults or 2 children
             specs__max_guests__gte=guests.get('adults', 0) + guests.get('children', 0) + guests.get('infants', 0),
             # max_adults is a separate, tighter cap than max_guests (see Booking.clean()'s own
@@ -108,7 +117,14 @@ class SearchView(View):
             specs__max_adults__gte=guests.get('adults', 0),
         )
 
-        for property in properties:
-            if Booking.objects.overlapping(property, start_date, end_date).exists():
-                properties = properties.exclude(id=property.id)
-        return properties
+        # One query instead of one Booking.objects.overlapping().exists() round trip per
+        # candidate property (2026-09-16, per Thomas - this was the search page's ~6s latency:
+        # a remote-DB round trip per property adds up fast). property_id__in on the same
+        # `properties` queryset lets Django fold this into one subquery rather than a second
+        # round trip for the ids.
+        unavailable_property_ids = Booking.objects.holding().filter(
+            property_id__in=properties.values('id'),
+            arrival_date__lt=end_date,
+            departure_date__gt=start_date,
+        ).values_list('property_id', flat=True)
+        return properties.exclude(id__in=unavailable_property_ids)

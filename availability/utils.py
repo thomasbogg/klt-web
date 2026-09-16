@@ -89,9 +89,15 @@ def find_property_combo_suggestions(start_date, end_date, guests):
     return suggestions
 
 
-def full_toolbar_context(start_date=None, end_date=None, guests=None):
+def full_toolbar_context(start_date=None, end_date=None, guests=None, booking_settings=None):
     guests = guests or {}
-    booking_settings = BookingSettings.load()
+    # Optional booking_settings (2026-09-16, per Thomas): BookingSettings.load() hits the DB every
+    # call (no caching - see its own get_or_create body), so a caller that's already loaded it for
+    # its own use (e.g. SearchView's max_bookable_date check) can pass it through here instead of
+    # this function loading it again - one of a few redundant round trips behind the search page's
+    # ~6s latency against the remote DB. Callers with no settings of their own yet still get the
+    # exact same load() as before.
+    booking_settings = booking_settings or BookingSettings.load()
     adult_min_age = booking_settings.adult_min_age
     child_min_age = booking_settings.child_min_age
     return {
@@ -109,10 +115,11 @@ def full_toolbar_context(start_date=None, end_date=None, guests=None):
         'toolbar_location_picker_list': Location.objects.order_by('title'),
         'toolbar_bedrooms_picker_name': 'bedrooms',
         'toolbar_bedrooms_picker_list': PropertySpec.objects.order_by('bedrooms').values_list('bedrooms', flat=True).distinct(),
-        # ISO format, not '%d/%m/%Y' like the value fields above - flatpickr's maxDate option
-        # parses ISO natively regardless of the picker's own dateFormat, so this doesn't need to
-        # match toolbar_date_picker_start_value's format.
-        'toolbar_date_picker_max_date': booking_settings.max_bookable_date().isoformat(),
+        # No toolbar_date_picker_max_date here (2026-09-16, per Thomas): guests can still
+        # search/pick dates beyond booking_settings.max_bookable_date() so they reach the "Contact
+        # Me" flow instead of being blocked from even searching - see SearchView's too_far_ahead
+        # handling and ReserveView.get_context_data's on_sale/contact_form branch, both of which
+        # already recompute the window server-side independently of what the calendar allowed.
     }
 
 

@@ -19,11 +19,10 @@ export function createSearchDatePickers() {
     startInput.placeholder = 'Check-in';
     endInput.placeholder = 'Check-out';
 
-    // BookingSettings.max_advance_booking_months, rendered server-side as an ISO date onto
-    // either input's own data-max-date (availability/utils.py::full_toolbar_context) - flatpickr's
-    // maxDate parses ISO natively regardless of dateFormat below. Read from startInput; both
-    // inputs carry the same value, so either would do.
-    const maxDate = startInput.dataset.maxDate || undefined;
+    // No upper bound (2026-09-16, per Thomas): guests can still pick dates beyond
+    // BookingSettings.max_advance_booking_months so they reach the "Contact Me" flow instead of
+    // being blocked from even searching - the window is enforced server-side regardless (see
+    // create_booking's enforce_advance_booking_window).
 
     // Not appendTo-ed into the field's own wrapper: this codebase's global
     // .container base rule (static/main/style.css) puts every .container
@@ -35,14 +34,12 @@ export function createSearchDatePickers() {
     const startFp = window.flatpickr(startInput, {
         dateFormat: 'd/m/Y',
         minDate: 'today',
-        maxDate,
         onReady: [tagCalendar],
     });
 
     const endFp = window.flatpickr(endInput, {
         dateFormat: 'd/m/Y',
         minDate: 'today',
-        maxDate,
         onReady: [tagCalendar],
         onOpen: [(selectedDates, dateStr, instance) => {
             // Check-out clicked before check-in has a value - open check-in instead.

@@ -1,6 +1,5 @@
 from django.http import HttpResponse
 from django.views import generic
-from bookings.models import BookingSettings
 from properties.models import Location, Property
 from libraries.dates import dates
 
@@ -25,7 +24,10 @@ class IndexView(generic.ListView):
         # Date Picker Settings
         context['datepicker_start_name'] = 'start'
         context['datepicker_end_name'] = 'end'
-        context['datepicker_max_date'] = BookingSettings.load().max_bookable_date().isoformat()
+        # No max_date here (2026-09-16, per Thomas): guests can still search/pick dates beyond
+        # BookingSettings.max_bookable_date() so they reach the "Contact Me" flow (see
+        # ReserveView.get_context_data's too_far_ahead/on_sale handling) rather than being blocked
+        # from even searching. create_booking() still enforces the window server-side regardless.
 
         # Group Picker Settings
         context['grouppicker_name'] = 'guests'

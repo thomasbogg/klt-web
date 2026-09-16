@@ -2,8 +2,8 @@
     <div class="container toolbar availability sticky">
 
         <div class="datepickers">
-            {% include 'pickers/dates.html' with name=toolbar_date_picker_start_name value=toolbar_date_picker_start_value max_date=toolbar_date_picker_max_date %}
-            {% include 'pickers/dates.html' with name=toolbar_date_picker_end_name value=toolbar_date_picker_end_value max_date=toolbar_date_picker_max_date %}
+            {% include 'pickers/dates.html' with name=toolbar_date_picker_start_name value=toolbar_date_picker_start_value %}
+            {% include 'pickers/dates.html' with name=toolbar_date_picker_end_name value=toolbar_date_picker_end_value %}
         </div>
 
         {% if not toolbar_compact %}

@@ -110,7 +110,7 @@ class SearchViewAdvanceBookingWindowTests(TestCase):
         result = next(p for p in available_properties if p.pk == property.pk)
         self.assertFalse(result.on_sale)
         self.assertIsNone(result.stay_total_price)
-        self.assertContains(response, 'contacted when on sale')
+        self.assertContains(response, 'Not on sale yet')
 
     def test_search_within_the_window_but_unpriced_shows_not_on_sale_card(self):
         property = Property.objects.create(

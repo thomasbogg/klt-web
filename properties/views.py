@@ -56,7 +56,11 @@ class LocationView(generic.DetailView):
         # with search results and the homepage's own location-tile gate, both of which already
         # exclude a property whose booking_company doesn't sell through the site at all (2026-09-13,
         # per Thomas: a KLT-doesn't-book property was showing up here regardless).
-        properties = Property.objects.filter(location_id__exact=location.id).bookable_on_website()
+        # select_related('specs'), prefetch_related('images'): tile.html reads property.specs.*
+        # and property.images.first per card - each would otherwise be one extra round trip per
+        # property.
+        properties = Property.objects.filter(location_id__exact=location.id).bookable_on_website() \
+            .select_related('specs').prefetch_related('images')
         context['properties'] = properties
         return context
 
