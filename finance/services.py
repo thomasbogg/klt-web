@@ -688,6 +688,10 @@ def owner_settlements(period_start, period_end):
         for booking, payout in rows:
             owner_id = booking.property.owner_id
             commission_by_owner[owner_id] = commission_by_owner.get(owner_id, ZERO) + payout['commission']
+            # Attached in Python only (not a model field) - lets a row's own bookings list double
+            # as the itemized breakdown for send_owner_statement's line items, without a second
+            # per-booking commission lookup there.
+            booking.commission_amount = payout['commission']
             bookings_by_owner.setdefault(owner_id, []).append(booking)
 
     cleans_invoiced_ids = [owner.pk for owner in owners if owner.cleans_are_invoiced]
@@ -733,6 +737,79 @@ def owner_settlements(period_start, period_end):
         })
     rows.sort(key=lambda row: row['owner'].name)
     return rows
+
+
+def _memo_display_date(memo):
+    """Which date to show a Memo's cleans/meet-greet line under, for send_owner_statement's
+    itemized breakdown - its own clean's date when it still has one, else the date it was sent
+    (the only case with no clean date left - see Memo's own docstring on cleaning_task going null
+    after sending). Deliberately the clean's own date, not the linked booking's arrival_date like
+    owners/views.py::_memo_event_date uses for gating - a statement line is about when the clean
+    itself happened, not when the guest arrived."""
+    if memo.cleaning_task is not None:
+        return memo.cleaning_task.date
+    return memo.sent_at.date()
+
+
+def _owner_statement_line_items(row):
+    """Plain-text itemized breakdown for send_owner_statement - one line per booking's rental
+    commission and per sent Memo's cleans/meet-greet fee, oldest first. booking.commission_amount
+    is attached by owner_settlements itself above (a Python-only attribute, not a model field) so
+    this doesn't need a second per-booking commission lookup."""
+    items = [
+        (booking.arrival_date, f"Rental commission - {booking.property.title} ({booking.reference})", booking.commission_amount)
+        for booking in row['bookings']
+    ]
+    items += [
+        (_memo_display_date(memo), f"Cleaning/meet-greet - {memo.property.title}", memo.total())
+        for memo in row['memos']
+    ]
+    items.sort(key=lambda item: item[0])
+    return '\n'.join(f"{item_date:%d %b %Y}  {description} - €{amount:.2f}" for item_date, description, amount in items)
+
+
+def send_owner_statement(owner, row, period_start, actor):
+    """Sends `owner` their monthly statement email for Settlements row `row` (owner_settlements
+    above) - the Settlements tab's 'Send statement' button (2026-09-16, per Thomas: full itemized
+    breakdown of what's owed, plus PaymentSettings.wise_payment_link so the owner can actually pay
+    it - see that field's own docstring, added storage-only with exactly this email as the planned
+    consumer).
+
+    Deliberately ad-hoc, not a ScheduledEmail/EMAIL_TYPES entry: every existing EMAIL_TYPES
+    definition (communications/registry.py) is anchored to one Booking - ScheduledEmail.booking is
+    a required FK - but a statement covers a whole month's worth of bookings/Memos for one owner,
+    which doesn't fit that shape at all. Still uses a staff-editable EmailTemplate
+    (slug='owner_monthly_statement', seeded by communications/migrations/
+    0005_seed_owner_monthly_statement.py) so the wording lives on Settings > Emails like every
+    other owner-facing email, just rendered/sent here directly via
+    communications.services.sending.send_plain_email instead of send_scheduled_email's
+    booking-anchored path.
+
+    Raises ValueError (owner has no email on file / template missing or inactive) for the caller
+    (StaffFinanceOwnerStatementSendView) to turn into a flashed error rather than a 500 - same
+    convention as OwnerBankAccount.upsert's ValidationError."""
+    from communications.models import EmailTemplate
+    from communications.services.sending import send_plain_email
+    from django.template import Context, Template
+
+    if not owner.email:
+        raise ValueError(f"{owner} has no email on file.")
+    template = EmailTemplate.objects.filter(slug='owner_monthly_statement', active=True).first()
+    if template is None:
+        raise ValueError("The owner statement email template is missing or inactive.")
+
+    context = {
+        'owner_name': owner.name,
+        'period_label': f"{period_start:%B %Y}",
+        'commission_amount': row['commission_amount'],
+        'cleans_amount': row['cleans_amount'],
+        'total': row['total'],
+        'line_items': _owner_statement_line_items(row),
+        'wise_payment_link': PaymentSettings.load().wise_payment_link or '',
+    }
+    subject = Template(template.subject).render(Context(context))
+    body = Template(template.body).render(Context(context))
+    send_plain_email(actor.email, actor.get_full_name() or actor.email, owner.name, owner.email, subject, body)
 
 
 def owner_outstanding_balance(owner, as_of, property=None):

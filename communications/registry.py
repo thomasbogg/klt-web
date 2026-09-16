@@ -312,6 +312,13 @@ PLACEHOLDER_KEYS = {
         'guest_first_name', 'property_name', 'reference', 'arrival_date',
         'manage_arrival_departure_url', 'manage_hub_url',
     ),
+    # Ad-hoc, not an EMAIL_TYPES entry - see finance/services.py::send_owner_statement's own
+    # docstring for why a whole-month, multi-booking statement can't be a Booking-anchored
+    # EmailDefinition like every other row in this dict.
+    'owner_monthly_statement': (
+        'owner_name', 'period_label', 'line_items', 'commission_amount', 'cleans_amount', 'total',
+        'wise_payment_link',
+    ),
 }
 
 

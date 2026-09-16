@@ -100,6 +100,10 @@ urlpatterns = [
         'finance/settlements/<int:owner_id>/generate/',
         views.StaffFinanceOwnerPayoutGenerateView.as_view(), name='finance_owner_payout_generate',
     ),
+    path(
+        'finance/settlements/<int:owner_id>/send-statement/',
+        views.StaffFinanceOwnerStatementSendView.as_view(), name='finance_owner_statement_send',
+    ),
     path('finance/deposits/', views.StaffFinanceDepositsView.as_view(), name='finance_deposits'),
     path(
         'finance/deposits/<str:reference>/mark-returned/',

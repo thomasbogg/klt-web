@@ -126,6 +126,14 @@
                         </td>
                         <td class="staff-finance-actions-cell">
                             <div class="staff-finance-actions-inner">
+                                {% if row.total > 0 %}
+                                <form method="post" action="{% url 'staff:finance_owner_statement_send' owner_id=row.owner.pk %}">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="period_start" value="{{ period_start|date:'Y-m-d' }}">
+                                    <input type="hidden" name="month" value="{{ period_start|date:'Y-m' }}">
+                                    <button type="submit" class="staff-button staff-button-small">Send statement</button>
+                                </form>
+                                {% endif %}
                                 {% if row.invoice %}
                                 {% if row.invoice.status == 'paid' %}
                                 <span class="staff-finance-sent-note">Paid{% if row.invoice.paid_at %} {{ row.invoice.paid_at|date:'j M Y' }}{% endif %}</span>

@@ -35,7 +35,8 @@ from finance.services import (
     deposits_due_in_range, dispatch_commission_receipt_for_payout, dispatch_owner_invoice_to_sage,
     generate_non_regular_owner_invoice, generate_scenario_1_cleans_invoice, informal_cleans_tracking_rows,
     needs_informal_cleans_tracking, open_memo_for_property, owner_ids_with_no_separate_cleans_payment,
-    owner_outstanding_balance, owner_settlements, payouts_due_in_range, sweep_unattached_ad_hoc_services,
+    owner_outstanding_balance, owner_settlements, payouts_due_in_range, send_owner_statement,
+    sweep_unattached_ad_hoc_services,
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_deposit_waiver, compute_effective_self_check_in, create_booking,
@@ -4381,6 +4382,51 @@ class StaffFinanceOwnerPayoutGenerateView(View):
             messages.error(request, f"Nothing to bill {owner} for this month.")
         else:
             messages.error(request, f"Couldn't generate an invoice for {owner}.")
+        return self._redirect(request)
+
+    def _redirect(self, request):
+        redirect_month = request.POST.get('month', '').strip()
+        redirect_url = reverse('staff:finance_settlements')
+        if redirect_month:
+            redirect_url = f"{redirect_url}?month={redirect_month}"
+        return redirect(redirect_url)
+
+
+@method_decorator(staff_page_required('can_view_finance'), name='dispatch')
+class StaffFinanceOwnerStatementSendView(View):
+    """The Settlements tab's 'Send statement' button for one owner's row (2026-09-16, per Thomas) -
+    emails that owner a full itemized breakdown of the month's commission/cleans-meet-greet via
+    finance/services.py::send_owner_statement. Recomputes owner_settlements() for the month fresh
+    (owner count here is small - see that function's own docstring on why this is fine at this
+    business's scale) rather than trusting anything posted from the page, so a stale/tampered total
+    can never reach the email. Safe to click more than once - it's just an email, not a Sage/
+    Revolut dispatch with its own idempotency to worry about."""
+
+    def post(self, request, owner_id, *args, **kwargs):
+        owner = Owner.objects.filter(pk=owner_id).first()
+        if owner is None:
+            messages.error(request, "That owner no longer exists.")
+            return self._redirect(request)
+
+        period_start = _parsed_date(request.POST.get('period_start'))
+        if period_start is None:
+            messages.error(request, "Missing or invalid period.")
+            return self._redirect(request)
+        period_end = _last_day_of_month(period_start)
+
+        rows = owner_settlements(period_start, period_end)
+        row = next((row for row in rows if row['owner'].pk == owner.pk), None)
+        if row is None or row['total'] <= 0:
+            messages.error(request, f"Nothing to send {owner} a statement for this month.")
+            return self._redirect(request)
+
+        try:
+            send_owner_statement(owner, row, period_start, actor=request.user)
+        except ValueError as error:
+            messages.error(request, str(error))
+            return self._redirect(request)
+
+        messages.success(request, f"Statement sent to {owner}.")
         return self._redirect(request)
 
     def _redirect(self, request):

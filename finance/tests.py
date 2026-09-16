@@ -1595,6 +1595,54 @@ class StaffOwnerSettlementViewsTests(FinanceTestCase):
         payout_invoice.refresh_from_db()
         self.assertIsNone(payout_invoice.status)
 
+    @patch('communications.services.sending.send_plain_email')
+    def test_send_statement_button_emails_owner_an_itemized_breakdown(self, send_plain_email):
+        """The Settlements tab's 'Send statement' button (2026-09-16, per Thomas) - patches
+        send_plain_email itself (the one function that would actually reach Gmail, see its own
+        docstring) rather than relying on COMMS_DRY_RUN's print output, so the rendered
+        subject/body can be asserted on directly."""
+        self._make_booking_on(date(2026, 2, 1))
+
+        response = self.client.post(
+            reverse('staff:finance_owner_statement_send', kwargs={'owner_id': self.owner.pk}),
+            {'period_start': '2026-02-01', 'month': '2026-02'},
+        )
+        self.assertRedirects(response, f"{reverse('staff:finance_settlements')}?month=2026-02")
+        messages = [str(m) for m in get_messages(response.wsgi_request)]
+        self.assertIn(f"Statement sent to {self.owner}.", messages)
+
+        send_plain_email.assert_called_once()
+        args = send_plain_email.call_args.args
+        self.assertEqual(args[3], self.owner.email)
+        subject, body = args[4], args[5]
+        self.assertIn('February 2026', subject)
+        self.assertIn('Rental commission - Finance Property', body)
+        self.assertIn(self.owner.name, body)
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_send_statement_refuses_owner_with_no_email(self, send_plain_email):
+        self._make_booking_on(date(2026, 2, 1))
+        self.owner.email = ''
+        self.owner.save(update_fields=['email'])
+
+        response = self.client.post(
+            reverse('staff:finance_owner_statement_send', kwargs={'owner_id': self.owner.pk}),
+            {'period_start': '2026-02-01', 'month': '2026-02'},
+        )
+        messages = [str(m) for m in get_messages(response.wsgi_request)]
+        self.assertIn(f"{self.owner} has no email on file.", messages)
+        send_plain_email.assert_not_called()
+
+    @patch('communications.services.sending.send_plain_email')
+    def test_send_statement_refuses_nothing_to_bill(self, send_plain_email):
+        response = self.client.post(
+            reverse('staff:finance_owner_statement_send', kwargs={'owner_id': self.owner.pk}),
+            {'period_start': '2026-02-01', 'month': '2026-02'},
+        )
+        messages = [str(m) for m in get_messages(response.wsgi_request)]
+        self.assertIn(f"Nothing to send {self.owner} a statement for this month.", messages)
+        send_plain_email.assert_not_called()
+
     def _make_booking_on(self, arrival_date):
         booking = Booking.objects.create(
             property=self.property, guest=self.guest, arrival_date=arrival_date,
