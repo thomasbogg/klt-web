@@ -319,11 +319,13 @@ class OwnerContactDetailsTests(TestCase):
             'email': self.owner.email, 'phone_country_code': '+351', 'phone': '900000001',
             'nif_number': self.owner.nif_number,
             'bank_iban': 'pt50000201231234567890154', 'eur_account_holder_name': 'Contact Details Owner',
+            'eur_address_street': 'Rua Test 1', 'eur_address_city': 'Albufeira', 'eur_address_postcode': '8200-001',
         }, follow=True)
         self.assertEqual(response.status_code, 200)
         account = self.owner.bank_accounts.get(currency=OwnerBankAccount.Currency.EUR)
         self.assertEqual(account.iban, 'PT50000201231234567890154')
         self.assertEqual(account.account_holder_name, 'Contact Details Owner')
+        self.assertEqual(account.address_street, 'Rua Test 1')
         self.assertContains(response, 'Details updated.')
 
     def test_post_allows_clearing_bank_details(self):
