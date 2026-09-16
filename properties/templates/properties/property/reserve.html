@@ -46,12 +46,7 @@
         </div>
 
         {% if not is_available %}
-        {% if too_far_ahead %}
-        <p class="reserve-message reserve-unavailable">
-            Sorry, we can only take reservations up to {{ booking_settings.max_advance_booking_months }} months in advance. Please choose an earlier arrival date.
-        </p>
-        <a class="reserve-back-link" href="{% url 'properties:property/page' location=location.slug title=property.short_title|slugify %}">&larr; Back to {{ property }}</a>
-        {% elif own_pending_booking %}
+        {% if own_pending_booking %}
         <p class="reserve-message">
             You already started a reservation for these dates (reference <strong>{{ own_pending_booking.reference }}</strong>) that's still awaiting payment.
         </p>
@@ -68,6 +63,67 @@
             Sorry, {{ property }} is no longer available for these dates. Please try a different search.
         </p>
         <a class="reserve-back-link" href="{% url 'properties:property/page' location=location.slug title=property.short_title|slugify %}">&larr; Back to {{ property }}</a>
+        {% endif %}
+
+        {% elif not on_sale %}
+        {% if contact_submitted %}
+        <p class="reserve-message">
+            Thanks - we've noted your interest in {{ property }} for these dates. We'll email you the moment it's open for booking.
+        </p>
+        <a class="reserve-back-link" href="{% url 'properties:property/page' location=location.slug title=property.short_title|slugify %}">&larr; Back to {{ property }}</a>
+
+        {% else %}
+        <p class="reserve-message">
+            {% if too_far_ahead %}
+            {{ property }} is available for these dates, but we can only take reservations up to {{ booking_settings.max_advance_booking_months }} months in advance. Leave your details and we'll email you as soon as it's open for booking.
+            {% else %}
+            {{ property }} is available for these dates, but prices aren't published yet. Leave your details and we'll email you as soon as it's ready to book.
+            {% endif %}
+        </p>
+
+        <form class="reserve-form" method="post">
+            {% csrf_token %}
+            <input type="hidden" name="form_kind" value="contact_me">
+            {% if contact_form.non_field_errors %}
+            <div class="reserve-form-errors">
+                {% for error in contact_form.non_field_errors %}
+                <p>{{ error }}</p>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {{ contact_form.start }}
+            {{ contact_form.end }}
+            {{ contact_form.guests }}
+
+            <div class="reserve-form-row">
+                <label for="{{ contact_form.first_name.id_for_label }}">First name</label>
+                {{ contact_form.first_name }}
+            </div>
+            <div class="reserve-form-row">
+                <label for="{{ contact_form.last_name.id_for_label }}">Last name</label>
+                {{ contact_form.last_name }}
+                {% for error in contact_form.last_name.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
+            <div class="reserve-form-row">
+                <label for="{{ contact_form.email.id_for_label }}">Email</label>
+                {{ contact_form.email }}
+                {% for error in contact_form.email.errors %}<p class="reserve-form-error">{{ error }}</p>{% endfor %}
+            </div>
+            <div class="reserve-form-row reserve-phone-row">
+                <div class="reserve-phone-code">
+                    <label for="{{ contact_form.phone_country_code.id_for_label }}">Country code</label>
+                    {{ contact_form.phone_country_code }}
+                </div>
+                <div class="reserve-phone-number">
+                    <label for="{{ contact_form.phone.id_for_label }}">Phone</label>
+                    {{ contact_form.phone }}
+                </div>
+            </div>
+
+            <button type="submit" class="reserve-form-submit">Contact Me</button>
+        </form>
+        <a class="reserve-form-cancel" href="{% url 'availability:search' %}?start={{ start_query|urlencode }}&end={{ end_query|urlencode }}&guests={{ guests_query|urlencode }}">Return to Search</a>
         {% endif %}
 
         {% else %}

@@ -39,21 +39,29 @@ class SearchView(View):
         booking_settings = BookingSettings.load()
         context['booking_settings'] = booking_settings
         context['too_far_ahead'] = context['has_search'] and start_date > booking_settings.max_bookable_date()
-        if context['has_search'] and not context['too_far_ahead']:
+        if context['has_search']:
             available_properties = list(self.get_available_properties(start_date, end_date, guests))
             for property in available_properties:
-                pricing = get_stay_total_price(
-                    property, start_date, end_date, guests,
-                    monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
-                )
+                # on_sale=False covers both gaps a guest can hit here: the whole search is beyond
+                # max_advance_booking_months (every property in this loop shares that same verdict,
+                # since it's a function of start_date alone), or this particular property just has
+                # no Price rows covering the stay yet. Either way the property still belongs in the
+                # results (it fits capacity-wise and isn't booked) - see tile.html for the
+                # "not on sale yet, contact me" card treatment this drives instead of a price.
+                property.on_sale = not context['too_far_ahead']
                 property.stay_total_price = None
-                if pricing is not None:
-                    rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
-                    property.stay_total_price = booking_settings.compute_costs(rental_total, arrival_date=start_date)['subtotal']
-                property.stay_total_price_gbp = (
-                    booking_settings.to_gbp(property.stay_total_price)
-                    if property.stay_total_price is not None else None
-                )
+                property.stay_total_price_gbp = None
+                if property.on_sale:
+                    pricing = get_stay_total_price(
+                        property, start_date, end_date, guests,
+                        monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
+                    )
+                    if pricing is not None:
+                        rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
+                        property.stay_total_price = booking_settings.compute_costs(rental_total, arrival_date=start_date)['subtotal']
+                        property.stay_total_price_gbp = booking_settings.to_gbp(property.stay_total_price)
+                    else:
+                        property.on_sale = False
             context['available_properties'] = available_properties
             context['nights'] = (end_date - start_date).days
             # Only offer a "book two apartments together" suggestion once no single property fits

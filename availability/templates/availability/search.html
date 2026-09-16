@@ -72,9 +72,6 @@
         </div>
 
         <div class="container cards results">
-            {% if too_far_ahead %}
-            <p class="no-results">We can only take reservations up to {{ booking_settings.max_advance_booking_months }} months in advance. Please choose an earlier date.</p>
-            {% else %}
             {% for property in available_properties %}
             {% include 'properties/property/tile.html' with property=property %}
             {% empty %}
@@ -82,7 +79,6 @@
             <p class="no-results">No properties available for the selected dates and guest count. Try adjusting your search.</p>
             {% endif %}
             {% endfor %}
-            {% endif %}
         </div>
 
         {% if not available_properties and combo_suggestions %}

@@ -156,19 +156,25 @@ class ReserveViewAdvanceBookingWindowTests(TestCase):
             'guests': '2 adults,0 children,0 infants',
         }
 
-    def test_dates_beyond_the_window_show_too_far_ahead_message(self):
+    def test_dates_beyond_the_window_show_contact_me_step(self):
+        """2026-09-16, per Thomas: a stay beyond the window is still available for those dates -
+        it just isn't on sale yet - so ReserveView now offers the Contact Me step instead of a
+        dead-end "too far ahead" message (see availability/models.py::NotifyOnSaleRequest)."""
         from dateutil.relativedelta import relativedelta
         start = date.today() + relativedelta(months=19)
         end = start + timedelta(days=5)
         Price.objects.create(property=self.property, start_date=date.today(), end_date=end + timedelta(days=30), rate=100)
 
         response = self.client.get(self.reserve_url, self._query(start, end))
-        self.assertFalse(response.context['is_available'])
+        self.assertTrue(response.context['is_available'])
         self.assertTrue(response.context['too_far_ahead'])
+        self.assertFalse(response.context['on_sale'])
         self.assertContains(response, 'months in advance')
+        self.assertContains(response, 'Contact Me')
 
     def test_post_beyond_the_window_is_rejected_server_side(self):
-        """Defense-in-depth even if the client-side flatpickr maxDate is bypassed."""
+        """Defense-in-depth even if the client-side flatpickr maxDate is bypassed and a reservation
+        (not contact_me) POST is sent anyway - create_booking() itself still enforces the window."""
         from dateutil.relativedelta import relativedelta
         start = date.today() + relativedelta(months=19)
         end = start + timedelta(days=5)
@@ -179,8 +185,28 @@ class ReserveViewAdvanceBookingWindowTests(TestCase):
             'currency': 'EUR', 'first_name': 'Test', 'last_name': 'Guest',
             'email': 'window-reserve@example.com', 'phone': '', 'country': 'GB', 'terms_accepted': 'on',
         })
-        self.assertEqual(response.status_code, 200)  # re-rendered with a form error, not redirected
+        self.assertEqual(response.status_code, 200)  # re-rendered, not redirected
         self.assertFalse(Booking.objects.filter(property=self.property).exists())
+
+    def test_post_beyond_the_window_creates_a_notify_on_sale_request(self):
+        from dateutil.relativedelta import relativedelta
+        from availability.models import NotifyOnSaleRequest
+
+        start = date.today() + relativedelta(months=19)
+        end = start + timedelta(days=5)
+        Price.objects.create(property=self.property, start_date=date.today(), end_date=end + timedelta(days=30), rate=100)
+
+        response = self.client.post(self.reserve_url, {
+            **self._query(start, end), 'form_kind': 'contact_me',
+            'first_name': 'Test', 'last_name': 'Guest', 'email': 'window-contact@example.com', 'phone': '',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "noted your interest")
+        watch_request = NotifyOnSaleRequest.objects.get(property=self.property)
+        self.assertEqual(watch_request.start_date, start)
+        self.assertEqual(watch_request.end_date, end)
+        self.assertEqual(watch_request.email, 'window-contact@example.com')
+        self.assertEqual(watch_request.status, NotifyOnSaleRequest.STATUS_PENDING)
 
     def test_dates_within_the_window_are_unaffected(self):
         start = date.today() + timedelta(days=330)
@@ -190,6 +216,62 @@ class ReserveViewAdvanceBookingWindowTests(TestCase):
         response = self.client.get(self.reserve_url, self._query(start, end))
         self.assertTrue(response.context['is_available'])
         self.assertFalse(response.context['too_far_ahead'])
+        self.assertTrue(response.context['on_sale'])
+
+    def test_dates_within_the_window_but_unpriced_show_contact_me_step(self):
+        """No Price rows at all for this property/stay - available, in-window, just not
+        priceable yet (the other of the two on_sale=False gaps)."""
+        start = date.today() + timedelta(days=330)
+        end = start + timedelta(days=5)
+        # Deliberately no Price.objects.create() here.
+
+        response = self.client.get(self.reserve_url, self._query(start, end))
+        self.assertTrue(response.context['is_available'])
+        self.assertFalse(response.context['too_far_ahead'])
+        self.assertFalse(response.context['on_sale'])
+        self.assertContains(response, "prices aren't published yet")
+
+
+class PropertyViewToolbarLabelTests(TestCase):
+    """PropertyView's own not-on-sale check (properties/utils.py::property_is_on_sale) drives the
+    sticky toolbar's button label (toolbar_sticky.html) - "Contact Me" instead of "Book Now" for
+    the exact same gap ReserveView itself branches on once the guest clicks through."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Toolbar Label Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.management_company = ManagementCompany.objects.create(name='Toolbar Label Management Co')
+        self.property = Property.objects.create(
+            title=f'{self.location} - TOOLBL', short_title='TOOLBL',
+            location=self.location, booking_company=self.management_company,
+        )
+        PropertySpec.objects.create(property=self.property, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        self.page_url = f'/properties/{self.location.slug}/toolbl/'
+
+    def _query(self, start, end):
+        return {
+            'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y'),
+            'guests': '2 adults,0 children,0 infants',
+        }
+
+    def test_button_reads_contact_me_when_unpriced(self):
+        start = date.today() + timedelta(days=330)
+        end = start + timedelta(days=5)
+        response = self.client.get(self.page_url, self._query(start, end))
+        self.assertEqual(response.context['toolbar_submit_label'], 'CONTACT ME')
+
+    def test_button_reads_book_now_when_priced(self):
+        start = date.today() + timedelta(days=330)
+        end = start + timedelta(days=5)
+        Price.objects.create(property=self.property, start_date=date.today(), end_date=end + timedelta(days=30), rate=100)
+        response = self.client.get(self.page_url, self._query(start, end))
+        self.assertEqual(response.context['toolbar_submit_label'], 'BOOK NOW')
+
+    def test_button_reads_book_now_with_no_dates_chosen(self):
+        response = self.client.get(self.page_url)
+        self.assertEqual(response.context['toolbar_submit_label'], 'BOOK NOW')
 
 
 class MultiPropertyReserveViewTests(TestCase):

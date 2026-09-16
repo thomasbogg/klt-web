@@ -113,6 +113,24 @@ def get_stay_total_price(property, start_date, end_date, guests=None, monthly_di
     }
 
 
+def property_is_on_sale(property, start_date, end_date, guests, booking_settings):
+    """Whether `property` can actually be quoted for this stay right now - within
+    BookingSettings.max_advance_booking_months AND every night covered by a Price row. Deliberately
+    ignores existing-booking overlap (see Booking.objects.overlapping for that separate check) - a
+    property can be "not on sale" for dates nobody's booked (no prices published, or beyond the
+    window) just as easily as for dates someone already holds. Callers that also need the actual
+    price breakdown (SearchView, ReserveView) call get_stay_total_price themselves instead of this,
+    to avoid pricing the same stay twice - this is for callers (PropertyView's sticky-toolbar
+    button label) that only need the yes/no."""
+    if start_date > booking_settings.max_bookable_date():
+        return False
+    pricing = get_stay_total_price(
+        property, start_date, end_date, guests,
+        monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
+    )
+    return pricing is not None
+
+
 def scale_rate(rate, percent):
     """rate * (1 + percent/100), rounded to the nearest whole euro (matches this project's
     pricing convention - every Price.rate in the DB is a whole number) then re-quantized to the

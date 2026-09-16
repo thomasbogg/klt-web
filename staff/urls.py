@@ -18,6 +18,7 @@ urlpatterns = [
     path('bookings/new/block/', views.StaffPropertyBlockCreateView.as_view(), name='booking_create_block'),
     path('bookings/new/offer/', views.StaffGuestOfferCreateView.as_view(), name='booking_create_offer'),
     path('bookings/new/offer/guest-search/', views.StaffGuestSearchView.as_view(), name='booking_guest_search'),
+    path('bookings/not-on-sale/', views.StaffNotifyOnSaleListView.as_view(), name='notify_on_sale_list'),
     path('guests/', views.StaffGuestListView.as_view(), name='guest_list'),
     path('guests/<int:pk>/', views.StaffGuestDetailView.as_view(), name='guest_detail'),
     path('properties/', views.StaffPropertyListView.as_view(), name='property_list'),

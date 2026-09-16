@@ -9,7 +9,8 @@ from django.views import View, generic
 
 import env_settings
 from .models import Property, Location, Platform, Price
-from .utils import get_stay_total_price
+from .utils import get_stay_total_price, property_is_on_sale
+from availability.models import NotifyOnSaleRequest
 from availability.utils import (
     date_string_to_date,
     even_split_guests,
@@ -17,7 +18,7 @@ from availability.utils import (
     get_property_calendar,
     guests_string_to_dict,
 )
-from bookings.forms import PropertyGuestSplitForm, ReservationForm
+from bookings.forms import ContactMeForm, PropertyGuestSplitForm, ReservationForm
 from bookings.models import Booking, BookingSettings, ReservationGroup
 from bookings.utils import create_booking
 
@@ -87,6 +88,17 @@ class PropertyView(generic.DetailView):
         context['start_query'] = self.request.GET.get('start', '')
         context['end_query'] = self.request.GET.get('end', '')
         context['guests_query'] = self.request.GET.get('guests', '')
+
+        # Drives the sticky toolbar's button label (toolbar_sticky.html) - "Contact Me" rather than
+        # "Book Now" whenever these exact dates aren't on sale yet (property_is_on_sale), same gap
+        # ReserveView itself branches on once the guest actually clicks through. Left True (the
+        # default) with no dates chosen, or once genuinely unavailable - the honest "sorry, no
+        # longer available" message ReserveView shows for THAT case is unrelated to this feature.
+        context['toolbar_submit_label'] = 'BOOK NOW'
+        if context['toolbar_compact']:
+            booking_settings = BookingSettings.load()
+            if not property_is_on_sale(self.object, start_date, end_date, guests, booking_settings):
+                context['toolbar_submit_label'] = 'CONTACT ME'
         return context
 
 
@@ -142,21 +154,24 @@ class ReserveView(generic.DetailView):
         booking_settings = BookingSettings.load()
         context['booking_settings'] = booking_settings
         context['too_far_ahead'] = start_date > booking_settings.max_bookable_date()
-        context['is_available'] = (
-            not context['too_far_ahead'] and self.is_still_available(self.object, start_date, end_date)
-        )
+        # is_available now means only "these exact dates aren't already taken by someone else" -
+        # the price/advance-booking-window gate that used to be folded into this same flag lives
+        # separately below as on_sale, since the two failure modes need different guest-facing
+        # treatment: unavailable is a dead end, not-on-sale-yet gets the Contact Me step.
+        context['is_available'] = self.is_still_available(self.object, start_date, end_date)
 
-        if not context['is_available'] and not context['too_far_ahead']:
+        if not context['is_available']:
             context['own_pending_booking'] = self._own_pending_booking(start_date, end_date)
+            return context
 
-        if context['is_available']:
+        context['on_sale'] = False
+        if not context['too_far_ahead']:
             pricing = get_stay_total_price(
                 self.object, start_date, end_date, guests,
                 monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
             )
-            if pricing is None:
-                context['is_available'] = False  # can't book a stay we can't price
-            else:
+            if pricing is not None:
+                context['on_sale'] = True
                 rental_total = pricing['basic_total'] - pricing['discount_total'] + pricing['extra_guest_total']
                 context['costs'] = booking_settings.compute_costs(rental_total, arrival_date=start_date)
                 context['costs_gbp'] = booking_settings.costs_in_gbp(context['costs'])
@@ -169,10 +184,22 @@ class ReserveView(generic.DetailView):
                         },
                         security_deposits_enabled=booking_settings.security_deposits_enabled,
                     )
+
+        if not context['on_sale'] and not context.get('contact_submitted') and 'contact_form' not in context:
+            context['contact_form'] = ContactMeForm(initial={
+                'start': self.request.GET.get('start', ''),
+                'end': self.request.GET.get('end', ''),
+                'guests': self.request.GET.get('guests', ''),
+            })
         return context
 
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
+        if request.POST.get('form_kind') == 'contact_me':
+            return self._post_contact_me(request)
+        return self._post_reservation(request)
+
+    def _post_reservation(self, request):
         form = ReservationForm(
             request.POST, security_deposits_enabled=BookingSettings.load().security_deposits_enabled,
         )
@@ -199,6 +226,26 @@ class ReserveView(generic.DetailView):
                 messages = dict.fromkeys(error.messages) if hasattr(error, 'messages') else [str(error)]
                 form.add_error(None, '; '.join(messages))
         context = self.get_context_data(form=form)
+        return self.render_to_response(context)
+
+    def _post_contact_me(self, request):
+        form = ContactMeForm(request.POST)
+        if form.is_valid():
+            NotifyOnSaleRequest.objects.create(
+                property=self.object,
+                start_date=form.cleaned_data['start'],
+                end_date=form.cleaned_data['end'],
+                adults=form.cleaned_data['guests'].get('adults', 0),
+                children=form.cleaned_data['guests'].get('children', 0),
+                infants=form.cleaned_data['guests'].get('infants', 0),
+                first_name=form.cleaned_data['first_name'],
+                last_name=form.cleaned_data['last_name'],
+                email=form.cleaned_data['email'],
+                phone=form.cleaned_data['phone'],
+            )
+            context = self.get_context_data(contact_submitted=True)
+            return self.render_to_response(context)
+        context = self.get_context_data(contact_form=form)
         return self.render_to_response(context)
 
 

@@ -97,6 +97,64 @@ class ReservationForm(forms.Form):
     def clean_currency(self):
         return self.cleaned_data.get('currency') or 'EUR'
 
+
+class ContactMeForm(forms.Form):
+    """Guest contact details for a non-binding NotifyOnSaleRequest (availability/models.py) -
+    ReserveView's "Contact Me" step, shown instead of ReservationForm when the property isn't
+    currently on sale for these dates (properties/utils.py::property_is_on_sale) but the dates
+    themselves are still free. Same name/email/phone rows as ReservationForm, minus everything
+    that only matters for a real Booking (country of residence, Terms and Conditions, currency) -
+    there's no price to quote yet, so nothing here commits the guest to anything."""
+    first_name = forms.CharField(
+        max_length=100, required=False,
+        widget=forms.TextInput(attrs={'class': 'reserve-input'}),
+    )
+    last_name = forms.CharField(
+        max_length=100,
+        widget=forms.TextInput(attrs={'class': 'reserve-input'}),
+    )
+    email = forms.EmailField(
+        widget=forms.EmailInput(attrs={'class': 'reserve-input'}),
+    )
+    phone_country_code = forms.ChoiceField(
+        choices=[('', '-')] + phone_country_choices(), required=False,
+        widget=forms.Select(attrs={'class': 'reserve-input', 'autocomplete': 'off'}),
+    )
+    phone = forms.CharField(
+        max_length=50, required=False,
+        widget=forms.TextInput(attrs={'class': 'reserve-input'}),
+    )
+    start = forms.CharField(widget=forms.HiddenInput)
+    end = forms.CharField(widget=forms.HiddenInput)
+    guests = forms.CharField(widget=forms.HiddenInput)
+
+    def clean_start(self):
+        try:
+            return date_string_to_date(self.cleaned_data['start'])
+        except (ValueError, TypeError):
+            raise forms.ValidationError("Invalid check-in date.")
+
+    def clean_end(self):
+        try:
+            return date_string_to_date(self.cleaned_data['end'])
+        except (ValueError, TypeError):
+            raise forms.ValidationError("Invalid check-out date.")
+
+    def clean_guests(self):
+        try:
+            return guests_string_to_dict(self.cleaned_data['guests'])
+        except (ValueError, TypeError):
+            raise forms.ValidationError("Invalid guest counts.")
+
+    def clean(self):
+        cleaned_data = super().clean()
+        start = cleaned_data.get('start')
+        end = cleaned_data.get('end')
+        if start and end and end <= start:
+            raise forms.ValidationError("Check-out must be after check-in.")
+        cleaned_data['phone'] = join_phone(cleaned_data.get('phone_country_code'), cleaned_data.get('phone'))
+        return cleaned_data
+
     def clean(self):
         cleaned_data = super().clean()
         start = cleaned_data.get('start')

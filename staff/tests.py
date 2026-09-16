@@ -2108,6 +2108,70 @@ class StaffPropertyBlockCreateViewTests(TestCase):
         self.assertTrue(list(response.context['messages']))
 
 
+class StaffNotifyOnSaleListViewTests(TestCase):
+    """staff/bookings/not-on-sale/ - the Reserve nav's 'Not on sale yet' list of guest Contact Me
+    leads (availability/models.py::NotifyOnSaleRequest). "Check now" runs the same
+    run_notify_on_sale_check() the management command does."""
+
+    def setUp(self):
+        User.objects.create_user(username='staffnotifyviewer', password='pw', is_staff=True, is_superuser=True)
+        self.client.login(username='staffnotifyviewer', password='pw')
+        location = Location.objects.create(
+            title='Staff Notify List Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.property = Property.objects.create(
+            title=f'{location} - STAFFNOTIFY', short_title='STAFFNOTIFY', location=location,
+        )
+        PropertySpec.objects.create(property=self.property, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        self.url = reverse('staff:notify_on_sale_list')
+
+    def _make_request(self, **overrides):
+        from availability.models import NotifyOnSaleRequest
+        defaults = dict(
+            property=self.property, start_date=date.today() + timedelta(days=330),
+            end_date=date.today() + timedelta(days=335), adults=2,
+            last_name='Watcher', email='staff-notify-watcher@example.com',
+        )
+        defaults.update(overrides)
+        return NotifyOnSaleRequest.objects.create(**defaults)
+
+    def test_requires_can_view_bookings(self):
+        User.objects.create_user(username='roleless_notify_viewer', password='pw', is_staff=True)
+        self.client.login(username='roleless_notify_viewer', password='pw')
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 403)
+
+    def test_lists_pending_requests_by_default(self):
+        from availability.models import NotifyOnSaleRequest
+        pending = self._make_request()
+        notified = self._make_request(email='already-notified@example.com', status=NotifyOnSaleRequest.STATUS_NOTIFIED)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(pending, response.context['requests'])
+        self.assertNotIn(notified, response.context['requests'])
+
+    def test_status_filter_all_shows_everything(self):
+        from availability.models import NotifyOnSaleRequest
+        pending = self._make_request()
+        notified = self._make_request(email='already-notified2@example.com', status=NotifyOnSaleRequest.STATUS_NOTIFIED)
+        response = self.client.get(self.url, {'status': 'all'})
+        self.assertIn(pending, response.context['requests'])
+        self.assertIn(notified, response.context['requests'])
+
+    def test_check_now_resolves_a_now_priced_request(self):
+        from availability.models import NotifyOnSaleRequest
+        watch_request = self._make_request()
+        Price.objects.create(
+            property=self.property, start_date=date.today(),
+            end_date=watch_request.end_date + timedelta(days=30), rate=100,
+        )
+        response = self.client.post(self.url)
+        self.assertRedirects(response, self.url)
+        watch_request.refresh_from_db()
+        self.assertEqual(watch_request.status, NotifyOnSaleRequest.STATUS_NOTIFIED)
+
+
 class StaffGuestOfferCreateViewTests(TestCase):
     """staff/bookings/new/offer/ - property/dates/guests + a live price preview, a manual %
     discount, then create_booking(enquiry_source='Staff offer', ...)."""

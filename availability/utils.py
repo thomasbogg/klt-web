@@ -1,9 +1,16 @@
 import calendar as calendar_module
 from datetime import date, datetime
+from urllib.parse import urlencode
 
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.text import slugify
+
+import env_settings
 from bookings.models import Booking, BookingSettings, SupplementaryPayment
 from env_settings import PROVISIONAL_BOOKING_STATUSES, VALID_BOOKING_STATUSES
 from properties.models import Location, Property, PropertySpec
+from properties.utils import get_stay_total_price
 
 
 def date_string_to_date(date_string):
@@ -207,3 +214,86 @@ def get_property_calendar(property, months=12, start=None, mine_range=None, book
             year += 1
 
     return month_grids
+
+
+def run_notify_on_sale_check():
+    """Walks every still-pending NotifyOnSaleRequest and resolves whatever can now be resolved -
+    shared by check_notify_on_sale_requests (management command, meant to be run manually/
+    periodically until klt-web has a real deployed scheduler - see project memory on the
+    automation roadmap) and the staff app's "Not on sale yet" list, so a staff member clicking
+    "Check now" there can never disagree with what the command itself would have done.
+
+    Two terminal outcomes, checked in this order because overlap wins even for a request that
+    would otherwise now be priceable - a request can't be fulfilled for dates someone else has
+    since taken, regardless of pricing:
+    - UNAVAILABLE: another booking now overlaps these exact dates - this request can never be
+      fulfilled as asked, so it's resolved (not fulfilled) rather than left pending forever.
+    - NOTIFIED: within the current advance-booking window AND every night now priced - the guest
+      is emailed a link straight back into ReserveView for these same dates/guests.
+    Anything that clears neither check is left PENDING for the next run.
+
+    Returns (notified_count, unavailable_count) - the staff view/command both just report these.
+    """
+    from availability.models import NotifyOnSaleRequest
+    from communications.services.sending import send_plain_email
+    from libraries.utils import logerror
+
+    booking_settings = BookingSettings.load()
+    notified_count = unavailable_count = 0
+
+    for watch_request in NotifyOnSaleRequest.objects.filter(
+        status=NotifyOnSaleRequest.STATUS_PENDING
+    ).select_related('property', 'property__location'):
+        if Booking.objects.overlapping(watch_request.property, watch_request.start_date, watch_request.end_date).exists():
+            watch_request.status = NotifyOnSaleRequest.STATUS_UNAVAILABLE
+            watch_request.resolved_at = timezone.now()
+            watch_request.save(update_fields=['status', 'resolved_at'])
+            unavailable_count += 1
+            continue
+
+        if watch_request.start_date > booking_settings.max_bookable_date():
+            continue
+        guests = {'adults': watch_request.adults, 'children': watch_request.children, 'infants': watch_request.infants}
+        pricing = get_stay_total_price(
+            watch_request.property, watch_request.start_date, watch_request.end_date, guests,
+            monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
+        )
+        if pricing is None:
+            continue
+
+        # One bad row (e.g. a property whose location got cleared after this request was made)
+        # must not take the rest of the batch down with it - same per-item isolation
+        # sync_ical_feeds uses for its own per-link fetch failures.
+        try:
+            link = env_settings.SITE_BASE_URL.rstrip('/') + reverse(
+                'properties:property/reserve',
+                kwargs={
+                    'location': watch_request.property.location.slug,
+                    'title': slugify(watch_request.property.short_title),
+                },
+            ) + '?' + urlencode({
+                'start': watch_request.start_date.strftime('%d/%m/%Y'),
+                'end': watch_request.end_date.strftime('%d/%m/%Y'),
+                'guests': f'{watch_request.adults} adults,{watch_request.children} children,{watch_request.infants} infants',
+            })
+            subject = f"{watch_request.property} is now open for your dates"
+            body = (
+                f"Good news - {watch_request.property} is now open for booking for "
+                f"{watch_request.start_date.strftime('%d %b %Y')} to {watch_request.end_date.strftime('%d %b %Y')}. "
+                f"Complete your reservation here: {link}"
+            )
+            send_plain_email(
+                from_email=env_settings.COMMS_AUTOMATED_SENDER_EMAIL, from_display_name='Algarve Beach Apartments',
+                greeting_name=watch_request.first_name or watch_request.last_name,
+                to_email=watch_request.email, subject=subject, body=body,
+            )
+        except Exception as error:
+            logerror(f"availability: could not send notify-on-sale email for request {watch_request.pk}: {error}")
+            continue
+
+        watch_request.status = NotifyOnSaleRequest.STATUS_NOTIFIED
+        watch_request.resolved_at = timezone.now()
+        watch_request.save(update_fields=['status', 'resolved_at'])
+        notified_count += 1
+
+    return notified_count, unavailable_count

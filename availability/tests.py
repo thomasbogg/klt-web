@@ -92,17 +92,42 @@ class SearchViewAdvanceBookingWindowTests(TestCase):
         )
         return property
 
-    def test_search_beyond_the_window_shows_too_far_ahead_and_no_results(self):
+    def test_search_beyond_the_window_still_shows_the_property_not_on_sale(self):
+        """2026-09-16, per Thomas: a search beyond the window shouldn't hide properties that
+        actually fit - it should show them with the "not on sale yet, contact me" card treatment
+        instead of a price (see availability/models.py::NotifyOnSaleRequest)."""
         from dateutil.relativedelta import relativedelta
         start = date.today() + relativedelta(months=19)
         end = start + timedelta(days=5)
-        self._make_property(end + timedelta(days=30))
+        property = self._make_property(end + timedelta(days=30))
         response = self.client.get(self.url, {
             'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y'),
             'guests': '2 adults,0 children,0 infants',
         })
         self.assertTrue(response.context['too_far_ahead'])
-        self.assertNotIn('available_properties', response.context)
+        available_properties = response.context['available_properties']
+        self.assertIn(property, available_properties)
+        result = next(p for p in available_properties if p.pk == property.pk)
+        self.assertFalse(result.on_sale)
+        self.assertIsNone(result.stay_total_price)
+        self.assertContains(response, 'contacted when on sale')
+
+    def test_search_within_the_window_but_unpriced_shows_not_on_sale_card(self):
+        property = Property.objects.create(
+            title='Window Test Property Unpriced', short_title='WINDOWUNPRICED',
+            location=self.location, booking_company=self.management_company,
+        )
+        PropertySpec.objects.create(property=property, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        start = date.today() + timedelta(days=330)
+        end = start + timedelta(days=5)
+        response = self.client.get(self.url, {
+            'start': start.strftime('%d/%m/%Y'), 'end': end.strftime('%d/%m/%Y'),
+            'guests': '2 adults,0 children,0 infants',
+        })
+        self.assertFalse(response.context['too_far_ahead'])
+        result = next(p for p in response.context['available_properties'] if p.pk == property.pk)
+        self.assertFalse(result.on_sale)
+        self.assertIsNone(result.stay_total_price)
 
     def test_search_within_the_window_is_unaffected(self):
         start = date.today() + timedelta(days=330)
@@ -114,6 +139,69 @@ class SearchViewAdvanceBookingWindowTests(TestCase):
         })
         self.assertFalse(response.context['too_far_ahead'])
         self.assertIn(property, response.context['available_properties'])
+
+
+class RunNotifyOnSaleCheckTests(TestCase):
+    """run_notify_on_sale_check() - shared by check_notify_on_sale_requests and the staff app's
+    "Not on sale yet" list "Check now" button (see both docstrings) - the actual resolution logic
+    behind NotifyOnSaleRequest."""
+
+    def setUp(self):
+        self.location = Location.objects.create(
+            title='Notify Check Location', street='Test St', zip_code='0000',
+            city='Test City', coordinates='37.0,-8.0', map_link='https://example.com',
+        )
+        self.management_company = ManagementCompany.objects.create(name='Notify Check Management Co')
+        self.property = Property.objects.create(
+            title=f'{self.location} - NOTIFYCHK', short_title='NOTIFYCHK',
+            location=self.location, booking_company=self.management_company,
+        )
+        PropertySpec.objects.create(property=self.property, max_guests=4, bedrooms=1, bathrooms=1, minimum_nights=1)
+        self.start = date.today() + timedelta(days=330)
+        self.end = self.start + timedelta(days=5)
+
+    def _make_request(self):
+        from availability.models import NotifyOnSaleRequest
+        return NotifyOnSaleRequest.objects.create(
+            property=self.property, start_date=self.start, end_date=self.end,
+            adults=2, children=0, infants=0,
+            last_name='Watcher', email='watcher@example.com',
+        )
+
+    def test_still_unpriced_stays_pending(self):
+        from availability.utils import run_notify_on_sale_check
+        watch_request = self._make_request()
+        notified, unavailable = run_notify_on_sale_check()
+        self.assertEqual((notified, unavailable), (0, 0))
+        watch_request.refresh_from_db()
+        self.assertEqual(watch_request.status, watch_request.STATUS_PENDING)
+
+    def test_now_priced_gets_notified(self):
+        from availability.utils import run_notify_on_sale_check
+        watch_request = self._make_request()
+        Price.objects.create(property=self.property, start_date=date.today(), end_date=self.end + timedelta(days=30), rate=100)
+
+        notified, unavailable = run_notify_on_sale_check()
+        self.assertEqual((notified, unavailable), (1, 0))
+        watch_request.refresh_from_db()
+        self.assertEqual(watch_request.status, watch_request.STATUS_NOTIFIED)
+        self.assertIsNotNone(watch_request.resolved_at)
+
+    def test_since_booked_out_becomes_unavailable(self):
+        from availability.utils import run_notify_on_sale_check
+        watch_request = self._make_request()
+        Price.objects.create(property=self.property, start_date=date.today(), end_date=self.end + timedelta(days=30), rate=100)
+        guest = Guest.objects.create(last_name='Blocker')
+        Booking.objects.create(
+            property=self.property, guest=guest, arrival_date=self.start, departure_date=self.end,
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+
+        notified, unavailable = run_notify_on_sale_check()
+        self.assertEqual((notified, unavailable), (0, 1))
+        watch_request.refresh_from_db()
+        self.assertEqual(watch_request.status, watch_request.STATUS_UNAVAILABLE)
 
 
 class FindPropertyComboSuggestionsTests(TestCase):

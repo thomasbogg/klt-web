@@ -21,7 +21,8 @@ from django.views import View
 from django_countries import countries as country_choices
 
 import env_settings
-from availability.utils import calendar_date_range, get_property_calendar
+from availability.models import NotifyOnSaleRequest
+from availability.utils import calendar_date_range, get_property_calendar, run_notify_on_sale_check
 from bookings.models import (
     CURRENCY_CHOICES, MONTH_CHOICES, PAYMENT_STATUS_CHOICES, Arrival, Booking, BookingCondition,
     BookingSettings, CheckinSettings, Departure, ExtrasSettings, FAQ, LocalGuideEntry, PaymentSettings,
@@ -547,6 +548,38 @@ class StaffGuestOfferCreateView(View):
             'guests': guests,
             'pricing': pricing, 'costs': costs,
         }
+
+
+@method_decorator(staff_page_required('can_view_bookings'), name='dispatch')
+class StaffNotifyOnSaleListView(View):
+    """List of guest "Contact Me" leads (availability/models.py::NotifyOnSaleRequest) - captured
+    by ReserveView when a guest wants a property/dates combo that's available but not yet on sale
+    (no prices published yet, or beyond BookingSettings.max_advance_booking_months). "Check now"
+    runs the exact same resolution pass as the check_notify_on_sale_requests management command
+    (run_notify_on_sale_check, shared so the two can never disagree) - a manual trigger rather
+    than a real cron, since klt-web has no deployed scheduler yet."""
+    template_name = 'staff/notify_on_sale_list.html'
+
+    def get(self, request, *args, **kwargs):
+        status = request.GET.get('status', NotifyOnSaleRequest.STATUS_PENDING)
+        requests = NotifyOnSaleRequest.objects.select_related('property', 'property__location')
+        if status != 'all':
+            requests = requests.filter(status=status)
+        context = {
+            'requests': requests,
+            'status': status,
+            'status_choices': NotifyOnSaleRequest.STATUS_CHOICES,
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request, *args, **kwargs):
+        notified_count, unavailable_count = run_notify_on_sale_check()
+        messages.success(
+            request,
+            f"Checked pending requests: {notified_count} notified, "
+            f"{unavailable_count} no longer available.",
+        )
+        return redirect('staff:notify_on_sale_list')
 
 
 @method_decorator(staff_page_required('can_view_bookings'), name='dispatch')

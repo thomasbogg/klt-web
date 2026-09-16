@@ -273,6 +273,15 @@
     color: rgb(150, 150, 150);
 }
 
+.container.cards.results .card-price-not-on-sale {
+    max-width: 140px;
+    font-family: var(--secondary-font);
+    font-size: 0.74rem;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--primary-color);
+}
+
 /* The full card is now clickable, so the old card-link button styling is no longer used. */
 .container.cards.results .card-link {
     display: none;

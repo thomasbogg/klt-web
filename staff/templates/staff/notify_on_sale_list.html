@@ -1,0 +1,79 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Not On Sale Yet | Staff</title>
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/booking_detail.css' %}">
+    <link rel="stylesheet" href="{% static 'staff/guest_list.css' %}">
+</head>
+<body>
+    <div class="staff-page">
+        {% include 'staff/_nav.html' %}
+
+        <header class="staff-header">
+            <h1 class="staff-page-title">Not On Sale Yet</h1>
+        </header>
+
+        {% if messages %}
+        <div class="staff-messages">
+            {% for message in messages %}
+            <p class="staff-message staff-message-{{ message.tags }}">{{ message }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <p class="staff-page-subtitle">
+            Guests who asked to be contacted about a property/dates combo that wasn't on sale yet
+            (no prices published, or beyond the advance-booking window). "Check now" emails anyone
+            whose stay is now priceable, and resolves any whose dates got booked by someone else in
+            the meantime.
+        </p>
+
+        <form method="post" class="staff-notify-on-sale-check">
+            {% csrf_token %}
+            <button type="submit" class="staff-button">Check now</button>
+        </form>
+
+        <nav class="staff-guest-letters">
+            <a href="?status=pending" class="staff-guest-letter{% if status == 'pending' %} staff-guest-letter-active{% endif %}">Pending</a>
+            <a href="?status=notified" class="staff-guest-letter{% if status == 'notified' %} staff-guest-letter-active{% endif %}">Notified</a>
+            <a href="?status=unavailable" class="staff-guest-letter{% if status == 'unavailable' %} staff-guest-letter-active{% endif %}">No longer available</a>
+            <a href="?status=all" class="staff-guest-letter{% if status == 'all' %} staff-guest-letter-active{% endif %}">All</a>
+        </nav>
+
+        <table class="staff-guest-table">
+            <thead>
+                <tr>
+                    <th>Property</th>
+                    <th>Dates</th>
+                    <th>Guests</th>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Phone</th>
+                    <th>Status</th>
+                    <th>Requested</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for request in requests %}
+                <tr>
+                    <td>{{ request.property }}</td>
+                    <td>{{ request.start_date|date:"d M Y" }} &rarr; {{ request.end_date|date:"d M Y" }}</td>
+                    <td>{{ request.adults }} adult{{ request.adults|pluralize }}{% if request.children %}, {{ request.children }} child{{ request.children|pluralize:"ren" }}{% endif %}{% if request.infants %}, {{ request.infants }} infant{{ request.infants|pluralize }}{% endif %}</td>
+                    <td>{{ request.first_name }} {{ request.last_name }}</td>
+                    <td>{{ request.email }}</td>
+                    <td>{{ request.phone|default:"" }}</td>
+                    <td>{{ request.get_status_display }}</td>
+                    <td>{{ request.created_at|date:"d M Y" }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="8" class="staff-empty">No requests match this filter.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
