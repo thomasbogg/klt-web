@@ -113,6 +113,78 @@ def get_stay_total_price(property, start_date, end_date, guests=None, monthly_di
     }
 
 
+def get_property_average_pricing(property, monthly_discount_min_nights=None):
+    """Average price per night/week/month this property is currently being quoted at to guests -
+    for the Owner Suite Pricing tab, not a guest-facing quote. Averaged across every Price row
+    from today through however far the property's rate card currently extends (no fixed calendar
+    window - this is exactly the range a guest could actually be quoted right now), weighted by
+    nights so a short shoulder-season row doesn't skew the average as much as a long summer one.
+
+    avg_week/avg_month apply each row's own weekly_discount_percent/monthly_discount_percent, but
+    deliberately don't call get_stay_total_price(): last-minute discounts are booking-date-relative
+    and extra-guest fees depend on party size, neither of which is part of a stable "what does this
+    property rent for" figure. avg_month is None unless at least one row in the window actually has
+    a monthly_discount_percent set - a property with no monthly discount configured has no
+    meaningful monthly figure to show (per Thomas: only "if applicable").
+
+    'breakdown' is the same three figures per Price row rather than blended - one entry per
+    currently-or-future row, in date order, each {'start_date', 'end_date', 'night', 'week',
+    'month'} (month is None for that specific row when ITS OWN monthly_discount_percent is 0,
+    independent of whether other rows have one - unlike avg_month, which only cares whether ANY
+    row in the property's window has a monthly discount).
+
+    Returns {'avg_night', 'avg_week', 'avg_month', 'breakdown'} (Decimals, avg_month/a row's
+    'month' possibly None), or None if the property has no currently-or-future-priced Price rows
+    at all.
+    """
+    if monthly_discount_min_nights is None:
+        monthly_discount_min_nights = DEFAULT_MONTHLY_DISCOUNT_MIN_NIGHTS
+
+    today = date.today()
+    total_nights = 0
+    night_weighted_rate = Decimal('0')
+    week_weighted_rate = Decimal('0')
+    month_weighted_rate = Decimal('0')
+    has_monthly_discount = False
+    breakdown = []
+
+    for price in property.prices.filter(end_date__gte=today).order_by('start_date'):
+        window_start = max(price.start_date, today)
+        nights = (price.end_date - window_start).days + 1
+        total_nights += nights
+        night_weighted_rate += price.rate * nights
+        row_week_rate = price.rate * (Decimal('1') - price.weekly_discount_percent / Decimal('100'))
+        row_month_rate = price.rate * (Decimal('1') - price.monthly_discount_percent / Decimal('100'))
+        week_weighted_rate += row_week_rate * nights
+        month_weighted_rate += row_month_rate * nights
+        if price.monthly_discount_percent > 0:
+            has_monthly_discount = True
+
+        breakdown.append({
+            'start_date': window_start,
+            'end_date': price.end_date,
+            'night': price.rate.quantize(TWO_PLACES, rounding=ROUND_HALF_UP),
+            'week': (row_week_rate * 7).quantize(TWO_PLACES, rounding=ROUND_HALF_UP),
+            'month': (row_month_rate * monthly_discount_min_nights).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+                     if price.monthly_discount_percent > 0 else None,
+        })
+
+    if total_nights == 0:
+        return None
+
+    avg_month = None
+    if has_monthly_discount:
+        avg_month = (month_weighted_rate / total_nights * monthly_discount_min_nights).quantize(
+            TWO_PLACES, rounding=ROUND_HALF_UP)
+
+    return {
+        'avg_night': (night_weighted_rate / total_nights).quantize(TWO_PLACES, rounding=ROUND_HALF_UP),
+        'avg_week': (week_weighted_rate / total_nights * 7).quantize(TWO_PLACES, rounding=ROUND_HALF_UP),
+        'avg_month': avg_month,
+        'breakdown': breakdown,
+    }
+
+
 def property_is_on_sale(property, start_date, end_date, guests, booking_settings):
     """Whether `property` can actually be quoted for this stay right now - within
     BookingSettings.max_advance_booking_months AND every night covered by a Price row. Deliberately

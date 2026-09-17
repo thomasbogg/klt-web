@@ -1362,19 +1362,27 @@
                                     <input type="text" name="regular_payout_days_after_arrival" class="staff-input" value="{{ payment_settings.regular_payout_days_after_arrival }}">
                                 </label>
                             </div>
-                            <label class="staff-checkbox-label">
-                                <input type="checkbox" name="charge_vat_on_low_season_direct_commission" {% if payment_settings.charge_vat_on_low_season_direct_commission %}checked{% endif %}>
-                                Charge VAT on commission for a low-season direct booking
+                            <p class="staff-settings-hint">Commission always carries VAT, regardless of season.</p>
+                            <div class="staff-field-row">
+                                <label class="staff-field">Bank account holder name
+                                    <input type="text" name="company_bank_account_holder_name" class="staff-input" value="{{ payment_settings.company_bank_account_holder_name|default:'' }}">
+                                </label>
+                                <label class="staff-field">Bank name
+                                    <input type="text" name="company_bank_name" class="staff-input" value="{{ payment_settings.company_bank_name|default:'' }}">
+                                </label>
+                            </div>
+                            <label class="staff-field">Bank address
+                                <input type="text" name="company_bank_address" class="staff-input" value="{{ payment_settings.company_bank_address|default:'' }}">
                             </label>
-                            <label class="staff-checkbox-label">
-                                <input type="checkbox" name="charge_vat_on_low_season_platform_commission" {% if payment_settings.charge_vat_on_low_season_platform_commission %}checked{% endif %}>
-                                Charge VAT on commission for a low-season platform booking
-                            </label>
-                            <p class="staff-settings-hint">High-season commission always carries VAT, regardless of origin.</p>
-                            <label class="staff-field">Informal Wise payment link
-                                <input type="url" name="wise_payment_link" class="staff-input" placeholder="https://wise.com/pay/..." value="{{ payment_settings.wise_payment_link|default:'' }}">
-                            </label>
-                            <p class="staff-settings-hint">Not yet included in any automated email - for staff to copy/paste manually into a message to an owner until that's built.</p>
+                            <div class="staff-field-row">
+                                <label class="staff-field">IBAN
+                                    <input type="text" name="company_bank_iban" class="staff-input" value="{{ payment_settings.company_bank_iban|default:'' }}">
+                                </label>
+                                <label class="staff-field">SWIFT/BIC
+                                    <input type="text" name="company_bank_swift_code" class="staff-input" value="{{ payment_settings.company_bank_swift_code|default:'' }}">
+                                </label>
+                            </div>
+                            <p class="staff-settings-hint">Shown to an owner on the Statement tab only once at least one of these is filled in.</p>
                             <button type="submit" class="staff-button">Save payment settings</button>
                         </form>
                     </div>

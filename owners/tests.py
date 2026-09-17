@@ -1,4 +1,4 @@
-from datetime import time, timedelta
+from datetime import date, time, timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -14,11 +14,11 @@ from bookings.models import (
     RequestType,
 )
 from bookings.utils import create_owner_booking, guest_for_owner
-from finance.models import Memo, PayoutRecord
+from finance.models import Memo, OwnerInvoice, PayoutRecord
 from guests.models import Guest
 from libraries.phone_country_codes import join_phone, split_phone
 from properties.models import (
-    Location, ManagementCompany, Owner, OwnerBankAccount, Platform, Property, PropertyOwnership,
+    Location, ManagementCompany, Owner, OwnerBankAccount, Platform, Price, Property, PropertyOwnership,
     PropertySpec, iCalLink,
 )
 from staff.models import CleaningTask, LateCheckoutGrant
@@ -1097,6 +1097,227 @@ class OwnerCalendarTests(TestCase):
         # An unrecognised property_id falls back to the default rather than honouring it.
         self.assertEqual(response.context['property'], self.first_property)
         self.assertNotIn(other_property, response.context['properties'])
+
+
+class OwnerPricingTests(TestCase):
+    """The Pricing tab - average price per night/week/month a property is currently being quoted
+    at to guests, per Thomas 2026-09-17 (see properties.utils.get_property_average_pricing's own
+    docstring for what "average" means: weighted by nights, over every currently-or-future Price
+    row, no fixed calendar window)."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Pricing Owner', email='pricing-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False, cleans_are_invoiced=False,
+        )
+        self.owner_user = User.objects.create_user(username='pricingowner', password='pw')
+        self.owner.user = self.owner_user
+        self.owner.save(update_fields=['user'])
+
+        self.property = Property.objects.create(
+            title='Pricing Property', short_title='PRICING', owner=self.owner,
+        )
+        self.client.login(username='pricingowner', password='pw')
+
+    def test_no_pricing_shows_empty_state_not_a_crash(self):
+        response = self.client.get(reverse('owners:pricing'))
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.context['pricing'])
+        self.assertContains(response, 'no pricing published')
+
+    def test_weekly_average_applies_the_discount_but_month_is_hidden_without_one(self):
+        Price.objects.create(
+            property=self.property, start_date=date.today(), end_date=date.today() + timedelta(days=29),
+            rate=200, weekly_discount_percent=Decimal('10'), monthly_discount_percent=Decimal('0'),
+        )
+        response = self.client.get(reverse('owners:pricing'))
+        pricing = response.context['pricing']
+        self.assertEqual(pricing['avg_night'], Decimal('200.00'))
+        self.assertEqual(pricing['avg_week'], Decimal('1260.00'))  # 200 * 0.9 * 7
+        self.assertIsNone(pricing['avg_month'])
+        self.assertNotContains(response, 'with monthly discount')
+
+    def test_monthly_average_shown_once_a_monthly_discount_is_configured(self):
+        Price.objects.create(
+            property=self.property, start_date=date.today(), end_date=date.today() + timedelta(days=29),
+            rate=200, monthly_discount_percent=Decimal('25'),
+        )
+        response = self.client.get(reverse('owners:pricing'))
+        pricing = response.context['pricing']
+        # 28 nights is BookingSettings' default monthly_discount_min_nights.
+        self.assertEqual(pricing['avg_month'], Decimal('4200.00'))  # 200 * 0.75 * 28
+        self.assertContains(response, 'with monthly discount')
+
+    def test_average_is_weighted_by_nights_not_a_flat_average_of_the_two_rates(self):
+        Price.objects.create(
+            property=self.property, start_date=date.today(), end_date=date.today() + timedelta(days=9),
+            rate=100,
+        )
+        Price.objects.create(
+            property=self.property, start_date=date.today() + timedelta(days=10), end_date=date.today() + timedelta(days=29),
+            rate=250,
+        )
+        response = self.client.get(reverse('owners:pricing'))
+        pricing = response.context['pricing']
+        # (10 nights * 100 + 20 nights * 250) / 30 nights = 200, NOT (100 + 250) / 2 = 175.
+        self.assertEqual(pricing['avg_night'], Decimal('200.00'))
+
+    def test_a_past_price_row_does_not_count_towards_the_average(self):
+        Price.objects.create(
+            property=self.property, start_date=date.today() - timedelta(days=30), end_date=date.today() - timedelta(days=1),
+            rate=999,
+        )
+        Price.objects.create(
+            property=self.property, start_date=date.today(), end_date=date.today() + timedelta(days=6),
+            rate=100,
+        )
+        response = self.client.get(reverse('owners:pricing'))
+        pricing = response.context['pricing']
+        self.assertEqual(pricing['avg_night'], Decimal('100.00'))
+
+    def test_breakdown_lists_one_row_per_price_row_with_its_own_figures(self):
+        Price.objects.create(
+            property=self.property, start_date=date.today(), end_date=date.today() + timedelta(days=9),
+            rate=100, weekly_discount_percent=Decimal('10'), monthly_discount_percent=Decimal('0'),
+        )
+        Price.objects.create(
+            property=self.property, start_date=date.today() + timedelta(days=10), end_date=date.today() + timedelta(days=29),
+            rate=250, weekly_discount_percent=Decimal('0'), monthly_discount_percent=Decimal('30'),
+        )
+        response = self.client.get(reverse('owners:pricing'))
+        breakdown = response.context['pricing']['breakdown']
+        self.assertEqual(len(breakdown), 2)
+
+        first, second = breakdown
+        self.assertEqual(first['night'], Decimal('100.00'))
+        self.assertEqual(first['week'], Decimal('630.00'))  # 100 * 0.9 * 7
+        self.assertIsNone(first['month'])  # this row has no monthly discount of its own
+
+        self.assertEqual(second['night'], Decimal('250.00'))
+        self.assertEqual(second['week'], Decimal('1750.00'))  # no weekly discount on this row
+        self.assertEqual(second['month'], Decimal('4900.00'))  # 250 * 0.7 * 28
+
+    def test_property_dropdown_never_offers_another_owners_property(self):
+        other_owner = Owner.objects.create(
+            name='Other Pricing Owner', email='other-pricing-owner@example.com', currency=Owner.Currency.EUR, is_paid_regularly=False, cleans_are_invoiced=False,
+        )
+        other_property = Property.objects.create(
+            title='Other Pricing Property', short_title='OTHPRICE', owner=other_owner,
+        )
+        response = self.client.get(reverse('owners:pricing'), {'property_id': other_property.pk})
+        self.assertEqual(response.context['property'], self.property)
+        self.assertNotIn(other_property, response.context['properties'])
+
+
+class OwnerStatementTests(TestCase):
+    """The Statement tab - owner-wide current position (finance.services.owner_outstanding_balance,
+    property=None) plus any currently-payable invoice (finance.services.owner_payable_invoices),
+    per Thomas 2026-09-17."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Statement Owner', email='statement-owner@example.com', currency=Owner.Currency.EUR,
+            is_paid_regularly=True, cleans_are_invoiced=True,
+        )
+        self.owner_user = User.objects.create_user(username='statementowner', password='pw')
+        self.owner.user = self.owner_user
+        self.owner.save(update_fields=['user'])
+        self.client.login(username='statementowner', password='pw')
+
+    def test_anonymous_visitor_is_redirected_to_login(self):
+        self.client.logout()
+        response = self.client.get(reverse('owners:statement'))
+        self.assertRedirects(response, f"{reverse('owners:login')}?next={reverse('owners:statement')}")
+
+    def test_no_activity_shows_a_zero_net_position(self):
+        response = self.client.get(reverse('owners:statement'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['balance']['net'], Decimal('0'))
+        self.assertEqual(response.context['rows'], [])
+        self.assertEqual(response.context['payable'], [])
+        self.assertContains(response, 'Nothing outstanding')
+
+    def test_payable_invoice_shows_a_pay_this_now_button_linking_to_its_checkout_url(self):
+        OwnerInvoice.objects.create(
+            owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_MONTHLY, period_start=date(2026, 9, 1),
+            cleans_amount=Decimal('90.00'), status='pending', revolut_checkout_url='https://revolut.example/pay/xyz',
+        )
+        response = self.client.get(reverse('owners:statement'))
+        self.assertEqual(len(response.context['payable']), 1)
+        self.assertContains(response, 'Pay this now')
+        self.assertContains(response, 'https://revolut.example/pay/xyz')
+
+    def test_invoice_with_no_live_payment_link_shows_no_pay_button(self):
+        OwnerInvoice.objects.create(
+            owner=self.owner, kind=OwnerInvoice.Kind.COMMISSION_MONTHLY, period_start=date(2026, 9, 1),
+            commission_amount=Decimal('90.00'), status='pending',
+        )
+        response = self.client.get(reverse('owners:statement'))
+        self.assertEqual(response.context['payable'], [])
+        self.assertNotContains(response, 'Pay this now')
+
+    def test_informal_bundle_shows_bank_details_not_a_link(self):
+        settings = PaymentSettings.load()
+        settings.company_bank_account_holder_name = 'Algarve Beach Apartments'
+        settings.company_bank_address = '1 Bank Street, Lisbon'
+        settings.company_bank_iban = 'PT50000000000000000000000'
+        settings.save(update_fields=['company_bank_account_holder_name', 'company_bank_address', 'company_bank_iban'])
+        OwnerInvoice.objects.create(
+            owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY, cleans_amount=Decimal('50.00'),
+        )
+        response = self.client.get(reverse('owners:statement'))
+        self.assertEqual(len(response.context['payable']), 1)
+        self.assertEqual(response.context['payable'][0]['pay_method'], 'bank_transfer')
+        self.assertContains(response, 'Algarve Beach Apartments')
+        self.assertContains(response, '1 Bank Street, Lisbon')
+        self.assertContains(response, 'PT50000000000000000000000')
+
+    def test_another_owners_invoice_never_appears(self):
+        other_owner = Owner.objects.create(
+            name='Other Statement Owner', email='other-statement-owner@example.com', currency=Owner.Currency.EUR,
+            is_paid_regularly=True, cleans_are_invoiced=True,
+        )
+        OwnerInvoice.objects.create(
+            owner=other_owner, kind=OwnerInvoice.Kind.CLEANS_MONTHLY, period_start=date(2026, 9, 1),
+            cleans_amount=Decimal('90.00'), status='pending', revolut_checkout_url='https://revolut.example/pay/other',
+        )
+        response = self.client.get(reverse('owners:statement'))
+        self.assertEqual(response.context['payable'], [])
+
+    def test_gates_out_a_booking_and_memo_before_this_owners_recorded_handover(self):
+        """PropertyOwnership.visible_since() gating (2026-09-17) - the same protection
+        Reports/Payouts & Memos already apply, now also on the Statement tab's balance figures.
+        Flagged as a gap the day this tab shipped, since owner_outstanding_balance was built for
+        staff and has no idea about ownership handovers on its own."""
+        company = ManagementCompany.objects.create(name='Statement Gating Co', finances_managed_internally=True)
+        property = Property.objects.create(
+            title='Statement Gating Property', short_title='STMTGATE', owner=self.owner,
+            cleaning_company=company, booking_company=company, standard_cleaning_fee=Decimal('80.00'),
+        )
+        PropertySpec.objects.create(property=property, bedrooms=2)
+        guest = Guest.objects.create(first_name='Gate', last_name='Owner', email='gating-guest@example.com')
+        today = timezone.now().date()
+        booking = Booking.objects.create(
+            property=property, guest=guest,
+            arrival_date=today + timedelta(days=10), departure_date=today + timedelta(days=14),
+            is_owner=False, enquiry_status='Booking confirmed', enquiry_source='Website',
+            adults=2, children=0, babies=0, last_updated=timezone.now(),
+        )
+        Charge.objects.create(booking=booking, basic_rental=Decimal('300.00'))
+        Departure.objects.create(booking=booking, clean=True)  # auto-creates a Memo via signal
+        memo = Memo.objects.get(property=property, cleaning_task__booking=booking)
+        memo.sent_at = timezone.now()
+        memo.save(update_fields=['sent_at'])
+
+        response = self.client.get(reverse('owners:statement'))
+        kinds = {row['kind'] for row in response.context['rows']}
+        self.assertEqual(kinds, {'booking', 'memo'})
+        self.assertNotEqual(response.context['balance']['net'], Decimal('0'))
+
+        PropertyOwnership.record_handover(property, self.owner, today + timedelta(days=15))
+
+        response = self.client.get(reverse('owners:statement'))
+        self.assertEqual(response.context['rows'], [])
+        self.assertEqual(response.context['balance']['net'], Decimal('0'))
 
 
 class OwnerPayoutsMemosTests(TestCase):

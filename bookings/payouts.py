@@ -155,14 +155,11 @@ def compute_owner_payout(booking, payment_settings=None):
     commission_percent = _commission_percent(payment_settings, booking.arrival_date)
     commission = _round((rental_base + off_platform_cash) * commission_percent / Decimal('100'))
 
-    high_season = _is_high_season(payment_settings, booking.arrival_date)
-    if high_season:
-        charge_commission_vat = True
-    elif is_platform:
-        charge_commission_vat = payment_settings.charge_vat_on_low_season_platform_commission
-    else:
-        charge_commission_vat = payment_settings.charge_vat_on_low_season_direct_commission
-    commission_vat = _round(commission * payment_settings.vat_rate_percent / Decimal('100')) if charge_commission_vat else ZERO
+    # Commission VAT is charged regardless of season or booking source - the old low-season
+    # direct/platform toggles (charge_vat_on_low_season_direct_commission/
+    # _platform_commission) were removed 2026-09-17, per Thomas: both had settled permanently on
+    # True in practice, so the conditional was dead configuration surface.
+    commission_vat = _round(commission * payment_settings.vat_rate_percent / Decimal('100'))
 
     platform_fee_vat = _round(platform_fee * payment_settings.vat_rate_percent / Decimal('100')) if is_platform else ZERO
 

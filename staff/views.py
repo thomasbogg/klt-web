@@ -2143,9 +2143,11 @@ class StaffSettingsView(View):
             value = _parsed_int(post.get(field))
             if value is not None:
                 setattr(settings, field, value)
-        for field in ('charge_vat_on_low_season_direct_commission', 'charge_vat_on_low_season_platform_commission'):
-            setattr(settings, field, post.get(field) == 'on')
-        settings.wise_payment_link = post.get('wise_payment_link', '').strip() or None
+        for field in (
+            'company_bank_account_holder_name', 'company_bank_name', 'company_bank_address',
+            'company_bank_iban', 'company_bank_swift_code',
+        ):
+            setattr(settings, field, post.get(field, '').strip() or None)
         try:
             settings.full_clean()
         except ValidationError as error:

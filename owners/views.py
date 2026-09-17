@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth import views as auth_views
@@ -12,8 +14,8 @@ from django.views import View
 
 from availability.utils import get_property_calendar
 from bookings.models import (
-    Arrival, Booking, Departure, Extra, ExtrasSettings, TravelMethod, WelcomePackDrinksChoice,
-    WelcomePackFoodChoice, WelcomePackItem,
+    Arrival, Booking, BookingSettings, Departure, Extra, ExtrasSettings, TravelMethod,
+    WelcomePackDrinksChoice, WelcomePackFoodChoice, WelcomePackItem,
 )
 from bookings.utils import (
     FLIGHT_NUMBER_HINT, compute_effective_self_check_in, create_owner_booking,
@@ -21,9 +23,11 @@ from bookings.utils import (
 )
 from bookings.views import BookingFormMixin
 from finance.models import Memo, PayoutRecord
+from finance.services import owner_outstanding_balance, owner_payable_invoices
 from owners.permissions import owner_login_required
 from libraries.phone_country_codes import join_phone, phone_country_choices, split_phone
 from properties.models import Owner, OwnerBankAccount, Property, PropertyOwnership, iCalLink
+from properties.utils import get_property_average_pricing
 from staff.models import TaskHistoryEntry
 from staff.reports import OWNER_SAFE_REPORT_COLUMNS, booking_report_rows, report_totals
 from staff.utils import CLOSED_STATUSES, last_day_of_month, parsed_date
@@ -317,6 +321,156 @@ class OwnerCalendarView(View):
             'calendar_months': get_property_calendar(selected_property) if selected_property else [],
             'active_section': 'calendar',
         })
+
+
+@method_decorator(owner_login_required, name='dispatch')
+class OwnerPricingView(View):
+    """Average price per night/week/month a property is currently being quoted at to guests,
+    scoped to a property this owner picks from a dropdown (same pattern as OwnerCalendarView).
+    See get_property_average_pricing's own docstring for what "average" means here."""
+    template_name = 'owners/pricing.html'
+
+    def get(self, request, *args, **kwargs):
+        owner = request.user.owner_profile
+        properties = list(Property.objects.filter(owner=owner).order_by('pk'))
+
+        property_id = request.GET.get('property_id', '')
+        selected_property = next((p for p in properties if str(p.pk) == property_id), None) or (
+            properties[0] if properties else None
+        )
+
+        pricing = None
+        if selected_property:
+            booking_settings = BookingSettings.load()
+            pricing = get_property_average_pricing(
+                selected_property, monthly_discount_min_nights=booking_settings.monthly_discount_min_nights,
+            )
+
+        return render(request, self.template_name, {
+            'owner': owner,
+            'properties': properties,
+            'property': selected_property,
+            'pricing': pricing,
+            'active_section': 'pricing',
+        })
+
+
+@method_decorator(owner_login_required, name='dispatch')
+class OwnerStatementView(View):
+    """Owner-wide (not per-property - see finance.services.owner_outstanding_balance's own
+    docstring on *_MONTHLY invoices covering every one of an owner's properties together) current
+    financial position, "as of" the end of the current month per Thomas 2026-09-17 - what KLT
+    still owes this owner in payouts that haven't gone out yet, against what this owner still owes
+    KLT for services already covered but not yet reimbursed. Reuses the exact same
+    owner_outstanding_balance() the staff Statement tab (StaffFinanceStatementView) is built on,
+    just called with property=None to get the owner's combined figure across every property at
+    once instead of one section per property.
+
+    Below that, owner_payable_invoices() surfaces any currently-unpaid invoice that already has a
+    real way to pay it right now (a live Revolut checkout link, or KLT's own bank details for an
+    informal bundle) with a "Pay this now" button - see that function's own docstring for why it's
+    deliberately narrower than every unpaid invoice, and why it never generates a new payment link
+    on the fly.
+
+    owner_outstanding_balance() itself was built for staff (StaffFinanceStatementView), who should
+    see a property's full history regardless of ownership handovers - it has no idea about
+    PropertyOwnership.visible_since() gating at all. _gate_balance_to_owner_visibility() applies
+    that same gating Reports/Payouts & Memos already use (2026-09-17, per Thomas, flagged as a real
+    gap the day this tab shipped) so a new owner of a handed-over property never sees a pre-handover
+    booking/memo surface here as something they're owed or owe."""
+    template_name = 'owners/statement.html'
+
+    def get(self, request, *args, **kwargs):
+        owner = request.user.owner_profile
+        as_of = last_day_of_month(timezone.now().date())
+        balance = _gate_balance_to_owner_visibility(owner, owner_outstanding_balance(owner, as_of))
+        payable = owner_payable_invoices(owner)
+
+        return render(request, self.template_name, {
+            'owner': owner,
+            'as_of': as_of,
+            'balance': balance,
+            'rows': _combined_balance_rows(balance),
+            'payable': payable,
+            'active_section': 'statement',
+        })
+
+
+def _gate_balance_to_owner_visibility(owner, balance):
+    """Filters an owner_outstanding_balance() result down to whatever `owner` is actually allowed
+    to see per PropertyOwnership.visible_since() - see OwnerStatementView's own docstring for why
+    this exists as a separate step rather than inside owner_outstanding_balance itself.
+
+    Regular owners (per-booking/per-memo rows): each row is checked and dropped individually, then
+    the two totals are recomputed from whatever's left - never trust the original totals once any
+    row's been dropped.
+
+    Non-regular owners (per-month rows, each covering however many bookings/properties settled
+    together that month): a month's 'owner_balance' is one combined figure with no per-booking
+    breakdown to subtract from, so there's no safe way to partially recompute it. Deliberately
+    conservative here - if EVERY booking in that month is visible the row stays as-is; if ANY of
+    them isn't, the whole row is dropped rather than risking a partial figure that's silently wrong
+    either way (showing too much, or claiming a smaller amount than's really owed)."""
+    properties = list(Property.objects.filter(owner=owner))
+    visible_since = _owner_visible_since_by_property(owner, properties)
+
+    if balance['is_regular']:
+        owed_to_owner_rows = [
+            row for row in balance['owed_to_owner_rows']
+            if _visible_to_owner(row['booking'].property_id, row['booking'].arrival_date, visible_since)
+        ]
+        owed_by_owner_rows = [
+            memo for memo in balance['owed_by_owner_rows']
+            if _visible_to_owner(memo.property_id, _memo_event_date(memo), visible_since)
+        ]
+        owed_to_owner = sum((row['payout']['owner_balance'] for row in owed_to_owner_rows), Decimal('0'))
+        owed_by_owner = sum((memo.total() for memo in owed_by_owner_rows), Decimal('0'))
+    else:
+        owed_to_owner_rows = [
+            row for row in balance['owed_to_owner_rows']
+            if all(_visible_to_owner(b.property_id, b.arrival_date, visible_since) for b in row['bookings'])
+        ]
+        owed_by_owner_rows = []
+        owed_to_owner = sum((row['owner_balance'] for row in owed_to_owner_rows), Decimal('0'))
+        owed_by_owner = balance['owed_by_owner']  # already None for non-regular owners
+
+    return {
+        'owed_to_owner': owed_to_owner,
+        'owed_to_owner_rows': owed_to_owner_rows,
+        'owed_by_owner': owed_by_owner,
+        'owed_by_owner_rows': owed_by_owner_rows,
+        'net': owed_to_owner - (owed_by_owner or Decimal('0')),
+        'is_regular': balance['is_regular'],
+    }
+
+
+def _combined_balance_rows(balance):
+    """Interleaves owed_to_owner_rows/owed_by_owner_rows into one chronological list, same
+    presentation StaffFinanceStatementView._combined_rows builds for the staff Statement tab -
+    is_credit=True means the owner owes KLT (rendered red via owner-table-deduction), False means
+    KLT owes the owner. Kept as a separate small owners-local copy rather than importing the staff
+    view's bound method - the two Statement pages share the underlying balance data
+    (owner_outstanding_balance) but not a common presentation layer."""
+    rows = []
+    if balance['is_regular']:
+        for row in balance['owed_to_owner_rows']:
+            rows.append({
+                'kind': 'booking', 'date': row['payout']['due_date'], 'booking': row['booking'],
+                'amount': row['payout']['owner_balance'], 'is_credit': False,
+            })
+    else:
+        for row in balance['owed_to_owner_rows']:
+            rows.append({
+                'kind': 'month', 'date': row['month_start'], 'month_start': row['month_start'],
+                'bookings': row['bookings'], 'amount': row['owner_balance'], 'is_credit': False,
+            })
+    for memo in balance['owed_by_owner_rows']:
+        rows.append({
+            'kind': 'memo', 'date': memo.cleaning_task.date if memo.cleaning_task else memo.created_at.date(),
+            'memo': memo, 'amount': memo.total(), 'is_credit': True,
+        })
+    rows.sort(key=lambda row: row['date'])
+    return rows
 
 
 def _owner_visible_since_by_property(owner, properties):

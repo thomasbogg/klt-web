@@ -654,8 +654,6 @@ class ComputeOwnerPayoutTests(TestCase):
         self.settings.high_season_start_month = 4
         self.settings.high_season_end_month = 10
         self.settings.vat_rate_percent = Decimal('23.00')
-        self.settings.charge_vat_on_low_season_direct_commission = False
-        self.settings.charge_vat_on_low_season_platform_commission = True
         self.settings.regular_payout_days_after_arrival = 3
         self.settings.cleaning_surcharge_one_bedroom = Decimal('10.00')
         self.settings.cleaning_surcharge_multi_bedroom = Decimal('15.00')
@@ -679,7 +677,13 @@ class ComputeOwnerPayoutTests(TestCase):
         result = compute_owner_payout(booking, self.settings)
         self.assertTrue(result['available'])
         self.assertEqual(result['commission'], Decimal('28.40'))
-        self.assertEqual(result['commission_vat'], Decimal('0'))
+        # The original report row had commission_vat=0 here under the old low-season-direct
+        # toggle (defaulted off) - that toggle was removed 2026-09-17 per Thomas (commission VAT
+        # is now always charged, any season), so this no longer matches the report's literal
+        # figure. commission_vat never fed owner_balance either way (see compute_owner_payout's
+        # own comment - it's KLT's internal VAT liability, absorbed internally, not deducted from
+        # the owner), so owner_balance below is still the real regression guard.
+        self.assertEqual(result['commission_vat'], Decimal('6.53'))  # 28.40 * 23%
         self.assertEqual(result['owner_balance'], Decimal('255.60'))
 
     def test_matches_report_row_5441_platform_high_season(self):
@@ -730,29 +734,24 @@ class ComputeOwnerPayoutTests(TestCase):
         self.assertFalse(result['available'])
         self.assertEqual(result['reason'], "Property has no owner assigned.")
 
-    # --- Commission VAT gating ---
+    # --- Commission VAT ---
+    # Always charged, any season, direct or platform - the old low-season toggles
+    # (charge_vat_on_low_season_direct_commission/_platform_commission) were removed 2026-09-17
+    # per Thomas: both had settled permanently on True in practice, so the conditional was dead
+    # configuration surface.
 
-    def test_commission_vat_always_charged_in_high_season_direct(self):
-        booking = self._make_booking(date(2026, 7, 1), date(2026, 7, 8))
-        Charge.objects.create(booking=booking, basic_rental=Decimal('1000.00'))
-        result = compute_owner_payout(booking, self.settings)
-        self.assertEqual(result['commission_vat'], Decimal('34.50'))  # 15% * 23%
+    def test_commission_vat_always_charged_direct_any_season(self):
+        high_season_booking = self._make_booking(date(2026, 7, 1), date(2026, 7, 8))
+        Charge.objects.create(booking=high_season_booking, basic_rental=Decimal('1000.00'))
+        high_result = compute_owner_payout(high_season_booking, self.settings)
+        self.assertEqual(high_result['commission_vat'], Decimal('34.50'))  # 15% * 23%
 
-    def test_low_season_direct_commission_vat_off_by_default(self):
-        booking = self._make_booking(date(2026, 1, 5), date(2026, 1, 10))
-        Charge.objects.create(booking=booking, basic_rental=Decimal('1000.00'))
-        result = compute_owner_payout(booking, self.settings)
-        self.assertEqual(result['commission_vat'], Decimal('0'))
+        low_season_booking = self._make_booking(date(2026, 1, 5), date(2026, 1, 10))
+        Charge.objects.create(booking=low_season_booking, basic_rental=Decimal('1000.00'))
+        low_result = compute_owner_payout(low_season_booking, self.settings)
+        self.assertEqual(low_result['commission_vat'], Decimal('23.00'))  # 10% * 23%
 
-    def test_low_season_direct_commission_vat_on_when_toggled(self):
-        self.settings.charge_vat_on_low_season_direct_commission = True
-        self.settings.save()
-        booking = self._make_booking(date(2026, 1, 5), date(2026, 1, 10))
-        Charge.objects.create(booking=booking, basic_rental=Decimal('1000.00'))
-        result = compute_owner_payout(booking, self.settings)
-        self.assertEqual(result['commission_vat'], Decimal('23.00'))  # 10% * 23%
-
-    def test_low_season_platform_commission_vat_on_by_default(self):
+    def test_commission_vat_always_charged_platform_low_season(self):
         booking = self._make_booking(date(2026, 1, 5), date(2026, 1, 10), enquiry_source='Airbnb')
         PlatformPayout.objects.create(
             booking=booking, gross_amount=Decimal('1050.00'), payout_amount=Decimal('1000.00'),
@@ -761,18 +760,6 @@ class ComputeOwnerPayoutTests(TestCase):
         result = compute_owner_payout(booking, self.settings)
         self.assertEqual(result['commission_vat'], Decimal('23.00'))
         self.assertEqual(result['platform_fee_vat'], Decimal('11.50'))  # always, any season
-
-    def test_low_season_platform_commission_vat_off_when_toggled_off(self):
-        self.settings.charge_vat_on_low_season_platform_commission = False
-        self.settings.save()
-        booking = self._make_booking(date(2026, 1, 5), date(2026, 1, 10), enquiry_source='Airbnb')
-        PlatformPayout.objects.create(
-            booking=booking, gross_amount=Decimal('1050.00'), payout_amount=Decimal('1000.00'),
-            platform_commission=Decimal('50.00'),
-        )
-        result = compute_owner_payout(booking, self.settings)
-        self.assertEqual(result['commission_vat'], Decimal('0'))
-        self.assertEqual(result['platform_fee_vat'], Decimal('11.50'))  # still always charged
 
     # --- Management fee ---
 

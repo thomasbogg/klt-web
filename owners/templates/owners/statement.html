@@ -1,0 +1,112 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Statement | Owner Suite | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'owners/owners.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+    <script src="{% static 'owners/statement.js' %}" defer></script>
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'owners/_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content">
+            <h1>Statement</h1>
+            <p class="owner-welcome">Your position as of {{ as_of|date:'j F Y' }}.</p>
+
+            {% if payable %}
+            <h2 class="owner-panel-title">Payment needed</h2>
+            <table class="owner-table">
+                <thead>
+                    <tr>
+                        <th>What for</th>
+                        <th>Amount</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in payable %}
+                    <tr>
+                        <td>{{ row.invoice.get_kind_display }}</td>
+                        <td class="owner-table-deduction">&euro;{{ row.invoice.total }}</td>
+                        <td>
+                            {% if row.pay_method == 'revolut' %}
+                            <a href="{{ row.pay_url }}" target="_blank" rel="noopener" class="owner-button" style="white-space: nowrap;">Pay this now</a>
+                            {% else %}
+                            <button type="button" class="owner-button owner-statement-pay-toggle" data-target="owner-bank-details-{{ forloop.counter }}" style="white-space: nowrap;">Pay this now</button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% if row.pay_method == 'bank_transfer' %}
+                    <tr id="owner-bank-details-{{ forloop.counter }}" class="owner-bank-details-panel" hidden>
+                        <td colspan="3">
+                            <p class="owner-field-note">Please pay by bank transfer using these details, referencing your name:</p>
+                            {% if row.bank_details.account_holder_name %}<p>Account holder: {{ row.bank_details.account_holder_name }}</p>{% endif %}
+                            {% if row.bank_details.bank_name %}<p>Bank: {{ row.bank_details.bank_name }}</p>{% endif %}
+                            {% if row.bank_details.bank_address %}<p>Bank address: {{ row.bank_details.bank_address }}</p>{% endif %}
+                            {% if row.bank_details.iban %}<p>IBAN: {{ row.bank_details.iban }}</p>{% endif %}
+                            {% if row.bank_details.swift_code %}<p>SWIFT/BIC: {{ row.bank_details.swift_code }}</p>{% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+
+            <h2 class="owner-panel-title owner-panel-title-spaced">Outstanding activity</h2>
+            <div class="owner-table-scroll">
+                <table class="owner-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Description</th>
+                            <th>Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                        <tr>
+                            <td>{{ row.date|date:'j M Y' }}</td>
+                            <td>
+                                {% if row.kind == 'booking' %}
+                                Payout &ndash; <a href="{% url 'owners:booking_detail' reference=row.booking.reference %}">{{ row.booking.guest }}</a>
+                                {% elif row.kind == 'month' %}
+                                {{ row.month_start|date:'F Y' }} payout ({{ row.bookings|length }} booking{{ row.bookings|length|pluralize }})
+                                {% else %}
+                                Cleaning/meet-greet &ndash; {{ row.memo.property }}
+                                {% endif %}
+                            </td>
+                            <td{% if row.is_credit %} class="owner-table-deduction"{% endif %}>&euro;{{ row.amount }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="3" class="owner-empty">Nothing outstanding.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="2" class="owner-table-totals-label">{% if balance.net >= 0 %}Net owed to you{% else %}Net owed by you{% endif %}</td>
+                            <td>&euro;{{ balance.net|cut:"-" }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            {% if balance.owed_by_owner is None %}
+            <p class="owner-payouts-memos-note">Your commission and cleans/meet-greet costs are deducted from your payout automatically, so there's nothing separate owed by you to show here.</p>
+            {% endif %}
+        </div>
+    </div>
+    {% include 'footer/footer.html' %}
+</body>
+</html>

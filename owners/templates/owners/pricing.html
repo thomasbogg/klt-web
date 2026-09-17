@@ -1,0 +1,95 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pricing | Owner Suite | Algarve Beach Apartments</title>
+    <link rel="stylesheet" href="{% static 'header/header.css' %}">
+    <link rel="stylesheet" href="{% static 'main/style.css' %}">
+    <link rel="stylesheet" href="{% static 'bookings/bookings.css' %}">
+    <link rel="stylesheet" href="{% static 'owners/owners.css' %}">
+    <link rel="stylesheet" href="{% static 'footer/footer.css' %}">
+</head>
+<header>
+    {% include 'header/header.html' %}
+</header>
+<body>
+    <div class="manage-hub-layout">
+        <aside class="manage-hub-sidebar">
+            {% include 'owners/_sidebar.html' %}
+        </aside>
+
+        <div class="manage-hub-content">
+            <h1>Pricing</h1>
+            <p class="owner-welcome">The average rate this property is currently being quoted at to guests, based on its rate card from today onward.</p>
+
+            {% if properties|length > 1 %}
+            <div class="owner-filter-panel">
+                <form method="get" class="owner-filter-form">
+                    <label>Property
+                        <select name="property_id" onchange="this.form.submit()">
+                            {% for p in properties %}
+                            <option value="{{ p.pk }}" {% if property.pk == p.pk %}selected{% endif %}>{{ p }}</option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <noscript><button type="submit" class="owner-button">Show</button></noscript>
+                </form>
+            </div>
+            {% endif %}
+
+            {% if not property %}
+            <p class="owner-empty">No properties are currently linked to your account.</p>
+            {% elif not pricing %}
+            <p class="owner-empty">This property has no pricing published from today onward yet.</p>
+            {% else %}
+            <table class="owner-table">
+                <thead>
+                    <tr>
+                        <th>Per night</th>
+                        <th>Per week</th>
+                        <th>Per month{% if pricing.avg_month %} <span class="owner-field-note">(with monthly discount)</span>{% endif %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>&euro;{{ pricing.avg_night }}</td>
+                        <td>&euro;{{ pricing.avg_week }}</td>
+                        <td>{% if pricing.avg_month %}&euro;{{ pricing.avg_month }}{% else %}&mdash;{% endif %}</td>
+                    </tr>
+                </tbody>
+            </table>
+            {% if not pricing.avg_month %}
+            <p class="owner-payouts-memos-note">No monthly discount is currently configured for this property, so there's no separate monthly figure to show.</p>
+            {% endif %}
+
+            <h2 class="owner-panel-title owner-panel-title-spaced">By date range</h2>
+            <div class="owner-table-scroll">
+                <table class="owner-table">
+                    <thead>
+                        <tr>
+                            <th>Dates</th>
+                            <th>Per night</th>
+                            <th>Per week</th>
+                            <th>Per month</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in pricing.breakdown %}
+                        <tr>
+                            <td>{{ row.start_date|date:"d M Y" }} &ndash; {{ row.end_date|date:"d M Y" }}</td>
+                            <td>&euro;{{ row.night }}</td>
+                            <td>&euro;{{ row.week }}</td>
+                            <td>{% if row.month %}&euro;{{ row.month }}{% else %}&mdash;{% endif %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% include 'footer/footer.html' %}
+</body>
+</html>

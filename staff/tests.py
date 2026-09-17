@@ -4531,15 +4531,17 @@ class StaffSettingsViewTests(TestCase):
             'cleaning_surcharge_one_bedroom': '10.00', 'cleaning_surcharge_multi_bedroom': '15.00',
             'cleaning_high_occupancy_surcharge': '15.00', 'meet_greet_fee': '28.00',
             'extra_bed_fee': '25.00', 'regular_payout_days_after_arrival': '5',
-            'charge_vat_on_low_season_direct_commission': 'on',
+            'company_bank_account_holder_name': 'Algarve Beach Apartments', 'company_bank_name': 'Test Bank',
+            'company_bank_address': '1 Bank Street, Lisbon',
+            'company_bank_iban': 'PT50000000000000000000000', 'company_bank_swift_code': 'TESTPTPL',
         })
         self.assertRedirects(response, f'{self.url}?panel=payments')
         settings = PaymentSettings.load()
         self.assertEqual(settings.regular_payout_days_after_arrival, 5)
-        self.assertTrue(settings.charge_vat_on_low_season_direct_commission)
-        # Omitted checkbox - unchecked, not left at its previous value, matching how the other
-        # boolean-checkbox settings on this page (e.g. OWNER_BOOLEAN_FIELDS) already behave.
-        self.assertFalse(settings.charge_vat_on_low_season_platform_commission)
+        self.assertEqual(settings.company_bank_account_holder_name, 'Algarve Beach Apartments')
+        self.assertEqual(settings.company_bank_address, '1 Bank Street, Lisbon')
+        self.assertEqual(settings.company_bank_iban, 'PT50000000000000000000000')
+        self.assertEqual(settings.company_bank_swift_code, 'TESTPTPL')
 
     def test_update_booking_settings_saves_security_deposits_enabled_checkbox(self):
         response = self.client.post(self.url, {

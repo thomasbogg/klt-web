@@ -1672,21 +1672,6 @@ class PaymentSettings(models.Model):
                   "schedule is instead batched into a single payout at the end of the arrival "
                   "month."
     )
-    charge_vat_on_low_season_direct_commission = models.BooleanField(
-        default=False,
-        help_text="Whether Internal Commission carries VAT for a direct booking outside high "
-                  "season. High-season commission always carries VAT regardless of origin - "
-                  "this only controls the low-season direct case, which can be disregarded for "
-                  "simplicity."
-    )
-    charge_vat_on_low_season_platform_commission = models.BooleanField(
-        default=True,
-        help_text="Whether Internal Commission carries VAT for a platform booking outside high "
-                  "season. High-season commission always carries VAT regardless of origin, and "
-                  "a platform booking already carries VAT on the platform's own fee year-round - "
-                  "defaults on for consistency, but kept togglable separately from the direct "
-                  "case."
-    )
     # Added 2026-09-11, per Thomas - an informal Wise payment link to give an owner alongside
     # their outstanding balance (e.g. a consolidated cleans/meet-greet request). Storage only for
     # now: no email currently sends an owner a statement at all (confirmed this session - Consolidate
@@ -1698,6 +1683,27 @@ class PaymentSettings(models.Model):
                   "balance. Not yet referenced by any automated email - for staff to copy/paste "
                   "manually until that's built."
     )
+    # Added 2026-09-17, per Thomas - wise_payment_link turned out to require the payer to sign up
+    # for (or log into) Wise themselves before they can send anything; there's no guest/no-account
+    # path at all (confirmed live at wise.com/pay/me/<username> - it's a plain account
+    # login/signup form, not a payment form). These fields are the fallback: KLT's own bank
+    # account details, shown directly to the owner (see finance/services.py::
+    # owner_payable_invoices and the Owner Suite Statement tab's "Pay this now" button for a
+    # CLEANS_INFORMAL_MONTHLY invoice) instead of linking out anywhere. All blank by default and
+    # all optional - the Statement tab only offers this as a payment option once at least one of
+    # them is actually filled in, same "storage only until configured" convention as
+    # wise_payment_link itself. No IBAN/sort-code split like properties.models.OwnerBankAccount -
+    # deliberately kept to one flat set of fields an owner's own bank can match against however it
+    # needs to (IBAN, SWIFT/BIC, or both), rather than presuming KLT's own account is EUR-only.
+    company_bank_account_holder_name = models.CharField(max_length=100, blank=True, null=True)
+    company_bank_name = models.CharField(max_length=100, blank=True, null=True)
+    company_bank_address = models.CharField(
+        max_length=255, blank=True, null=True,
+        help_text="The bank's own address - often required alongside SWIFT/BIC for an "
+                  "international wire transfer, same as company_bank_name/iban/swift_code."
+    )
+    company_bank_iban = models.CharField(max_length=34, blank=True, null=True)
+    company_bank_swift_code = models.CharField(max_length=20, blank=True, null=True)
 
     class Meta:
         db_table = 'payment_settings'

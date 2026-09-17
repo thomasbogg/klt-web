@@ -813,6 +813,63 @@ def owner_outstanding_balance(owner, as_of, property=None):
     }
 
 
+def owner_payable_invoices(owner):
+    """Unpaid OwnerInvoice rows for `owner` that already have a real, live way to pay them right
+    now - the Owner Suite Statement tab's "Pay this now" candidates (2026-09-17).
+
+    Deliberately narrower than "every unpaid OwnerInvoice": COMMISSION_PAYOUT is issued already
+    settled (excluded by the status filter alone) and COMMISSION_MONTHLY/COMBINED_MONTHLY are
+    structural, netted out of the owner's next payout rather than paid directly (see
+    owner_outstanding_balance's own docstring) - there's genuinely nothing to click for those, so
+    they're excluded even though they're "unpaid" in the model sense. Only CLEANS_MONTHLY and
+    CLEANS_INFORMAL_MONTHLY have ever had a live payment mechanism.
+
+    CLEANS_MONTHLY pays via its own real Revolut order (see finance/services.py::
+    create_revolut_order_for_owner_invoice) - pay_method='revolut', pay_url set, bank_details None.
+    A CLEANS_MONTHLY invoice with no revolut_checkout_url yet (order creation failed, or hasn't
+    run) is silently omitted rather than shown with a dead button.
+
+    CLEANS_INFORMAL_MONTHLY used to point at PaymentSettings.wise_payment_link, but that turned out
+    to require the payer to sign up for (or log into) Wise themselves - confirmed live 2026-09-17,
+    there's no guest/no-account path at all. Replaced with KLT's own bank details
+    (PaymentSettings.company_bank_*) shown directly to the owner instead of any outbound link -
+    pay_method='bank_transfer', pay_url None, bank_details a dict of whichever company_bank_*
+    fields are actually filled in. Omitted entirely if none of them are set, same "nothing
+    configured yet" convention as the old Wise-link check.
+
+    Returns a list of {'invoice': OwnerInvoice, 'pay_method': 'revolut'|'bank_transfer',
+    'pay_url': str or None, 'bank_details': dict or None}, oldest first."""
+    settings = PaymentSettings.load()
+    bank_details = {
+        'account_holder_name': settings.company_bank_account_holder_name,
+        'bank_name': settings.company_bank_name,
+        'bank_address': settings.company_bank_address,
+        'iban': settings.company_bank_iban,
+        'swift_code': settings.company_bank_swift_code,
+    }
+    has_bank_details = any(bank_details.values())
+
+    invoices = OwnerInvoice.objects.filter(
+        owner=owner, kind__in=[OwnerInvoice.Kind.CLEANS_MONTHLY, OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY],
+    ).exclude(status='paid').order_by('created_at')
+
+    rows = []
+    for invoice in invoices:
+        if invoice.kind == OwnerInvoice.Kind.CLEANS_MONTHLY:
+            if invoice.revolut_checkout_url:
+                rows.append({
+                    'invoice': invoice, 'pay_method': 'revolut',
+                    'pay_url': invoice.revolut_checkout_url, 'bank_details': None,
+                })
+        else:
+            if has_bank_details:
+                rows.append({
+                    'invoice': invoice, 'pay_method': 'bank_transfer',
+                    'pay_url': None, 'bank_details': bank_details,
+                })
+    return rows
+
+
 def needs_informal_cleans_tracking(owner):
     """Whether this owner needs the Expected Payments tab's individual-Memo-toggle-then-consolidate
     mechanism (2026-09-10) - not just scenario 4. A scenario-3 owner (not regular, not invoiced) has

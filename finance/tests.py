@@ -18,8 +18,8 @@ from finance.services import (
     compute_regular_owner_payout, consolidate_informal_cleans_payment, deposits_due_in_range,
     dispatch_commission_receipt_for_payout, dispatch_memo_to_sage, generate_non_regular_owner_invoice,
     generate_scenario_1_cleans_invoice, needs_informal_cleans_tracking, open_memo_for_property,
-    owner_balance_in_range, owner_outstanding_balance, owner_settlements, payouts_due_in_range,
-    recompute_unsent_memo_fees_for_settings_change, sweep_unattached_ad_hoc_services,
+    owner_balance_in_range, owner_outstanding_balance, owner_payable_invoices, owner_settlements,
+    payouts_due_in_range, recompute_unsent_memo_fees_for_settings_change, sweep_unattached_ad_hoc_services,
 )
 from guests.models import Guest
 from properties.models import ManagementCompany, Owner, OwnerBankAccount, Property, PropertySpec
@@ -897,7 +897,6 @@ class ComputeRegularOwnerPayoutTests(TestCase):
         self.settings.high_season_start_month = 4
         self.settings.high_season_end_month = 10
         self.settings.vat_rate_percent = Decimal('23.00')
-        self.settings.charge_vat_on_low_season_direct_commission = False
         self.settings.regular_payout_days_after_arrival = 3
         self.settings.cleaning_surcharge_one_bedroom = Decimal('10.00')
         self.settings.cleaning_surcharge_multi_bedroom = Decimal('15.00')
@@ -1861,6 +1860,87 @@ class OwnerOutstandingBalanceTests(TestCase):
         balance = owner_outstanding_balance(owner, date(2026, 3, 15))
         self.assertEqual(balance['owed_to_owner_rows'], [])
         self.assertEqual(balance['owed_to_owner'], Decimal('0'))
+
+
+class OwnerPayableInvoicesTests(TestCase):
+    """finance/services.py::owner_payable_invoices - the Owner Suite Statement tab's "Pay this
+    now" candidates (2026-09-17, bank-details fallback added same day once the Wise link turned
+    out to require the payer to have/create a Wise account). Deliberately narrow: only surfaces a
+    payment mechanism that already exists/is configured, and never generates a new Revolut order
+    on the fly - see that function's own docstring."""
+
+    def setUp(self):
+        self.owner = Owner.objects.create(
+            name='Payable Owner', email='payable-owner@example.com', currency=Owner.Currency.EUR,
+            is_paid_regularly=True, cleans_are_invoiced=True,
+        )
+
+    def test_unpaid_cleans_monthly_invoice_with_a_checkout_url_is_payable(self):
+        invoice = OwnerInvoice.objects.create(
+            owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_MONTHLY, period_start=date(2026, 9, 1),
+            cleans_amount=Decimal('120.00'), status='pending', revolut_checkout_url='https://revolut.example/pay/abc',
+        )
+        rows = owner_payable_invoices(self.owner)
+        self.assertEqual(rows, [{
+            'invoice': invoice, 'pay_method': 'revolut',
+            'pay_url': 'https://revolut.example/pay/abc', 'bank_details': None,
+        }])
+
+    def test_cleans_monthly_invoice_with_no_checkout_url_yet_is_omitted(self):
+        OwnerInvoice.objects.create(
+            owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_MONTHLY, period_start=date(2026, 9, 1),
+            cleans_amount=Decimal('120.00'), status='pending',
+        )
+        self.assertEqual(owner_payable_invoices(self.owner), [])
+
+    def test_paid_cleans_monthly_invoice_is_omitted(self):
+        OwnerInvoice.objects.create(
+            owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_MONTHLY, period_start=date(2026, 9, 1),
+            cleans_amount=Decimal('120.00'), status='paid', revolut_checkout_url='https://revolut.example/pay/abc',
+        )
+        self.assertEqual(owner_payable_invoices(self.owner), [])
+
+    def test_unpaid_informal_bundle_shows_companys_own_bank_details(self):
+        settings = PaymentSettings.load()
+        settings.company_bank_account_holder_name = 'Algarve Beach Apartments'
+        settings.company_bank_address = '1 Bank Street, Lisbon'
+        settings.company_bank_iban = 'PT50000000000000000000000'
+        settings.save(update_fields=['company_bank_account_holder_name', 'company_bank_address', 'company_bank_iban'])
+        invoice = OwnerInvoice.objects.create(
+            owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY, cleans_amount=Decimal('50.00'),
+        )
+        rows = owner_payable_invoices(self.owner)
+        self.assertEqual(rows, [{
+            'invoice': invoice, 'pay_method': 'bank_transfer', 'pay_url': None,
+            'bank_details': {
+                'account_holder_name': 'Algarve Beach Apartments', 'bank_name': None,
+                'bank_address': '1 Bank Street, Lisbon',
+                'iban': 'PT50000000000000000000000', 'swift_code': None,
+            },
+        }])
+
+    def test_unpaid_informal_bundle_omitted_when_no_bank_details_are_configured(self):
+        settings = PaymentSettings.load()
+        settings.company_bank_account_holder_name = ''
+        settings.company_bank_name = ''
+        settings.company_bank_address = ''
+        settings.company_bank_iban = ''
+        settings.company_bank_swift_code = ''
+        settings.save(update_fields=[
+            'company_bank_account_holder_name', 'company_bank_name', 'company_bank_address',
+            'company_bank_iban', 'company_bank_swift_code',
+        ])
+        OwnerInvoice.objects.create(
+            owner=self.owner, kind=OwnerInvoice.Kind.CLEANS_INFORMAL_MONTHLY, cleans_amount=Decimal('50.00'),
+        )
+        self.assertEqual(owner_payable_invoices(self.owner), [])
+
+    def test_structural_commission_only_invoices_are_never_payable(self):
+        OwnerInvoice.objects.create(
+            owner=self.owner, kind=OwnerInvoice.Kind.COMMISSION_MONTHLY, period_start=date(2026, 9, 1),
+            commission_amount=Decimal('200.00'), status='pending',
+        )
+        self.assertEqual(owner_payable_invoices(self.owner), [])
 
 
 class NeedsInformalCleansTrackingTests(TestCase):
